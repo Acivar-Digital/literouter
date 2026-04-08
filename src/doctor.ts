@@ -35,8 +35,8 @@ async function main() {
 
   // 2. Configuration Summary
   console.log(`  ${dim}Config:${R} ${configPath}`);
-  console.log(`  ${dim}Template:${R} ${config.template}`);
   console.log(`  ${dim}Provider keys:${R} ${config.apiKeys.length}`);
+  console.log(`  ${dim}Models loaded:${R} ${Object.keys(config.models).join(", ")}`);
   console.log(`  ${dim}Auth key:${R} ${config.authKey ? "set" : "not set"}\n`);
 
   // 3. Provider Validation via preflight
@@ -77,11 +77,14 @@ async function main() {
             headers["Authorization"] = `Bearer ${config.authKey}`;
         }
 
+        // We use the first loaded model alias, or fall back to generic code
+        const firstModelAlias = Object.keys(config.models)[0] || "code";
+
         const testRes = await fetch(`${serverUrl}/v1/chat/completions`, {
           method: "POST",
           headers,
           body: JSON.stringify({
-            model: "code",  // Using the generic alias
+            model: firstModelAlias,
             messages: [{ role: "user", content: "ping" }],
             max_tokens: 1
           }),

@@ -4,16 +4,14 @@
  *
  * OpenAI-compatible HTTP server for LiteRouter.
  * Exposes /v1/chat/completions and /health endpoints.
- * Uses provider templates for correct thinking/reasoning injection.
+ * Routes to OpenRouter and maps requested models to specific multi-model configurations.
  */
 
 import { getConfig } from "./config.js";
 import { getNextKey, getRouterStatus, reportError } from "./router.js";
-import { getTemplate } from "./templates/index.js";
 import { logger } from "./logger.js";
 
 const config = getConfig();
-const template = getTemplate(config.template);
 
 function checkAuth(req: Request): boolean {
   if (!config.authKey) return true;
@@ -52,62 +50,54 @@ async function handleChat(req: Request): Promise<Response> {
     );
   }
 
-  // 1. Generic model name alias: "code"
-  if (body.model === "code") {
-    body.model = config.model;
-  } else if (config.model && !body.model) {
-    body.model = config.model;
+  // Map requested model to configured model and provider
+  const requestedModel = body.model;
+  let providerToUse = null;
+
+  if (requestedModel && config.models[requestedModel]) {
+    const mapped = config.models[requestedModel];
+    body.model = mapped.model;
+    if (mapped.provider) {
+      providerToUse = mapped.provider;
+    }
   }
 
-  // 2. Temperature injection (server config overrides client)
-  if (config.temperature !== null) {
-    body.temperature = config.temperature;
-  }
-
-  // 3. Provider template injection (streaming defaults + thinking mode + provider)
-  let finalBody = body;
-  if (template.transformRequest) {
-    finalBody = template.transformRequest(body, {
-      mode: config.thinkingMode,
-      provider: config.provider,
-    });
-  } else {
-    template.applyTemplateConfig(body, { 
-      mode: config.thinkingMode, 
-      provider: config.provider 
-    });
+  // Default to streaming if not specified
+  body.stream = body.stream ?? true;
+  
+  if (providerToUse) {
+    body.provider = {
+      order: [providerToUse],
+    };
   }
 
   console.log(
     `[▶️ Sending] Forwarding to upstream: ` +
-    `template=${config.template} | model=${finalBody.model || body.model} | ` +
-    `temp=${finalBody.temperature ?? body.temperature ?? "def"} | thinking=${config.thinkingMode ?? "none"}`
+    `model=${body.model} | requested_alias=${requestedModel} | ` +
+    `temp=${body.temperature ?? "def"}`
   );
 
-  // Pass original body to targetUrlCallback so it can read body.stream for URL selection
-  const targetUrl = template.targetUrlCallback 
-    ? template.targetUrlCallback(config.baseUrl, body, key)
-    : `${config.baseUrl}/chat/completions`;
+  const targetUrl = `${config.baseUrl}/chat/completions`;
 
-  const bodyStr = JSON.stringify(finalBody);
+  const bodyStr = JSON.stringify(body);
   const headers: Record<string, string> = {
     Authorization: `Bearer ${key}`,
     "Content-Type": "application/json",
   };
 
-  // Allow templates to customize headers (e.g. native Gemini uses query param, so remove Auth header)
-  if (template.applyHeaders) {
-    template.applyHeaders(headers, key);
-  }
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 60000); // 60 seconds
 
   const options: RequestInit = {
     method: "POST",
     headers,
     body: bodyStr,
+    signal: controller.signal,
   };
 
   try {
     const upstream = await fetch(targetUrl, options);
+    clearTimeout(timeoutId);
 
     if (upstream.status === 429 || upstream.status === 401 || upstream.status === 403) {
       reportError(key, upstream.status);
@@ -130,7 +120,7 @@ async function handleChat(req: Request): Promise<Response> {
     }
 
     if (body.stream) {
-      const streamId = `chatcmpl-${Date.now()}`;
+      // we don't natively transform chunks anymore since it is OpenRouter OpenAI-compatible Native!
       
       const transformer = new TransformStream({
         transform(chunk, controller) {
@@ -141,7 +131,6 @@ async function handleChat(req: Request): Promise<Response> {
           for (const line of lines) {
             if (!line.trim()) continue;
 
-            // Use data line if present, or handle raw lines (native Gemini uses raw JSON in SSE stream)
             const isDataLine = line.startsWith("data: ");
             const rawJson = isDataLine ? line.slice(6) : line;
 
@@ -153,11 +142,6 @@ async function handleChat(req: Request): Promise<Response> {
             try {
               let data = JSON.parse(rawJson);
               
-              // 1. Template transformation (e.g. Native Gemini -> OpenAI)
-              if (template.transformChunk) {
-                data = template.transformChunk(data, { model: body.model, id: streamId });
-              }
-
               // 2. OpenAI spec fixes (like missing index in tool_calls)
               if (data?.choices?.[0]?.delta?.tool_calls) {
                 for (let i = 0; i < data.choices[0].delta.tool_calls.length; i++) {
@@ -177,11 +161,7 @@ async function handleChat(req: Request): Promise<Response> {
           if (output) {
             controller.enqueue(new TextEncoder().encode(output));
           }
-        },
-        // Gemini's native stream does NOT send [DONE]. We must emit it when the stream closes.
-        flush(controller) {
-          controller.enqueue(new TextEncoder().encode("data: [DONE]\n\n"));
-        },
+        }
       });
 
       return new Response(upstream.body?.pipeThrough(transformer), {
@@ -194,9 +174,6 @@ async function handleChat(req: Request): Promise<Response> {
     }
 
     let data = await upstream.json();
-    if (template.transformResponse) {
-      data = template.transformResponse(data, { model: body.model, id: `chatcmpl-${Date.now()}` });
-    }
     return Response.json(data);
   } catch (err) {
     logger.error(`Error fetching from ${targetUrl}`, err);
@@ -215,15 +192,11 @@ function handleHealth(): Response {
     status: "ok",
     timestamp: new Date().toISOString(),
     config: {
-      template: config.template,
       baseUrl: config.baseUrl || "Not set",
-      model: config.model || "Not set",
       port: config.port,
       host: config.host,
-      temperature: config.temperature,
-      thinkingMode: config.thinkingMode,
       authEnabled: !!config.authKey,
-      providers: Object.keys(config.providers),
+      models: Object.keys(config.models),
     },
     router: getRouterStatus(),
   });
@@ -248,13 +221,9 @@ const server = Bun.serve({
 });
 
 console.log(`\n🚀 LiteRouter is listening on http://${config.host}:${config.port}`);
-console.log(`[Config] Template: ${config.template}`);
 console.log(`[Config] Base URL: ${config.baseUrl}`);
-console.log(`[Config] Model: ${config.model} (Alias: code)`);
-if (config.temperature !== null) console.log(`[Config] Temp: ${config.temperature}`);
-if (config.thinkingMode) console.log(`[Config] Thinking: ${config.thinkingMode}`);
+console.log(`[Config] Models Loaded: ${Object.keys(config.models).join(", ")}`);
 console.log(`[Config] Auth: ${config.authKey ? "Enabled" : "Disabled"}`);
-console.log(`[Config] Available templates: ${Object.keys(config.providers).join(", ")}`);
 console.log(`\n☁️  Waiting for requests...\n`);
 
 process.on("SIGINT", () => {

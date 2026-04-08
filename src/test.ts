@@ -21,7 +21,7 @@ export async function runPreflightTest(logProgress = true) {
   if (logProgress) {
     console.log(`\n${cyan}${bold}  LITEROUTER PREFLIGHT TEST${R}\n`);
     console.log(`  ${dim}Base URL :${R} ${config.baseUrl}`);
-    console.log(`  ${dim}Template :${R} ${config.template}`);
+    console.log(`  ${dim}Models   :${R} ${Object.keys(config.models).join(", ")}`);
     console.log(`  ${dim}Testing  :${R} ${config.apiKeys.length} key(s)\n`);
   }
 
@@ -33,6 +33,8 @@ export async function runPreflightTest(logProgress = true) {
   let healthy = 0;
   let failed = 0;
   const testResults = [];
+
+  const firstModelId = Object.values(config.models)[0]?.model || "gpt-3.5-turbo";
 
   for (let i = 0; i < config.apiKeys.length; i++) {
     const key = config.apiKeys[i];
@@ -52,7 +54,7 @@ export async function runPreflightTest(logProgress = true) {
           Authorization: `Bearer ${key}`
         },
         body: JSON.stringify({
-          model: config.model || "gpt-4o",
+          model: firstModelId,
           messages: [{ role: "user", content: "hello" }],
           max_tokens: 1
         }),
