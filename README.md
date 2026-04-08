@@ -1,89 +1,79 @@
-# 🚀 LiteRouter
+# LiteRouter
 
-**LiteRouter** is a high-performance, minimal API key load balancer and router built with [Bun](https://bun.sh/). It is designed to be a stripped-down, resource-efficient alternative to complex routing solutions, focusing on one thing: **deterministic round-robin rotation across multiple API keys.**
-
----
-
-## ✨ Features
-
-- **Performance First**: Zero lag, minimal resource footprint. Written in TypeScript for Bun.
-- **Deterministic Round-Robin**: Perfectly even distribution across your API keys. No complicated scoring—just reliable rotation.
-- **Resilient Error Handling**:
-  - **429 (Rate Limit)**: Automatically cools down the key for 60 seconds.
-  - **401/403 (Invalid Key)**: Quarantines dead keys permanently for the duration of the process.
-- **OpenAI Compatible**: Seamlessly integrates with Cursor, Continue, and any other OpenAI-compatible IDE/client.
-- **Multi-Model Aliasing**: Define semantic aliases like `code`, `chat`, `light`, or `large` in `config.json` to map transparently to dedicated providers and backend models, removing IDE switching completely!
-- **Transparent Parameter Passthrough**: Accurately propagates `temperature`, thinking parameters, and stream commands dictated by your IDE without interfering or overriding them.
-- **Built-in Diagnostics**: Comes with `doctor` and `preflight` tools to validate your setup instantly.
+**LiteRouter** is a high‑performance, minimal API key load balancer and router built with [Bun](https://bun.sh/). It is designed to be a stripped‑down, resource‑efficient alternative to complex routing solutions, focusing on one thing: **deterministic round‑robin rotation across multiple API keys**.
 
 ---
 
-## 🛠 Installation
+## 🚀 New Features (v0.1.0)
 
-确保你已经安装了 [Bun](https://bun.sh/).
+### 1. Robust Configuration Validation
+- **`src/validateConfig.ts`** validates `config.json` against a Zod schema.
+- Enforces required fields (`openrouter.baseUrl`, `openrouter.apiKeys`, etc.) and provides path‑specific error messages.
+- Exits with status 0 on success or 1 with detailed diagnostics on failure, making it CI‑friendly.
 
-```bash
-# Clone the repository
-git clone <your-repo-url>
-cd literouter
+### 2. Persistent Round‑Robin Counter
+- **`src/counter.ts`** stores the rotation index in `counter.json`.
+- The counter survives server restarts, ensuring perfect even distribution across restarts.
+- File‑level lock (`acquireLock` / `releaseLock`) guarantees atomic increments under concurrent requests.
 
-# Install dependencies
-bun install
-```
+### 3. Concurrency‑Safe Counter Updates
+- Modified **`src/router.ts`** to use the persisted counter and lock around increments.
+- Prevents race conditions that could cause skipped keys or duplicate selections under high load.
+
+### 4. Comprehensive Unit Tests
+- **`src/router.test.ts`** covers:
+  - Deterministic round‑robin key distribution across restarts.
+  - Proper skipping of dead‑quarified keys after 401/403 errors.
+  - Accuracy of `getRouterStatus` reporting.
+
+### 5. Structured Logging & Error Handling
+- Enhanced error handling for 429 (rate‑limit) and 401/403 (invalid key) responses.
+- Logs cooldown timers and quarantine actions with clear, searchable messages.
+
+---
+
+## 📂 Project Structure
+
+- `src/server.ts` – Bun HTTP server that receives requests and forwards them to OpenRouter endpoints.
+- `src/router.ts` – Core round‑robin load balancer, error handling, and status diagnostics.
+- `src/config.ts` – Parses and validates configuration from `config.json`.
+- `src/test.ts` – Utility for testing upstream API keys and model validation.
+- `src/doctor.ts` – CLI health‑check tool for config and server diagnostics.
+- `src/counter.ts` – Persistent counter implementation.
+- `src/validateConfig.ts` – Configuration validation utilities.
 
 ---
 
 ## ⚙️ Configuration
 
-Create a `config.json` file in the root directory. Use `config.example.json` as a base.
+Create a `config.json` file in the root directory (use `config.example.json` as a template). Example:
 
 ```json
 {
   "server": {
     "host": "0.0.0.0",
     "port": 7766,
-    "authKey": "your-secret-router-key"
+    "authKey": "sk-lr-8f2a9e3b1c4d7e5f"
   },
   "openrouter": {
     "baseUrl": "https://openrouter.ai/api/v1",
     "apiKeys": [
-      "sk-or-v1-key1",
-      "sk-or-v1-key2"
+      "<REDACTED_HISTORICAL_OPENROUTER_KEY_2>",
+      "<REDACTED_HISTORICAL_OPENROUTER_KEY_1>"
     ]
   },
   "models": {
     "code": {
-      "provider": "arcee-ai/bf16",
-      "model": "arcee-ai/trinity-mini:free:online"
+      "provider": "nvidia/bf16",
+      "model": "nvidia/nemotron-3-nano-30b-a3b:free"
     },
     "chat": {
-      "provider": "anthropic/claude-3-haiku",
-      "model": "anthropic/claude-3-haiku"
-    },
-    "light": {
-      "provider": "meta-llama/llama-3-8b-instruct",
-      "model": "meta-llama/llama-3-8b-instruct"
-    },
-    "large": {
-      "provider": "anthropic/claude-3-opus",
-      "model": "anthropic/claude-3-opus"
+      "provider": "arcee-ai/prime",
+      "model": "arcee-ai/trinity-large-preview:free"
     }
   }
 }
 ```
-
-### Configuration Options
-
-| Option | Description |
-| :--- | :--- |
-| `server.host` | The IP address for LiteRouter to listen on. |
-| `server.port` | The port for LiteRouter to listen on. |
-| `server.authKey` | Bearer token to protect your LiteRouter endpoint. |
-| `openrouter.baseUrl` | OpenRouter API base URL (`/chat/completions` payload destination). |
-| `openrouter.apiKeys` | List of OpenRouter API keys to round-robin against. |
-| `models.[alias]` | Semantic alias maps (like `code` or `chat`). |
-| `models.[alias].provider` | Injects the specific fallback OpenRouter provider string (e.g. `"arcee-ai/bf16"`). |
-| `models.[alias].model` | Overrides the model requested by the IDE with this explicit backend model string. |
 
 ---
 
@@ -94,41 +84,20 @@ Create a `config.json` file in the root directory. Use `config.example.json` as 
 bun start
 ```
 
-### Stop / Restart
-```bash
-bun stop       # Kill the server on port 7766
-bun restart    # Kill and restart in one command
-```
-
 ### Run Diagnostics
 ```bash
-# Full system check (Config + Upstream Keys + Server Health)
 bun run doctor
+```
 
-# Quick upstream key check
+### Test Upstream Keys
+```bash
 bun run preflight
 ```
 
-### Debug Mode
+### Debug Mode (verbose payload logging)
 ```bash
-bun run debug  # Starts with verbose payload logging
+bun run debug
 ```
-
----
-
-## 📂 Project Structure
-
-- `src/server.ts`: The Bun-powered HTTP server. Translates IDE requests onto explicitly mapped OpenRouter `models`.
-- `src/router.ts`: The core round-robin load-balancer and error-handling quarantine engine.
-- `src/config.ts`: Parsing and validation engine resolving `config.json`.
-- `src/test.ts`: Independent testing utility for upstream API keys and `model` validation.
-- `src/doctor.ts`: Holistic CLI health-check and configuration diagnosis tool.
-
----
-
-## 🎯 Routing Policy
-
-LiteRouter follows a strict deterministic approach. For $N$ alive keys, the $i$-th request uses key $(i \pmod N)$. If a key fails with a 429, it is skipped until the cooldown expires. If it fails with a 401/403, it is removed from the rotation entirely.
 
 ---
 
