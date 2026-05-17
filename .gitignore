@@ -33,3 +33,11 @@ data/
 .opencode/
 .agents/
 .ruff_cache/
+
+# PID files
+*.pid
+
+# Beads / Dolt files (added by bd init)
+.dolt/
+*.db
+.beads-credential-key
