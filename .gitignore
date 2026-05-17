@@ -1,30 +1,35 @@
-# Dependencies
-node_modules/
-
-# OS-generated files
-.DS_Store
-Thumbs.db
-
-# Logs
-*.log
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-
-# IDE / Editor directories
-.vscode/
-.idea/
-*literouter.code-workspace*
-
-# Build output
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+*.egg-info/
 dist/
 build/
 
-# Environment variables - DO NOT COMMIT THESE
+# Environment
 .env
-.env.local
-.env.*.local
 
-# Project-specific
-config.json
-/.agents/workflows/*
+# Archives
+*.tar.gz
+*.zip
+
+# Logs
+*.log
+
+# IDE
+.DS_Store
+*.code-workspace
+.vscode/
+.idea/
+
+# Node (if any)
+node_modules/
+
+# Data
+data/
+
+# Opencode internal
+.opencode/
+.agents/
+.ruff_cache/

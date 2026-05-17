@@ -1,106 +1,215 @@
 # LiteRouter
 
-**LiteRouter** is a high‑performance, minimal API key load balancer and router built with [Bun](https://bun.sh/). It is designed to be a stripped‑down, resource‑efficient alternative to complex routing solutions, focusing on one thing: **deterministic round‑robin rotation across multiple API keys**.
+**A Python + Redis API key load balancer for LLM providers.**
 
----
+LiteRouter sits between your application and LLM providers (OpenRouter, Gemini, and others), distributing requests across multiple API keys using intelligent round-robin routing with automatic cooldown, quarantine, and rate limiting.
 
-## 🚀 New Features (v0.1.0)
+## Features
 
-### 1. Robust Configuration Validation
-- **`src/validateConfig.ts`** validates `config.json` against a Zod schema.
-- Enforces required fields (`openrouter.baseUrl`, `openrouter.apiKeys`, etc.) and provides path‑specific error messages.
-- Exits with status 0 on success or 1 with detailed diagnostics on failure, making it CI‑friendly.
+- **Provider-centric routing** — Route requests to specific providers (OpenRouter, Gemini, etc.) with key-level load balancing
+- **Redis-backed state** — All routing state persisted in Redis for crash recovery and multi-instance coordination
+- **Sequential processing** — Built-in request queue ensures ordered, non-overlapping key operations
+- **Smart round-robin** — Deterministic key selection with persistent counter across restarts
+- **Automatic cooldown** — Keys that hit rate limits enter a configurable cooldown period before rejoining the pool
+- **Quarantine system** — Keys with repeated failures are temporarily quarantined to prevent cascading errors
+- **Rate limiting** — Per-key and global rate limits with configurable windows and burst allowances
+- **Gemini support** — First-class support for Google Gemini alongside OpenRouter
+- **Built-in metrics** — Request counts, error rates, latency tracking, and key health dashboards
+- **CLI diagnostics** — `doctor` command for comprehensive system health checks
 
-### 2. Persistent Round‑Robin Counter
-- **`src/counter.ts`** stores the rotation index in `counter.json`.
-- The counter survives server restarts, ensuring perfect even distribution across restarts.
-- File‑level lock (`acquireLock` / `releaseLock`) guarantees atomic increments under concurrent requests.
+## Quick Start
 
-### 3. Concurrency‑Safe Counter Updates
-- Modified **`src/router.ts`** to use the persisted counter and lock around increments.
-- Prevents race conditions that could cause skipped keys or duplicate selections under high load.
+### Prerequisites
 
-### 4. Comprehensive Unit Tests
-- **`src/router.test.ts`** covers:
-  - Deterministic round‑robin key distribution across restarts.
-  - Proper skipping of dead‑quarified keys after 401/403 errors.
-  - Accuracy of `getRouterStatus` reporting.
+- Python 3.11+
+- Redis server (local or remote)
+- Multiple API keys for your LLM provider(s)
 
-### 5. Structured Logging & Error Handling
-- Enhanced error handling for 429 (rate‑limit) and 401/403 (invalid key) responses.
-- Logs cooldown timers and quarantine actions with clear, searchable messages.
+### Installation
 
----
-
-## 📂 Project Structure
-
-- `src/server.ts` – Bun HTTP server that receives requests and forwards them to OpenRouter endpoints.
-- `src/router.ts` – Core round‑robin load balancer, error handling, and status diagnostics.
-- `src/config.ts` – Parses and validates configuration from `config.json`.
-- `src/test.ts` – Utility for testing upstream API keys and model validation.
-- `src/doctor.ts` – CLI health‑check tool for config and server diagnostics.
-- `src/counter.ts` – Persistent counter implementation.
-- `src/validateConfig.ts` – Configuration validation utilities.
-
----
-
-## ⚙️ Configuration
-
-Create a `config.json` file in the root directory (use `config.example.json` as a template). Example:
-
-```json
-{
-  "server": {
-    "host": "0.0.0.0",
-    "port": 7766,
-    "authKey": "sk-lr-8f2a9e3b1c4d7e5f"
-  },
-  "openrouter": {
-    "baseUrl": "https://openrouter.ai/api/v1",
-    "apiKeys": [
-      "<REDACTED_HISTORICAL_OPENROUTER_KEY_2>",
-      "<REDACTED_HISTORICAL_OPENROUTER_KEY_1>"
-    ]
-  },
-  "models": {
-    "code": {
-      "provider": "nvidia/bf16",
-      "model": "nvidia/nemotron-3-nano-30b-a3b:free"
-    },
-    "chat": {
-      "provider": "arcee-ai/prime",
-      "model": "arcee-ai/trinity-large-preview:free"
-    }
-  }
-}
-```
-
----
-
-## 🚀 Usage
-
-### Start the Server
 ```bash
-bun start
+# Clone the repository
+git clone https://github.com/Acivar-Digital/literouter.git
+cd literouter
+
+# Install dependencies
+uv sync
+
+# Copy and configure environment
+cp .env.example .env
 ```
 
-### Run Diagnostics
+### Configuration
+
+Edit `.env` with your settings:
+
+```env
+REDIS_URL=redis://localhost:6379/0
+REDIS_TOKEN_URL=redis://localhost:6379/1
+
+# OpenRouter
+OPENROUTER_KEYS=key1,key2,key3
+OPENROUTER_MODELS=openai/gpt-4o,anthropic/claude-3.5-sonnet
+
+# Gemini
+GEMINI_KEYS=key1,key2
+GEMINI_MODELS=gemini-2.5-pro,gemini-2.0-flash
+
+# Routing
+COOLDOWN_SECONDS=60
+QUARANTINE_THRESHOLD=3
+QUARANTINE_DURATION=300
+RATE_LIMIT_RPM=60
+RATE_LIMIT_WINDOW=60
+```
+
+### Running
+
 ```bash
-bun run doctor
+# Start the server
+uv run uvicorn src.main:app --host 0.0.0.0 --port 8000
+
+# Run diagnostics
+uv run python -m src.doctor
 ```
 
-### Test Upstream Keys
+## Usage
+
+### cURL
+
 ```bash
-bun run preflight
+# Route a chat completion through OpenRouter
+curl -X POST http://localhost:8000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "provider": "openrouter",
+    "model": "openai/gpt-4o",
+    "messages": [{"role": "user", "content": "Hello!"}]
+  }'
+
+# Route through Gemini
+curl -X POST http://localhost:8000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "provider": "gemini",
+    "model": "gemini-2.5-pro",
+    "messages": [{"role": "user", "content": "Hello!"}]
+  }'
 ```
 
-### Debug Mode (verbose payload logging)
+### Python SDK
+
+```python
+import httpx
+
+async with httpx.AsyncClient() as client:
+    response = await client.post(
+        "http://localhost:8000/v1/chat/completions",
+        json={
+            "provider": "openrouter",
+            "model": "anthropic/claude-3.5-sonnet",
+            "messages": [{"role": "user", "content": "Explain quantum computing"}]
+        }
+    )
+    print(response.json())
+```
+
+### Metrics Endpoint
+
 ```bash
-bun run debug
+# Get routing metrics
+curl http://localhost:8000/metrics
+
+# Get key health status
+curl http://localhost:8000/health
 ```
 
----
+## Configuration Reference
 
-## 📄 License
+| Variable | Type | Default | Description |
+|---|---|---|---|
+| `REDIS_URL` | string | `redis://localhost:6379/0` | Redis connection URL for routing state |
+| `REDIS_TOKEN_URL` | string | `redis://localhost:6379/1` | Redis connection URL for token/key storage |
+| `OPENROUTER_KEYS` | comma-separated | — | List of OpenRouter API keys |
+| `OPENROUTER_MODELS` | comma-separated | — | List of available OpenRouter models |
+| `GEMINI_KEYS` | comma-separated | — | List of Gemini API keys |
+| `GEMINI_MODELS` | comma-separated | — | List of available Gemini models |
+| `COOLDOWN_SECONDS` | int | `60` | Seconds a key stays in cooldown after rate limit |
+| `QUARANTINE_THRESHOLD` | int | `3` | Consecutive failures before quarantine |
+| `QUARANTINE_DURATION` | int | `300` | Seconds a key stays quarantined |
+| `RATE_LIMIT_RPM` | int | `60` | Maximum requests per minute per key |
+| `RATE_LIMIT_WINDOW` | int | `60` | Rate limit window in seconds |
+| `LOG_LEVEL` | string | `INFO` | Logging level (DEBUG, INFO, WARNING, ERROR) |
+| `HOST` | string | `0.0.0.0` | Server bind address |
+| `PORT` | int | `8000` | Server port |
 
-MIT
+## Project Structure
+
+```
+literouter/
+├── src/
+│   ├── __init__.py          # Package initialization
+│   ├── main.py              # FastAPI application entry point
+│   ├── config.py            # Environment configuration loader
+│   ├── models.py            # Pydantic request/response models
+│   ├── router.py            # Core routing logic and round-robin
+│   ├── redis_client.py      # Redis connection management
+│   ├── queue.py             # Sequential request queue
+│   ├── rate_limiter.py      # Per-key and global rate limiting
+│   ├── metrics.py           # Request metrics and health tracking
+│   ├── doctor.py            # CLI diagnostics and health checks
+│   ├── gemini.py            # Gemini provider adapter
+│   └── embed_cache.py       # Embedding cache (optional)
+├── tests/
+│   └── test_router.py       # Router unit tests
+├── scripts/
+│   └── setup.sh             # Environment setup script
+├── docs/
+│   ├── ARCHITECTURE.md      # System architecture documentation
+│   └── ROUTING.md           # Routing algorithm documentation
+├── .env.example             # Environment template
+├── pyproject.toml           # Python project configuration
+├── uv.lock                  # Dependency lock file
+└── README.md                # This file
+```
+
+## Redis Key Schema
+
+| Key Pattern | Type | Description | TTL |
+|---|---|---|---|
+| `lr:rr:{provider}` | STRING | Current round-robin index | None |
+| `lr:cooldown:{provider}:{key_idx}` | STRING | Cooldown expiration timestamp | Dynamic |
+| `lr:quarantine:{provider}:{key_idx}` | STRING | Quarantine expiration timestamp | Dynamic |
+| `lr:failures:{provider}:{key_idx}` | STRING | Consecutive failure count | None |
+| `lr:ratelimit:{provider}:{key_idx}` | HASH | Rate limit counters (window, count) | Dynamic |
+| `lr:metrics:requests` | STRING | Total request count | None |
+| `lr:metrics:errors` | STRING | Total error count | None |
+| `lr:metrics:latency` | STRING | Rolling average latency | None |
+| `lr:queue` | LIST | Pending request queue | None |
+
+## Multi-Instance Deployment
+
+LiteRouter supports horizontal scaling across multiple instances:
+
+1. **Shared Redis** — All instances connect to the same Redis server for coordinated state
+2. **Atomic operations** — Round-robin increments use Redis `INCR` for atomicity
+3. **Distributed cooldown** — Cooldown and quarantine states are Redis-backed, visible to all instances
+4. **Queue coordination** — Sequential queue is managed via Redis lists with `BLPOP`/`RPOP`
+
+```
+┌─────────────┐    ┌─────────────┐    ┌─────────────┐
+│ Instance 1  │    │ Instance 2  │    │ Instance 3  │
+│ :8000       │    │ :8000       │    │ :8000       │
+└──────┬──────┘    └──────┬──────┘    └──────┬──────┘
+       │                  │                  │
+       └──────────────────┼──────────────────┘
+                          │
+                   ┌──────▼──────┐
+                   │    Redis    │
+                   │  :6379/0,1  │
+                   └─────────────┘
+```
+
+## License
+
+MIT License — see LICENSE file for details.
