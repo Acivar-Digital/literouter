@@ -17,7 +17,6 @@ import httpx
 from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
-from src.anthropic import build_anthropic_request_body, transform_anthropic_response
 from src.config import (
     get_config,
     is_anthropic_provider,
@@ -137,15 +136,14 @@ async def _process_request(body: dict, provider_name: str, template: str, provid
             del headers["Authorization"]
 
         elif use_anthropic:
-            # Anthropic template → /messages endpoint
+            # Anthropic template → /messages endpoint (pass-through, no transformation)
             target_url = f"{provider.base_url}/messages"
-            payload = build_anthropic_request_body(body)
             if is_anthropic_provider(provider):
                 # Native Anthropic: use x-api-key header
                 headers["x-api-key"] = key
                 headers["anthropic-version"] = "2023-06-01"
                 del headers["Authorization"]
-            # For OpenRouter: keep Authorization: Bearer, OpenRouter handles it
+            # For OpenRouter: keep Authorization: Bearer, pass body as-is
 
         else:
             # OpenAI template → /chat/completions endpoint
@@ -201,8 +199,8 @@ async def _buffered_request(
             data = resp.json()
             if use_gemini:
                 data = transform_gemini_response(data)
-            elif use_anthropic:
-                data = transform_anthropic_response(data)
+            # Anthropic + OpenRouter: pass response as-is (OpenRouter returns OpenAI-format)
+            # Anthropic + native: pass response as-is (client expects Anthropic format)
             return JSONResponse(content=data)
 
     except httpx.TimeoutException:
@@ -242,12 +240,9 @@ async def _stream_request(
                         metrics.increment_error_by_status(resp.status_code)
                         yield b'data: {"error": {"message": "' + err_text.encode() + b'", "type": "upstream_error"}}\n\n'
                         return
-                    if use_anthropic:
-                        async for sse in _stream_anthropic(resp):
-                            yield sse
-                    else:
-                        async for chunk in resp.aiter_bytes():
-                            yield chunk
+                    # All pathways: pass streaming response as-is
+                    async for chunk in resp.aiter_bytes():
+                        yield chunk
             metrics.increment_success()
             latency_ms = int((time.time() - start_time) * 1000)
             metrics.add_latency(latency_ms)
