@@ -12,9 +12,10 @@ from contextlib import asynccontextmanager
 
 import httpx
 from fastapi import FastAPI, Header, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
-from src.config import get_config, is_gemini_provider
+from src.anthropic import transform_anthropic_response
+from src.config import get_config, is_anthropic_model, is_gemini_provider, is_openrouter_provider
 from src.gemini import build_gemini_request_body, transform_gemini_response
 from src.metrics import get_metrics
 from src.rate_limiter import get_rate_limiter
@@ -62,11 +63,17 @@ def _check_auth(authorization: str | None) -> bool:
     return token == config.auth_key
 
 
-async def _process_request(body: dict, provider_name: str) -> dict:
+async def _process_request(body: dict, provider_name: str):
     """Forward a single request to the upstream provider (sequential)."""
+    should_stream = body.get("stream", False)
+
     async with _processing_lock:
         provider = config.providers[provider_name]
         use_gemini = is_gemini_provider(provider)
+        use_anthropic = (
+            is_openrouter_provider(provider)
+            and is_anthropic_model(body.get("model", ""))
+        )
 
         default_delay = config.rotate_delay_ms
         min_delay_ms = config.provider_min_delays.get(provider_name, default_delay)
@@ -98,7 +105,11 @@ async def _process_request(body: dict, provider_name: str) -> dict:
                     continue
                 body[k] = v
 
-        body["stream"] = False
+        # Strip provider prefix from model name before sending upstream
+        # e.g. "openrouter/owl-alpha" -> "owl-alpha"
+        #       "anthropic/claude-sonnet-4.6" -> "claude-sonnet-4.6"
+        if "/" in body.get("model", ""):
+            body["model"] = body["model"].split("/", 1)[1]
 
         headers = {
             "Authorization": f"Bearer {key}",
@@ -106,9 +117,14 @@ async def _process_request(body: dict, provider_name: str) -> dict:
         }
 
         if use_gemini:
-            target_url = (
-                f"{provider.base_url}/models/{body['model']}:generateContent"
-            )
+            if should_stream:
+                target_url = (
+                    f"{provider.base_url}/models/{body['model']}:streamGenerateContent"
+                )
+            else:
+                target_url = (
+                    f"{provider.base_url}/models/{body['model']}:generateContent"
+                )
             gemini_body = build_gemini_request_body(body)
             payload = gemini_body
             del headers["Authorization"]
@@ -116,86 +132,200 @@ async def _process_request(body: dict, provider_name: str) -> dict:
             target_url = f"{provider.base_url}/chat/completions"
             payload = body
 
+        if should_stream:
+            return await _stream_request(
+                target_url, payload, headers, key, provider_name,
+                use_gemini, start_time,
+            )
+        else:
+            return await _buffered_request(
+                target_url, payload, headers, key, provider_name,
+                use_gemini, use_anthropic, start_time,
+            )
+
+
+async def _buffered_request(
+    target_url: str,
+    payload: dict,
+    headers: dict,
+    key: str,
+    provider_name: str,
+    use_gemini: bool,
+    use_anthropic: bool,
+    start_time: float,
+):
+    """Non-streaming path: buffer the full response and return JSONResponse."""
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            if use_gemini:
+                resp = await client.post(
+                    target_url,
+                    json=payload,
+                    params={"key": key},
+                )
+            else:
+                resp = await client.post(
+                    target_url,
+                    json=payload,
+                    headers=headers,
+                )
+
+        rate_limiter.mark_call(provider_name)
+
+        if resp.status_code in (429, 401, 403):
+            router.report_error(provider_name, key, resp.status_code)
+
+        if not resp.is_success:
+            err_text = resp.text[:200]
+            logger.warning(
+                "[%s] upstream %d: %s", provider_name, resp.status_code, err_text
+            )
+            metrics.increment_error()
+            metrics.increment_error_by_status(resp.status_code)
+            return JSONResponse(
+                status_code=resp.status_code,
+                content={
+                    "error": {
+                        "message": err_text,
+                        "type": "upstream_error",
+                        "code": resp.status_code,
+                    }
+                },
+            )
+
+        metrics.increment_success()
+        latency_ms = int((time.time() - start_time) * 1000)
+        metrics.add_latency(latency_ms)
+        logger.info(
+            "[%s] success status=%d latency=%dms",
+            provider_name,
+            resp.status_code,
+            latency_ms,
+        )
+
+        data = resp.json()
+        if use_gemini:
+            data = transform_gemini_response(data)
+        elif use_anthropic:
+            data = transform_anthropic_response(data)
+
+        return JSONResponse(content=data)
+
+    except httpx.TimeoutException:
+        logger.error("[%s] request timed out", provider_name)
+        metrics.increment_error()
+        return JSONResponse(
+            status_code=504,
+            content={"error": {"message": "Upstream timeout.", "type": "upstream_error"}},
+        )
+    except httpx.ConnectError as exc:
+        logger.error("[%s] connection refused: %s", provider_name, exc)
+        metrics.increment_error()
+        return JSONResponse(
+            status_code=502,
+            content={
+                "error": {
+                    "message": "Upstream connection refused.",
+                    "type": "upstream_error",
+                },
+            },
+        )
+    except Exception as exc:
+        logger.error("[%s] unexpected error: %s", provider_name, exc)
+        metrics.increment_error()
+        return JSONResponse(
+            status_code=500,
+            content={"error": {"message": "Internal server error.", "type": "internal_error"}},
+        )
+
+
+async def _stream_request(
+    target_url: str,
+    payload: dict,
+    headers: dict,
+    key: str,
+    provider_name: str,
+    use_gemini: bool,
+    start_time: float,
+):
+    """Streaming path: return a StreamingResponse that passes through upstream chunks."""
+
+    async def _upstream_stream():
         try:
             async with httpx.AsyncClient(timeout=60.0) as client:
                 if use_gemini:
-                    resp = await client.post(
+                    stream_cm = client.stream(
+                        "POST",
                         target_url,
                         json=payload,
                         params={"key": key},
                     )
                 else:
-                    resp = await client.post(
+                    stream_cm = client.stream(
+                        "POST",
                         target_url,
                         json=payload,
                         headers=headers,
                     )
+                async with stream_cm as resp:
+                    rate_limiter.mark_call(provider_name)
 
-            rate_limiter.mark_call(provider_name)
+                    if resp.status_code in (429, 401, 403):
+                        router.report_error(provider_name, key, resp.status_code)
 
-            if resp.status_code in (429, 401, 403):
-                router.report_error(provider_name, key, resp.status_code)
+                    if not resp.is_success:
+                        err_text = resp.text[:200]
+                        logger.warning(
+                            "[%s] upstream %d: %s",
+                            provider_name,
+                            resp.status_code,
+                            err_text,
+                        )
+                        metrics.increment_error()
+                        metrics.increment_error_by_status(resp.status_code)
+                        error_payload = (
+                            b'data: {"error": {"message": "' + err_text.encode()
+                            + b'", "type": "upstream_error", "code": '
+                            + str(resp.status_code).encode() + b'}}\n\n'
+                        )
+                        yield error_payload
+                        return
 
-            if not resp.is_success:
-                err_text = resp.text[:200]
-                logger.warning(
-                    "[%s] upstream %d: %s", provider_name, resp.status_code, err_text
-                )
-                metrics.increment_error()
-                metrics.increment_error_by_status(resp.status_code)
-                return JSONResponse(
-                    status_code=resp.status_code,
-                    content={
-                        "error": {
-                            "message": err_text,
-                            "type": "upstream_error",
-                            "code": resp.status_code,
-                        }
-                    },
-                )
+                    async for chunk in resp.aiter_bytes():
+                        yield chunk
 
             metrics.increment_success()
             latency_ms = int((time.time() - start_time) * 1000)
             metrics.add_latency(latency_ms)
             logger.info(
-                "[%s] success status=%d latency=%dms",
+                "[%s] stream success status=200 latency=%dms",
                 provider_name,
-                resp.status_code,
                 latency_ms,
             )
 
-            data = resp.json()
-            if use_gemini:
-                data = transform_gemini_response(data)
-
-            return JSONResponse(content=data)
-
         except httpx.TimeoutException:
-            logger.error("[%s] request timed out", provider_name)
+            logger.error("[%s] stream timed out", provider_name)
             metrics.increment_error()
-            return JSONResponse(
-                status_code=504,
-                content={"error": {"message": "Upstream timeout.", "type": "upstream_error"}},
-            )
+            yield b'data: {"error": {"message": "Upstream timeout.", "type": "upstream_error"}}\n\n'
         except httpx.ConnectError as exc:
-            logger.error("[%s] connection refused: %s", provider_name, exc)
+            logger.error("[%s] stream connection refused: %s", provider_name, exc)
             metrics.increment_error()
-            return JSONResponse(
-                status_code=502,
-                content={
-                    "error": {
-                        "message": "Upstream connection refused.",
-                        "type": "upstream_error",
-                    },
-                },
+            yield (
+                b'data: {"error": {"message": "Upstream connection refused."'
+                b', "type": "upstream_error"}}\n\n'
             )
         except Exception as exc:
-            logger.error("[%s] unexpected error: %s", provider_name, exc)
+            logger.error("[%s] stream unexpected error: %s", provider_name, exc)
             metrics.increment_error()
-            return JSONResponse(
-                status_code=500,
-                content={"error": {"message": "Internal server error.", "type": "internal_error"}},
+            yield (
+                b'data: {"error": {"message": "Internal server error."'
+                b', "type": "internal_error"}}\n\n'
             )
+
+    return StreamingResponse(
+        _upstream_stream(),
+        media_type="text/event-stream",
+    )
 
 
 @app.post("/v1/chat/completions")
@@ -207,6 +337,9 @@ async def chat_completions(request: Request, authorization: str | None = Header(
             content={"error": {"message": "Invalid API key", "type": "invalid_request_error"}},
         )
 
+    raw_body = await request.body()
+    logger.info("[debug] RAW BODY (%d bytes): %s", len(raw_body), raw_body[:2000])
+
     try:
         body = await request.json()
     except Exception:
@@ -216,13 +349,31 @@ async def chat_completions(request: Request, authorization: str | None = Header(
         )
 
     raw_model: str = body.get("model", "")
-    if "/" in raw_model:
+
+    if not body.get("messages") and not body.get("prompt"):
+        return JSONResponse(
+            status_code=200,
+            content={
+                "id": "health-check",
+                "object": "chat.completion",
+                "created": int(time.time()),
+                "model": raw_model or "default",
+                "choices": [
+                    {"index": 0, "message": {"role": "assistant", "content": "ok"},
+                     "finish_reason": "stop"}
+                ],
+            },
+        )
+
+    if raw_model and "/" in raw_model:
         parts = raw_model.split("/", 1)
         provider_name = parts[0]
-    else:
+    elif raw_model:
         provider_name = raw_model
+    else:
+        provider_name = next(iter(config.providers), "")
 
-    if provider_name not in config.providers:
+    if not provider_name or provider_name not in config.providers:
         available = ", ".join(config.providers.keys())
         return JSONResponse(
             status_code=400,

@@ -144,3 +144,24 @@ def get_config() -> LiteRouterConfig:
 def is_gemini_provider(provider: ProviderConfig) -> bool:
     """Return True if the provider's base_url targets the Gemini API."""
     return "generativelanguage.googleapis.com" in provider.base_url
+
+
+def is_anthropic_model(model: str) -> bool:
+    """Return True if the model identifier indicates an Anthropic model.
+
+    Checks if the model name starts with 'anthropic/' or if the
+    provider prefix resolves to an Anthropic endpoint.
+    """
+    if not model:
+        return False
+    model_lower = model.lower()
+    return (
+        model_lower.startswith("anthropic/")
+        or model_lower.startswith("claude-")
+        or "claude" in model_lower
+    )
+
+
+def is_openrouter_provider(provider: ProviderConfig) -> bool:
+    """Return True if the provider's base_url targets OpenRouter."""
+    return "openrouter.ai" in provider.base_url

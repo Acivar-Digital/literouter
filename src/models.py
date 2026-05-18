@@ -45,6 +45,7 @@ class Usage(BaseModel):
     prompt_tokens: int
     completion_tokens: int
     total_tokens: int
+    reasoning_tokens: int = 0
 
 
 class ChatCompletionResponse(BaseModel):
