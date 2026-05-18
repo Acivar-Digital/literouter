@@ -10,7 +10,6 @@ if [ -f "$PID_FILE" ]; then
         echo "Stopping LiteRouter (PID: $OLD_PID)..."
         kill "$OLD_PID" 2>/dev/null
 
-        # Wait up to 5 seconds for graceful shutdown
         for i in 1 2 3 4 5; do
             if ! kill -0 "$OLD_PID" 2>/dev/null; then
                 break
@@ -18,7 +17,6 @@ if [ -f "$PID_FILE" ]; then
             sleep 1
         done
 
-        # Force kill if still alive
         if kill -0 "$OLD_PID" 2>/dev/null; then
             echo "Force killing (PID: $OLD_PID)..."
             kill -9 "$OLD_PID" 2>/dev/null
@@ -39,10 +37,17 @@ uv run uvicorn src.main:app --host 0.0.0.0 --port 7766 &
 PID=$!
 echo "$PID" > "$PID_FILE"
 
-sleep 2
+sleep 3
 
 if kill -0 "$PID" 2>/dev/null; then
-    echo "LiteRouter started successfully (PID: $PID)"
+    echo ""
+    echo "╔══════════════════════════════════════════════════════════════╗"
+    echo "║  LiteRouter running (PID: $PID)"
+    echo "║"
+    echo "║  Health:  http://localhost:7766/health"
+    echo "║  Chat:    http://localhost:7766/v1/chat/completions"
+    echo "║  Models:  http://localhost:7766/v1/models"
+    echo "╚══════════════════════════════════════════════════════════════╝"
 else
     echo "ERROR: LiteRouter failed to start"
     rm -f "$PID_FILE"
