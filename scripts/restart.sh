@@ -40,9 +40,16 @@ echo "$PID" > "$PID_FILE"
 sleep 3
 
 if kill -0 "$PID" 2>/dev/null; then
+    # Get the LAN IP for network access
+    LAN_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
     echo ""
     echo "╔══════════════════════════════════════════════════════════════╗"
     echo "║  LiteRouter running (PID: $PID)"
+    echo "║"
+    echo "║  Local:   http://localhost:7766"
+    if [ -n "$LAN_IP" ]; then
+        echo "║  Network: http://${LAN_IP}:7766"
+    fi
     echo "║"
     echo "║  Health:  http://localhost:7766/health"
     echo "║  Chat:    http://localhost:7766/v1/chat/completions"
