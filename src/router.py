@@ -117,11 +117,10 @@ class RedisRouter:
         if not alive_shas:
             return None
 
-        # Get / increment counter
-        counter_raw = self._redis.get(_counter_key(provider_name))
-        counter = int(counter_raw) if counter_raw is not None else 0
+        # Atomic INCR — returns the new counter value without a separate GET
+        counter = self._redis.incr(_counter_key(provider_name))
+        start = (counter - 1) % len(alive_shas)
 
-        start = counter % len(alive_shas)
         for i in range(len(alive_shas)):
             idx = (start + i) % len(alive_shas)
             chosen_sha = alive_shas[idx]
@@ -137,7 +136,6 @@ class RedisRouter:
             if cooldown_raw is not None and time.time() < float(cooldown_raw):
                 continue
 
-            self._redis.incr(_counter_key(provider_name))
             return sha_map[chosen_sha]
 
         return None
@@ -180,7 +178,7 @@ class RedisRouter:
             sha = _sha256(key)
             if sha in cooldowns and now < cooldowns[sha]:
                 continue
-            _mem_counters[provider_name] = (start + i + 1) % len(alive)
+            _mem_counters[provider_name] = counter + i + 1
             return key
 
         return None

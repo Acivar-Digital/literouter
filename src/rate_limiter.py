@@ -71,12 +71,12 @@ class RedisRateLimiter:
         """Check whether a call to *provider_name* is allowed right now.
 
         Returns ``{"ready": bool, "wait_ms": int}``.
-        If Redis is unavailable, always returns ``ready=True``.
+        Uses atomic Lua script when Redis is available; falls back to
+        in-memory rate limiting (not ready=True) when Redis is down.
         """
-        if not self._is_redis():
-            return {"ready": True, "wait_ms": 0}
-
-        return self._can_call_redis(provider_name, min_delay_ms)
+        if self._is_redis():
+            return self._can_call_redis(provider_name, min_delay_ms)
+        return self._can_call_mem(provider_name, min_delay_ms)
 
     def _can_call_redis(
         self, provider_name: str, min_delay_ms: int
@@ -85,8 +85,36 @@ class RedisRateLimiter:
         now_ms = int(time.time() * 1000)
         key = _ratelimit_key(provider_name)
 
+        # Use the pre-registered Lua script for atomic check-and-set.
+        # The script: if key doesn't exist, set it and return 1 (ready).
+        # If elapsed >= min_delay, update and return 1 (ready).
+        # Otherwise return 0 (not ready).
+        if self._sha is not None:
+            try:
+                ready = self._redis.evalsha(
+                    self._sha, 1, key, str(now_ms), str(min_delay_ms)
+                )
+                if ready:
+                    return {"ready": True, "wait_ms": 0}
+                # Not ready — compute wait_ms from current value
+                last_raw = self._redis.get(key)
+                if last_raw is not None:
+                    elapsed = now_ms - int(last_raw)
+                    wait_ms = max(0, min_delay_ms - elapsed)
+                else:
+                    wait_ms = min_delay_ms
+                logger.info(
+                    f"[RateLimiter] {provider_name} must wait {wait_ms}ms "
+                    f"(minDelay={min_delay_ms}ms)"
+                )
+                return {"ready": False, "wait_ms": wait_ms}
+            except Exception as exc:
+                logger.warning(f"Lua evalsha failed ({exc}), falling back to GET")
+
+        # Fallback: non-atomic GET (only safe under low concurrency)
         last_raw = self._redis.get(key)
         if last_raw is None:
+            self._redis.set(key, str(now_ms))
             return {"ready": True, "wait_ms": 0}
 
         last_ms = int(last_raw)
@@ -100,12 +128,36 @@ class RedisRateLimiter:
             )
             return {"ready": False, "wait_ms": wait_ms}
 
+        self._redis.set(key, str(now_ms))
+        return {"ready": True, "wait_ms": 0}
+
+    def _can_call_mem(
+        self, provider_name: str, min_delay_ms: int
+    ) -> dict:
+        now_ms = time.time() * 1000
+        last_ms = _mem_last_calls.get(provider_name)
+        if last_ms is None:
+            _mem_last_calls[provider_name] = now_ms
+            return {"ready": True, "wait_ms": 0}
+
+        elapsed = now_ms - last_ms
+        wait_ms = max(0, min_delay_ms - elapsed)
+        if wait_ms > 0:
+            return {"ready": False, "wait_ms": wait_ms}
+
+        _mem_last_calls[provider_name] = now_ms
         return {"ready": True, "wait_ms": 0}
 
     # ── mark_call ──────────────────────────────────────────────────────────
 
     def mark_call(self, provider_name: str) -> None:
-        """Record that a call was just made to *provider_name*."""
+        """Record that a call was just made to *provider_name*.
+
+        When the Lua script is used in can_call(), the timestamp is already
+        set atomically. This method acts as a safety net so that even if
+        can_call() fell back to the non-Lua path, the timestamp is still
+        updated after a successful upstream call.
+        """
         if self._is_redis():
             self._mark_call_redis(provider_name)
         else:
