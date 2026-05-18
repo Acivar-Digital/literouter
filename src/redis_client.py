@@ -16,8 +16,8 @@ load_dotenv()
 
 logger = logging.getLogger(__name__)
 
-REDIS_HOST = os.getenv("REDIS_HOST", "10.32.34.243")
-REDIS_PORT = int(os.getenv("REDIS_PORT", "12000"))
+REDIS_HOST = os.getenv("REDIS_HOST", "")
+REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
 REDIS_DB = int(os.getenv("REDIS_DB", "0"))
 REDIS_PASSWORD = os.getenv("REDIS_PASSWORD", "")
 

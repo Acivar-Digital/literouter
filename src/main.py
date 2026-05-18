@@ -1,11 +1,14 @@
 """
-main.py — FastAPI server for LiteRouter.
+main.py — FastAPI server for LiteRouter v2.2
 
-Replaces Bun.serve() with a FastAPI-based HTTP server that routes
-OpenAI-compatible chat completion requests to upstream providers.
+Three routing pathways (configured in .env):
+  anthropic + anthropic  → Native Anthropic SDK
+  anthropic + openrouter → Anthropic format → OpenRouter /messages
+  openai    + openrouter → OpenAI format → OpenRouter /chat/completions
 """
 
 import asyncio
+import json
 import logging
 import time
 from contextlib import asynccontextmanager
@@ -14,47 +17,33 @@ import httpx
 from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
-from src.anthropic import transform_anthropic_response
-from src.config import get_config, is_anthropic_model, is_gemini_provider, is_openrouter_provider
+from src.anthropic import build_anthropic_request_body, transform_anthropic_response
+from src.config import (
+    get_config,
+    is_anthropic_provider,
+    is_gemini_provider,
+    is_openrouter_provider,
+)
 from src.gemini import build_gemini_request_body, transform_gemini_response
 from src.metrics import get_metrics
 from src.rate_limiter import get_rate_limiter
-from src.redis_client import get_redis_client
-from src.redis_client import redis_available as check_redis
+from src.redis_client import get_redis_client, redis_available as check_redis
 from src.router import get_router
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
 config = get_config()
 router = get_router()
 rate_limiter = get_rate_limiter()
 metrics = get_metrics()
-
 _processing_lock = asyncio.Lock()
 
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    """Log startup/shutdown events."""
-    provider_names = ", ".join(config.providers.keys())
-    logger.info(
-        "LiteRouter starting — providers: %s, port: %d",
-        provider_names,
-        config.port,
-    )
-    yield
-    logger.info("LiteRouter shutting down")
-
-
-app = FastAPI(title="LiteRouter", version="1.0.0", lifespan=lifespan)
+# ── Helpers ────────────────────────────────────────────────────────────────────
 
 
 def _check_auth(authorization: str | None) -> bool:
-    """Return True if the Bearer token matches the configured auth key."""
     if not config.auth_key:
         return True
     if not authorization:
@@ -63,21 +52,53 @@ def _check_auth(authorization: str | None) -> bool:
     return token == config.auth_key
 
 
-async def _process_request(body: dict, provider_name: str):
-    """Forward a single request to the upstream provider (sequential)."""
+def _get_routing() -> tuple:
+    """Return (template_mode, provider_name, provider_config) from .env settings."""
+    template = config.template  # 'openai' or 'anthropic'
+    provider_name = config.provider  # 'openrouter' or 'anthropic'
+    provider = config.providers.get(provider_name)
+    if not provider:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Provider '{provider_name}' not configured. "
+                   f"Available: {list(config.providers.keys())}",
+        )
+    if not provider.api_keys:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Provider '{provider_name}' has no API keys configured.",
+        )
+    return template, provider_name, provider
+
+
+# ── App ────────────────────────────────────────────────────────────────────────
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    logger.info(
+        "LiteRouter v2.2 starting — template=%s, provider=%s, port=%d",
+        config.template, config.provider, config.port,
+    )
+    yield
+    logger.info("LiteRouter shutting down")
+
+
+app = FastAPI(title="LiteRouter", version="2.2.0", lifespan=lifespan)
+
+
+# ── Request Processing ────────────────────────────────────────────────────────
+
+
+async def _process_request(body: dict, provider_name: str, template: str, provider):
+    """Forward a single request to the upstream provider."""
     should_stream = body.get("stream", False)
+    use_anthropic = template == "anthropic"
+    use_gemini = is_gemini_provider(provider)
 
     async with _processing_lock:
-        provider = config.providers[provider_name]
-        use_gemini = is_gemini_provider(provider)
-        use_anthropic = (
-            is_openrouter_provider(provider)
-            and is_anthropic_model(body.get("model", ""))
-        )
-
-        default_delay = config.rotate_delay_ms
-        min_delay_ms = config.provider_min_delays.get(provider_name, default_delay)
-
+        # Rate limit check
+        min_delay_ms = config.provider_min_delays.get(provider_name, config.rotate_delay_ms)
         rl = rate_limiter.can_call(provider_name, min_delay_ms)
         if not rl["ready"]:
             logger.info("[RateLimiter] %s waiting %dms", provider_name, rl["wait_ms"])
@@ -85,224 +106,152 @@ async def _process_request(body: dict, provider_name: str):
             metrics.add_rate_limit_wait_ms(rl["wait_ms"])
             await asyncio.sleep(rl["wait_ms"] / 1000.0)
 
+        # Get next API key
         key = router.get_next_key(provider_name, provider.api_keys)
         if not key:
-            raise HTTPException(
-                status_code=503,
-                detail=f"[{provider_name}] No available API keys.",
-            )
+            raise HTTPException(status_code=503, detail=f"[{provider_name}] No available API keys.")
 
         metrics.increment_request()
         metrics.increment_key_usage(key)
         start_time = time.time()
 
-        lookup_key = provider_name
-        model_config = config.model_params.get(lookup_key)
+        # Apply model params from config
+        model_config = config.model_params.get(provider_name)
         if model_config:
             body["model"] = model_config["model"]
             for k, v in model_config.items():
-                if k == "model":
-                    continue
-                body[k] = v
+                if k != "model":
+                    body[k] = v
 
-        # Strip provider prefix from model name before sending upstream
-        # e.g. "openrouter/owl-alpha" -> "owl-alpha"
-        #       "anthropic/claude-sonnet-4.6" -> "claude-sonnet-4.6"
-        if "/" in body.get("model", ""):
-            body["model"] = body["model"].split("/", 1)[1]
-
-        headers = {
-            "Authorization": f"Bearer {key}",
-            "Content-Type": "application/json",
-        }
+        # Build request based on template + provider
+        headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
+        payload = body
 
         if use_gemini:
+            # Gemini pathway
             if should_stream:
-                target_url = (
-                    f"{provider.base_url}/models/{body['model']}:streamGenerateContent"
-                )
+                target_url = f"{provider.base_url}/models/{body['model']}:streamGenerateContent"
             else:
-                target_url = (
-                    f"{provider.base_url}/models/{body['model']}:generateContent"
-                )
-            gemini_body = build_gemini_request_body(body)
-            payload = gemini_body
+                target_url = f"{provider.base_url}/models/{body['model']}:generateContent"
+            payload = build_gemini_request_body(body)
             del headers["Authorization"]
-        else:
-            target_url = f"{provider.base_url}/chat/completions"
-            payload = body
 
+        elif use_anthropic:
+            # Anthropic template → /messages endpoint
+            target_url = f"{provider.base_url}/messages"
+            payload = build_anthropic_request_body(body)
+            if is_anthropic_provider(provider):
+                # Native Anthropic: use x-api-key header
+                headers["x-api-key"] = key
+                headers["anthropic-version"] = "2023-06-01"
+                del headers["Authorization"]
+            # For OpenRouter: keep Authorization: Bearer, OpenRouter handles it
+
+        else:
+            # OpenAI template → /chat/completions endpoint
+            target_url = f"{provider.base_url}/chat/completions"
+            # Strip provider prefix from model name for OpenAI-compatible APIs
+            if "/" in body.get("model", ""):
+                body["model"] = body["model"].split("/", 1)[1]
+
+        # Dispatch
         if should_stream:
             return await _stream_request(
                 target_url, payload, headers, key, provider_name,
-                use_gemini, start_time,
-            )
-        else:
-            return await _buffered_request(
-                target_url, payload, headers, key, provider_name,
                 use_gemini, use_anthropic, start_time,
             )
+        return await _buffered_request(
+            target_url, payload, headers, key, provider_name,
+            use_gemini, use_anthropic, start_time,
+        )
 
 
 async def _buffered_request(
-    target_url: str,
-    payload: dict,
-    headers: dict,
-    key: str,
-    provider_name: str,
-    use_gemini: bool,
-    use_anthropic: bool,
-    start_time: float,
+    target_url, payload, headers, key, provider_name,
+    use_gemini, use_anthropic, start_time,
 ):
-    """Non-streaming path: buffer the full response and return JSONResponse."""
+    """Non-streaming: buffer full response, transform, return JSON."""
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
             if use_gemini:
-                resp = await client.post(
-                    target_url,
-                    json=payload,
-                    params={"key": key},
-                )
+                resp = await client.post(target_url, json=payload, params={"key": key})
             else:
-                resp = await client.post(
-                    target_url,
-                    json=payload,
-                    headers=headers,
+                resp = await client.post(target_url, json=payload, headers=headers)
+
+            rate_limiter.mark_call(provider_name)
+
+            if resp.status_code in (429, 401, 403):
+                router.report_error(provider_name, key, resp.status_code)
+
+            if not resp.is_success:
+                err_text = resp.text[:200]
+                logger.warning("[%s] upstream %d: %s", provider_name, resp.status_code, err_text)
+                metrics.increment_error()
+                metrics.increment_error_by_status(resp.status_code)
+                return JSONResponse(
+                    status_code=resp.status_code,
+                    content={"error": {"message": err_text, "type": "upstream_error", "code": resp.status_code}},
                 )
 
-        rate_limiter.mark_call(provider_name)
+            metrics.increment_success()
+            latency_ms = int((time.time() - start_time) * 1000)
+            metrics.add_latency(latency_ms)
+            logger.info("[%s] success status=%d latency=%dms", provider_name, resp.status_code, latency_ms)
 
-        if resp.status_code in (429, 401, 403):
-            router.report_error(provider_name, key, resp.status_code)
-
-        if not resp.is_success:
-            err_text = resp.text[:200]
-            logger.warning(
-                "[%s] upstream %d: %s", provider_name, resp.status_code, err_text
-            )
-            metrics.increment_error()
-            metrics.increment_error_by_status(resp.status_code)
-            return JSONResponse(
-                status_code=resp.status_code,
-                content={
-                    "error": {
-                        "message": err_text,
-                        "type": "upstream_error",
-                        "code": resp.status_code,
-                    }
-                },
-            )
-
-        metrics.increment_success()
-        latency_ms = int((time.time() - start_time) * 1000)
-        metrics.add_latency(latency_ms)
-        logger.info(
-            "[%s] success status=%d latency=%dms",
-            provider_name,
-            resp.status_code,
-            latency_ms,
-        )
-
-        data = resp.json()
-        if use_gemini:
-            data = transform_gemini_response(data)
-        elif use_anthropic:
-            data = transform_anthropic_response(data)
-
-        return JSONResponse(content=data)
+            data = resp.json()
+            if use_gemini:
+                data = transform_gemini_response(data)
+            elif use_anthropic:
+                data = transform_anthropic_response(data)
+            return JSONResponse(content=data)
 
     except httpx.TimeoutException:
         logger.error("[%s] request timed out", provider_name)
         metrics.increment_error()
-        return JSONResponse(
-            status_code=504,
-            content={"error": {"message": "Upstream timeout.", "type": "upstream_error"}},
-        )
+        return JSONResponse(status_code=504, content={"error": {"message": "Upstream timeout.", "type": "upstream_error"}})
     except httpx.ConnectError as exc:
         logger.error("[%s] connection refused: %s", provider_name, exc)
         metrics.increment_error()
-        return JSONResponse(
-            status_code=502,
-            content={
-                "error": {
-                    "message": "Upstream connection refused.",
-                    "type": "upstream_error",
-                },
-            },
-        )
+        return JSONResponse(status_code=502, content={"error": {"message": "Upstream connection refused.", "type": "upstream_error"}})
     except Exception as exc:
         logger.error("[%s] unexpected error: %s", provider_name, exc)
         metrics.increment_error()
-        return JSONResponse(
-            status_code=500,
-            content={"error": {"message": "Internal server error.", "type": "internal_error"}},
-        )
+        return JSONResponse(status_code=500, content={"error": {"message": "Internal server error.", "type": "internal_error"}})
 
 
 async def _stream_request(
-    target_url: str,
-    payload: dict,
-    headers: dict,
-    key: str,
-    provider_name: str,
-    use_gemini: bool,
-    start_time: float,
+    target_url, payload, headers, key, provider_name,
+    use_gemini, use_anthropic, start_time,
 ):
-    """Streaming path: return a StreamingResponse that passes through upstream chunks."""
+    """Streaming: return StreamingResponse with transformed chunks."""
 
     async def _upstream_stream():
         try:
             async with httpx.AsyncClient(timeout=60.0) as client:
                 if use_gemini:
-                    stream_cm = client.stream(
-                        "POST",
-                        target_url,
-                        json=payload,
-                        params={"key": key},
-                    )
+                    stream_cm = client.stream("POST", target_url, json=payload, params={"key": key})
                 else:
-                    stream_cm = client.stream(
-                        "POST",
-                        target_url,
-                        json=payload,
-                        headers=headers,
-                    )
+                    stream_cm = client.stream("POST", target_url, json=payload, headers=headers)
                 async with stream_cm as resp:
                     rate_limiter.mark_call(provider_name)
-
                     if resp.status_code in (429, 401, 403):
                         router.report_error(provider_name, key, resp.status_code)
-
                     if not resp.is_success:
                         err_text = resp.text[:200]
-                        logger.warning(
-                            "[%s] upstream %d: %s",
-                            provider_name,
-                            resp.status_code,
-                            err_text,
-                        )
                         metrics.increment_error()
                         metrics.increment_error_by_status(resp.status_code)
-                        error_payload = (
-                            b'data: {"error": {"message": "' + err_text.encode()
-                            + b'", "type": "upstream_error", "code": '
-                            + str(resp.status_code).encode() + b'}}\n\n'
-                        )
-                        yield error_payload
+                        yield b'data: {"error": {"message": "' + err_text.encode() + b'", "type": "upstream_error"}}\n\n'
                         return
-
-                    async for chunk in resp.aiter_bytes():
-                        yield chunk
-
+                    if use_anthropic:
+                        async for sse in _stream_anthropic(resp):
+                            yield sse
+                    else:
+                        async for chunk in resp.aiter_bytes():
+                            yield chunk
             metrics.increment_success()
             latency_ms = int((time.time() - start_time) * 1000)
             metrics.add_latency(latency_ms)
-            logger.info(
-                "[%s] stream success status=200 latency=%dms",
-                provider_name,
-                latency_ms,
-            )
-
+            logger.info("[%s] stream success latency=%dms", provider_name, latency_ms)
         except httpx.TimeoutException:
             logger.error("[%s] stream timed out", provider_name)
             metrics.increment_error()
@@ -310,32 +259,102 @@ async def _stream_request(
         except httpx.ConnectError as exc:
             logger.error("[%s] stream connection refused: %s", provider_name, exc)
             metrics.increment_error()
-            yield (
-                b'data: {"error": {"message": "Upstream connection refused."'
-                b', "type": "upstream_error"}}\n\n'
-            )
+            yield b'data: {"error": {"message": "Upstream connection refused.", "type": "upstream_error"}}\n\n'
         except Exception as exc:
             logger.error("[%s] stream unexpected error: %s", provider_name, exc)
             metrics.increment_error()
-            yield (
-                b'data: {"error": {"message": "Internal server error."'
-                b', "type": "internal_error"}}\n\n'
-            )
+            yield b'data: {"error": {"message": "Internal server error.", "type": "internal_error"}}\n\n'
 
-    return StreamingResponse(
-        _upstream_stream(),
-        media_type="text/event-stream",
-    )
+    return StreamingResponse(_upstream_stream(), media_type="text/event-stream")
+
+
+async def _stream_anthropic(resp):
+    """Convert Anthropic SSE → OpenAI-compatible SSE chunks."""
+    text_parts = []
+    model = "anthropic"
+    message_id = ""
+    finish_reason = "stop"
+    usage = {}
+    buf = b""
+    async for raw in resp.aiter_bytes():
+        buf += raw
+        while b"\n\n" in buf:
+            event_text, buf = buf.split(b"\n\n", 1)
+            event_text = event_text.decode("utf-8", errors="replace")
+            event_type = ""
+            data_line = ""
+            for line in event_text.strip().split("\n"):
+                if line.startswith("event:"):
+                    event_type = line[len("event:"):].strip()
+                elif line.startswith("data:"):
+                    data_line = line[len("data:"):].strip()
+            if not data_line:
+                continue
+            try:
+                data = json.loads(data_line)
+            except json.JSONDecodeError:
+                continue
+
+            if event_type == "message_start":
+                msg = data.get("message", {})
+                model = msg.get("model", "anthropic")
+                message_id = msg.get("id", "")
+                chunk = {
+                    "id": message_id or f"chatcmpl-{int(time.time())}",
+                    "object": "chat.completion.chunk",
+                    "created": int(time.time()),
+                    "model": model,
+                    "choices": [{"index": 0, "delta": {"role": "assistant"}, "finish_reason": None}],
+                }
+                yield f"data: {json.dumps(chunk)}\n\n".encode()
+
+            elif event_type == "content_block_delta":
+                text = data.get("delta", {}).get("text", "")
+                if text:
+                    text_parts.append(text)
+                    chunk = {
+                        "id": message_id or f"chatcmpl-{int(time.time())}",
+                        "object": "chat.completion.chunk",
+                        "created": int(time.time()),
+                        "model": model,
+                        "choices": [{"index": 0, "delta": {"content": text}, "finish_reason": None}],
+                    }
+                    yield f"data: {json.dumps(chunk)}\n\n".encode()
+
+            elif event_type == "message_delta":
+                stop_reason = data.get("delta", {}).get("stop_reason", "")
+                if stop_reason:
+                    finish_reason = {"end_turn": "stop", "max_tokens": "length", "stop_sequence": "stop", "tool_use": "tool_calls"}.get(stop_reason, "stop")
+                usage = data.get("usage", {})
+
+            elif event_type == "message_stop":
+                openai_usage = {}
+                if usage:
+                    out_t = usage.get("output_tokens", 0)
+                    in_t = usage.get("input_tokens", 0)
+                    openai_usage = {"prompt_tokens": in_t, "completion_tokens": out_t, "total_tokens": in_t + out_t}
+                final = {
+                    "id": message_id or f"chatcmpl-{int(time.time())}",
+                    "object": "chat.completion.chunk",
+                    "created": int(time.time()),
+                    "model": model,
+                    "choices": [{"index": 0, "delta": {}, "finish_reason": finish_reason}],
+                }
+                if openai_usage:
+                    final["usage"] = openai_usage
+                yield f"data: {json.dumps(final)}\n\n".encode()
+                yield b"data: [DONE]\n\n"
+
+    yield b"data: [DONE]\n\n"
+
+
+# ── Endpoints ──────────────────────────────────────────────────────────────────
 
 
 @app.post("/v1/chat/completions")
 async def chat_completions(request: Request, authorization: str | None = Header(None)):
-    """Main routing endpoint — OpenAI-compatible chat completions."""
     if not _check_auth(authorization):
-        return JSONResponse(
-            status_code=401,
-            content={"error": {"message": "Invalid API key", "type": "invalid_request_error"}},
-        )
+        return JSONResponse(status_code=401, content={"error": {"message": "Invalid API key", "type": "invalid_request_error"}})
 
     raw_body = await request.body()
     logger.info("[debug] RAW BODY (%d bytes): %s", len(raw_body), raw_body[:2000])
@@ -343,100 +362,104 @@ async def chat_completions(request: Request, authorization: str | None = Header(
     try:
         body = await request.json()
     except Exception:
-        return JSONResponse(
-            status_code=400,
-            content={"error": {"message": "Invalid JSON body", "type": "invalid_request_error"}},
-        )
+        return JSONResponse(status_code=400, content={"error": {"message": "Invalid JSON body", "type": "invalid_request_error"}})
 
     raw_model: str = body.get("model", "")
 
+    # Health check shortcut
     if not body.get("messages") and not body.get("prompt"):
         return JSONResponse(
             status_code=200,
             content={
-                "id": "health-check",
-                "object": "chat.completion",
-                "created": int(time.time()),
-                "model": raw_model or "default",
-                "choices": [
-                    {"index": 0, "message": {"role": "assistant", "content": "ok"},
-                     "finish_reason": "stop"}
-                ],
+                "id": "health-check", "object": "chat.completion",
+                "created": int(time.time()), "model": raw_model or "default",
+                "choices": [{"index": 0, "message": {"role": "assistant", "content": "ok"}, "finish_reason": "stop"}],
             },
         )
 
-    if raw_model and "/" in raw_model:
-        parts = raw_model.split("/", 1)
-        provider_name = parts[0]
-    elif raw_model:
-        provider_name = raw_model
-    else:
-        provider_name = next(iter(config.providers), "")
+    # Get routing from .env (template + provider)
+    template, provider_name, provider = _get_routing()
 
-    if not provider_name or provider_name not in config.providers:
-        available = ", ".join(config.providers.keys())
-        return JSONResponse(
-            status_code=400,
-            content={
-                "error": {
-                    "message": f"Unknown provider '{provider_name}'. Available: {available}",
-                    "type": "invalid_request_error",
-                }
-            },
-        )
-
-    return await _process_request(body, provider_name)
+    return await _process_request(body, provider_name, template, provider)
 
 
 @app.get("/health")
 @app.get("/")
 async def health():
-    """Health endpoint with config, router, queue, rate limiter, and metrics status."""
-    return JSONResponse(
-        content={
-            "status": "ok",
-            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-            "config": {
-                "port": config.port,
-                "host": config.host,
-                "authEnabled": bool(config.auth_key),
-                "providers": {
-                    name: {
-                        "baseUrl": p.base_url,
-                        "keys": len(p.api_keys),
-                        "model": config.model_params.get(name, {}).get("model", "not configured"),
-                        "minDelayMs": config.provider_min_delays.get(name, config.rotate_delay_ms),
-                    }
-                    for name, p in config.providers.items()
-                },
+    return JSONResponse(content={
+        "status": "ok",
+        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "config": {
+            "port": config.port, "host": config.host,
+            "authEnabled": bool(config.auth_key),
+            "template": config.template,
+            "provider": config.provider,
+            "providers": {
+                name: {
+                    "baseUrl": p.base_url, "keys": len(p.api_keys),
+                    "model": config.model_params.get(name, {}).get("model", "not configured"),
+                    "minDelayMs": config.provider_min_delays.get(name, config.rotate_delay_ms),
+                }
+                for name, p in config.providers.items()
             },
-            "router": router.get_router_status(config.providers),
-            "queue": {
-                "length": 0,
-                "isProcessing": _processing_lock.locked(),
-                "rotateDelayMs": config.rotate_delay_ms,
-            },
-            "rateLimiter": {
-                "providerStatus": rate_limiter.get_status(),
-                "defaultMinDelayMs": config.rotate_delay_ms,
-            },
-            "metrics": metrics.get_metrics(),
-            "redis": {
-                "connected": check_redis(),
-                "info": get_redis_info_safe(),
-            },
-        }
-    )
+        },
+        "router": router.get_router_status(config.providers),
+        "queue": {"length": 0, "isProcessing": _processing_lock.locked(), "rotateDelayMs": config.rotate_delay_ms},
+        "rateLimiter": {"providerStatus": rate_limiter.get_status(), "defaultMinDelayMs": config.rotate_delay_ms},
+        "metrics": metrics.get_metrics(),
+        "redis": {"connected": check_redis(), "info": _redis_info_safe()},
+    })
 
 
 @app.get("/metrics")
 async def detailed_metrics():
-    """Detailed metrics endpoint."""
     return JSONResponse(content=metrics.get_metrics())
 
 
-def get_redis_info_safe() -> dict:
-    """Return Redis info or empty dict if unavailable."""
+# ── Provider Model Availability ────────────────────────────────────────────────
+
+OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models"
+
+
+@app.get("/v1/models")
+async def list_models(authorization: str | None = Header(None)):
+    if not _check_auth(authorization):
+        return JSONResponse(status_code=401, content={"error": {"message": "Invalid API key", "type": "invalid_request_error"}})
+
+    result = {}
+    for name, provider in config.providers.items():
+        if is_openrouter_provider(provider):
+            result[name] = await _fetch_openrouter_models(provider)
+        elif is_anthropic_provider(provider):
+            result[name] = {
+                "configured": True,
+                "model": config.model_params.get(name, {}).get("model", "not set"),
+                "supported_models": ["claude-sonnet-4-6", "claude-opus-4-6", "claude-haiku-4-5"],
+            }
+        else:
+            result[name] = {"configured": True, "model": config.model_params.get(name, {}).get("model", "not set")}
+    return JSONResponse(content={"status": "ok", "providers": result})
+
+
+async def _fetch_openrouter_models(provider):
+    keys = provider.api_keys
+    if not keys:
+        return {"error": "No API keys available"}
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.get(OPENROUTER_MODELS_URL, headers={"Authorization": f"Bearer {keys[0]}"})
+        if resp.status_code == 200:
+            models = resp.json().get("data", [])
+            return {
+                "count": len(models),
+                "models": [{"id": m.get("id", ""), "context_length": m.get("context_length", 0), "pricing": m.get("pricing", {})} for m in models],
+            }
+        return {"error": f"OpenRouter returned {resp.status_code}", "detail": resp.text[:200]}
+    except Exception as exc:
+        return {"error": str(exc)}
+
+
+def _redis_info_safe() -> dict:
     if not check_redis():
         return {}
     try:
