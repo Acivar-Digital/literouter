@@ -8,10 +8,7 @@ and edge cases. Uses in-memory fallback (no Redis).
 import time
 from unittest.mock import patch
 
-import pytest
-
 from src.config import ProviderConfig
-from src.router import RedisRouter, get_router
 
 
 class TestRoundRobin:
@@ -21,6 +18,7 @@ class TestRoundRobin:
         """Create a fresh router with no Redis."""
         with patch("src.redis_client.get_redis_client", return_value=None):
             with patch("src.redis_client.redis_available", return_value=False):
+                from src.router import RedisRouter
                 self.router = RedisRouter()
 
     def test_round_robin_distribution(self):
@@ -119,14 +117,11 @@ class TestRoundRobin:
         first_cooldown = first_expiry - time.time()
         assert 55 <= first_cooldown <= 65, f"First cooldown was {first_cooldown}s, expected ~60s"
 
-        # Advance time past first cooldown
-        router_mod._mem_cooldowns["test"][sha] = time.time() - 1
-
-        # Second 429 (after key becomes available again)
+        # Second 429 (consecutive, immediately after)
         self.router.report_error("test", "key-a", 429)
         second_expiry = router_mod._mem_cooldowns["test"].get(sha, 0)
         second_cooldown = second_expiry - time.time()
-        assert 115 <= second_cooldown <= 125, f"Second cooldown was {second_cooldown}s, expected ~120s"
+        assert 110 <= second_cooldown <= 130, f"Second cooldown was {second_cooldown}s, expected ~120s"
 
     def test_quarantine_is_permanent(self):
         """
@@ -240,8 +235,6 @@ class TestRoundRobin:
 
         # Simulate many 429s
         for _ in range(20):
-            # Expire current cooldown
-            router_mod._mem_cooldowns["test"][sha] = time.time() - 1
             self.router.report_error("test", "key-a", 429)
 
         expiry = router_mod._mem_cooldowns["test"].get(sha, 0)

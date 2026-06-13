@@ -26,7 +26,8 @@ from src.config import (
 from src.gemini import build_gemini_request_body, transform_gemini_response
 from src.metrics import get_metrics
 from src.rate_limiter import get_rate_limiter
-from src.redis_client import get_redis_client, redis_available as check_redis
+from src.redis_client import get_redis_client
+from src.redis_client import redis_available as check_redis
 from src.router import get_router
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -51,22 +52,30 @@ def _check_auth(authorization: str | None) -> bool:
     return token == config.auth_key
 
 
-def _get_routing() -> tuple:
-    """Return (template_mode, provider_name, provider_config) from .env settings."""
-    template = config.template  # 'openai' or 'anthropic'
-    provider_name = config.provider  # 'openrouter' or 'anthropic'
+def _get_routing(raw_model: str = "") -> tuple:
+    """Return (template_mode, provider_name, provider_config) from requested model or .env settings."""
+    provider_name = ""
+    if raw_model and "/" in raw_model:
+        provider_name = raw_model.split("/", 1)[0]
+    elif raw_model:
+        provider_name = raw_model
+    else:
+        provider_name = config.provider
+
     provider = config.providers.get(provider_name)
     if not provider:
         raise HTTPException(
-            status_code=500,
-            detail=f"Provider '{provider_name}' not configured. "
-                   f"Available: {list(config.providers.keys())}",
+            status_code=400,
+            detail=f"Unknown provider '{provider_name}'. Available: {list(config.providers.keys())}",
         )
     if not provider.api_keys:
         raise HTTPException(
             status_code=503,
             detail=f"Provider '{provider_name}' has no API keys configured.",
         )
+    template = config.template
+    if is_anthropic_provider(provider):
+        template = "anthropic"
     return template, provider_name, provider
 
 
@@ -84,6 +93,20 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="LiteRouter", version="2.2.0", lifespan=lifespan)
+
+
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={
+            "error": {
+                "message": exc.detail,
+                "type": "invalid_request_error",
+                "code": exc.status_code,
+            }
+        },
+    )
 
 
 # ── Request Processing ────────────────────────────────────────────────────────
@@ -151,10 +174,11 @@ async def _process_request(body: dict, provider_name: str, template: str, provid
             # OpenAI template → /chat/completions endpoint
             target_url = f"{provider.base_url}/chat/completions"
             # Strip provider prefix from model name for OpenAI-compatible APIs
-            if "/" in body.get("model", ""):
+            if "/" in (body.get("model") or ""):
                 body["model"] = body["model"].split("/", 1)[1]
 
         # Dispatch
+        logger.info("[debug] OUTBOUND PAYLOAD: %s", payload)
         if should_stream:
             return await _stream_request(
                 target_url, payload, headers, key, provider_name,
@@ -369,10 +393,12 @@ async def chat_completions(request: Request, authorization: str | None = Header(
     # Sanitize custom block types injected by OpenCode clients
     if "messages" in body and isinstance(body["messages"], list):
         for msg in body["messages"]:
-            if isinstance(msg.get("content"), list):
+            if isinstance(msg, dict) and isinstance(msg.get("content"), list):
                 for block in msg["content"]:
                     if isinstance(block, dict) and block.get("type") in ("input_text", "output_text"):
+                        block_type = block.get("type")
                         block["type"] = "text"
+                        logger.info("[Sanitizer] Replaced %s block with standard text", block_type)
 
     raw_model: str = body.get("model", "")
 
@@ -387,8 +413,8 @@ async def chat_completions(request: Request, authorization: str | None = Header(
             },
         )
 
-    # Get routing from .env (template + provider)
-    template, provider_name, provider = _get_routing()
+    # Get routing from requested model or .env (template + provider)
+    template, provider_name, provider = _get_routing(raw_model)
 
     return await _process_request(body, provider_name, template, provider)
 

@@ -17,11 +17,16 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 @pytest.fixture(autouse=True)
 def reset_singletons():
     """Reset all singleton caches before each test."""
+    import sys
+    for module_name in ["src.main", "src.config", "src.router", "src.rate_limiter", "src.metrics"]:
+        if module_name in sys.modules:
+            del sys.modules[module_name]
+
     import src.config as config_mod
-    import src.router as router_mod
-    import src.rate_limiter as rl_mod
     import src.metrics as metrics_mod
+    import src.rate_limiter as rl_mod
     import src.redis_client as redis_mod
+    import src.router as router_mod
 
     # Reset config singleton
     config_mod._cached_config = None

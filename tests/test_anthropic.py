@@ -5,7 +5,6 @@ BUG CATEGORY A: Tests A1-A9 probe edge cases in the Anthropic-to-OpenAI
 response format conversion. This is new code with high risk of silent failures.
 """
 
-import pytest
 from src.anthropic import transform_anthropic_response
 
 
@@ -120,28 +119,21 @@ class TestAnthropicTransformer:
             "usage": {"input_tokens": 10, "output_tokens": 5},
         }
         result = transform_anthropic_response(anthropic_resp)
-        # BUG: The string "some string" is silently dropped because
-        # isinstance("some string", list) is False, and there's no
-        # "completion" key, so content_text stays as "".
-        # This is a potential data loss bug.
-        assert result["choices"][0]["message"]["content"] == ""
+        # Verify the string "some string" is preserved
+        assert result["choices"][0]["message"]["content"] == "some string"
 
     def test_none_values_in_usage(self):
         """
-        BUG PROBE: None values in usage dict.
-        If input_tokens or output_tokens are None, the `or 0` fallback
-        in `usage.get("input_tokens", 0)` won't trigger because the key
-        exists (value is None, not missing). Then `None + 0` crashes.
+        Verify that None values in usage dict are safely defaulted to 0.
         """
         anthropic_resp = {
             "content": [{"type": "text", "text": "hi"}],
             "stop_reason": "end_turn",
             "usage": {"input_tokens": None, "output_tokens": None},
         }
-        # BUG: usage.get("input_tokens", 0) returns None (key exists),
-        # then None + 0 raises TypeError
-        with pytest.raises(TypeError):
-            transform_anthropic_response(anthropic_resp)
+        result = transform_anthropic_response(anthropic_resp)
+        assert result["usage"]["prompt_tokens"] == 0
+        assert result["usage"]["completion_tokens"] == 0
 
     def test_output_structure_matches_openai_format(self):
         """
@@ -257,9 +249,7 @@ class TestAnthropicTransformer:
 
     def test_usage_with_reasoning_tokens(self):
         """
-        BUG PROBE: Usage with reasoning_tokens (extended output).
-        The docstring says reasoning_tokens should be preserved, but the
-        current implementation doesn't include it in openai_usage.
+        Verify that reasoning_tokens from Anthropic response are preserved.
         """
         anthropic_resp = {
             "content": [{"type": "text", "text": "hi"}],
@@ -267,9 +257,7 @@ class TestAnthropicTransformer:
             "usage": {"input_tokens": 10, "output_tokens": 5, "reasoning_tokens": 100},
         }
         result = transform_anthropic_response(anthropic_resp)
-        # BUG: reasoning_tokens is mentioned in docstring but not included
-        # in the output. This may cause clients expecting it to miss data.
-        assert "reasoning_tokens" not in result["usage"]
+        assert result["usage"]["reasoning_tokens"] == 100
 
     def test_missing_stop_reason_defaults_to_stop(self):
         """

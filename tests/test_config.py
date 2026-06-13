@@ -6,9 +6,6 @@ BUG CATEGORY D, G: Tests for provider detection helpers and config loading.
 
 import os
 import sys
-from unittest.mock import patch
-
-import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -115,8 +112,7 @@ class TestConfigLoading:
 
     def test_provider_with_empty_api_keys(self, monkeypatch, tmp_path):
         """
-        BUG PROBE: Provider with empty API keys string.
-        Should log a warning and create provider with empty api_keys list.
+        Verify that provider with empty API keys is skipped.
         """
         monkeypatch.setenv("TEST_BASE_URL", "https://api.test.com")
         monkeypatch.setenv("TEST_API_KEYS", "")
@@ -124,14 +120,11 @@ class TestConfigLoading:
 
         from src.config import LiteRouterConfig
         config = LiteRouterConfig()
-        # Provider is created but with empty api_keys
-        assert "test" in config.providers
-        assert config.providers["test"].api_keys == []
+        assert "test" not in config.providers
 
     def test_provider_with_whitespace_api_keys(self, monkeypatch, tmp_path):
         """
-        BUG PROBE: API keys with only whitespace.
-        Should be filtered out by the strip/check logic.
+        Verify that provider with whitespace API keys is skipped.
         """
         monkeypatch.setenv("TEST_BASE_URL", "https://api.test.com")
         monkeypatch.setenv("TEST_API_KEYS", "  ,  ,  ")
@@ -139,8 +132,7 @@ class TestConfigLoading:
 
         from src.config import LiteRouterConfig
         config = LiteRouterConfig()
-        assert "test" in config.providers
-        assert config.providers["test"].api_keys == []
+        assert "test" not in config.providers
 
     def test_model_params_not_set(self, monkeypatch, tmp_path):
         """

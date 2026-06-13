@@ -6,9 +6,7 @@ BUG CATEGORY H: Tests for cache hit/miss and Redis unavailability.
 
 import os
 import sys
-from unittest.mock import patch, MagicMock
-
-import pytest
+from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -35,7 +33,7 @@ class TestEmbedCache:
         mock_client.get.return_value = json.dumps([0.1, 0.2, 0.3])
 
         with patch("src.embed_cache.get_redis_client", return_value=mock_client):
-            from src.embed_cache import get_cached_embedding, cache_embedding
+            from src.embed_cache import cache_embedding, get_cached_embedding
 
             # First cache it
             cache_embedding("hello", [0.1, 0.2, 0.3])
@@ -52,10 +50,10 @@ class TestEmbedCache:
         with patch("src.embed_cache.get_redis_client", return_value=None):
             from src.embed_cache import (
                 cache_embedding,
-                get_cached_embedding,
                 cache_query_result,
-                get_cached_query_result,
                 clear_cache,
+                get_cached_embedding,
+                get_cached_query_result,
             )
 
             # All should be no-ops

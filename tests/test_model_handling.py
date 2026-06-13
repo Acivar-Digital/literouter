@@ -6,11 +6,6 @@ BUG CATEGORY C: Tests for model name prefix stripping and edge cases.
 
 import os
 import sys
-from unittest.mock import patch, AsyncMock, MagicMock
-
-import pytest
-import httpx
-from fastapi.testclient import TestClient
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -33,7 +28,7 @@ class TestModelNameHandling:
         # Simulate the stripping logic from _process_request
         model = "openrouter/owl-alpha"
         body = {"model": model}
-        if "/" in body.get("model", ""):
+        if "/" in (body.get("model") or ""):
             body["model"] = body["model"].split("/", 1)[1]
 
         assert body["model"] == "owl-alpha"
@@ -44,7 +39,7 @@ class TestModelNameHandling:
         """
         model = "owl-alpha"
         body = {"model": model}
-        if "/" in body.get("model", ""):
+        if "/" in (body.get("model") or ""):
             body["model"] = body["model"].split("/", 1)[1]
 
         assert body["model"] == "owl-alpha"
@@ -56,7 +51,7 @@ class TestModelNameHandling:
         """
         model = "provider/sub/model"
         body = {"model": model}
-        if "/" in body.get("model", ""):
+        if "/" in (body.get("model") or ""):
             body["model"] = body["model"].split("/", 1)[1]
 
         assert body["model"] == "sub/model"
@@ -67,7 +62,7 @@ class TestModelNameHandling:
         """
         model = ""
         body = {"model": model}
-        if "/" in body.get("model", ""):
+        if "/" in (body.get("model") or ""):
             body["model"] = body["model"].split("/", 1)[1]
 
         assert body["model"] == ""
@@ -80,7 +75,7 @@ class TestModelNameHandling:
         """
         body = {"model": None}
         # This is what the code does:
-        if "/" in body.get("model", ""):
+        if "/" in (body.get("model") or ""):
             body["model"] = body["model"].split("/", 1)[1]
         # None doesn't contain "/", so it stays None
         assert body["model"] is None
@@ -90,7 +85,7 @@ class TestModelNameHandling:
         BUG PROBE: Model that is just "/" should split to ["", ""].
         """
         body = {"model": "/"}
-        if "/" in body.get("model", ""):
+        if "/" in (body.get("model") or ""):
             body["model"] = body["model"].split("/", 1)[1]
 
         assert body["model"] == ""
@@ -100,7 +95,7 @@ class TestModelNameHandling:
         BUG PROBE: Model "provider/" should split to ["provider", ""].
         """
         body = {"model": "provider/"}
-        if "/" in body.get("model", ""):
+        if "/" in (body.get("model") or ""):
             body["model"] = body["model"].split("/", 1)[1]
 
         assert body["model"] == ""

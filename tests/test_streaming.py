@@ -5,16 +5,12 @@ BUG CATEGORY B: Tests for stream=True/False paths, error handling in streams,
 and model name handling during streaming.
 """
 
-import asyncio
-import json
 import os
 import sys
-from unittest.mock import patch, MagicMock, AsyncMock, patch as mock_patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
-import pytest
 from fastapi.testclient import TestClient
-from httpx import ASGITransport
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -23,13 +19,14 @@ def _setup_app(tmp_path, monkeypatch):
     """Helper to set up a fresh app with OpenRouter provider."""
     monkeypatch.setenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
     monkeypatch.setenv("OPENROUTER_API_KEYS", "test-key-1")
+    monkeypatch.delenv("LITEROUTER_AUTH_KEY", raising=False)
     monkeypatch.chdir(tmp_path)
 
     import src.config as config_mod
-    import src.router as router_mod
-    import src.rate_limiter as rl_mod
     import src.metrics as metrics_mod
+    import src.rate_limiter as rl_mod
     import src.redis_client as redis_mod
+    import src.router as router_mod
 
     config_mod._cached_config = None
     router_mod._router = None

@@ -7,10 +7,6 @@ BUG CATEGORY F: Tests for in-memory rate limiting fallback.
 import time
 from unittest.mock import patch
 
-import pytest
-
-from src.rate_limiter import RedisRateLimiter, get_rate_limiter
-
 
 class TestRateLimiter:
     """Tests for RedisRateLimiter with in-memory fallback."""
@@ -19,7 +15,10 @@ class TestRateLimiter:
         """Create a fresh rate limiter with no Redis."""
         with patch("src.redis_client.get_redis_client", return_value=None):
             with patch("src.redis_client.redis_available", return_value=False):
+                from src.rate_limiter import RedisRateLimiter
                 self.limiter = RedisRateLimiter()
+                import src.rate_limiter as rl_mod
+                rl_mod._mem_last_calls.clear()
 
     def test_first_call_always_ready(self):
         """
@@ -57,6 +56,7 @@ class TestRateLimiter:
             mock_time.time.return_value = 1006.0
             mock_time.return_value = 1006.0
             result = self.limiter.can_call("test-provider", 5000)
+            print("DEBUG RESULT:", result)
             assert result["ready"] is True
 
     def test_memory_fallback_isolated_providers(self):

@@ -155,3 +155,15 @@ def is_anthropic_provider(provider: ProviderConfig) -> bool:
 
 def is_openrouter_provider(provider: ProviderConfig) -> bool:
     return "openrouter.ai" in provider.base_url
+
+
+def is_anthropic_model(model: str | None) -> bool:
+    """Return True if the model identifier indicates an Anthropic model."""
+    if not model:
+        return False
+    model_lower = model.lower()
+    return (
+        model_lower.startswith("anthropic/")
+        or model_lower.startswith("claude-")
+        or "claude" in model_lower
+    )

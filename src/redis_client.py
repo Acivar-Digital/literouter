@@ -39,6 +39,9 @@ def get_redis_client() -> Optional["redis.Redis"]:
     if _sync_client is not None:
         return _sync_client
 
+    if not REDIS_HOST:
+        return None
+
     try:
         _sync_client = redis.Redis(
             host=REDIS_HOST,
@@ -68,6 +71,9 @@ async def get_async_redis_client() -> Optional["redis.asyncio.Redis"]:
     global _async_client
     if _async_client is not None:
         return _async_client
+
+    if not REDIS_HOST:
+        return None
 
     import redis.asyncio as redis_async
 

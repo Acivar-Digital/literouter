@@ -1,6 +1,7 @@
-import pytest
 from fastapi.testclient import TestClient
+
 from src.main import app
+
 
 def test_opencode_custom_blocks_sanitization():
     """

@@ -5,19 +5,24 @@ BUG CATEGORY I: End-to-end tests using mocked upstream HTTP responses.
 BUG CATEGORY B: Streaming support tests.
 """
 
-import asyncio
-import json
 import os
 import sys
-import time
-from unittest.mock import patch, MagicMock, AsyncMock
+from unittest.mock import patch
 
 import httpx
 import pytest
 from fastapi.testclient import TestClient
-from httpx import ASGITransport, AsyncClient
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+
+@pytest.fixture(autouse=True)
+def mock_httpx_client():
+    with patch("httpx.AsyncClient") as mock:
+        mock_instance = mock.return_value
+        mock_instance.__aenter__.return_value = mock_instance
+        # Simulate connection refused to speed up tests and mimic no real upstream
+        mock_instance.post.side_effect = httpx.ConnectError("Connection refused")
+        yield mock
 
 # We need to set up env vars BEFORE importing main, since main.py
 # creates singletons at module level. We'll use lazy imports.
@@ -28,14 +33,15 @@ def app_with_openrouter(tmp_path, monkeypatch):
     """Create a test app with OpenRouter provider configured."""
     monkeypatch.setenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
     monkeypatch.setenv("OPENROUTER_API_KEYS", "test-key-1,test-key-2")
+    monkeypatch.delenv("LITEROUTER_AUTH_KEY", raising=False)
     monkeypatch.chdir(tmp_path)
 
     # Reset all singletons
     import src.config as config_mod
-    import src.router as router_mod
-    import src.rate_limiter as rl_mod
     import src.metrics as metrics_mod
+    import src.rate_limiter as rl_mod
     import src.redis_client as redis_mod
+    import src.router as router_mod
 
     config_mod._cached_config = None
     router_mod._router = None
@@ -61,10 +67,10 @@ def app_with_auth(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
 
     import src.config as config_mod
-    import src.router as router_mod
-    import src.rate_limiter as rl_mod
     import src.metrics as metrics_mod
+    import src.rate_limiter as rl_mod
     import src.redis_client as redis_mod
+    import src.router as router_mod
 
     config_mod._cached_config = None
     router_mod._router = None
@@ -90,7 +96,7 @@ class TestHealthEndpoint:
         """
         with patch("src.redis_client.get_redis_client", return_value=None):
             with patch("src.redis_client.redis_available", return_value=False):
-                with patch("src.main.get_redis_info_safe", return_value={}):
+                with patch("src.main._redis_info_safe", return_value={}):
                     with TestClient(app_with_openrouter) as client:
                         response = client.get("/health")
                         assert response.status_code == 200
@@ -110,7 +116,7 @@ class TestHealthEndpoint:
         """
         with patch("src.redis_client.get_redis_client", return_value=None):
             with patch("src.redis_client.redis_available", return_value=False):
-                with patch("src.main.get_redis_info_safe", return_value={}):
+                with patch("src.main._redis_info_safe", return_value={}):
                     with TestClient(app_with_openrouter) as client:
                         response = client.get("/")
                         assert response.status_code == 200
