@@ -2,6 +2,12 @@
 
 All notable changes to LiteRouter will be documented in this file.
 
+## [2.3.0] — 2026-06-13
+
+### Added
+- **Project Initialization** — Synced optional and dev dependencies via `uv sync --all-extras`.
+- **VPS Redis Verification** — Successfully verified connectivity and authentication with Redis Enterprise running in Docker on the remote VPS (10.32.34.243:12000).
+
 ## [2.2.0] — 2026-05-18
 
 ### Architecture — Clean Template + Provider Selection
