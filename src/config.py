@@ -105,7 +105,7 @@ class LiteRouterConfig(BaseSettings):
             temperature = float(os.environ.get(f"{prefix}_TEMPERATURE", "0.0"))
 
             extra: dict[str, Any] = {}
-            skip = {"BASE_URL", "API_KEYS", "MIN_DELAY_MS", "MODEL", "TEMPERATURE"}
+            skip = {"BASE_URL", "API_KEYS", "API_KEY", "MIN_DELAY_MS", "MODEL", "TEMPERATURE"}
             for k, v in os.environ.items():
                 if k.startswith(f"{prefix}_") and k.replace(f"{prefix}_", "") not in skip:
                     extra[k.replace(f"{prefix}_", "").lower()] = v

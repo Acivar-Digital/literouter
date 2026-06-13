@@ -132,6 +132,7 @@ async def _process_request(body: dict, provider_name: str, template: str, provid
         key = router.get_next_key(provider_name, provider.api_keys)
         if not key:
             raise HTTPException(status_code=503, detail=f"[{provider_name}] No available API keys.")
+        logger.info("[%s] Using rotated key: %s...", provider_name, key[:15])
 
         metrics.increment_request()
         metrics.increment_key_usage(key)
