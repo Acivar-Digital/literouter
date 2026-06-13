@@ -275,6 +275,12 @@ so it's clear how far execution got before failure.
 - `src/engine/openrouter.py` - LLM API calls for narrative generation
 - `_docs/IMPACT_MAP.md` - **Change Impact Map**: Internal module dependency graph organized by blast radius. **Always consult before making architectural changes.**
 
+## LiteRouter Proxy Guidelines
+- Run LiteRouter locally: `nohup uv run uvicorn src.main:app --host 0.0.0.0 --port 7766 > logs/literouter.log 2>&1 & echo $! > .literouter.pid`
+- Local logs under `logs/` are ignored in Git to prevent leaks.
+- Supports `/v1/responses` for OpenCode compatibility, translating incoming `input_text` content blocks to standard `text` blocks.
+- Falls back gracefully to in-memory key rotation if the Redis server is unavailable.
+
 ## Critical Patterns
 - Auto mode collects only: alias, gender, dob, location -> engine computes all pillars/strength
 - Never ask for computed fields: year_pillar, month_pillar, day_pillar, hour_pillar, da_yun_pillar, etc.

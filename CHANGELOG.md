@@ -2,6 +2,13 @@
 
 All notable changes to LiteRouter will be documented in this file.
 
+## [2.4.0] — 2026-06-13
+
+### Added
+- **`/v1/responses` endpoint** — Added support mapping to `chat_completions` for newer OpenCode compatibility.
+- **OpenCode Format Mapping** — Translated `"input"` field to `"messages"` on input, and mapped `"input_text"` content block type to `"text"` for Anthropic Messages compatibility.
+- **TUI Integration** — Configured global `opencode.json` with `openrouter/owl-alpha` as `Owl-Alpha (Literouter)`.
+
 ## [2.3.0] — 2026-06-13
 
 ### Added
