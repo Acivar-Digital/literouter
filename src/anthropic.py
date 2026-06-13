@@ -44,6 +44,19 @@ def build_anthropic_request_body(body: dict) -> dict:
             else:
                 system_content = str(content)
         elif role in ("user", "assistant"):
+            # Handle list-based content and convert 'input_text' blocks to 'text'
+            if isinstance(content, list):
+                anthropic_content = []
+                for block in content:
+                    if isinstance(block, dict):
+                        block_copy = dict(block)
+                        if block_copy.get("type") == "input_text":
+                            block_copy["type"] = "text"
+                        anthropic_content.append(block_copy)
+                    else:
+                        anthropic_content.append(block)
+                content = anthropic_content
+
             anthropic_msg: dict = {"role": role, "content": content}
             # Handle tool_calls for assistant messages
             if role == "assistant" and "tool_calls" in msg:

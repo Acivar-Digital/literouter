@@ -136,14 +136,16 @@ async def _process_request(body: dict, provider_name: str, template: str, provid
             del headers["Authorization"]
 
         elif use_anthropic:
-            # Anthropic template → /messages endpoint (pass-through, no transformation)
+            # Anthropic template → /messages endpoint (transform to Anthropic Messages format)
             target_url = f"{provider.base_url}/messages"
+            from src.anthropic import build_anthropic_request_body
+            payload = build_anthropic_request_body(body)
+            logger.info("[debug] TRANSFORMED ANTHROPIC PAYLOAD: %s", payload)
             if is_anthropic_provider(provider):
                 # Native Anthropic: use x-api-key header
                 headers["x-api-key"] = key
                 headers["anthropic-version"] = "2023-06-01"
                 del headers["Authorization"]
-            # For OpenRouter: keep Authorization: Bearer, pass body as-is
 
         else:
             # OpenAI template → /chat/completions endpoint
@@ -235,7 +237,8 @@ async def _stream_request(
                     if resp.status_code in (429, 401, 403):
                         router.report_error(provider_name, key, resp.status_code)
                     if not resp.is_success:
-                        err_text = resp.text[:200]
+                        err_body = await resp.aread()
+                        err_text = err_body[:200].decode("utf-8", errors="replace")
                         metrics.increment_error()
                         metrics.increment_error_by_status(resp.status_code)
                         yield b'data: {"error": {"message": "' + err_text.encode() + b'", "type": "upstream_error"}}\n\n'
@@ -347,6 +350,7 @@ async def _stream_anthropic(resp):
 
 
 @app.post("/v1/chat/completions")
+@app.post("/v1/responses")
 async def chat_completions(request: Request, authorization: str | None = Header(None)):
     if not _check_auth(authorization):
         return JSONResponse(status_code=401, content={"error": {"message": "Invalid API key", "type": "invalid_request_error"}})
@@ -358,6 +362,9 @@ async def chat_completions(request: Request, authorization: str | None = Header(
         body = await request.json()
     except Exception:
         return JSONResponse(status_code=400, content={"error": {"message": "Invalid JSON body", "type": "invalid_request_error"}})
+
+    if "input" in body and "messages" not in body:
+        body["messages"] = body["input"]
 
     raw_model: str = body.get("model", "")
 
