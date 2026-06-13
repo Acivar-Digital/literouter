@@ -366,6 +366,14 @@ async def chat_completions(request: Request, authorization: str | None = Header(
     if "input" in body and "messages" not in body:
         body["messages"] = body["input"]
 
+    # Sanitize custom block types injected by OpenCode clients
+    if "messages" in body and isinstance(body["messages"], list):
+        for msg in body["messages"]:
+            if isinstance(msg.get("content"), list):
+                for block in msg["content"]:
+                    if isinstance(block, dict) and block.get("type") in ("input_text", "output_text"):
+                        block["type"] = "text"
+
     raw_model: str = body.get("model", "")
 
     # Health check shortcut
