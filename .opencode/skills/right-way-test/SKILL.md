@@ -1,5 +1,5 @@
 ---
-name: skill-right-way-test
+name: right-way-test
 description: The mandatory testing protocol for validating code changes by rotating API keys, verifying logs, and checking integration with OpenCode.
 ---
 
