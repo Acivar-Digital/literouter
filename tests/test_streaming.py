@@ -295,8 +295,8 @@ class TestStreamingSupport:
                             },
                         )
                         assert response.status_code == 200
-                        # Verify model prefix was stripped
-                        assert captured_payload["json"]["model"] == "owl-alpha"
+                        # Verify model prefix was preserved
+                        assert captured_payload["json"]["model"] == "openrouter/owl-alpha"
 
     def test_stream_with_connection_error(self, tmp_path, monkeypatch):
         """

@@ -173,9 +173,6 @@ async def _process_request(body: dict, provider_name: str, template: str, provid
         else:
             # OpenAI template → /chat/completions endpoint
             target_url = f"{provider.base_url}/chat/completions"
-            # Strip provider prefix from model name for OpenAI-compatible APIs
-            if "/" in (body.get("model") or ""):
-                body["model"] = body["model"].split("/", 1)[1]
 
         # Dispatch
         logger.info("[debug] OUTBOUND PAYLOAD: %s", payload)
@@ -390,7 +387,7 @@ async def chat_completions(request: Request, authorization: str | None = Header(
     if "input" in body and "messages" not in body:
         body["messages"] = body["input"]
 
-    # Sanitize custom block types injected by OpenCode clients
+    # Sanitize custom block types injected by client TUI/CLI systems
     if "messages" in body and isinstance(body["messages"], list):
         for msg in body["messages"]:
             if isinstance(msg, dict) and isinstance(msg.get("content"), list):

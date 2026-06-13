@@ -280,6 +280,7 @@ so it's clear how far execution got before failure.
 - Local logs under `logs/` are ignored in Git to prevent leaks.
 - Supports `/v1/responses` for OpenCode compatibility, translating incoming `input_text` content blocks to standard `text` blocks.
 - Falls back gracefully to in-memory key rotation if the Redis server is unavailable.
+- **Mandatory E2E Test Protocol**: All testing must follow the "right-way" testing protocol detailed in `tests/right-way-test.md`. You must read `tests/right-way-test.md` and verify the live running daemon process using actual client requests before asserting complete status.
 
 ## Critical Patterns
 - Auto mode collects only: alias, gender, dob, location -> engine computes all pillars/strength
