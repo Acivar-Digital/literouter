@@ -281,6 +281,14 @@ so it's clear how far execution got before failure.
 - Supports `/v1/responses` for OpenCode compatibility, translating incoming `input_text` content blocks to standard `text` blocks.
 - Falls back gracefully to in-memory key rotation if the Redis server is unavailable.
 - **Mandatory E2E Test Protocol**: All testing must follow the "right-way" testing protocol detailed in `tests/right-way-test.md`. You must read `tests/right-way-test.md` and verify the live running daemon process using actual client requests before asserting complete status.
+- **Code Change Test Protocol (`skill-right-way-test`)**:
+  1. Check all API keys are healthy for rotation.
+  2. Run a Python script to perform a curl test. Send "hi" to the model $N + 1$ times (where $N$ is the number of keys; e.g., if there are 5 keys, say "hi" 6 times) and log down if key rotation occurred.
+  3. Check logs to verify that the keys were indeed rotated.
+  4. Insert the configuration into OpenCode if necessary.
+  5. Otherwise, test the OpenCode CLI model using the setup in step 2 but via OpenCode directly.
+  6. Verify the logs again to ensure rotation happened.
+  7. Consider the test passed only when all steps pass successfully.
 
 ## Critical Patterns
 - Auto mode collects only: alias, gender, dob, location -> engine computes all pillars/strength
