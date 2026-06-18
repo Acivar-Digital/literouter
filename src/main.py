@@ -285,9 +285,14 @@ async def _process_request(body: dict, provider_name: str, template: str, provid
             if k != "model" and k not in body:
                 body[k] = v
 
-    # Ensure max_tokens is set — without it, some providers/models default to
-    # a very small output limit, causing truncated or empty responses.
-    if "max_tokens" not in body and "max_output_tokens" not in body:
+    # Normalize max_output_tokens → max_tokens for upstream providers.
+    # OpenCode (ACP/Responses API) sends "max_output_tokens" but upstream
+    # ChatCompletions providers (OpenRouter, Nvidia) only understand "max_tokens".
+    # Without this conversion, the upstream ignores the limit and uses its own
+    # tiny default, causing truncated responses.
+    if "max_output_tokens" in body and "max_tokens" not in body:
+        body["max_tokens"] = body.pop("max_output_tokens")
+    if "max_tokens" not in body:
         body["max_tokens"] = 1_000_000
 
     # Strip provider prefix from model ID if it starts with any known provider name
