@@ -60,7 +60,7 @@ class TestProviderDetection:
         from src.config import ProviderConfig, is_openrouter_provider
         provider = ProviderConfig(
             base_url="https://openrouter.ai/api/v1",
-            api_keys=["key1"],
+            api_keys=["sk-test-stub-0001-padded-to-look-like-real"],
         )
         assert is_openrouter_provider(provider) is True
 
@@ -69,7 +69,7 @@ class TestProviderDetection:
         from src.config import ProviderConfig, is_openrouter_provider
         provider = ProviderConfig(
             base_url="https://api.anthropic.com",
-            api_keys=["key1"],
+            api_keys=["sk-test-stub-0001-padded-to-look-like-real"],
         )
         assert is_openrouter_provider(provider) is False
 
@@ -78,7 +78,7 @@ class TestProviderDetection:
         from src.config import ProviderConfig, is_gemini_provider
         provider = ProviderConfig(
             base_url="https://generativelanguage.googleapis.com/v1beta",
-            api_keys=["key1"],
+            api_keys=["sk-test-stub-0001-padded-to-look-like-real"],
         )
         assert is_gemini_provider(provider) is True
 
@@ -87,7 +87,7 @@ class TestProviderDetection:
         from src.config import ProviderConfig, is_gemini_provider
         provider = ProviderConfig(
             base_url="https://api.openai.com/v1",
-            api_keys=["key1"],
+            api_keys=["sk-test-stub-0001-padded-to-look-like-real"],
         )
         assert is_gemini_provider(provider) is False
 
@@ -140,7 +140,7 @@ class TestConfigLoading:
         model_params should not contain an entry for this provider.
         """
         monkeypatch.setenv("TEST_BASE_URL", "https://api.test.com")
-        monkeypatch.setenv("TEST_API_KEYS", "key1")
+        monkeypatch.setenv("TEST_API_KEYS", "sk-test-stub-0001-padded-to-look-like-real")
         # No TEST_MODEL set
         monkeypatch.chdir(tmp_path)
 
@@ -154,7 +154,7 @@ class TestConfigLoading:
         Should be captured in extra_params dict.
         """
         monkeypatch.setenv("TEST_BASE_URL", "https://api.test.com")
-        monkeypatch.setenv("TEST_API_KEYS", "key1")
+        monkeypatch.setenv("TEST_API_KEYS", "sk-test-stub-0001-padded-to-look-like-real")
         monkeypatch.setenv("TEST_CUSTOM_PARAM", "custom_value")
         monkeypatch.setenv("TEST_ANOTHER", "another_value")
         monkeypatch.chdir(tmp_path)
@@ -171,7 +171,7 @@ class TestConfigLoading:
         Should fall back to rotate_delay_ms (default 2000).
         """
         monkeypatch.setenv("TEST_BASE_URL", "https://api.test.com")
-        monkeypatch.setenv("TEST_API_KEYS", "key1")
+        monkeypatch.setenv("TEST_API_KEYS", "sk-test-stub-0001-padded-to-look-like-real")
         monkeypatch.chdir(tmp_path)
 
         from src.config import LiteRouterConfig
@@ -183,7 +183,7 @@ class TestConfigLoading:
         BUG PROBE: Provider with custom _MIN_DELAY_MS.
         """
         monkeypatch.setenv("TEST_BASE_URL", "https://api.test.com")
-        monkeypatch.setenv("TEST_API_KEYS", "key1")
+        monkeypatch.setenv("TEST_API_KEYS", "sk-test-stub-0001-padded-to-look-like-real")
         monkeypatch.setenv("TEST_MIN_DELAY_MS", "5000")
         monkeypatch.chdir(tmp_path)
 
@@ -197,7 +197,7 @@ class TestConfigLoading:
         The code does `int(...) or None`, so 0 becomes None.
         """
         monkeypatch.setenv("TEST_BASE_URL", "https://api.test.com")
-        monkeypatch.setenv("TEST_API_KEYS", "key1")
+        monkeypatch.setenv("TEST_API_KEYS", "sk-test-stub-0001-padded-to-look-like-real")
         monkeypatch.setenv("TEST_MIN_DELAY_MS", "0")
         monkeypatch.chdir(tmp_path)
 
@@ -210,23 +210,26 @@ class TestConfigLoading:
         """
         BUG PROBE: Multiple providers configured simultaneously.
         """
+        monkeypatch.delenv("NVIDIA_BASE_URL", raising=False)
+        monkeypatch.delenv("NVIDIA_API_KEYS", raising=False)
         monkeypatch.setenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
-        monkeypatch.setenv("OPENROUTER_API_KEYS", "or-key1")
+        monkeypatch.setenv("OPENROUTER_API_KEYS", "sk-or-test-stub-0001-padded-padded")
         monkeypatch.setenv("ANTHROPIC_BASE_URL", "https://api.anthropic.com")
-        monkeypatch.setenv("ANTHROPIC_API_KEYS", "ant-key1")
+        monkeypatch.setenv("ANTHROPIC_API_KEYS", "sk-ant-test-stub-0001-padded-padded")
         monkeypatch.chdir(tmp_path)
 
         from src.config import LiteRouterConfig
         config = LiteRouterConfig()
         assert "openrouter" in config.providers
         assert "anthropic" in config.providers
+        assert len(config.providers) == 2
 
     def test_base_url_trailing_slash_stripped(self, monkeypatch, tmp_path):
         """
         BUG PROBE: Base URL with trailing slash should be stripped.
         """
         monkeypatch.setenv("TEST_BASE_URL", "https://api.test.com/")
-        monkeypatch.setenv("TEST_API_KEYS", "key1")
+        monkeypatch.setenv("TEST_API_KEYS", "sk-test-stub-0001-padded-to-look-like-real")
         monkeypatch.chdir(tmp_path)
 
         from src.config import LiteRouterConfig
@@ -238,7 +241,7 @@ class TestConfigLoading:
         BUG PROBE: Provider with empty BASE_URL should be skipped.
         """
         monkeypatch.setenv("TEST_BASE_URL", "")
-        monkeypatch.setenv("TEST_API_KEYS", "key1")
+        monkeypatch.setenv("TEST_API_KEYS", "sk-test-stub-0001-padded-to-look-like-real")
         monkeypatch.chdir(tmp_path)
 
         from src.config import LiteRouterConfig

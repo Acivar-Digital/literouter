@@ -23,6 +23,45 @@ logger = logging.getLogger(__name__)
 VALID_TEMPLATES = ("openai", "anthropic")
 VALID_PROVIDERS = ("openrouter", "anthropic")
 
+# ── API-key intake gate ────────────────────────────────────────────────────────
+# Defends against the "NEWNIMKEY1234567890" foot-gun: a placeholder key
+# shipped into .env bypasses the doctor, then survives until the router
+# rotates it into a real request and returns 403 to the client.
+#
+# Two layers:
+#   - _INTAKE_BLOCKLIST_PATTERNS: cheap, deterministic substring matches
+#     for known placeholder shapes (e.g. "NEWNIMKEY", "CHANGEME", "<...>").
+#   - _MIN_KEY_LENGTH: length floor. Real Nvidia keys are 70 chars;
+#     real OpenRouter/Anthropic keys are >= 40.
+_INTAKE_BLOCKLIST_PATTERNS: tuple[str, ...] = (
+    "new",
+    "nimkey",
+    "nvidia",
+    "changeme",
+    "todo",
+    "xxxx",
+    "placeholder",
+    "your-key",
+    "your_key",
+    "<",
+    ">",
+    "example",
+)
+_MIN_KEY_LENGTH = 30
+
+
+def is_invalid_api_key(key: str) -> bool:
+    """Return True if *key* obviously cannot be a real upstream credential."""
+    if not key:
+        return True
+    stripped = key.strip()
+    if not stripped or stripped != key:
+        return True
+    if len(key) < _MIN_KEY_LENGTH:
+        return True
+    lowered = key.lower()
+    return any(p in lowered for p in _INTAKE_BLOCKLIST_PATTERNS)
+
 
 # ── Models ─────────────────────────────────────────────────────────────────────
 
@@ -80,32 +119,23 @@ class LiteRouterConfig(BaseSettings):
         """Scan os.environ for *_BASE_URL vars and build provider configs."""
         import os
 
-        # Handle provider inheritance (e.g., MINIMAXAI_INHERITS=NVIDIA)
-        # Loop up to 5 times to resolve nested inheritance (e.g., A inherits B inherits C)
-        for _ in range(5):
-            changed = False
-            for env_key, env_val in list(os.environ.items()):
-                if env_key.endswith("_INHERITS"):
-                    prefix = env_key.replace("_INHERITS", "")
-                    parent = env_val.strip()
-                    if f"{prefix}_BASE_URL" not in os.environ and f"{parent}_BASE_URL" in os.environ:
-                        os.environ[f"{prefix}_BASE_URL"] = os.environ[f"{parent}_BASE_URL"]
-                        changed = True
-                    if f"{prefix}_API_KEYS" not in os.environ and f"{parent}_API_KEYS" in os.environ:
-                        os.environ[f"{prefix}_API_KEYS"] = os.environ[f"{parent}_API_KEYS"]
-                        changed = True
-            if not changed:
-                break
-
         for env_key in [k for k in os.environ if k.endswith("_BASE_URL")]:
             prefix = env_key.replace("_BASE_URL", "")
             provider_name = prefix.lower()
             base_url = os.environ.get(env_key, "").rstrip("/")
-            api_keys = [
+            raw_keys = [
                 k.strip()
                 for k in os.environ.get(f"{prefix}_API_KEYS", "").split(",")
-                if k.strip()
             ]
+            dropped = [(idx, k) for idx, k in enumerate(raw_keys) if is_invalid_api_key(k)]
+            api_keys = [k for k in raw_keys if not is_invalid_api_key(k)]
+            for idx, dropped_key in dropped:
+                logger.warning(
+                    "[Config] %s key #%d LOOKS LIKE A PLACEHOLDER "
+                    "(len=%d prefix='%s') — filtered out. "
+                    "Run `uv run python src/doctor.py` to confirm.",
+                    prefix, idx + 1, len(dropped_key), dropped_key[:8],
+                )
 
             if not base_url:
                 logger.warning("[Config] %s is empty, skipping '%s'", env_key, provider_name)
@@ -122,7 +152,7 @@ class LiteRouterConfig(BaseSettings):
             temperature = float(os.environ.get(f"{prefix}_TEMPERATURE", "0.0"))
 
             extra: dict[str, Any] = {}
-            skip = {"BASE_URL", "API_KEYS", "API_KEY", "MIN_DELAY_MS", "MODEL", "TEMPERATURE", "INHERITS"}
+            skip = {"BASE_URL", "API_KEYS", "API_KEY", "MIN_DELAY_MS", "MODEL", "TEMPERATURE"}
             for k, v in os.environ.items():
                 if k.startswith(f"{prefix}_") and k.replace(f"{prefix}_", "") not in skip:
                     extra[k.replace(f"{prefix}_", "").lower()] = v

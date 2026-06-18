@@ -18,7 +18,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 def _setup_app(tmp_path, monkeypatch):
     """Helper to set up a fresh app with OpenRouter provider."""
     monkeypatch.setenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
-    monkeypatch.setenv("OPENROUTER_API_KEYS", "test-key-1")
+    monkeypatch.setenv("OPENROUTER_API_KEYS", "sk-or-test-stub-0001-padded-padded")
     monkeypatch.delenv("LITEROUTER_AUTH_KEY", raising=False)
     monkeypatch.chdir(tmp_path)
 
@@ -295,7 +295,8 @@ class TestStreamingSupport:
                             },
                         )
                         assert response.status_code == 200
-                        # Verify model prefix was stripped (as per BUG PROBE comment)
+                        # Provider prefix is stripped before forwarding upstream
+                        # per commit 0a7f621 (strip_prefix behavior is intentional).
                         assert captured_payload["json"]["model"] == "owl-alpha"
 
     def test_stream_with_connection_error(self, tmp_path, monkeypatch):

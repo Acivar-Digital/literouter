@@ -96,107 +96,118 @@ async def _validate_provider_keys() -> dict:
 
     healthy = 0
     failed = 0
+    skipped = 0
     test_results = []
 
-    async with httpx.AsyncClient(timeout=10.0) as client:
-        for provider_name, provider in config.providers.items():
-            if not provider.api_keys:
-                _print_err(f"{provider_name}: No API keys configured")
-                continue
+    async def _probe_one(provider_name, provider, key, i, model_config, use_gemini):
+        nonlocal healthy, failed, skipped
+        key_display = f"Key {i + 1} ({key[:8]}...)"
+        print(f"    {DIM}Testing [{provider_name}] {key_display}...{R}", end="", flush=True)
 
-            model_config = config.model_params.get(provider_name)
-            use_gemini = is_gemini_provider(provider)
+        if not use_gemini and not model_config:
+            skipped += 1
+            test_results.append({
+                "provider": provider_name, "key": key_display,
+                "status": "skipped", "error": "no model configured",
+            })
+            print(
+                f"\r    {DIM}○{R} [{provider_name}] {key_display} "
+                f"{DIM}skipped (no model configured){R}",
+            )
+            return
 
-            for i, key in enumerate(provider.api_keys):
-                key_display = f"Key {i + 1} ({key[:8]}...)"
-                print(f"    {DIM}Testing [{provider_name}] {key_display}...{R}", end="", flush=True)
-
-                start = time.time()
-                try:
-                    if use_gemini:
-                        default_model = "gemini-2.5-flash"
-                        if model_config:
-                            test_model = model_config.get("model", default_model)
-                        else:
-                            test_model = default_model
-                        resp = await client.post(
-                            f"{provider.base_url}/models/{test_model}:generateContent",
-                            json={
-                                "contents": [{"role": "user", "parts": [{"text": "hello"}]}],
-                                "generationConfig": {"maxOutputTokens": 1},
-                            },
-                            params={"key": key},
-                        )
-                    else:
-                        default_model = "gpt-3.5-turbo"
-                        if model_config:
-                            test_model = model_config.get("model", default_model)
-                        else:
-                            test_model = default_model
-                        resp = await client.post(
-                            f"{provider.base_url}/chat/completions",
-                            json={
-                                "model": test_model,
-                                "messages": [{"role": "user", "content": "hello"}],
-                                "max_tokens": 1,
-                            },
-                            headers={
-                                "Content-Type": "application/json",
-                                "Authorization": f"Bearer {key}",
-                            },
-                        )
-
-                    latency_ms = int((time.time() - start) * 1000)
-
-                    if resp.status_code == 200:
-                        healthy += 1
-                        test_results.append({
-                            "provider": provider_name, "key": key_display,
-                            "status": "healthy", "latencyMs": latency_ms,
-                        })
-                        print(
-                            f"\r    {GREEN}✓{R} [{provider_name}] {key_display} "
-                            f"{GREEN}healthy{R} {DIM}{latency_ms}ms{R}",
-                        )
-                    elif resp.status_code == 429:
-                        healthy += 1
-                        test_results.append({
-                            "provider": provider_name, "key": key_display,
-                            "status": "rate-limited", "latencyMs": latency_ms,
-                        })
-                        print(
-                            f"\r    {YELLOW}⚡{R} [{provider_name}] {key_display} "
-                            f"{YELLOW}valid (rate limited){R} {DIM}{latency_ms}ms{R}",
-                        )
-                    else:
-                        failed += 1
-                        err_text = resp.text[:100]
-                        test_results.append({
-                            "provider": provider_name, "key": key_display,
-                            "status": "error",
-                            "error": f"HTTP {resp.status_code}",
-                            "latencyMs": latency_ms,
-                        })
-                        print(
-                            f"\r    {RED}✗{R} [{provider_name}] {key_display} "
-                            f"{RED}HTTP {resp.status_code}{R} {DIM}{latency_ms}ms{R} - {err_text}",
-                        )
-
-                except Exception as exc:
-                    failed += 1
-                    latency_ms = int((time.time() - start) * 1000)
-                    err_msg = str(exc)
-                    test_results.append({
-                        "provider": provider_name, "key": key_display,
-                        "status": "error", "error": err_msg,
-                        "latencyMs": latency_ms,
-                    })
-                    print(
-                        f"\r    {RED}✗{R} [{provider_name}] {key_display} "
-                        f"{RED}{err_msg}{R} {DIM}{latency_ms}ms{R}",
+        start = time.time()
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                if use_gemini:
+                    test_model = "gemini-2.5-flash"
+                    if model_config:
+                        test_model = model_config.get("model", test_model)
+                    resp = await client.post(
+                        f"{provider.base_url}/models/{test_model}:generateContent",
+                        json={
+                            "contents": [{"role": "user", "parts": [{"text": "hello"}]}],
+                            "generationConfig": {"maxOutputTokens": 1},
+                        },
+                        params={"key": key},
                     )
+                else:
+                    test_model = model_config.get("model", "gpt-3.5-turbo")
+                    resp = await client.post(
+                        f"{provider.base_url}/chat/completions",
+                        json={
+                            "model": test_model,
+                            "messages": [{"role": "user", "content": "hello"}],
+                            "max_tokens": 1,
+                        },
+                        headers={
+                            "Content-Type": "application/json",
+                            "Authorization": f"Bearer {key}",
+                        },
+                    )
+            latency_ms = int((time.time() - start) * 1000)
 
-    return {"healthy": healthy, "failed": failed, "test_results": test_results}
+            if resp.status_code == 200:
+                healthy += 1
+                test_results.append({
+                    "provider": provider_name, "key": key_display,
+                    "status": "healthy", "latencyMs": latency_ms,
+                })
+                print(
+                    f"\r    {GREEN}✓{R} [{provider_name}] {key_display} "
+                    f"{GREEN}healthy{R} {DIM}{latency_ms}ms{R}",
+                )
+            elif resp.status_code in (429, 403):
+                healthy += 1
+                test_results.append({
+                    "provider": provider_name, "key": key_display,
+                    "status": "rate-limited", "latencyMs": latency_ms,
+                })
+                print(
+                    f"\r    {YELLOW}⚡{R} [{provider_name}] {key_display} "
+                    f"{YELLOW}valid (rate limited){R} {DIM}{latency_ms}ms{R}",
+                )
+            else:
+                failed += 1
+                err_text = resp.text[:100]
+                test_results.append({
+                    "provider": provider_name, "key": key_display,
+                    "status": "error", "error": f"HTTP {resp.status_code}",
+                    "latencyMs": latency_ms,
+                })
+                print(
+                    f"\r    {RED}✗{R} [{provider_name}] {key_display} "
+                    f"{RED}HTTP {resp.status_code}{R} {DIM}{latency_ms}ms{R} - {err_text}",
+                )
+        except Exception as exc:
+            failed += 1
+            latency_ms = int((time.time() - start) * 1000)
+            err_msg = str(exc)
+            test_results.append({
+                "provider": provider_name, "key": key_display,
+                "status": "error", "error": err_msg,
+                "latencyMs": latency_ms,
+            })
+            print(
+                f"\r    {RED}✗{R} [{provider_name}] {key_display} "
+                f"{RED}{err_msg}{R} {DIM}{latency_ms}ms{R}",
+            )
+
+    for provider_name, provider in config.providers.items():
+        if not provider.api_keys:
+            _print_err(f"{provider_name}: No API keys configured")
+            continue
+
+        model_config = config.model_params.get(provider_name)
+        use_gemini = is_gemini_provider(provider)
+
+        # Probe all keys in this provider in parallel.
+        await asyncio.gather(*(
+            _probe_one(provider_name, provider, key, i, model_config, use_gemini)
+            for i, key in enumerate(provider.api_keys)
+        ))
+
+    return {"healthy": healthy, "failed": failed, "skipped": skipped, "test_results": test_results}
 
 
 async def _check_server_health() -> None:
@@ -251,6 +262,12 @@ async def _check_server_health() -> None:
 
 async def main() -> None:
     """Run all doctor checks."""
+    if "--force" in sys.argv:
+        sys.argv.remove("--force")
+        override = True
+    else:
+        override = False
+
     print(f"\n{CYAN}{BOLD}  LITEROUTER DOCTOR{R}\n")
 
     config_ok = _check_config()
@@ -262,20 +279,29 @@ async def main() -> None:
     test_stats = await _validate_provider_keys()
 
     for result in test_stats["test_results"]:
-        if result["status"] == "healthy":
+        status = result["status"]
+        if status == "healthy":
             print(
                 f"  {GREEN}✓{R} {BOLD}[{result['provider']}] {result['key']}{R} "
                 f"{GREEN}healthy{R} {DIM}{result['latencyMs']}ms{R}",
             )
-        elif result["status"] == "rate-limited":
+        elif status == "rate-limited":
             print(
                 f"  {YELLOW}⚡{R} {BOLD}[{result['provider']}] {result['key']}{R} "
                 f"{YELLOW}valid (rate limited){R} {DIM}{result['latencyMs']}ms{R}",
             )
+        elif status == "skipped":
+            print(
+                f"  {DIM}○{R} {BOLD}[{result['provider']}] {result['key']}{R} "
+                f"{DIM}{result.get('error', 'skipped')}{R}",
+            )
         else:
+            latency = result.get("latencyMs", 0)
+            latency_str = f"{DIM}{latency}ms{R}" if latency else ""
+            error_text = result.get("error", "unknown")
             print(
                 f"  {RED}✗{R} {BOLD}[{result['provider']}] {result['key']}{R} "
-                f"{RED}{result.get('error', 'unknown')}{R} {DIM}{result['latencyMs']}ms{R}",
+                f"{RED}{error_text}{R} {latency_str}",
             )
 
     await _check_server_health()
@@ -283,11 +309,21 @@ async def main() -> None:
     total_keys = sum(len(p.api_keys) for p in get_config().providers.values())
     healthy = test_stats["healthy"]
     failed = test_stats["failed"]
+    skipped = test_stats["skipped"]
 
     print(f"\n{CYAN}{'─' * 50}{R}")
     fail_msg = f" {RED}{failed} failed.{R}" if failed > 0 else ""
-    print(f"  {BOLD}{healthy}/{total_keys}{R} keys healthy.{fail_msg}")
+    skip_msg = f" {DIM}{skipped} skipped.{R}" if skipped > 0 else ""
+    print(f"  {BOLD}{healthy}/{total_keys}{R} keys healthy.{fail_msg}{skip_msg}")
     print(f"{CYAN}{'─' * 50}{R}\n")
+
+    if failed > 0 and not override:
+        print(f"{RED}Doctor FAILED: {failed} key(s) cannot authenticate upstream.{R}")
+        print(
+            f"{YELLOW}Either replace the dead key(s) in .env, "
+            f"or pass --force to bypass this gate.{R}"
+        )
+        sys.exit(2)
 
 
 if __name__ == "__main__":

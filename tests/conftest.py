@@ -74,12 +74,12 @@ def mock_env_openrouter(tmp_path, monkeypatch):
     env_file = tmp_path / ".env"
     env_file.write_text(
         "OPENROUTER_BASE_URL=https://openrouter.ai/api/v1\n"
-        "OPENROUTER_API_KEYS=key1,key2,key3\n"
+        "OPENROUTER_API_KEYS=sk-test-stub-0001-padded-to-look-like-real,sk-test-stub-0002-padded-to-look-like-real,sk-test-stub-0003-padded-to-look-like-real\n"
     )
     monkeypatch.chdir(tmp_path)
     # Also set env vars directly for the config scanner
     monkeypatch.setenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
-    monkeypatch.setenv("OPENROUTER_API_KEYS", "key1,key2,key3")
+    monkeypatch.setenv("OPENROUTER_API_KEYS", "sk-test-stub-0001-padded-to-look-like-real,sk-test-stub-0002-padded-to-look-like-real,sk-test-stub-0003-padded-to-look-like-real")
     return tmp_path
 
 
@@ -89,11 +89,11 @@ def mock_env_anthropic(tmp_path, monkeypatch):
     env_file = tmp_path / ".env"
     env_file.write_text(
         "ANTHROPIC_BASE_URL=https://api.anthropic.com\n"
-        "ANTHROPIC_API_KEYS=ant-key1,ant-key2\n"
+        "ANTHROPIC_API_KEYS=sk-ant-test-stub-0001-padded-padded,sk-ant-test-stub-0002-padded-padded\n"
     )
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("ANTHROPIC_BASE_URL", "https://api.anthropic.com")
-    monkeypatch.setenv("ANTHROPIC_API_KEYS", "ant-key1,ant-key2")
+    monkeypatch.setenv("ANTHROPIC_API_KEYS", "sk-ant-test-stub-0001-padded-padded,sk-ant-test-stub-0002-padded-padded")
     return tmp_path
 
 
@@ -103,9 +103,9 @@ def mock_env_gemini(tmp_path, monkeypatch):
     env_file = tmp_path / ".env"
     env_file.write_text(
         "GEMINI_BASE_URL=https://generativelanguage.googleapis.com/v1beta\n"
-        "GEMINI_API_KEYS=gem-key1,gem-key2\n"
+        "GEMINI_API_KEYS=gemini-test-stub-0001-padded-padded,gemini-test-stub-0002-padded-padded\n"
     )
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("GEMINI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta")
-    monkeypatch.setenv("GEMINI_API_KEYS", "gem-key1,gem-key2")
+    monkeypatch.setenv("GEMINI_API_KEYS", "gemini-test-stub-0001-padded-padded,gemini-test-stub-0002-padded-padded")
     return tmp_path
