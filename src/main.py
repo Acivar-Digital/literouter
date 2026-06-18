@@ -126,6 +126,26 @@ _provider_locks: dict[str, asyncio.Lock] = {}
 # ── Request Processing ────────────────────────────────────────────────────────
 
 
+def _extract_tool_call_deltas(line: str) -> list[dict]:
+    """Extract tool_call delta chunks from a raw SSE data line.
+    
+    Returns a list of tool_call delta dicts (with index, id, function.name, function.arguments)
+    or an empty list if the line doesn't contain tool_calls.
+    """
+    if not line.startswith("data: ") or "[DONE]" in line:
+        return []
+    try:
+        data = json.loads(line[6:].strip())
+        results = []
+        for choice in data.get("choices", []):
+            delta = choice.get("delta", {})
+            for tc in delta.get("tool_calls", []):
+                results.append(tc)
+        return results
+    except Exception:
+        return []
+
+
 def _fix_streaming_line(line: str, is_responses: bool = False, responses_item_id: str = "") -> str | None:
     """Sanitize a single complete SSE line for reasoning models to satisfy strict Zod schemas.
     
@@ -169,7 +189,6 @@ def _fix_streaming_line(line: str, is_responses: bool = False, responses_item_id
                     msg["content"] = msg_reasoning
 
         if is_responses:
-            results = []
             for choice in choices:
                 delta = choice.get("delta", {})
                 content = delta.get("content", "")
@@ -181,15 +200,7 @@ def _fix_streaming_line(line: str, is_responses: bool = False, responses_item_id
                         'content_index': 0,
                         'delta': content,
                     })
-                    results.append(f"event: response.output_text.delta\ndata: {event_data}\n")
-                # Accumulate tool_calls deltas — pass them through as tagged lines
-                # so the generator can collect them for ACP function_call emission
-                tool_calls = delta.get("tool_calls", [])
-                for tc in tool_calls:
-                    tc_data = json.dumps(tc)
-                    results.append(f"__TOOL_CALL_DELTA__:{tc_data}")
-            if results:
-                return "\n".join(results)
+                    return f"event: response.output_text.delta\ndata: {event_data}\n"
             return None
 
         # 2. Sanitize: Rebuild standard OpenAI chunk structure to satisfy strict Zod schemas
@@ -468,61 +479,51 @@ async def _stream_request(
                         buffer += decoder.decode(chunk)
                         while "\n" in buffer:
                             line, buffer = buffer.split("\n", 1)
+                            # Extract tool_call deltas from raw line BEFORE _fix_streaming_line
+                            # (which returns None for tool-call-only chunks in responses mode)
+                            if is_responses:
+                                for tc in _extract_tool_call_deltas(line):
+                                    idx = tc.get("index", 0)
+                                    if idx not in accumulated_tool_calls:
+                                        accumulated_tool_calls[idx] = {"id": "", "name": "", "arguments": ""}
+                                    if "id" in tc:
+                                        accumulated_tool_calls[idx]["id"] = tc["id"]
+                                    fn = tc.get("function", {})
+                                    if "name" in fn:
+                                        accumulated_tool_calls[idx]["name"] += fn["name"]
+                                    if "arguments" in fn:
+                                        accumulated_tool_calls[idx]["arguments"] += fn["arguments"]
                             processed = _fix_streaming_line(line, is_responses, responses_item_id=item_id if is_responses else "")
                             if processed is not None:
-                                # Handle multi-line results (text + tool_call deltas)
-                                for sub_line in processed.split("\n"):
-                                    if sub_line.startswith("__TOOL_CALL_DELTA__:"):
-                                        # Accumulate tool call delta chunks
-                                        try:
-                                            tc = json.loads(sub_line.split(":", 1)[1])
-                                            idx = tc.get("index", 0)
-                                            if idx not in accumulated_tool_calls:
-                                                accumulated_tool_calls[idx] = {"id": "", "name": "", "arguments": ""}
-                                            if "id" in tc:
-                                                accumulated_tool_calls[idx]["id"] = tc["id"]
-                                            fn = tc.get("function", {})
-                                            if "name" in fn:
-                                                accumulated_tool_calls[idx]["name"] += fn["name"]
-                                            if "arguments" in fn:
-                                                accumulated_tool_calls[idx]["arguments"] += fn["arguments"]
-                                        except Exception:
-                                            pass
-                                    elif sub_line.strip():
-                                        yield (sub_line + "\n").encode("utf-8")
-                                        if is_responses and '"delta"' in sub_line:
-                                            try:
-                                                evt = json.loads(sub_line.split("data: ", 1)[1])
-                                                accumulated_text.append(evt.get("delta", ""))
-                                            except Exception:
-                                                pass
-                    if buffer:
-                        processed = _fix_streaming_line(buffer, is_responses, responses_item_id=item_id if is_responses else "")
-                        if processed is not None:
-                            for sub_line in processed.split("\n"):
-                                if sub_line.startswith("__TOOL_CALL_DELTA__:"):
+                                yield (processed + "\n").encode("utf-8")
+                                if is_responses and '"delta"' in processed:
                                     try:
-                                        tc = json.loads(sub_line.split(":", 1)[1])
-                                        idx = tc.get("index", 0)
-                                        if idx not in accumulated_tool_calls:
-                                            accumulated_tool_calls[idx] = {"id": "", "name": "", "arguments": ""}
-                                        if "id" in tc:
-                                            accumulated_tool_calls[idx]["id"] = tc["id"]
-                                        fn = tc.get("function", {})
-                                        if "name" in fn:
-                                            accumulated_tool_calls[idx]["name"] += fn["name"]
-                                        if "arguments" in fn:
-                                            accumulated_tool_calls[idx]["arguments"] += fn["arguments"]
+                                        evt = json.loads(processed.split("data: ", 1)[1])
+                                        accumulated_text.append(evt.get("delta", ""))
                                     except Exception:
                                         pass
-                                elif sub_line.strip():
-                                    yield sub_line.encode("utf-8")
-                                    if is_responses and '"delta"' in sub_line:
-                                        try:
-                                            evt = json.loads(sub_line.split("data: ", 1)[1])
-                                            accumulated_text.append(evt.get("delta", ""))
-                                        except Exception:
-                                            pass
+                    if buffer:
+                        if is_responses:
+                            for tc in _extract_tool_call_deltas(buffer):
+                                idx = tc.get("index", 0)
+                                if idx not in accumulated_tool_calls:
+                                    accumulated_tool_calls[idx] = {"id": "", "name": "", "arguments": ""}
+                                if "id" in tc:
+                                    accumulated_tool_calls[idx]["id"] = tc["id"]
+                                fn = tc.get("function", {})
+                                if "name" in fn:
+                                    accumulated_tool_calls[idx]["name"] += fn["name"]
+                                if "arguments" in fn:
+                                    accumulated_tool_calls[idx]["arguments"] += fn["arguments"]
+                        processed = _fix_streaming_line(buffer, is_responses, responses_item_id=item_id if is_responses else "")
+                        if processed is not None:
+                            yield processed.encode("utf-8")
+                            if is_responses and '"delta"' in processed:
+                                try:
+                                    evt = json.loads(processed.split("data: ", 1)[1])
+                                    accumulated_text.append(evt.get("delta", ""))
+                                except Exception:
+                                    pass
 
                     if is_responses:
                         full_text = "".join(accumulated_text)
