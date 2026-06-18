@@ -80,6 +80,16 @@ class LiteRouterConfig(BaseSettings):
         """Scan os.environ for *_BASE_URL vars and build provider configs."""
         import os
 
+        # Handle provider inheritance (e.g., MINIMAXAI_INHERITS=NVIDIA)
+        for env_key, env_val in list(os.environ.items()):
+            if env_key.endswith("_INHERITS"):
+                prefix = env_key.replace("_INHERITS", "")
+                parent = env_val.strip()
+                if f"{prefix}_BASE_URL" not in os.environ and f"{parent}_BASE_URL" in os.environ:
+                    os.environ[f"{prefix}_BASE_URL"] = os.environ[f"{parent}_BASE_URL"]
+                if f"{prefix}_API_KEYS" not in os.environ and f"{parent}_API_KEYS" in os.environ:
+                    os.environ[f"{prefix}_API_KEYS"] = os.environ[f"{parent}_API_KEYS"]
+
         for env_key in [k for k in os.environ if k.endswith("_BASE_URL")]:
             prefix = env_key.replace("_BASE_URL", "")
             provider_name = prefix.lower()

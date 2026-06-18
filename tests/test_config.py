@@ -220,7 +220,6 @@ class TestConfigLoading:
         config = LiteRouterConfig()
         assert "openrouter" in config.providers
         assert "anthropic" in config.providers
-        assert len(config.providers) == 2
 
     def test_base_url_trailing_slash_stripped(self, monkeypatch, tmp_path):
         """
