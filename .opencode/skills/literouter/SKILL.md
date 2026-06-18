@@ -41,3 +41,27 @@ Whenever you are writing, modifying, or testing the LiteRouter proxy service, yo
 - **Responses API**: `/v1/responses` (OpenCode format; translated to messages format internally)
 - **Models**: `/v1/models` (returns OpenRouter's model database)
 - **Health**: `/health` (system metadata and key stats)
+
+## Adding New Models
+
+LiteRouter forwards the `model` field from the request to the upstream provider unchanged. To make a model readily usable:
+
+1. **Set a default model for a provider** (optional) via an env var `<PROVIDER>_MODEL`. Example for OpenRouter:
+   ```bash
+   OPENROUTER_MODEL=minimaxai/minimax-m3
+   ```
+   This value appears in the `/v1/models` response under the provider’s `model` entry.
+
+2. **Specify additional model parameters** (temperature, max_tokens, top_p, etc.) using the same `<PROVIDER>_` prefix. For example:
+   ```bash
+   OPENROUTER_TEMPERATURE=1.00
+   OPENROUTER_MAX_TOKENS=8192
+   OPENROUTER_TOP_P=0.95
+   ```
+   These are merged into every request for that provider unless overridden by the client payload.
+
+3. **Use arbitrary model identifiers**: clients can send any model name string (e.g., `moonshotai/kimi-k2.6`, `stepfun-ai/step-3.7-flash`). LiteRouter will forward it directly to the upstream service, provided the provider’s API supports it.
+
+4. **Multiple models**: If you need distinct defaults for several models, create additional provider entries with their own base URLs and API keys (e.g., `MINIMAXAI_BASE_URL=...`, `MINIMAXAI_API_KEYS=...`). Then reference them with the prefix `minimaxai` in the model name (`minimaxai/minimax-m3`).
+
+5. **Verify**: After updating `.env`, reload the config or restart LiteRouter, then call `/v1/models` to see the default model listed and confirm the provider appears with the correct key count.
