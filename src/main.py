@@ -8,9 +8,11 @@ Three routing pathways (configured in .env):
 """
 
 import asyncio
+import codecs
 import json
 import logging
 import time
+import uuid
 from contextlib import asynccontextmanager
 
 import httpx
@@ -37,9 +39,6 @@ config = get_config()
 router = get_router()
 rate_limiter = get_rate_limiter()
 metrics = get_metrics()
-_processing_lock = asyncio.Lock()
-
-
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
 
@@ -55,12 +54,21 @@ def _check_auth(authorization: str | None) -> bool:
 def _get_routing(raw_model: str = "") -> tuple:
     """Return (template_mode, provider_name, provider_config) from requested model or .env settings."""
     provider_name = ""
-    if raw_model and "/" in raw_model:
-        provider_name = raw_model.split("/", 1)[0]
-    elif raw_model:
-        provider_name = raw_model
-    else:
-        provider_name = config.provider
+    # Check for specific models before general provider splitting
+    if raw_model:
+        model_lower = raw_model.lower()
+        if "nemo" in model_lower:
+            provider_name = "openrouter"
+        elif "nvidia" in model_lower or "gpt-oss" in model_lower:
+            provider_name = "nvidia"
+
+    if not provider_name:
+        if raw_model and "/" in raw_model:
+            provider_name = raw_model.split("/", 1)[0]
+        elif raw_model:
+            provider_name = raw_model
+        else:
+            provider_name = config.provider
 
     provider = config.providers.get(provider_name)
     if not provider:
@@ -79,11 +87,14 @@ def _get_routing(raw_model: str = "") -> tuple:
     return template, provider_name, provider
 
 
+
 # ── App ────────────────────────────────────────────────────────────────────────
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    from src.db_logger import init_db
+    init_db()
     logger.info(
         "LiteRouter v2.2 starting — template=%s, provider=%s, port=%d",
         config.template, config.provider, config.port,
@@ -109,24 +120,146 @@ async def http_exception_handler(request: Request, exc: HTTPException):
     )
 
 
+_provider_locks: dict[str, asyncio.Lock] = {}
+
+
 # ── Request Processing ────────────────────────────────────────────────────────
 
 
-async def _process_request(body: dict, provider_name: str, template: str, provider):
+def _fix_streaming_line(line: str, is_responses: bool = False, responses_item_id: str = "") -> str | None:
+    """Sanitize a single complete SSE line for reasoning models to satisfy strict Zod schemas.
+    
+    Returns None to signal 'skip this line entirely' (is_responses mode, no translatable content).
+    Returns "" for empty lines (SSE event delimiters that MUST be preserved).
+    """
+    if not line.startswith("data: "):
+        if is_responses and line.startswith(":"):
+            return None
+        return line
+    if "[DONE]" in line:
+        if is_responses:
+            return None
+        return line
+
+    try:
+        data_content = line[6:].strip()
+        if not data_content:
+            return line
+        data = json.loads(data_content)
+        
+        # 1. Extract reasoning if content is empty/missing
+        choices = data.get("choices", [])
+        for choice in choices:
+            delta = choice.get("delta", {})
+            content = delta.get("content")
+            if content is None or content == "":
+                reasoning = delta.get("reasoning") or delta.get("reasoning_content") or ""
+                if not reasoning and "reasoning_details" in delta:
+                    details = delta["reasoning_details"]
+                    if isinstance(details, list):
+                        reasoning = "".join(d.get("text", "") for d in details if isinstance(d, dict))
+                if reasoning:
+                    delta["content"] = reasoning
+            
+            msg = choice.get("message", {})
+            msg_content = msg.get("content")
+            if msg_content is None or msg_content == "":
+                msg_reasoning = msg.get("reasoning") or msg.get("reasoning_content") or ""
+                if msg_reasoning:
+                    msg["content"] = msg_reasoning
+
+        if is_responses:
+            for choice in choices:
+                delta = choice.get("delta", {})
+                content = delta.get("content", "")
+                if content:
+                    event_data = json.dumps({
+                        'type': 'response.output_text.delta',
+                        'item_id': responses_item_id or f'msg-{data.get("id", "unknown")}',
+                        'output_index': 0,
+                        'content_index': 0,
+                        'delta': content,
+                    })
+                    return f"event: response.output_text.delta\ndata: {event_data}\n"
+            return None
+
+        # 2. Sanitize: Rebuild standard OpenAI chunk structure to satisfy strict Zod schemas
+        clean_choices = []
+        for choice in choices:
+            clean_choice = {
+                "index": choice.get("index", 0),
+                "finish_reason": choice.get("finish_reason")
+            }
+            
+            # Sanitize delta
+            if "delta" in choice:
+                delta = choice["delta"]
+                clean_delta = {}
+                if "role" in delta:
+                    clean_delta["role"] = delta["role"]
+                if "content" in delta:
+                    clean_delta["content"] = delta["content"] or ""
+                elif "role" in delta or "tool_calls" in delta or "function_call" in delta:
+                    # Standard OpenAI delta requires content to be present as string
+                    clean_delta["content"] = ""
+                if "tool_calls" in delta:
+                    clean_delta["tool_calls"] = delta["tool_calls"]
+                if "function_call" in delta:
+                    clean_delta["function_call"] = delta["function_call"]
+                clean_choice["delta"] = clean_delta
+                
+            # Sanitize message (non-streaming compatibility)
+            if "message" in choice:
+                msg = choice["message"]
+                clean_msg = {}
+                if "role" in msg:
+                    clean_msg["role"] = msg["role"]
+                if "content" in msg:
+                    clean_msg["content"] = msg["content"] or ""
+                if "tool_calls" in msg:
+                    clean_msg["tool_calls"] = msg["tool_calls"]
+                if "function_call" in msg:
+                    clean_msg["function_call"] = msg["function_call"]
+                clean_choice["message"] = clean_msg
+                
+            clean_choices.append(clean_choice)
+            
+        clean_data = {
+            "id": data.get("id", f"chatcmpl-{int(time.time())}"),
+            "object": data.get("object", "chat.completion.chunk"),
+            "created": data.get("created", int(time.time())),
+            "model": data.get("model", "default"),
+            "choices": clean_choices
+        }
+        if "usage" in data:
+            clean_data["usage"] = data["usage"]
+            
+        return f"data: {json.dumps(clean_data)}"
+    except Exception:
+        return line
+
+
+async def _process_request(body: dict, provider_name: str, template: str, provider, req_id: str, is_responses: bool = False):
     """Forward a single request to the upstream provider."""
     should_stream = body.get("stream", False)
     use_anthropic = template == "anthropic"
     use_gemini = is_gemini_provider(provider)
 
-    async with _processing_lock:
+    min_delay_ms = config.provider_min_delays.get(provider_name, config.rotate_delay_ms)
+    
+    # Get or create lock for this specific provider
+    if provider_name not in _provider_locks:
+        _provider_locks[provider_name] = asyncio.Lock()
+    provider_lock = _provider_locks[provider_name]
+
+    async with provider_lock:
         # Rate limit check
-        min_delay_ms = config.provider_min_delays.get(provider_name, config.rotate_delay_ms)
         rl = rate_limiter.can_call(provider_name, min_delay_ms)
+        wait_ms = 0
         if not rl["ready"]:
-            logger.info("[RateLimiter] %s waiting %dms", provider_name, rl["wait_ms"])
+            wait_ms = rl["wait_ms"]
             metrics.increment_rate_limit_wait()
-            metrics.add_rate_limit_wait_ms(rl["wait_ms"])
-            await asyncio.sleep(rl["wait_ms"] / 1000.0)
+            metrics.add_rate_limit_wait_ms(wait_ms)
 
         # Get next API key
         key = router.get_next_key(provider_name, provider.api_keys)
@@ -136,67 +269,77 @@ async def _process_request(body: dict, provider_name: str, template: str, provid
 
         metrics.increment_request()
         metrics.increment_key_usage(key)
-        start_time = time.time()
 
-        # Apply extra model params from config (temperature, etc.)
-        # but NEVER overwrite the model — the client knows what it asked for
-        model_config = config.model_params.get(provider_name)
-        if model_config:
-            for k, v in model_config.items():
-                if k != "model" and k not in body:
-                    body[k] = v
+    # Sleep outside the lock
+    if wait_ms > 0:
+        logger.info("[RateLimiter] %s waiting %dms (outside lock)", provider_name, wait_ms)
+        await asyncio.sleep(wait_ms / 1000.0)
 
-        # Strip provider prefix from model ID (e.g. "nvidia/model-name" → "model-name")
-        if "/" in body.get("model", "") and provider_name:
-            prefix = body["model"].split("/", 1)[0]
-            if prefix == provider_name:
-                body["model"] = body["model"].split("/", 1)[1]
+    start_time = time.time()
 
-        # Build request based on template + provider
-        headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
-        payload = body
+    # Apply extra model params from config (temperature, etc.)
+    # but NEVER overwrite the model — the client knows what it asked for
+    model_config = config.model_params.get(provider_name)
+    if model_config:
+        for k, v in model_config.items():
+            if k != "model" and k not in body:
+                body[k] = v
 
-        if use_gemini:
-            # Gemini pathway
-            if should_stream:
-                target_url = f"{provider.base_url}/models/{body['model']}:streamGenerateContent"
-            else:
-                target_url = f"{provider.base_url}/models/{body['model']}:generateContent"
-            payload = build_gemini_request_body(body)
+    # Strip provider prefix from model ID if it starts with any known provider name
+    raw_model = body.get("model", "")
+    if "/" in raw_model:
+        prefix = raw_model.split("/", 1)[0]
+        if prefix in config.providers or prefix == "openrouter" or prefix == "nvidia":
+            body["model"] = raw_model.split("/", 1)[1]
+
+    # Build request based on template + provider
+    headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
+    payload = body
+
+    if use_gemini:
+        # Gemini pathway
+        if should_stream:
+            target_url = f"{provider.base_url}/models/{body['model']}:streamGenerateContent"
+        else:
+            target_url = f"{provider.base_url}/models/{body['model']}:generateContent"
+        payload = build_gemini_request_body(body)
+        del headers["Authorization"]
+
+    elif use_anthropic:
+        # Anthropic template → /messages endpoint (transform to Anthropic Messages format)
+        target_url = f"{provider.base_url}/messages"
+        from src.anthropic import build_anthropic_request_body
+        payload = build_anthropic_request_body(body)
+        if is_anthropic_provider(provider):
+            # Native Anthropic: use x-api-key header
+            headers["x-api-key"] = key
+            headers["anthropic-version"] = "2023-06-01"
             del headers["Authorization"]
 
-        elif use_anthropic:
-            # Anthropic template → /messages endpoint (transform to Anthropic Messages format)
-            target_url = f"{provider.base_url}/messages"
-            from src.anthropic import build_anthropic_request_body
-            payload = build_anthropic_request_body(body)
-            if is_anthropic_provider(provider):
-                # Native Anthropic: use x-api-key header
-                headers["x-api-key"] = key
-                headers["anthropic-version"] = "2023-06-01"
-                del headers["Authorization"]
+    else:
+        # OpenAI template → /chat/completions endpoint
+        target_url = f"{provider.base_url}/chat/completions"
 
-        else:
-            # OpenAI template → /chat/completions endpoint
-            target_url = f"{provider.base_url}/chat/completions"
-
-        # Dispatch
-        if should_stream:
-            return await _stream_request(
-                target_url, payload, headers, key, provider_name,
-                use_gemini, use_anthropic, start_time,
-            )
-        return await _buffered_request(
+    # Dispatch
+    from src.db_logger import log_leg
+    log_leg(req_id, 2, "OUTGOING", "literouter", "upstream", url=target_url, body=payload)
+    if should_stream:
+        return await _stream_request(
             target_url, payload, headers, key, provider_name,
-            use_gemini, use_anthropic, start_time,
+            use_gemini, use_anthropic, start_time, req_id, is_responses=is_responses,
         )
+    return await _buffered_request(
+        target_url, payload, headers, key, provider_name,
+        use_gemini, use_anthropic, start_time, req_id,
+    )
 
 
 async def _buffered_request(
     target_url, payload, headers, key, provider_name,
-    use_gemini, use_anthropic, start_time,
+    use_gemini, use_anthropic, start_time, req_id,
 ):
     """Non-streaming: buffer full response, transform, return JSON."""
+    from src.db_logger import log_leg
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
             if use_gemini:
@@ -210,13 +353,14 @@ async def _buffered_request(
                 router.report_error(provider_name, key, resp.status_code)
 
             if not resp.is_success:
-                err_text = resp.text[:200]
-                logger.warning("[%s] upstream %d: %s", provider_name, resp.status_code, err_text)
+                err_text = resp.text
+                log_leg(req_id, 3, "INCOMING", "upstream", "literouter", status_code=resp.status_code, body={"error": err_text})
+                logger.warning("[%s] upstream %d: %s | Payload sent: %s", provider_name, resp.status_code, err_text, payload)
                 metrics.increment_error()
                 metrics.increment_error_by_status(resp.status_code)
                 return JSONResponse(
                     status_code=resp.status_code,
-                    content={"error": {"message": err_text, "type": "upstream_error", "code": resp.status_code}},
+                    content={"error": {"message": err_text[:200], "type": "upstream_error", "code": resp.status_code}},
                 )
 
             metrics.increment_success()
@@ -225,21 +369,31 @@ async def _buffered_request(
             logger.info("[%s] success status=%d latency=%dms", provider_name, resp.status_code, latency_ms)
 
             data = resp.json()
+            log_leg(req_id, 3, "INCOMING", "upstream", "literouter", status_code=resp.status_code, body=data)
             if use_gemini:
                 data = transform_gemini_response(data)
-            # Anthropic + OpenRouter: pass response as-is (OpenRouter returns OpenAI-format)
-            # Anthropic + native: pass response as-is (client expects Anthropic format)
+            # Fix null content for reasoning models (OpenCode can't parse null content)
+            for choice in data.get("choices", []):
+                msg = choice.get("message", {})
+                msg_content = msg.get("content")
+                if not msg_content:
+                    msg_reasoning = msg.get("reasoning") or msg.get("reasoning_content") or ""
+                    if msg_reasoning:
+                        msg["content"] = msg_reasoning
             return JSONResponse(content=data)
 
     except httpx.TimeoutException:
+        log_leg(req_id, 3, "INCOMING", "upstream", "literouter", status_code=504, body={"error": "timeout"})
         logger.error("[%s] request timed out", provider_name)
         metrics.increment_error()
         return JSONResponse(status_code=504, content={"error": {"message": "Upstream timeout.", "type": "upstream_error"}})
     except httpx.ConnectError as exc:
+        log_leg(req_id, 3, "INCOMING", "upstream", "literouter", status_code=502, body={"error": f"connection refused: {exc}"})
         logger.error("[%s] connection refused: %s", provider_name, exc)
         metrics.increment_error()
         return JSONResponse(status_code=502, content={"error": {"message": "Upstream connection refused.", "type": "upstream_error"}})
     except Exception as exc:
+        log_leg(req_id, 3, "INCOMING", "upstream", "literouter", status_code=500, body={"error": str(exc)})
         logger.error("[%s] unexpected error: %s", provider_name, exc)
         metrics.increment_error()
         return JSONResponse(status_code=500, content={"error": {"message": "Internal server error.", "type": "internal_error"}})
@@ -247,9 +401,10 @@ async def _buffered_request(
 
 async def _stream_request(
     target_url, payload, headers, key, provider_name,
-    use_gemini, use_anthropic, start_time,
+    use_gemini, use_anthropic, start_time, req_id, is_responses: bool = False,
 ):
     """Streaming: return StreamingResponse with transformed chunks."""
+    from src.db_logger import log_leg
 
     async def _upstream_stream():
         try:
@@ -264,16 +419,65 @@ async def _stream_request(
                         router.report_error(provider_name, key, resp.status_code)
                     if not resp.is_success:
                         err_body = await resp.aread()
-                        err_text = err_body[:200].decode("utf-8", errors="replace")
+                        err_text = err_body.decode("utf-8", errors="replace")
+                        log_leg(req_id, 3, "INCOMING", "upstream", "literouter", status_code=resp.status_code, body={"error": err_text})
+                        logger.warning("[%s] stream upstream %d: %s | Payload sent: %s", provider_name, resp.status_code, err_text, payload)
                         metrics.increment_error()
                         metrics.increment_error_by_status(resp.status_code)
-                        import json
-                        err_payload = json.dumps({"error": {"message": err_text, "type": "upstream_error"}})
+                        err_payload = json.dumps({"error": {"message": err_text[:200], "type": "upstream_error"}})
                         yield f"data: {err_payload}\n\n".encode("utf-8")
                         return
-                    # All pathways: pass streaming response as-is
+                    # Log leg 3 successfully starting
+                    log_leg(req_id, 3, "INCOMING", "upstream", "literouter", status_code=resp.status_code, body={"status": "streaming starting"})
+                    
+                    if is_responses:
+                        resp_id = f"resp-{req_id}"
+                        item_id = f"msg-{req_id}"
+                        created_data = json.dumps({'type': 'response.created', 'response': {'id': resp_id, 'object': 'response', 'status': 'in_progress', 'output': []}})
+                        yield f"event: response.created\ndata: {created_data}\n\n".encode("utf-8")
+                        item_added = json.dumps({'type': 'response.output_item.added', 'output_index': 0, 'item': {'type': 'message', 'id': item_id, 'status': 'in_progress', 'role': 'assistant', 'content': []}})
+                        yield f"event: response.output_item.added\ndata: {item_added}\n\n".encode("utf-8")
+                        part_added = json.dumps({'type': 'response.content_part.added', 'item_id': item_id, 'output_index': 0, 'content_index': 0, 'part': {'type': 'output_text', 'text': ''}})
+                        yield f"event: response.content_part.added\ndata: {part_added}\n\n".encode("utf-8")
+                        accumulated_text = []
+
+                    # Fix null content in streaming chunks for reasoning models using incremental decoder and line buffer
+                    decoder = codecs.getincrementaldecoder("utf-8")()
+                    buffer = ""
                     async for chunk in resp.aiter_bytes():
-                        yield chunk
+                        buffer += decoder.decode(chunk)
+                        while "\n" in buffer:
+                            line, buffer = buffer.split("\n", 1)
+                            processed = _fix_streaming_line(line, is_responses, responses_item_id=item_id if is_responses else "")
+                            if processed is not None:
+                                yield (processed + "\n").encode("utf-8")
+                                if is_responses and '"delta"' in processed:
+                                    try:
+                                        evt = json.loads(processed.split("data: ", 1)[1])
+                                        accumulated_text.append(evt.get("delta", ""))
+                                    except Exception:
+                                        pass
+                    if buffer:
+                        processed = _fix_streaming_line(buffer, is_responses, responses_item_id=item_id if is_responses else "")
+                        if processed is not None:
+                            yield processed.encode("utf-8")
+                            if is_responses and '"delta"' in processed:
+                                try:
+                                    evt = json.loads(processed.split("data: ", 1)[1])
+                                    accumulated_text.append(evt.get("delta", ""))
+                                except Exception:
+                                    pass
+
+                    if is_responses:
+                        full_text = "".join(accumulated_text)
+                        text_done = json.dumps({'type': 'response.output_text.done', 'item_id': item_id, 'output_index': 0, 'content_index': 0, 'text': full_text})
+                        yield f"event: response.output_text.done\ndata: {text_done}\n\n".encode("utf-8")
+                        part_done = json.dumps({'type': 'response.content_part.done', 'item_id': item_id, 'output_index': 0, 'content_index': 0, 'part': {'type': 'output_text', 'text': full_text}})
+                        yield f"event: response.content_part.done\ndata: {part_done}\n\n".encode("utf-8")
+                        item_done = json.dumps({'type': 'response.output_item.done', 'output_index': 0, 'item': {'type': 'message', 'id': item_id, 'status': 'completed', 'role': 'assistant', 'content': [{'type': 'output_text', 'text': full_text}]}})
+                        yield f"event: response.output_item.done\ndata: {item_done}\n\n".encode("utf-8")
+                        completed_data = json.dumps({'type': 'response.completed', 'response': {'id': resp_id, 'object': 'response', 'status': 'completed', 'output': [{'type': 'message', 'id': item_id, 'status': 'completed', 'role': 'assistant', 'content': [{'type': 'output_text', 'text': full_text}]}]}})
+                        yield f"event: response.completed\ndata: {completed_data}\n\n".encode("utf-8")
             metrics.increment_success()
             latency_ms = int((time.time() - start_time) * 1000)
             metrics.add_latency(latency_ms)
@@ -281,19 +485,16 @@ async def _stream_request(
         except httpx.TimeoutException:
             logger.error("[%s] stream timed out", provider_name)
             metrics.increment_error()
-            import json
             err_payload = json.dumps({"error": {"message": "Upstream timeout.", "type": "upstream_error"}})
             yield f"data: {err_payload}\n\n".encode("utf-8")
         except httpx.ConnectError as exc:
             logger.error("[%s] stream connection refused: %s", provider_name, exc)
             metrics.increment_error()
-            import json
             err_payload = json.dumps({"error": {"message": "Upstream connection refused.", "type": "upstream_error"}})
             yield f"data: {err_payload}\n\n".encode("utf-8")
         except Exception as exc:
             logger.error("[%s] stream unexpected error: %s", provider_name, exc)
             metrics.increment_error()
-            import json
             err_payload = json.dumps({"error": {"message": "Internal server error.", "type": "internal_error"}})
             yield f"data: {err_payload}\n\n".encode("utf-8")
 
@@ -399,15 +600,81 @@ async def chat_completions(request: Request, authorization: str | None = Header(
     if "input" in body and "messages" not in body:
         body["messages"] = body["input"]
 
-    # Sanitize custom block types injected by client TUI/CLI systems
+    # ── ACP → ChatCompletions message sanitization ────────────────────────────
+    # ACP input arrays can contain items that are NOT valid ChatCompletions
+    # messages. Specifically:
+    #   - {type: "function_call", call_id, name, arguments}  → no "role" key
+    #   - {type: "function_call_output", call_id, output}    → no "role" key
+    # Upstream providers reject these with 400 Bad Request.
+    # We convert them to proper OpenAI tool_calls / tool-role messages.
     if "messages" in body and isinstance(body["messages"], list):
+        sanitized_messages = []
         for msg in body["messages"]:
-            if isinstance(msg, dict) and isinstance(msg.get("content"), list):
+            if not isinstance(msg, dict):
+                sanitized_messages.append(msg)
+                continue
+
+            msg_type = msg.get("type", "")
+
+            if msg_type == "function_call":
+                # Convert ACP function_call → assistant message with tool_calls
+                tool_call = {
+                    "id": msg.get("call_id", f"call_{uuid.uuid4().hex[:8]}"),
+                    "type": "function",
+                    "function": {
+                        "name": msg.get("name", "unknown"),
+                        "arguments": msg.get("arguments", "{}"),
+                    },
+                }
+                sanitized_messages.append({
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [tool_call],
+                })
+                logger.info("[Sanitizer] Converted function_call '%s' to assistant tool_calls", msg.get("name"))
+                continue
+
+            if msg_type == "function_call_output":
+                # Convert ACP function_call_output → tool-role message
+                sanitized_messages.append({
+                    "role": "tool",
+                    "tool_call_id": msg.get("call_id", ""),
+                    "content": msg.get("output", ""),
+                })
+                logger.info("[Sanitizer] Converted function_call_output to tool message")
+                continue
+
+            # Standard message — sanitize content block types
+            if isinstance(msg.get("content"), list):
                 for block in msg["content"]:
                     if isinstance(block, dict) and block.get("type") in ("input_text", "output_text"):
                         block_type = block.get("type")
                         block["type"] = "text"
                         logger.info("[Sanitizer] Replaced %s block with standard text", block_type)
+
+            sanitized_messages.append(msg)
+
+        body["messages"] = sanitized_messages
+
+    # Sanitize tools schema if necessary (e.g. OpenAI format vs SDK raw format)
+    if "tools" in body and isinstance(body["tools"], list):
+        sanitized_tools = []
+        for tool in body["tools"]:
+            if isinstance(tool, dict):
+                # If the tool has type=function but does not have the 'function' object (OpenAI format requirement)
+                if tool.get("type") == "function" and "function" not in tool:
+                    # Move name, description, parameters to the 'function' nested dictionary
+                    fn_data = {}
+                    for k in ["name", "description", "parameters"]:
+                        if k in tool:
+                            fn_data[k] = tool[k]
+                    sanitized_tools.append({
+                        "type": "function",
+                        "function": fn_data
+                    })
+                else:
+                    sanitized_tools.append(tool)
+        body["tools"] = sanitized_tools
 
     raw_model: str = body.get("model", "")
 
@@ -422,10 +689,32 @@ async def chat_completions(request: Request, authorization: str | None = Header(
             },
         )
 
-    # Get routing from requested model or .env (template + provider)
-    template, provider_name, provider = _get_routing(raw_model)
+    req_id = f"req-{uuid.uuid4().hex[:8]}"
+    from src.db_logger import log_leg
+    log_leg(req_id, 1, "INCOMING", "opencode", "literouter", url=request.url.path, body=body)
+    logger.info("[%s] INCOMING REQUEST | Path: %s | Model: %s | Body: %s", req_id, request.url.path, raw_model, json.dumps(body))
 
-    return await _process_request(body, provider_name, template, provider)
+    template, provider_name, provider = _get_routing(raw_model)
+    is_responses = request.url.path == "/v1/responses"
+    try:
+        response = await _process_request(body, provider_name, template, provider, req_id, is_responses=is_responses)
+        if isinstance(response, JSONResponse):
+            # Read bytes of response for logging
+            resp_content = response.body.decode("utf-8", errors="replace")
+            try:
+                resp_json = json.loads(resp_content)
+            except Exception:
+                resp_json = {"raw": resp_content}
+            log_leg(req_id, 4, "OUTGOING", "literouter", "opencode", status_code=response.status_code, body=resp_json)
+            logger.info("[%s] OUTGOING RESPONSE | Status: %d | Body: %s", req_id, response.status_code, resp_content)
+        else:
+            log_leg(req_id, 4, "OUTGOING", "literouter", "opencode", status_code=200, body={"status": "streaming started"})
+            logger.info("[%s] OUTGOING RESPONSE | Started Stream Response", req_id)
+        return response
+    except Exception as exc:
+        log_leg(req_id, 4, "OUTGOING", "literouter", "opencode", status_code=500, body={"error": str(exc)})
+        logger.error("[%s] OUTGOING RESPONSE ERROR | %s", req_id, exc, exc_info=True)
+        raise exc
 
 
 @app.get("/health")
@@ -449,7 +738,7 @@ async def health():
             },
         },
         "router": router.get_router_status(config.providers),
-        "queue": {"length": 0, "isProcessing": _processing_lock.locked(), "rotateDelayMs": config.rotate_delay_ms},
+        "queue": {"length": 0, "isProcessing": any(lock.locked() for lock in _provider_locks.values()), "rotateDelayMs": config.rotate_delay_ms},
         "rateLimiter": {"providerStatus": rate_limiter.get_status(), "defaultMinDelayMs": config.rotate_delay_ms},
         "metrics": metrics.get_metrics(),
         "redis": {"connected": check_redis(), "info": _redis_info_safe()},
@@ -482,7 +771,7 @@ async def list_models(authorization: str | None = Header(None)):
                 "supported_models": ["claude-sonnet-4-6", "claude-opus-4-6", "claude-haiku-4-5"],
             }
         else:
-            result[name] = {"configured": True, "model": config.model_params.get(name, {}).get("model", "not set")}
+            result[name] = await _fetch_provider_models(name, provider)
     return JSONResponse(content={"status": "ok", "providers": result})
 
 
@@ -502,6 +791,28 @@ async def _fetch_openrouter_models(provider):
         return {"error": f"OpenRouter returned {resp.status_code}", "detail": resp.text[:200]}
     except Exception as exc:
         return {"error": str(exc)}
+
+
+async def _fetch_provider_models(name: str, provider) -> dict:
+    """Fetch models from any OpenAI-compatible provider (Nvidia, etc.)."""
+    keys = provider.api_keys
+    models_url = f"{provider.base_url}/models"
+    headers = {}
+    if keys:
+        headers["Authorization"] = f"Bearer {keys[0]}"
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.get(models_url, headers=headers)
+        if resp.status_code == 200:
+            body = resp.json()
+            raw = body.get("data") if isinstance(body, dict) else body
+            if isinstance(raw, list):
+                models = [{"id": m.get("id", "")} for m in raw]
+                return {"configured": True, "count": len(models), "models": models}
+            return {"configured": True, "model": config.model_params.get(name, {}).get("model", "not set")}
+        return {"configured": True, "error": f"API returned {resp.status_code}"}
+    except Exception as exc:
+        return {"configured": True, "error": str(exc)}
 
 
 def _redis_info_safe() -> dict:

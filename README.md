@@ -1,8 +1,13 @@
 # LiteRouter
 
-**A Python + Redis API key load balancer for LLM providers.**
+**A high-performance Python + Redis proxy and API key load balancer for LLM providers.**
 
-LiteRouter sits between your application and LLM providers, distributing requests across multiple API keys using round-robin routing with automatic cooldown, quarantine, and rate limiting.
+LiteRouter sits between your modern AI applications (like OpenCode, utilizing the Agentic Communication Protocol / ACP) and standard LLM upstream providers (OpenRouter, Nvidia, Anthropic). It acts as an intelligent middleware to:
+1. **Translate Protocols**: Sanitizes and converts complex client-side multi-turn ACP requests (e.g., `input_text`, `function_call` items without roles) into valid ChatCompletions or Anthropic formats.
+2. **Distribute Load**: Distributes requests across multiple API keys using round-robin routing with automatic cooldown, quarantine, and per-provider rate limiting.
+3. **Troubleshoot & Validate**: Serves as the primary debugging surface for Zod schema validation errors, SSE stream dropouts, and upstream 400 Bad Requests.
+
+*(If you are an AI Agent debugging LiteRouter, **you must read `.agents/skills/literouter-troubleshooting/SKILL.md`** first to understand the ACP event lifecycle and how to troubleshoot 400/JSON parsing errors.)*
 
 ## Multi-Provider Routing
 

@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 
 COOLDOWN_TTL = 3600  # 1 hour max TTL for cooldown keys
 BASE_COOLDOWN_SEC = 60  # initial cooldown for 429
+BASE_COOLDOWN_403_SEC = 600  # 10 min initial cooldown for 403 (key limit exceeded)
 MAX_COOLDOWN_SEC = 3600  # 1 hour cap
 
 # ── In-memory fallback state ───────────────────────────────────────────────────
@@ -189,7 +190,8 @@ class RedisRouter:
         """Handle an upstream error for *key*.
 
         - 429 → exponential backoff cooldown (60 s → 120 s → … → 1 h max)
-        - 401 / 403 → permanent quarantine
+        - 403 → cooldown (10 min base, exponential to 1 h max)
+        - 401 → permanent quarantine
         """
         sha = _sha256(key)
 
@@ -204,9 +206,10 @@ class RedisRouter:
         assert self._redis is not None
         now = time.time()
 
-        if status == 429:
+        if status in (429, 403):
+            base = BASE_COOLDOWN_403_SEC if status == 403 else BASE_COOLDOWN_SEC
             cooldown_raw = self._redis.get(_cooldown_key(provider_name, sha))
-            base_delay = BASE_COOLDOWN_SEC
+            base_delay = base
 
             if cooldown_raw is not None:
                 remaining = float(cooldown_raw) - now
@@ -218,13 +221,13 @@ class RedisRouter:
                 _cooldown_key(provider_name, sha), COOLDOWN_TTL, str(expiry)
             )
             logger.info(
-                f"[{provider_name}] 429 for key {key[:10]}... | "
+                f"[{provider_name}] {status} for key {key[:10]}... | "
                 f"{int(base_delay)}s cooldown"
             )
-        elif status in (401, 403):
+        elif status == 401:
             self._redis.sadd(_quarantine_key(provider_name), sha)
             logger.warning(
-                f"[{provider_name}] {status} for key {key[:10]}... | "
+                f"[{provider_name}] 401 for key {key[:10]}... | "
                 f"Quarantined permanently"
             )
 
@@ -238,21 +241,22 @@ class RedisRouter:
         if provider_name not in _mem_quarantine:
             _mem_quarantine[provider_name] = set()
 
-        if status == 429:
+        if status in (429, 403):
             cooldowns = _mem_cooldowns[provider_name]
             existing = cooldowns.get(sha, 0.0)
-            base_delay = BASE_COOLDOWN_SEC
+            base = BASE_COOLDOWN_403_SEC if status == 403 else BASE_COOLDOWN_SEC
+            base_delay = base
             if existing > now:
                 base_delay = min((existing - now) * 2, MAX_COOLDOWN_SEC)
             cooldowns[sha] = now + base_delay
             logger.info(
-                f"[{provider_name}] 429 for key {key[:10]}... | "
+                f"[{provider_name}] {status} for key {key[:10]}... | "
                 f"{int(base_delay)}s cooldown (memory)"
             )
-        elif status in (401, 403):
+        elif status == 401:
             _mem_quarantine[provider_name].add(sha)
             logger.warning(
-                f"[{provider_name}] {status} for key {key[:10]}... | "
+                f"[{provider_name}] 401 for key {key[:10]}... | "
                 f"Quarantined permanently (memory)"
             )
 

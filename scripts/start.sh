@@ -20,7 +20,11 @@ echo "Starting LiteRouter..."
 nohup uv run uvicorn src.main:app --host 0.0.0.0 --port 7766 > logs/literouter.log 2>&1 &
 PID=$!
 echo "$PID" > "$PID_FILE"
-disown
+# Check if disown is available (dash/sh doesn't have it, bash does)
+if [ -n "$BASH_VERSION" ] || type disown >/dev/null 2>&1; then
+    disown "$PID" 2>/dev/null || true
+fi
+
 
 sleep 2
 

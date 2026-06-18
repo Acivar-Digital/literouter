@@ -276,9 +276,26 @@ so it's clear how far execution got before failure.
 - `_docs/IMPACT_MAP.md` - **Change Impact Map**: Internal module dependency graph organized by blast radius. **Always consult before making architectural changes.**
 
 ## LiteRouter Proxy Guidelines
+
+**High-Level Purpose**: LiteRouter is a high-performance proxy that translates modern AI SDK requests (like the Agentic Communication Protocol / ACP) into standard upstream provider calls (OpenRouter, Nvidia, Anthropic). It distributes requests across multiple API keys using round-robin routing with automatic cooldown, quarantine, and rate limiting.
+
+### 🚨 MANDATORY TROUBLESHOOTING SKILL 🚨
+**If you are debugging LiteRouter, YOU MUST READ the troubleshooting skill first:**
+`view_file` on `.agents/skills/literouter-troubleshooting/SKILL.md`
+
+This skill contains the **source of truth** for:
+- **Topics**: Resolving `ZodValidationError`, "text part not found" errors, JSON Parse errors from corrupted SSE streams, and upstream 400 Bad Requests during multi-turn conversations.
+- **ACP Lifecycle**: The strict, mandatory Server-Sent Events (SSE) sequence that OpenCode requires.
+- **Routing**: How to add new models to OpenCode and map them to LiteRouter.
+
+### Core Architecture & File Map
+- `src/main.py` - **The Core Engine**: Handles `/v1/chat/completions` and `/v1/responses`, sanitizes ACP input (e.g., stripping `function_call` without roles), and manages the SSE streaming lifecycle.
+- `src/config.py` - **Routing & Setup**: Loads environment variables, determines which provider (e.g., Nvidia vs. OpenRouter) handles the request based on the model string prefix.
+- `src/router.py` - **Key Rotation**: Uses Redis or in-memory fallback to atomically cycle through available API keys per provider.
+- `logs/literouter.log` & `logs/literouter_logs.db` - **The Truth**: The primary locations to check for stack traces, Zod validation errors, and raw incoming/outgoing request bodies. (Local logs under `logs/` are ignored in Git to prevent leaks.)
+
+### Operations & Testing
 - Run LiteRouter locally: `nohup uv run uvicorn src.main:app --host 0.0.0.0 --port 7766 > logs/literouter.log 2>&1 & echo $! > .literouter.pid`
-- Local logs under `logs/` are ignored in Git to prevent leaks.
-- Supports `/v1/responses` for OpenCode compatibility, translating incoming `input_text` content blocks to standard `text` blocks.
 - Falls back gracefully to in-memory key rotation if the Redis server is unavailable.
 - **Mandatory E2E Test Protocol**: All testing must follow the "right-way" testing protocol detailed in `tests/right-way-test.md`. You must read `tests/right-way-test.md` and verify the live running daemon process using actual client requests before asserting complete status.
 - **Code Change Test Protocol (`right-way-test`)**:

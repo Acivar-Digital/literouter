@@ -2,6 +2,12 @@
 
 All notable changes to LiteRouter will be documented in this file.
 
+## [2.6.0] — 2026-06-18
+
+### Fixed
+- **Multi-turn tool calling 400 errors** — Fixed an issue where upstream providers (OpenRouter, Nvidia) returned 400 Bad Request on multi-turn conversations. This was caused by ACP `function_call` and `function_call_output` items lacking a `role` field. The sanitizer now properly converts these to the standard OpenAI `tool_calls` format.
+
+
 ## [2.5.0] — 2026-06-18
 
 ### Architecture — Multi-Provider Routing
