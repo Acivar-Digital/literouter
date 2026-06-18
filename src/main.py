@@ -285,6 +285,11 @@ async def _process_request(body: dict, provider_name: str, template: str, provid
             if k != "model" and k not in body:
                 body[k] = v
 
+    # Ensure max_tokens is set — without it, some providers/models default to
+    # a very small output limit, causing truncated or empty responses.
+    if "max_tokens" not in body and "max_output_tokens" not in body:
+        body["max_tokens"] = 1_000_000
+
     # Strip provider prefix from model ID if it starts with any known provider name
     raw_model = body.get("model", "")
     if "/" in raw_model:
