@@ -145,19 +145,24 @@ Returns per-provider stats: key counts, health scores, active cooldowns, rotatio
 
 ## OpenCode Integration
 
+> [!WARNING]
+> **CRITICAL SDK REQUIREMENT**: You MUST use `@ai-sdk/openai-compatible` instead of `@ai-sdk/openai` in your `opencode.json` configuration. 
+> 
+> *Why?* `@ai-sdk/openai` requests the `/v1/responses` endpoint (Agentic Communication Protocol/ACP format) by default. Upstream providers like OpenRouter and Nvidia only accept standard OpenAI `/v1/chat/completions`. Translating between these formats in flight is highly fragile, causing tool-call failures (Zod validation errors) and SSE stream corruption. Using `@ai-sdk/openai-compatible` forces the client to use `/v1/chat/completions` natively, bypassing all translation logic.
+
 Point any OpenCode provider at LiteRouter to get automatic key rotation:
 
 ```json
 {
   "provider": {
     "openrouter": {
-      "npm": "@ai-sdk/openai",
+      "npm": "@ai-sdk/openai-compatible",
       "baseURL": "http://localhost:7766/v1",
       "apiKey": "sk-lr-your-auth-key",
       "models": {}
     },
     "nvidia": {
-      "npm": "@ai-sdk/openai",
+      "npm": "@ai-sdk/openai-compatible",
       "baseURL": "http://localhost:7766/v1",
       "apiKey": "sk-lr-your-auth-key",
       "models": {}

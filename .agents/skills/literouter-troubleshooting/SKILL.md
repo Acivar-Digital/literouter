@@ -7,16 +7,31 @@ description: Guide for understanding LiteRouter architecture, ACP protocol trans
 
 LiteRouter acts as a high-performance proxy translating modern AI SDK requests (like the Agentic Communication Protocol / OpenCode) into standard upstream provider calls (OpenRouter, Nvidia, Anthropic).
 
-## 1. Key Architecture & Flow
+## ⚠️ 1. THE MANDATORY SDK REQUIREMENT: `@ai-sdk/openai-compatible` ⚠️
+
+**DO NOT use `@ai-sdk/openai` in your OpenCode configuration (`opencode.json`) for LiteRouter endpoints. You MUST use `@ai-sdk/openai-compatible` instead.**
+
+### The Protocol Mismatch Root Cause
+1. **The Endpoint Mismatch**: `@ai-sdk/openai` uses the modern `/v1/responses` (Agentic Communication Protocol / ACP) endpoint by default. However, upstream providers like OpenRouter and Nvidia only accept standard OpenAI ChatCompletions (`/v1/chat/completions`).
+2. **Fragile Protocol Translation**: LiteRouter contains an endpoint mapping layer to translate `/v1/responses` ↔ `/v1/chat/completions`, but this translation layer is extremely fragile and prone to failure:
+   - **Tool Call Failures**: Upstream models (like `owl-alpha`) emitting `finish_reason: "tool_calls"` had their structured tool outputs dropped or malformed by the ACP translator, leading to client-side `ZodValidationError` errors ("expected object, received undefined").
+   - **Stream Corruption**: Attempting to inject missing ACP structures/tokens into the SSE stream often broke the `\n\n` event delimiters, resulting in consecutive events fusing and throwing JSON Parse errors.
+3. **The Simple Solution**: By switching the provider npm package in `opencode.json` to `@ai-sdk/openai-compatible`, the client communicates natively via standard `/v1/chat/completions`. LiteRouter then behaves as a pure rotating proxy (only swapping authorization headers and forwarding bytes), completely bypassing the fragile protocol translation code.
+
+---
+
+## 2. Key Architecture & Flow
 - **Entrypoints (`src/main.py`)**: 
   - `/v1/chat/completions` (Standard OpenAI)
-  - `/v1/responses` (ACP Protocol used by modern agents)
+  - `/v1/responses` (ACP Protocol used by modern agents - **avoid where possible by using the compatible SDK**)
 - **Routing Logic (`config.py` & `main.py`)**: Checks the requested `model` string to determine the provider (e.g., `nemo` -> Nvidia, others -> OpenRouter).
 - **Concurrency & Key Rotation**: Uses `KeyRotator` to cycle through available API keys per provider. **CRITICAL**: Each provider uses an isolated `asyncio.Lock` (`self.locks = defaultdict(asyncio.Lock)`) to ensure that rate-limit delays or upstream hangs in one provider (e.g., OpenRouter) do not stall queues for another (e.g., Nvidia).
 - **Sanitization**: Standardizes `input_text` blocks to standard `text` blocks.
 
-## 2. Streaming & The ACP Protocol (`/v1/responses`)
-The ACP protocol requires a highly specific lifecycle for Server-Sent Events (SSE). It expects the full structural tree to be built event by event.
+---
+
+## 3. Streaming & The ACP Protocol (`/v1/responses`)
+If you MUST use `/v1/responses`, the ACP protocol requires a highly specific lifecycle for Server-Sent Events (SSE). It expects the full structural tree to be built event by event.
 
 ### The ACP Event Lifecycle (Mandatory Order)
 1. `response.created`: Signals the response has started.
@@ -34,12 +49,21 @@ The ACP protocol requires a highly specific lifecycle for Server-Sent Events (SS
 - **Explicit Skips**: The sanitizer function `_fix_streaming_line` returns `None` to explicitly signal "skip this line entirely", and `""` to signal "preserve this empty line delimiter".
 - **Self-Terminating Events**: When yielding translated ACP events, ensure the string ends with `\n\n` (e.g. `yield f"event: response.output_text.delta\ndata: {data}\n\n"`) to guarantee clean separation.
 
-## 3. Common Failure Modes & Where to Check
+---
+
+## 4. Failed Workaround Approaches & Why They Failed
+During the attempt to make `/v1/responses` translation work with `owl-alpha`'s tool calls, the following workarounds were tried and abandoned:
+1. **ACP function_call emission**: We accumulated tool call deltas and emitted them as `response.output_item.added` / `response.output_item.done` with `type: "function_call"`. While this worked in curl tests, OpenCode's client-side SDK rejected it with `ZodValidationError` ("expected object, received undefined"). **Reason for Failure**: Strict Zod schema constraints in the SDK were not satisfied by the translated payload.
+2. **Tagged string delta parsing**: Attempted to prefix tool deltas with `__TOOL_CALL_DELTA__:` in the stream parser. **Reason for Failure**: Splitting multi-line outputs on `\n` broke the `\n\n` delimiter structure of the SSE stream, leading to JSON Parse errors because of fused packets.
+3. **Protocol translation in general**: Trying to parse and rebuild state streams in flight is a losing battle because any difference in stream sequence or formatting triggers client-side validation errors.
+
+---
+
+## 5. Common Failure Modes & Where to Check
 
 ### Error: `AI_TypeValidationError` or `ZodValidationError`
 - **Cause**: The stream yielded an event that does not match the strict schema.
-- **Where to look**: Check the uvicorn server logs (`tail -n 50 logs/literouter.log` or your task log) for Python exceptions.
-- **Known Trap (Shadowed Imports)**: If a python exception occurs during the stream (e.g., `UnboundLocalError`), check if you placed an `import json` inside an error block of the generator function. Python scoping rules treat `import X` inside a function as making `X` local to the *entire* function scope, breaking execution in the happy path before the import is reached.
+- **Fix**: Use `@ai-sdk/openai-compatible` in OpenCode so the client uses standard chat completions instead of the ACP endpoint.
 
 ### Error: `"text part ... not found"`
 - **Cause**: The server sent `response.output_text.delta` events without first announcing the item and content part.
@@ -51,17 +75,11 @@ The ACP protocol requires a highly specific lifecycle for Server-Sent Events (SS
 
 ### Error: Upstream `400 Bad Request` / `"Provider returned error"` on multi-turn
 - **Cause**: ACP (Responses API) input arrays can contain `function_call` and `function_call_output` items that are **not** valid ChatCompletions messages — they have `type` and `call_id` fields but **no `role` key**. Upstream providers (OpenRouter, Nvidia) reject these with 400.
-- **Example malformed items**:
-  ```json
-  {"type": "function_call", "call_id": "call_123", "name": "bash", "arguments": "..."}
-  {"type": "function_call_output", "call_id": "call_123", "output": "..."}
-  ```
-- **Fix**: The sanitizer in `src/main.py` converts these to proper OpenAI format:
-  - `function_call` → `{"role": "assistant", "content": null, "tool_calls": [...]}`
-  - `function_call_output` → `{"role": "tool", "tool_call_id": "...", "content": "..."}`
-- **Where to look**: Check `logs/literouter_logs.db` → `request_legs` table. Query for `status_code = 400` and inspect the outgoing body (leg 2) for messages without a `role` field.
+- **Fix**: The sanitizer in `src/main.py` converts these to proper OpenAI format, but the real fix is using `@ai-sdk/openai-compatible`.
 
-## 4. Debugging Toolkit
+---
+
+## 6. Debugging Toolkit
 - **Logs**: `logs/literouter.log` (if running via `nohup`) or the active uvicorn task log.
 - **Test `/v1/responses` directly**:
   ```bash
@@ -71,14 +89,16 @@ The ACP protocol requires a highly specific lifecycle for Server-Sent Events (SS
     -d '{"model": "openrouter/nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free", "input": [{"role": "user", "content": [{"type": "text", "text": "hi"}]}], "stream": true}'
   ```
 
-## 5. Routing New Models (e.g., OpenRouter)
+---
+
+## 7. Routing New Models (e.g., OpenRouter)
 When you need to add a new model (like `openrouter/owl-alpha` or any other OpenRouter model) so that it routes through LiteRouter in OpenCode:
 1. Open the OpenCode configuration at `~/.config/opencode/opencode.json`.
-2. Locate the provider block for either `literouter` or `openrouter` (both map to `http://localhost:7766/v1` via `@ai-sdk/openai`).
+2. Locate the provider block for either `literouter` or `openrouter` (both map to `http://localhost:7766/v1` via `@ai-sdk/openai-compatible`).
 3. Add the precise upstream model ID into the `models` dictionary.
    ```json
    "openrouter": {
-       "npm": "@ai-sdk/openai",
+       "npm": "@ai-sdk/openai-compatible",
        "options": {
            "baseURL": "http://localhost:7766/v1",
            "apiKey": "sk-lr-8f2a9e3b1c4d7e5f"

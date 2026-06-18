@@ -4,8 +4,13 @@ All notable changes to LiteRouter will be documented in this file.
 
 ## [2.6.0] — 2026-06-18
 
+### Added
+- **Mandatory `@ai-sdk/openai-compatible` SDK Integration** — Established the requirement to configure OpenCode with the compatible SDK. This forces the client to hit standard `/v1/chat/completions` natively rather than the ACP `/v1/responses` endpoint, making the proxy robust by omitting complex in-flight protocol translation.
+
 ### Fixed
 - **Multi-turn tool calling 400 errors** — Fixed an issue where upstream providers (OpenRouter, Nvidia) returned 400 Bad Request on multi-turn conversations. This was caused by ACP `function_call` and `function_call_output` items lacking a `role` field. The sanitizer now properly converts these to the standard OpenAI `tool_calls` format.
+- **Tool call streaming fixes** — Resolved `ZodValidationError: expected object, received undefined` and SSE stream corruption by bypassing protocol translation entirely for tool-calling models via the compatible SDK.
+- **Uvicorn read timeout** — Increased upstream read timeout limit to 300s to support slow/complex reasoning models.
 
 
 ## [2.5.0] — 2026-06-18

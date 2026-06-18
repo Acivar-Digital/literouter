@@ -277,7 +277,7 @@ so it's clear how far execution got before failure.
 
 ## LiteRouter Proxy Guidelines
 
-**High-Level Purpose**: LiteRouter is a high-performance proxy that translates modern AI SDK requests (like the Agentic Communication Protocol / ACP) into standard upstream provider calls (OpenRouter, Nvidia, Anthropic). It distributes requests across multiple API keys using round-robin routing with automatic cooldown, quarantine, and rate limiting.
+**High-Level Purpose**: LiteRouter is a high-performance proxy that distributes requests across multiple API keys using round-robin routing with automatic cooldown, quarantine, and rate limiting. It translates upstream calls for providers like OpenRouter, Nvidia, and Anthropic.
 
 ### 🚨 MANDATORY TROUBLESHOOTING SKILL 🚨
 **If you are debugging LiteRouter, YOU MUST READ the troubleshooting skill first:**
@@ -287,6 +287,17 @@ This skill contains the **source of truth** for:
 - **Topics**: Resolving `ZodValidationError`, "text part not found" errors, JSON Parse errors from corrupted SSE streams, and upstream 400 Bad Requests during multi-turn conversations.
 - **ACP Lifecycle**: The strict, mandatory Server-Sent Events (SSE) sequence that OpenCode requires.
 - **Routing**: How to add new models to OpenCode and map them to LiteRouter.
+
+### ⚠️ THE MANDATORY SDK REQUIREMENT: `@ai-sdk/openai-compatible` ⚠️
+
+**DO NOT use `@ai-sdk/openai` in OpenCode config (`opencode.json`) for LiteRouter endpoints. You MUST use `@ai-sdk/openai-compatible` instead.**
+
+#### Why? (The Protocol Mismatch Root Cause)
+1. **The Endpoint Mismatch**: `@ai-sdk/openai` uses the modern `/v1/responses` (Agentic Communication Protocol / ACP) endpoint by default. However, upstream providers like OpenRouter and Nvidia only accept standard OpenAI ChatCompletions (`/v1/chat/completions`).
+2. **Fragile Protocol Translation**: While LiteRouter includes an endpoint mapping layer to translate `/v1/responses` ↔ `/v1/chat/completions`, this translation layer is extremely fragile and prone to failure:
+   - **Tool Call Failures**: Upstream models (like `owl-alpha`) emitting `finish_reason: "tool_calls"` had their structured tool outputs dropped or malformed by the ACP translator, leading to client-side `ZodValidationError` errors ("expected object, received undefined").
+   - **Stream Corruption**: Attempting to inject missing ACP structures/tokens into the SSE stream often broke the `\n\n` event delimiters, resulting in consecutive events fusing and throwing JSON Parse errors.
+3. **The Simple Solution**: By switching the provider npm package in `opencode.json` to `@ai-sdk/openai-compatible`, the client communicates natively via standard `/v1/chat/completions`. LiteRouter then behaves as a pure rotating proxy (only swapping authorization headers and forwarding bytes), completely bypassing the fragile protocol translation code.
 
 ### Core Architecture & File Map
 - `src/main.py` - **The Core Engine**: Handles `/v1/chat/completions` and `/v1/responses`, sanitizes ACP input (e.g., stripping `function_call` without roles), and manages the SSE streaming lifecycle.
