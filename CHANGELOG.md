@@ -2,6 +2,35 @@
 
 All notable changes to LiteRouter will be documented in this file.
 
+## [2.5.0] — 2026-06-18
+
+### Architecture — Multi-Provider Routing
+
+LiteRouter now supports **multiple upstream providers** through a single endpoint. Requests are routed based on the model prefix:
+
+| Prefix | Provider | Upstream |
+|--------|----------|----------|
+| `openrouter/` | OpenRouter | `openrouter.ai/api/v1` |
+| `nvidia/` | Nvidia | `integrate.api.nvidia.com/v1` |
+| `anthropic/` | Anthropic | `api.anthropic.com` |
+
+Each provider has its own independent key pool, rotation counter, health tracking, and rate limiting.
+
+### Added
+- **Multi-provider support** — Add as many providers as you want via `{PROVIDER}_BASE_URL` + `{PROVIDER}_API_KEYS` in `.env`
+- **Model prefix stripping** — Provider prefix (e.g., `nvidia/`) is automatically stripped before forwarding to the upstream API
+- **Nvidia provider** — Pre-configured Nvidia integration with 6 API keys
+- **OpenCode integration docs** — README updated with `opencode.json` configuration example
+
+### Changed
+- **Model passthrough** — Client's model ID is never overwritten by config defaults (previously `OPENROUTER_MODEL` would override the request)
+- **Extra params injection** — Config-level `temperature` etc. only apply if the client didn't already set them
+- **start.sh** — Uses `nohup` + `disown` for proper daemon persistence
+- **Streaming error responses** — Use proper JSON serialization instead of string concatenation
+
+### Removed
+- **Debug logs** — Removed noisy `[debug] RAW BODY`, `[debug] OUTBOUND PAYLOAD`, `[debug] TRANSFORMED ANTHROPIC PAYLOAD` log lines that leaked request content
+
 ## [2.4.0] — 2026-06-13
 
 ### Added
