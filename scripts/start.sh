@@ -17,9 +17,10 @@ if [ -f "$PID_FILE" ]; then
 fi
 
 echo "Starting LiteRouter..."
-uv run uvicorn src.main:app --host 0.0.0.0 --port 7766 &
+nohup uv run uvicorn src.main:app --host 0.0.0.0 --port 7766 > logs/literouter.log 2>&1 &
 PID=$!
 echo "$PID" > "$PID_FILE"
+disown
 
 sleep 2
 

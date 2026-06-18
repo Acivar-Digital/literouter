@@ -138,13 +138,19 @@ async def _process_request(body: dict, provider_name: str, template: str, provid
         metrics.increment_key_usage(key)
         start_time = time.time()
 
-        # Apply model params from config
+        # Apply extra model params from config (temperature, etc.)
+        # but NEVER overwrite the model — the client knows what it asked for
         model_config = config.model_params.get(provider_name)
         if model_config:
-            body["model"] = model_config["model"]
             for k, v in model_config.items():
-                if k != "model":
+                if k != "model" and k not in body:
                     body[k] = v
+
+        # Strip provider prefix from model ID (e.g. "nvidia/model-name" → "model-name")
+        if "/" in body.get("model", "") and provider_name:
+            prefix = body["model"].split("/", 1)[0]
+            if prefix == provider_name:
+                body["model"] = body["model"].split("/", 1)[1]
 
         # Build request based on template + provider
         headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
@@ -164,7 +170,6 @@ async def _process_request(body: dict, provider_name: str, template: str, provid
             target_url = f"{provider.base_url}/messages"
             from src.anthropic import build_anthropic_request_body
             payload = build_anthropic_request_body(body)
-            logger.info("[debug] TRANSFORMED ANTHROPIC PAYLOAD: %s", payload)
             if is_anthropic_provider(provider):
                 # Native Anthropic: use x-api-key header
                 headers["x-api-key"] = key
@@ -176,7 +181,6 @@ async def _process_request(body: dict, provider_name: str, template: str, provid
             target_url = f"{provider.base_url}/chat/completions"
 
         # Dispatch
-        logger.info("[debug] OUTBOUND PAYLOAD: %s", payload)
         if should_stream:
             return await _stream_request(
                 target_url, payload, headers, key, provider_name,
@@ -263,7 +267,9 @@ async def _stream_request(
                         err_text = err_body[:200].decode("utf-8", errors="replace")
                         metrics.increment_error()
                         metrics.increment_error_by_status(resp.status_code)
-                        yield b'data: {"error": {"message": "' + err_text.encode() + b'", "type": "upstream_error"}}\n\n'
+                        import json
+                        err_payload = json.dumps({"error": {"message": err_text, "type": "upstream_error"}})
+                        yield f"data: {err_payload}\n\n".encode("utf-8")
                         return
                     # All pathways: pass streaming response as-is
                     async for chunk in resp.aiter_bytes():
@@ -275,15 +281,21 @@ async def _stream_request(
         except httpx.TimeoutException:
             logger.error("[%s] stream timed out", provider_name)
             metrics.increment_error()
-            yield b'data: {"error": {"message": "Upstream timeout.", "type": "upstream_error"}}\n\n'
+            import json
+            err_payload = json.dumps({"error": {"message": "Upstream timeout.", "type": "upstream_error"}})
+            yield f"data: {err_payload}\n\n".encode("utf-8")
         except httpx.ConnectError as exc:
             logger.error("[%s] stream connection refused: %s", provider_name, exc)
             metrics.increment_error()
-            yield b'data: {"error": {"message": "Upstream connection refused.", "type": "upstream_error"}}\n\n'
+            import json
+            err_payload = json.dumps({"error": {"message": "Upstream connection refused.", "type": "upstream_error"}})
+            yield f"data: {err_payload}\n\n".encode("utf-8")
         except Exception as exc:
             logger.error("[%s] stream unexpected error: %s", provider_name, exc)
             metrics.increment_error()
-            yield b'data: {"error": {"message": "Internal server error.", "type": "internal_error"}}\n\n'
+            import json
+            err_payload = json.dumps({"error": {"message": "Internal server error.", "type": "internal_error"}})
+            yield f"data: {err_payload}\n\n".encode("utf-8")
 
     return StreamingResponse(_upstream_stream(), media_type="text/event-stream")
 
@@ -378,7 +390,6 @@ async def chat_completions(request: Request, authorization: str | None = Header(
         return JSONResponse(status_code=401, content={"error": {"message": "Invalid API key", "type": "invalid_request_error"}})
 
     raw_body = await request.body()
-    logger.info("[debug] RAW BODY (%d bytes): %s", len(raw_body), raw_body[:2000])
 
     try:
         body = await request.json()
