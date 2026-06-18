@@ -81,14 +81,21 @@ class LiteRouterConfig(BaseSettings):
         import os
 
         # Handle provider inheritance (e.g., MINIMAXAI_INHERITS=NVIDIA)
-        for env_key, env_val in list(os.environ.items()):
-            if env_key.endswith("_INHERITS"):
-                prefix = env_key.replace("_INHERITS", "")
-                parent = env_val.strip()
-                if f"{prefix}_BASE_URL" not in os.environ and f"{parent}_BASE_URL" in os.environ:
-                    os.environ[f"{prefix}_BASE_URL"] = os.environ[f"{parent}_BASE_URL"]
-                if f"{prefix}_API_KEYS" not in os.environ and f"{parent}_API_KEYS" in os.environ:
-                    os.environ[f"{prefix}_API_KEYS"] = os.environ[f"{parent}_API_KEYS"]
+        # Loop up to 5 times to resolve nested inheritance (e.g., A inherits B inherits C)
+        for _ in range(5):
+            changed = False
+            for env_key, env_val in list(os.environ.items()):
+                if env_key.endswith("_INHERITS"):
+                    prefix = env_key.replace("_INHERITS", "")
+                    parent = env_val.strip()
+                    if f"{prefix}_BASE_URL" not in os.environ and f"{parent}_BASE_URL" in os.environ:
+                        os.environ[f"{prefix}_BASE_URL"] = os.environ[f"{parent}_BASE_URL"]
+                        changed = True
+                    if f"{prefix}_API_KEYS" not in os.environ and f"{parent}_API_KEYS" in os.environ:
+                        os.environ[f"{prefix}_API_KEYS"] = os.environ[f"{parent}_API_KEYS"]
+                        changed = True
+            if not changed:
+                break
 
         for env_key in [k for k in os.environ if k.endswith("_BASE_URL")]:
             prefix = env_key.replace("_BASE_URL", "")
@@ -115,7 +122,7 @@ class LiteRouterConfig(BaseSettings):
             temperature = float(os.environ.get(f"{prefix}_TEMPERATURE", "0.0"))
 
             extra: dict[str, Any] = {}
-            skip = {"BASE_URL", "API_KEYS", "API_KEY", "MIN_DELAY_MS", "MODEL", "TEMPERATURE"}
+            skip = {"BASE_URL", "API_KEYS", "API_KEY", "MIN_DELAY_MS", "MODEL", "TEMPERATURE", "INHERITS"}
             for k, v in os.environ.items():
                 if k.startswith(f"{prefix}_") and k.replace(f"{prefix}_", "") not in skip:
                     extra[k.replace(f"{prefix}_", "").lower()] = v
