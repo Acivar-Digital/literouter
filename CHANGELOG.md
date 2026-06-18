@@ -2,8 +2,12 @@
 
 All notable changes to LiteRouter will be documented in this file.
 
-## [2.6.0] — 2026-06-18
+## [2.7.0] — 2026-06-18
 
+### Added
+- **`_INHERITS` Environment Deduplication** — Added the ability for providers in `.env` to inherit `BASE_URL` and `API_KEYS` from a parent provider (e.g., `MINIMAXAI_INHERITS=NVIDIA`). This drastically reduces configuration duplication and makes adding new inherited providers cleaner.
+
+## [2.6.0] — 2026-06-18
 ### Added
 - **Mandatory `@ai-sdk/openai-compatible` SDK Integration** — Established the requirement to configure OpenCode with the compatible SDK. This forces the client to hit standard `/v1/chat/completions` natively rather than the ACP `/v1/responses` endpoint, making the proxy robust by omitting complex in-flight protocol translation.
 

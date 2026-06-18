@@ -24,7 +24,7 @@ LiteRouter acts as a high-performance proxy translating modern AI SDK requests (
 - **Entrypoints (`src/main.py`)**: 
   - `/v1/chat/completions` (Standard OpenAI)
   - `/v1/responses` (ACP Protocol used by modern agents - **avoid where possible by using the compatible SDK**)
-- **Routing Logic (`config.py` & `main.py`)**: Checks the requested `model` string to determine the provider (e.g., `nemo` -> Nvidia, others -> OpenRouter).
+- **Routing Logic (`config.py` & `main.py`)**: Checks the requested `model` string to determine the provider (e.g., `nemo` -> Nvidia, others -> OpenRouter). Providers can inherit credentials via `{PROVIDER}_INHERITS={PARENT}` in `.env`, which dynamically injects into `os.environ` *before* the providers are parsed.
 - **Concurrency & Key Rotation**: Uses `KeyRotator` to cycle through available API keys per provider. **CRITICAL**: Each provider uses an isolated `asyncio.Lock` (`self.locks = defaultdict(asyncio.Lock)`) to ensure that rate-limit delays or upstream hangs in one provider (e.g., OpenRouter) do not stall queues for another (e.g., Nvidia).
 - **Sanitization**: Standardizes `input_text` blocks to standard `text` blocks.
 

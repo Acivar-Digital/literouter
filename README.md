@@ -89,6 +89,11 @@ NVIDIA_BASE_URL=https://integrate.api.nvidia.com/v1
 NVIDIA_API_KEYS=nvapi-key1,nvapi-key2,nvapi-key3
 NVIDIA_MIN_DELAY_MS=3000
 
+# ── Inherited Provider Example ──
+# Avoid copy-pasting API keys if multiple models share an endpoint
+MINIMAXAI_INHERITS=NVIDIA
+MINIMAXAI_MODEL=minimaxai/minimax-m3
+
 # ── Provider: Anthropic (optional) ──
 # ANTHROPIC_BASE_URL=https://api.anthropic.com
 # ANTHROPIC_API_KEYS=sk-ant-key1,sk-ant-key2
@@ -184,6 +189,7 @@ Both providers point to the same LiteRouter endpoint. Routing is determined by t
 | `LITEROUTER_TEMPLATE` | Default template: `anthropic` or `openai` |
 | `LITEROUTER_PROVIDER` | Default provider (used when model has no prefix) |
 | `LITEROUTER_ROTATE_DELAY_MS` | Default min delay between calls (ms) |
+| `{PROVIDER}_INHERITS` | Inherit `BASE_URL` and `API_KEYS` from a parent provider |
 | `{PROVIDER}_BASE_URL` | Upstream API base URL |
 | `{PROVIDER}_API_KEYS` | Comma-separated API keys for rotation |
 | `{PROVIDER}_MIN_DELAY_MS` | Min delay between calls to this provider (ms) |
