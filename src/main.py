@@ -534,20 +534,13 @@ async def _stream_request(
                         item_done = json.dumps({'type': 'response.output_item.done', 'output_index': 0, 'item': {'type': 'message', 'id': item_id, 'status': 'completed', 'role': 'assistant', 'content': [{'type': 'output_text', 'text': full_text}]}})
                         yield f"event: response.output_item.done\ndata: {item_done}\n\n".encode("utf-8")
 
-                        # Emit accumulated tool calls as ACP function_call output items
+                        # Log accumulated tool calls for debugging (not emitted as ACP events
+                        # because OpenCode's @ai-sdk/openai SDK rejects function_call items
+                        # with Zod validation errors)
                         output_items = [{'type': 'message', 'id': item_id, 'status': 'completed', 'role': 'assistant', 'content': [{'type': 'output_text', 'text': full_text}]}]
                         for idx in sorted(accumulated_tool_calls.keys()):
                             tc = accumulated_tool_calls[idx]
-                            call_id = tc["id"] or f"call_{idx}"
-                            fc_item_id = f"fc-{req_id}-{idx}"
-                            fc_item = {'type': 'function_call', 'id': fc_item_id, 'call_id': call_id, 'name': tc['name'], 'arguments': tc['arguments'], 'status': 'completed'}
-                            # Announce the function_call item
-                            fc_added = json.dumps({'type': 'response.output_item.added', 'output_index': idx + 1, 'item': fc_item})
-                            yield f"event: response.output_item.added\ndata: {fc_added}\n\n".encode("utf-8")
-                            fc_done = json.dumps({'type': 'response.output_item.done', 'output_index': idx + 1, 'item': fc_item})
-                            yield f"event: response.output_item.done\ndata: {fc_done}\n\n".encode("utf-8")
-                            output_items.append(fc_item)
-                            logger.info("[%s] Emitting ACP function_call: %s(%s...)", provider_name, tc['name'], tc['arguments'][:50])
+                            logger.info("[%s] Tool call received (not forwarded to ACP): %s(%s...)", provider_name, tc['name'], tc['arguments'][:80])
 
                         completed_data = json.dumps({'type': 'response.completed', 'response': {'id': resp_id, 'object': 'response', 'status': 'completed', 'output': output_items}})
                         yield f"event: response.completed\ndata: {completed_data}\n\n".encode("utf-8")
