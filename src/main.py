@@ -169,6 +169,7 @@ def _fix_streaming_line(line: str, is_responses: bool = False, responses_item_id
                     msg["content"] = msg_reasoning
 
         if is_responses:
+            results = []
             for choice in choices:
                 delta = choice.get("delta", {})
                 content = delta.get("content", "")
@@ -180,7 +181,15 @@ def _fix_streaming_line(line: str, is_responses: bool = False, responses_item_id
                         'content_index': 0,
                         'delta': content,
                     })
-                    return f"event: response.output_text.delta\ndata: {event_data}\n"
+                    results.append(f"event: response.output_text.delta\ndata: {event_data}\n")
+                # Accumulate tool_calls deltas — pass them through as tagged lines
+                # so the generator can collect them for ACP function_call emission
+                tool_calls = delta.get("tool_calls", [])
+                for tc in tool_calls:
+                    tc_data = json.dumps(tc)
+                    results.append(f"__TOOL_CALL_DELTA__:{tc_data}")
+            if results:
+                return "\n".join(results)
             return None
 
         # 2. Sanitize: Rebuild standard OpenAI chunk structure to satisfy strict Zod schemas
@@ -450,6 +459,7 @@ async def _stream_request(
                         part_added = json.dumps({'type': 'response.content_part.added', 'item_id': item_id, 'output_index': 0, 'content_index': 0, 'part': {'type': 'output_text', 'text': ''}})
                         yield f"event: response.content_part.added\ndata: {part_added}\n\n".encode("utf-8")
                         accumulated_text = []
+                        accumulated_tool_calls = {}  # id -> {name, arguments}
 
                     # Fix null content in streaming chunks for reasoning models using incremental decoder and line buffer
                     decoder = codecs.getincrementaldecoder("utf-8")()
@@ -460,23 +470,59 @@ async def _stream_request(
                             line, buffer = buffer.split("\n", 1)
                             processed = _fix_streaming_line(line, is_responses, responses_item_id=item_id if is_responses else "")
                             if processed is not None:
-                                yield (processed + "\n").encode("utf-8")
-                                if is_responses and '"delta"' in processed:
-                                    try:
-                                        evt = json.loads(processed.split("data: ", 1)[1])
-                                        accumulated_text.append(evt.get("delta", ""))
-                                    except Exception:
-                                        pass
+                                # Handle multi-line results (text + tool_call deltas)
+                                for sub_line in processed.split("\n"):
+                                    if sub_line.startswith("__TOOL_CALL_DELTA__:"):
+                                        # Accumulate tool call delta chunks
+                                        try:
+                                            tc = json.loads(sub_line.split(":", 1)[1])
+                                            idx = tc.get("index", 0)
+                                            if idx not in accumulated_tool_calls:
+                                                accumulated_tool_calls[idx] = {"id": "", "name": "", "arguments": ""}
+                                            if "id" in tc:
+                                                accumulated_tool_calls[idx]["id"] = tc["id"]
+                                            fn = tc.get("function", {})
+                                            if "name" in fn:
+                                                accumulated_tool_calls[idx]["name"] += fn["name"]
+                                            if "arguments" in fn:
+                                                accumulated_tool_calls[idx]["arguments"] += fn["arguments"]
+                                        except Exception:
+                                            pass
+                                    elif sub_line.strip():
+                                        yield (sub_line + "\n").encode("utf-8")
+                                        if is_responses and '"delta"' in sub_line:
+                                            try:
+                                                evt = json.loads(sub_line.split("data: ", 1)[1])
+                                                accumulated_text.append(evt.get("delta", ""))
+                                            except Exception:
+                                                pass
                     if buffer:
                         processed = _fix_streaming_line(buffer, is_responses, responses_item_id=item_id if is_responses else "")
                         if processed is not None:
-                            yield processed.encode("utf-8")
-                            if is_responses and '"delta"' in processed:
-                                try:
-                                    evt = json.loads(processed.split("data: ", 1)[1])
-                                    accumulated_text.append(evt.get("delta", ""))
-                                except Exception:
-                                    pass
+                            for sub_line in processed.split("\n"):
+                                if sub_line.startswith("__TOOL_CALL_DELTA__:"):
+                                    try:
+                                        tc = json.loads(sub_line.split(":", 1)[1])
+                                        idx = tc.get("index", 0)
+                                        if idx not in accumulated_tool_calls:
+                                            accumulated_tool_calls[idx] = {"id": "", "name": "", "arguments": ""}
+                                        if "id" in tc:
+                                            accumulated_tool_calls[idx]["id"] = tc["id"]
+                                        fn = tc.get("function", {})
+                                        if "name" in fn:
+                                            accumulated_tool_calls[idx]["name"] += fn["name"]
+                                        if "arguments" in fn:
+                                            accumulated_tool_calls[idx]["arguments"] += fn["arguments"]
+                                    except Exception:
+                                        pass
+                                elif sub_line.strip():
+                                    yield sub_line.encode("utf-8")
+                                    if is_responses and '"delta"' in sub_line:
+                                        try:
+                                            evt = json.loads(sub_line.split("data: ", 1)[1])
+                                            accumulated_text.append(evt.get("delta", ""))
+                                        except Exception:
+                                            pass
 
                     if is_responses:
                         full_text = "".join(accumulated_text)
@@ -486,7 +532,23 @@ async def _stream_request(
                         yield f"event: response.content_part.done\ndata: {part_done}\n\n".encode("utf-8")
                         item_done = json.dumps({'type': 'response.output_item.done', 'output_index': 0, 'item': {'type': 'message', 'id': item_id, 'status': 'completed', 'role': 'assistant', 'content': [{'type': 'output_text', 'text': full_text}]}})
                         yield f"event: response.output_item.done\ndata: {item_done}\n\n".encode("utf-8")
-                        completed_data = json.dumps({'type': 'response.completed', 'response': {'id': resp_id, 'object': 'response', 'status': 'completed', 'output': [{'type': 'message', 'id': item_id, 'status': 'completed', 'role': 'assistant', 'content': [{'type': 'output_text', 'text': full_text}]}]}})
+
+                        # Emit accumulated tool calls as ACP function_call output items
+                        output_items = [{'type': 'message', 'id': item_id, 'status': 'completed', 'role': 'assistant', 'content': [{'type': 'output_text', 'text': full_text}]}]
+                        for idx in sorted(accumulated_tool_calls.keys()):
+                            tc = accumulated_tool_calls[idx]
+                            call_id = tc["id"] or f"call_{idx}"
+                            fc_item_id = f"fc-{req_id}-{idx}"
+                            fc_item = {'type': 'function_call', 'id': fc_item_id, 'call_id': call_id, 'name': tc['name'], 'arguments': tc['arguments'], 'status': 'completed'}
+                            # Announce the function_call item
+                            fc_added = json.dumps({'type': 'response.output_item.added', 'output_index': idx + 1, 'item': fc_item})
+                            yield f"event: response.output_item.added\ndata: {fc_added}\n\n".encode("utf-8")
+                            fc_done = json.dumps({'type': 'response.output_item.done', 'output_index': idx + 1, 'item': fc_item})
+                            yield f"event: response.output_item.done\ndata: {fc_done}\n\n".encode("utf-8")
+                            output_items.append(fc_item)
+                            logger.info("[%s] Emitting ACP function_call: %s(%s...)", provider_name, tc['name'], tc['arguments'][:50])
+
+                        completed_data = json.dumps({'type': 'response.completed', 'response': {'id': resp_id, 'object': 'response', 'status': 'completed', 'output': output_items}})
                         yield f"event: response.completed\ndata: {completed_data}\n\n".encode("utf-8")
             metrics.increment_success()
             latency_ms = int((time.time() - start_time) * 1000)
