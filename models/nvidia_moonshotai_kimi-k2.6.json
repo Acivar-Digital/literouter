@@ -1,0 +1,221 @@
+{
+  "id": "moonshotai/kimi-k2.6",
+  "canonical_slug": "moonshotai/kimi-k2.6-20260420",
+  "hugging_face_id": "moonshotai/Kimi-K2.6",
+  "name": "MoonshotAI: Kimi K2.6",
+  "created": 1776699402,
+  "description": "Kimi K2.6 is Moonshot AI's next-generation multimodal model, designed for long-horizon coding, coding-driven UI/UX generation, and multi-agent orchestration. It handles complex end-to-end coding tasks across Python, Rust, and Go, and...",
+  "context_length": 262144,
+  "architecture": {
+    "modality": "text+image->text",
+    "input_modalities": [
+      "text",
+      "image"
+    ],
+    "output_modalities": [
+      "text"
+    ],
+    "tokenizer": "Other",
+    "instruct_type": null
+  },
+  "pricing": {
+    "prompt": "0.00000067",
+    "completion": "0.0000035",
+    "input_cache_read": "0.0000002"
+  },
+  "top_provider": {
+    "context_length": 262144,
+    "max_completion_tokens": 262144,
+    "is_moderated": false
+  },
+  "per_request_limits": null,
+  "supported_parameters": [
+    "frequency_penalty",
+    "include_reasoning",
+    "logit_bias",
+    "logprobs",
+    "max_tokens",
+    "min_p",
+    "parallel_tool_calls",
+    "presence_penalty",
+    "reasoning",
+    "repetition_penalty",
+    "response_format",
+    "seed",
+    "stop",
+    "structured_outputs",
+    "temperature",
+    "tool_choice",
+    "tools",
+    "top_k",
+    "top_logprobs",
+    "top_p"
+  ],
+  "default_parameters": {
+    "temperature": null,
+    "top_p": null,
+    "top_k": null,
+    "frequency_penalty": null,
+    "presence_penalty": null,
+    "repetition_penalty": null
+  },
+  "supported_voices": null,
+  "knowledge_cutoff": null,
+  "expiration_date": null,
+  "links": {
+    "details": "/api/v1/models/moonshotai/kimi-k2.6-20260420/endpoints"
+  },
+  "benchmarks": {
+    "design_arena": [
+      {
+        "arena": "agents",
+        "category": "agenticgamedev",
+        "elo": 1183,
+        "win_rate": 50.3,
+        "rank": 7
+      },
+      {
+        "arena": "agents",
+        "category": "agentichtmlslides",
+        "elo": 1248,
+        "win_rate": 59,
+        "rank": 2
+      },
+      {
+        "arena": "agents",
+        "category": "agenticslides",
+        "elo": 1187,
+        "win_rate": 45.8,
+        "rank": 5
+      },
+      {
+        "arena": "agents",
+        "category": "agenticslides(html)",
+        "elo": 1252,
+        "win_rate": 59.2,
+        "rank": 2
+      },
+      {
+        "arena": "agents",
+        "category": "agenticslides(python-pptx)",
+        "elo": 1186,
+        "win_rate": 45.5,
+        "rank": 5
+      },
+      {
+        "arena": "agents",
+        "category": "androidnative",
+        "elo": 1195,
+        "win_rate": 49.6,
+        "rank": 10
+      },
+      {
+        "arena": "agents",
+        "category": "fullstack",
+        "elo": 1225,
+        "win_rate": 57,
+        "rank": 8
+      },
+      {
+        "arena": "agents",
+        "category": "godotgamedev",
+        "elo": 1214,
+        "win_rate": 53,
+        "rank": 10
+      },
+      {
+        "arena": "agents",
+        "category": "htmlslides",
+        "elo": 1253,
+        "win_rate": 59.4,
+        "rank": 2
+      },
+      {
+        "arena": "agents",
+        "category": "mobileapps",
+        "elo": 1233,
+        "win_rate": 53.3,
+        "rank": 8
+      },
+      {
+        "arena": "agents",
+        "category": "pptxslides",
+        "elo": 1181,
+        "win_rate": 44.3,
+        "rank": 5
+      },
+      {
+        "arena": "agents",
+        "category": "webapps",
+        "elo": 1261,
+        "win_rate": 58.9,
+        "rank": 4
+      },
+      {
+        "arena": "agents",
+        "category": "python-pptxslides",
+        "elo": 1180,
+        "win_rate": 42.2,
+        "rank": 5
+      },
+      {
+        "arena": "models",
+        "category": "3d",
+        "elo": 1359,
+        "win_rate": 63.2,
+        "rank": 3
+      },
+      {
+        "arena": "models",
+        "category": "codecategories",
+        "elo": 1328,
+        "win_rate": 58.3,
+        "rank": 6
+      },
+      {
+        "arena": "models",
+        "category": "dataviz",
+        "elo": 1302,
+        "win_rate": 56.5,
+        "rank": 8
+      },
+      {
+        "arena": "models",
+        "category": "gamedev",
+        "elo": 1320,
+        "win_rate": 58.7,
+        "rank": 11
+      },
+      {
+        "arena": "models",
+        "category": "svg",
+        "elo": 1235,
+        "win_rate": 52.6,
+        "rank": 16
+      },
+      {
+        "arena": "models",
+        "category": "uicomponent",
+        "elo": 1323,
+        "win_rate": 57.6,
+        "rank": 7
+      },
+      {
+        "arena": "models",
+        "category": "website",
+        "elo": 1318,
+        "win_rate": 56.3,
+        "rank": 8
+      }
+    ],
+    "artificial_analysis": {
+      "intelligence_index": 42.8,
+      "coding_index": 56,
+      "agentic_index": 30.3
+    }
+  },
+  "reasoning": {
+    "mandatory": false,
+    "default_enabled": true
+  }
+}

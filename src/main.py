@@ -52,25 +52,17 @@ def _check_auth(authorization: str | None) -> bool:
 
 
 def _get_routing(raw_model: str = "") -> tuple:
-    """Return (template_mode, provider_name, provider_config) from requested model or .env settings."""
-    provider_name = ""
-    # Check for specific models before general provider splitting
-    if raw_model:
-        model_lower = raw_model.lower()
-        if "nemo" in model_lower:
-            provider_name = "openrouter"
-        elif "cohere" in model_lower:
-            provider_name = "openrouter"
-        elif "nvidia" in model_lower or "gpt-oss" in model_lower:
-            provider_name = "nvidia"
-
-    if not provider_name:
-        if raw_model and "/" in raw_model:
-            provider_name = raw_model.split("/", 1)[0]
-        elif raw_model:
-            provider_name = raw_model
-        else:
-            provider_name = config.provider
+    """Return (template_mode, provider_name, provider_config) from requested model or .env settings.
+    
+    The first segment of the model ID (before '/') IS the provider name.
+    No keyword overrides, no catch-all — configure the prefix correctly or it fails.
+    """
+    if raw_model and "/" in raw_model:
+        provider_name = raw_model.split("/", 1)[0]
+    elif raw_model:
+        provider_name = raw_model
+    else:
+        provider_name = config.provider
 
     provider = config.providers.get(provider_name)
     if not provider:
@@ -317,11 +309,11 @@ async def _process_request(body: dict, provider_name: str, template: str, provid
     if "max_tokens" not in body:
         body["max_tokens"] = 1_000_000
 
-    # Strip provider prefix from model ID if it starts with any known provider name
+    # Strip provider prefix from model ID — first segment matches a provider, remove it
     raw_model = body.get("model", "")
     if "/" in raw_model:
         prefix = raw_model.split("/", 1)[0]
-        if prefix in config.providers or prefix == "openrouter" or prefix == "nvidia":
+        if prefix in config.providers:
             body["model"] = raw_model.split("/", 1)[1]
 
     # Build request based on template + provider

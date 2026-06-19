@@ -279,14 +279,13 @@ so it's clear how far execution got before failure.
 
 **High-Level Purpose**: LiteRouter is a high-performance proxy that distributes requests across multiple API keys using round-robin routing with automatic cooldown, quarantine, and rate limiting. It translates upstream calls for providers like OpenRouter, Nvidia, and Anthropic.
 
-### 🚨 MANDATORY TROUBLESHOOTING SKILL 🚨
-**If you are debugging LiteRouter, YOU MUST READ the troubleshooting skill first:**
-`view_file` on `.agents/skills/literouter-troubleshooting/SKILL.md`
+### 🚨 MANDATORY SKILL 🚨
+**For ANY LiteRouter work, load the playbook first:**
+`view_file` on `.opencode/skills/literouter-playbook/SKILL.md`
 
-This skill contains the **source of truth** for:
-- **Topics**: Resolving `ZodValidationError`, "text part not found" errors, JSON Parse errors from corrupted SSE streams, and upstream 400 Bad Requests during multi-turn conversations.
-- **ACP Lifecycle**: The strict, mandatory Server-Sent Events (SSE) sequence that OpenCode requires.
-- **Routing**: How to add new models to OpenCode and map them to LiteRouter.
+Then read the relevant appendix:
+- **[`setup.md`](.opencode/skills/literouter-playbook/setup.md)** — Ops, routing, adding models/keys/providers
+- **[`troubleshoot.md`](.opencode/skills/literouter-playbook/troubleshoot.md)** — `ZodValidationError`, JSON Parse errors, ACP lifecycle, missing legs analysis
 
 ### ⚠️ THE MANDATORY SDK REQUIREMENT: `@ai-sdk/openai-compatible` ⚠️
 
@@ -300,10 +299,12 @@ This skill contains the **source of truth** for:
 3. **The Simple Solution**: By switching the provider npm package in `opencode.json` to `@ai-sdk/openai-compatible`, the client communicates natively via standard `/v1/chat/completions`. LiteRouter then behaves as a pure rotating proxy (only swapping authorization headers and forwarding bytes), completely bypassing the fragile protocol translation code.
 
 ### Core Architecture & File Map
-- `src/main.py` - **The Core Engine**: Handles `/v1/chat/completions` and `/v1/responses`, sanitizes ACP input (e.g., stripping `function_call` without roles), and manages the SSE streaming lifecycle.
-- `src/config.py` - **Routing & Setup**: Loads environment variables, determines which provider (e.g., Nvidia vs. OpenRouter) handles the request based on the model string prefix.
+- `src/main.py` - **The Core Engine**: Handles `/v1/chat/completions` and `/v1/responses`, sanitizes ACP input (e.g., stripping `function_call` without roles), and manages the SSE streaming lifecycle. Routing is **first-segment-as-provider**: `openrouter/owl-alpha` → first segment = `openrouter` → routes to OpenRouter.
+- `src/config.py` - **Provider Discovery**: Scans env vars ending with `_BASE_URL` to build the provider table. No hardcoded routing here — providers are purely data-driven from `.env`.
 - `src/router.py` - **Key Rotation**: Uses Redis or in-memory fallback to atomically cycle through available API keys per provider.
+- `src/config.py` - **Provider Discovery**: `{NAME}_BASE_URL` → provider named `{name}`. No manual registration needed.
 - `logs/literouter.log` & `logs/literouter_logs.db` - **The Truth**: The primary locations to check for stack traces, Zod validation errors, and raw incoming/outgoing request bodies. (Local logs under `logs/` are ignored in Git to prevent leaks.)
+- `models/` - **Model metadata snapshots**: One `.json` file per model, fetched from the provider API for quick reference (e.g., `openrouter_owl-alpha.json`, `nvidia_deepseek-ai_deepseek-v4-flash.json`)
 
 ### Operations & Testing
 - Run LiteRouter locally: `nohup uv run uvicorn src.main:app --host 0.0.0.0 --port 7766 > logs/literouter.log 2>&1 & echo $! > .literouter.pid`
@@ -317,6 +318,21 @@ This skill contains the **source of truth** for:
   5. Otherwise, test the OpenCode CLI model using the setup in step 2 but via OpenCode directly.
   6. Verify the logs again to ensure rotation happened.
   7. Consider the test passed only when all steps pass successfully.
+
+### Model Naming Quick Reference
+
+The first segment of the model ID (before `/`) IS the provider name. No keyword overrides, no catch-all.
+
+| OpenCode model key | Routes to | Sent upstream as |
+|---|---|---|
+| `openrouter/owl-alpha` | OpenRouter | `owl-alpha` |
+| `openrouter/openai/gpt-oss-120b:free` | OpenRouter | `openai/gpt-oss-120b:free` |
+| `openrouter/cohere/north-mini-code:free` | OpenRouter | `cohere/north-mini-code:free` |
+| `nvidia/deepseek-ai/deepseek-v4-flash` | Nvidia | `deepseek-ai/deepseek-v4-flash` |
+
+To add a model: (1) add to `opencode.json` under `provider.literouter.models`, (2) save metadata snapshot to `models/`. See the playbook `setup.md` for the full template.
+
+To remove a model: delete from `opencode.json` and optionally from `models/`.
 
 ## Critical Patterns
 - Auto mode collects only: alias, gender, dob, location -> engine computes all pillars/strength
