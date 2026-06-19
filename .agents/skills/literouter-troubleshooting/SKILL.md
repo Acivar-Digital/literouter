@@ -111,3 +111,63 @@ When you need to add a new model (like `openrouter/owl-alpha` or any other OpenR
    }
    ```
 4. LiteRouter's internal `_get_routing()` logic will check if the model name contains routing hints (like `nemo` -> Nvidia) and otherwise defaults to OpenRouter.
+
+---
+
+## 8. Diagnosing "Hanging" / Slow Responses (Missing Legs Analysis)
+
+**Trigger**: User reports opencode stopped showing responses, stream appears to hang, or responses are extremely slow.
+
+### Step 1: Check LiteRouter Process Health
+```bash
+ps aux | grep -E 'uvicorn|literouter' | grep -v grep
+ss -tlnp | grep 7766
+```
+If the process is dead or port not listening → restart LiteRouter. If alive, proceed.
+
+### Step 2: Missing Legs Analysis (Match Incoming ↔ Stream Success)
+This is the core diagnostic — match the two legs of every request to find orphans:
+```bash
+# All request IDs with an INCOMING leg
+grep -oP 'INCOMING.*\[(req-[a-f0-9]+)\]' logs/literouter.log | grep -oP 'req-[a-f0-9]+' | sort -u
+
+# All request IDs with a stream-success leg
+grep -oP 'stream success.*\[(req-[a-f0-9]+)\]' logs/literouter.log | grep -oP 'req-[a-f0-9]+' | sort -u
+```
+If both sets are identical → **LiteRouter is healthy, all requests completed**. The problem is upstream latency or the client, not LiteRouter.
+
+If any request ID appears in INCOMING but NOT in stream-success → **that request is genuinely stuck/hanging inside LiteRouter**. Check its full lifecycle:
+```bash
+grep '<stuck-request-id>' logs/literouter.log | cut -c1-120
+```
+
+### Step 3: Check Upstream Latency (When All Legs Match But Responses Are Slow)
+If all requests complete but feel slow, measure the gap between INCOMING and stream-success:
+```bash
+grep '<request-id>' logs/literouter.log | grep -oP '^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}' | head -2
+```
+- < 10s: Normal
+- 10-30s: Slow upstream (OpenRouter model is busy or context is large)
+- 30s+: Very slow — likely a large multi-turn conversation with many tool definitions
+
+### Step 4: Check for Errors (Careful — Request Bodies Contain the Word "error")
+**Do NOT** grep for `error` naively — request bodies contain tool definitions with the word "error" in descriptions. Instead:
+```bash
+# Check only log-level lines (not request body content)
+grep -E '\[ERROR\]|\[WARNING\]|Traceback|Exception' logs/literouter.log | tail -20
+```
+
+### Step 5: Check Current Timeout Values
+LiteRouter's httpx timeout in `src/main.py`:
+- `connect=60.0` — connection timeout
+- `read=300.0` — read timeout (5 minutes, usually sufficient)
+- `write=60.0` — write timeout
+- `pool=300.0` — pool timeout
+
+**Increasing the timeout is almost never the fix.** If all legs match, the stream completed — the issue is upstream generation speed, not a timeout.
+
+### Common Root Causes (In Order of Likelihood)
+1. **OpenRouter model latency** — owl-alpha or the specific model is under heavy load
+2. **Large context** — multi-turn conversations with many tool definitions inflate the request, slowing inference
+3. **OpenCode client timeout** — the *client* may have its own timeout lower than LiteRouter's (check `opencode.json`)
+4. **Actual LiteRouter hang** — only if missing legs are found in Step 2

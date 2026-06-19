@@ -371,7 +371,7 @@ async def _buffered_request(
     """Non-streaming: buffer full response, transform, return JSON."""
     from src.db_logger import log_leg
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(connect=30.0, read=300.0, write=30.0, pool=300.0)) as client:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(connect=60.0, read=300.0, write=60.0, pool=300.0)) as client:
             if use_gemini:
                 resp = await client.post(target_url, json=payload, params={"key": key})
             else:
@@ -438,7 +438,7 @@ async def _stream_request(
 
     async def _upstream_stream():
         try:
-            async with httpx.AsyncClient(timeout=httpx.Timeout(connect=30.0, read=300.0, write=30.0, pool=300.0)) as client:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(connect=60.0, read=300.0, write=60.0, pool=300.0)) as client:
                 if use_gemini:
                     stream_cm = client.stream("POST", target_url, json=payload, params={"key": key})
                 else:
