@@ -59,6 +59,8 @@ def _get_routing(raw_model: str = "") -> tuple:
         model_lower = raw_model.lower()
         if "nemo" in model_lower:
             provider_name = "openrouter"
+        elif "cohere" in model_lower:
+            provider_name = "openrouter"
         elif "nvidia" in model_lower or "gpt-oss" in model_lower:
             provider_name = "nvidia"
 
