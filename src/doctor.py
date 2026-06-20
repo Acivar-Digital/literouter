@@ -143,6 +143,7 @@ async def _validate_provider_keys() -> dict:
                         headers={
                             "Content-Type": "application/json",
                             "Authorization": f"Bearer {key}",
+                            "User-Agent": "LiteRouter/2.2",
                         },
                     )
             latency_ms = int((time.time() - start) * 1000)
