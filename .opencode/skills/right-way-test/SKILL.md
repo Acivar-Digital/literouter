@@ -8,7 +8,7 @@ description: The mandatory testing protocol for validating code changes by rotat
 This skill documents the mandatory verification protocol for code changes made to LiteRouter.
 
 ## 🚨 CRITICAL DEPLOYMENT WARNING 🚨
-**Always verify WHICH LiteRouter instance OpenCode is actually talking to.** Do not assume OpenCode is hitting `localhost:7766`. Check `~/.config/opencode/opencode.json` (specifically the `baseURL` under `provider.literouter.options`) to see if it is routing to a VPS (e.g., `10.32.34.243:7766`). If it is, you **MUST** apply environment variable and config changes to the VPS, and check the VPS logs, not just your local machine.
+**Always verify WHICH LiteRouter instance OpenCode is actually talking to.** Do not assume OpenCode is hitting `localhost:7766`. Check `~/.config/opencode/opencode.json` (specifically the `baseURL` under `provider.literouter.options`) to see if it is routing to a VPS (e.g., `10.32.34.243:7766`). If it is, ask the user if they intended to use the remote VPS or their local service before making changes, and check the VPS logs, not just your local machine.
 
 ## Test Protocol
 
