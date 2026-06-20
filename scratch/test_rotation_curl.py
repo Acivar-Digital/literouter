@@ -1,6 +1,7 @@
-import httpx
 import sqlite3
 import time
+
+import httpx
 
 print("Starting rotation test via curl/httpx directly to LiteRouter...")
 
@@ -23,7 +24,7 @@ for i in range(6):
         "Content-Type": "application/json"
     }
     try:
-        resp = httpx.post("http://localhost:7766/v1/chat/completions", json=payload, headers=headers, timeout=20.0)
+        resp = httpx.post("http://localhost:7766/v1/chat/completions", json=payload, headers=headers, timeout=20.0)  # noqa: E501
         print(f"Request {i+1}/6: Status {resp.status_code}")
     except Exception as e:
         print(f"Request {i+1}/6: Failed with error: {e}")
@@ -42,7 +43,7 @@ for i in range(6):
         "Content-Type": "application/json"
     }
     try:
-        resp = httpx.post("http://localhost:7766/v1/chat/completions", json=payload, headers=headers, timeout=20.0)
+        resp = httpx.post("http://localhost:7766/v1/chat/completions", json=payload, headers=headers, timeout=20.0)  # noqa: E501
         print(f"Request {i+1}/6: Status {resp.status_code}")
     except Exception as e:
         print(f"Request {i+1}/6: Failed with error: {e}")

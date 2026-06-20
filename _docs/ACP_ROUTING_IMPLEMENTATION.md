@@ -58,3 +58,7 @@ The ACP (Agentic Communication Protocol) requires a highly specific lifecycle fo
 
 4. **Self-Terminating Events**:
    - Each yielded event must end with a clean `\n\n` to guarantee SSE separation, regardless of how the upstream chunks arrive.
+
+## Configuration Standards
+- **Client Identification**: Health checks and downstream API requests (like those in `doctor.py`) must include a proper `User-Agent` header (e.g., `User-Agent: LiteRouter/2.2`) to prevent upstream API gateways from rejecting the requests.
+- **Model Metadata Trackers**: Experimental and free-tier "Zen models" are explicitly tracked using discrete JSON catalogs (e.g., `models/zen_models.json`) to prevent pollution of the core provider configurations. Ensure JSON configurations strictly follow standards (no trailing commas) as LiteRouter's strict parser will fail on malformed definitions.

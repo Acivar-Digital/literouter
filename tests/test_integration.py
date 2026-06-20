@@ -32,7 +32,7 @@ def mock_httpx_client():
 def app_with_openrouter(tmp_path, monkeypatch):
     """Create a test app with OpenRouter provider configured."""
     monkeypatch.setenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
-    monkeypatch.setenv("OPENROUTER_API_KEYS", "sk-or-test-stub-0001-padded-padded,sk-or-test-stub-0002-padded-padded")
+    monkeypatch.setenv("OPENROUTER_API_KEYS", "sk-or-test-stub-0001-padded-padded,sk-or-test-stub-0002-padded-padded")  # noqa: E501
     monkeypatch.delenv("LITEROUTER_AUTH_KEY", raising=False)
     monkeypatch.chdir(tmp_path)
 

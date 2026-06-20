@@ -19,6 +19,18 @@ LiteRouter routes requests to different upstream providers based on the **model 
 | `nvidia/` | Nvidia | `https://integrate.api.nvidia.com/v1/chat/completions` |
 | `anthropic/` | Anthropic | `https://api.anthropic.com/messages` |
 
+### Zen Models
+LiteRouter ships with pre-configured support and metadata for "Zen models" (free/experimental tier), including:
+- `big-pickle`
+- `deepseek-v4-flash-free`
+- `mimo-v2.5-free`
+- `qwen3.6-plus-free`
+- `minimax-m3-free`
+- `nemotron-3-ultra-free`
+- `north-mini-code-free`
+
+Model metadata configurations are tracked in `models/zen_models.json`.
+
 **One endpoint, multiple providers.** Each provider has its own pool of API keys with independent rotation, health tracking, and rate limiting.
 
 ```bash

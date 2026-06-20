@@ -68,7 +68,7 @@ def _get_routing(raw_model: str = "") -> tuple:
     if not provider:
         raise HTTPException(
             status_code=400,
-            detail=f"Unknown provider '{provider_name}'. Available: {list(config.providers.keys())}",
+            detail=f"Unknown provider '{provider_name}'. Available: {list(config.providers.keys())}",  # noqa: E501
         )
     if not provider.api_keys:
         raise HTTPException(
@@ -140,7 +140,7 @@ def _extract_tool_call_deltas(line: str) -> list[dict]:
         return []
 
 
-def _fix_streaming_line(line: str, is_responses: bool = False, responses_item_id: str = "") -> str | None:
+def _fix_streaming_line(line: str, is_responses: bool = False, responses_item_id: str = "") -> str | None:  # noqa: E501
     """Sanitize a single complete SSE line for reasoning models to satisfy strict Zod schemas.
     
     Returns None to signal 'skip this line entirely' (is_responses mode, no translatable content).
@@ -171,7 +171,7 @@ def _fix_streaming_line(line: str, is_responses: bool = False, responses_item_id
                 if not reasoning and "reasoning_details" in delta:
                     details = delta["reasoning_details"]
                     if isinstance(details, list):
-                        reasoning = "".join(d.get("text", "") for d in details if isinstance(d, dict))
+                        reasoning = "".join(d.get("text", "") for d in details if isinstance(d, dict))  # noqa: E501
                 if reasoning:
                     delta["content"] = reasoning
             
@@ -253,7 +253,7 @@ def _fix_streaming_line(line: str, is_responses: bool = False, responses_item_id
         return line
 
 
-async def _process_request(body: dict, provider_name: str, template: str, provider, req_id: str, is_responses: bool = False):
+async def _process_request(body: dict, provider_name: str, template: str, provider, req_id: str, is_responses: bool = False):  # noqa: E501
     """Forward a single request to the upstream provider."""
     should_stream = body.get("stream", False)
     use_anthropic = template == "anthropic"
@@ -365,7 +365,7 @@ async def _buffered_request(
     """Non-streaming: buffer full response, transform, return JSON."""
     from src.db_logger import log_leg
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(connect=60.0, read=300.0, write=60.0, pool=300.0)) as client:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(connect=60.0, read=300.0, write=60.0, pool=300.0)) as client:  # noqa: E501
             if use_gemini:
                 resp = await client.post(target_url, json=payload, params={"key": key})
             else:
@@ -378,22 +378,22 @@ async def _buffered_request(
 
             if not resp.is_success:
                 err_text = resp.text
-                log_leg(req_id, 3, "INCOMING", "upstream", "literouter", status_code=resp.status_code, body={"error": err_text})
-                logger.warning("[%s] upstream %d: %s | Payload sent: %s", provider_name, resp.status_code, err_text, payload)
+                log_leg(req_id, 3, "INCOMING", "upstream", "literouter", status_code=resp.status_code, body={"error": err_text})  # noqa: E501
+                logger.warning("[%s] upstream %d: %s | Payload sent: %s", provider_name, resp.status_code, err_text, payload)  # noqa: E501
                 metrics.increment_error()
                 metrics.increment_error_by_status(resp.status_code)
                 return JSONResponse(
                     status_code=resp.status_code,
-                    content={"error": {"message": err_text[:200], "type": "upstream_error", "code": resp.status_code}},
+                    content={"error": {"message": err_text[:200], "type": "upstream_error", "code": resp.status_code}},  # noqa: E501
                 )
 
             metrics.increment_success()
             latency_ms = int((time.time() - start_time) * 1000)
             metrics.add_latency(latency_ms)
-            logger.info("[%s] success status=%d latency=%dms", provider_name, resp.status_code, latency_ms)
+            logger.info("[%s] success status=%d latency=%dms", provider_name, resp.status_code, latency_ms)  # noqa: E501
 
             data = resp.json()
-            log_leg(req_id, 3, "INCOMING", "upstream", "literouter", status_code=resp.status_code, body=data)
+            log_leg(req_id, 3, "INCOMING", "upstream", "literouter", status_code=resp.status_code, body=data)  # noqa: E501
             if use_gemini:
                 data = transform_gemini_response(data)
             # Fix null content for reasoning models (OpenCode can't parse null content)
@@ -407,20 +407,20 @@ async def _buffered_request(
             return JSONResponse(content=data)
 
     except httpx.TimeoutException:
-        log_leg(req_id, 3, "INCOMING", "upstream", "literouter", status_code=504, body={"error": "timeout"})
+        log_leg(req_id, 3, "INCOMING", "upstream", "literouter", status_code=504, body={"error": "timeout"})  # noqa: E501
         logger.error("[%s] request timed out", provider_name)
         metrics.increment_error()
-        return JSONResponse(status_code=504, content={"error": {"message": "Upstream timeout.", "type": "upstream_error"}})
+        return JSONResponse(status_code=504, content={"error": {"message": "Upstream timeout.", "type": "upstream_error"}})  # noqa: E501
     except httpx.ConnectError as exc:
-        log_leg(req_id, 3, "INCOMING", "upstream", "literouter", status_code=502, body={"error": f"connection refused: {exc}"})
+        log_leg(req_id, 3, "INCOMING", "upstream", "literouter", status_code=502, body={"error": f"connection refused: {exc}"})  # noqa: E501
         logger.error("[%s] connection refused: %s", provider_name, exc)
         metrics.increment_error()
-        return JSONResponse(status_code=502, content={"error": {"message": "Upstream connection refused.", "type": "upstream_error"}})
+        return JSONResponse(status_code=502, content={"error": {"message": "Upstream connection refused.", "type": "upstream_error"}})  # noqa: E501
     except Exception as exc:
-        log_leg(req_id, 3, "INCOMING", "upstream", "literouter", status_code=500, body={"error": str(exc)})
+        log_leg(req_id, 3, "INCOMING", "upstream", "literouter", status_code=500, body={"error": str(exc)})  # noqa: E501
         logger.error("[%s] unexpected error: %s", provider_name, exc)
         metrics.increment_error()
-        return JSONResponse(status_code=500, content={"error": {"message": "Internal server error.", "type": "internal_error"}})
+        return JSONResponse(status_code=500, content={"error": {"message": "Internal server error.", "type": "internal_error"}})  # noqa: E501
 
 
 async def _stream_request(
@@ -432,7 +432,7 @@ async def _stream_request(
 
     async def _upstream_stream():
         try:
-            async with httpx.AsyncClient(timeout=httpx.Timeout(connect=60.0, read=300.0, write=60.0, pool=300.0)) as client:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(connect=60.0, read=300.0, write=60.0, pool=300.0)) as client:  # noqa: E501
                 if use_gemini:
                     stream_cm = client.stream("POST", target_url, json=payload, params={"key": key})
                 else:
@@ -444,29 +444,29 @@ async def _stream_request(
                     if not resp.is_success:
                         err_body = await resp.aread()
                         err_text = err_body.decode("utf-8", errors="replace")
-                        log_leg(req_id, 3, "INCOMING", "upstream", "literouter", status_code=resp.status_code, body={"error": err_text})
-                        logger.warning("[%s] stream upstream %d: %s | Payload sent: %s", provider_name, resp.status_code, err_text, payload)
+                        log_leg(req_id, 3, "INCOMING", "upstream", "literouter", status_code=resp.status_code, body={"error": err_text})  # noqa: E501
+                        logger.warning("[%s] stream upstream %d: %s | Payload sent: %s", provider_name, resp.status_code, err_text, payload)  # noqa: E501
                         metrics.increment_error()
                         metrics.increment_error_by_status(resp.status_code)
-                        err_payload = json.dumps({"error": {"message": err_text[:200], "type": "upstream_error"}})
+                        err_payload = json.dumps({"error": {"message": err_text[:200], "type": "upstream_error"}})  # noqa: E501
                         yield f"data: {err_payload}\n\n".encode("utf-8")
                         return
                     # Log leg 3 successfully starting
-                    log_leg(req_id, 3, "INCOMING", "upstream", "literouter", status_code=resp.status_code, body={"status": "streaming starting"})
+                    log_leg(req_id, 3, "INCOMING", "upstream", "literouter", status_code=resp.status_code, body={"status": "streaming starting"})  # noqa: E501
                     
                     if is_responses:
                         resp_id = f"resp-{req_id}"
                         item_id = f"msg-{req_id}"
-                        created_data = json.dumps({'type': 'response.created', 'response': {'id': resp_id, 'object': 'response', 'status': 'in_progress', 'output': []}})
+                        created_data = json.dumps({'type': 'response.created', 'response': {'id': resp_id, 'object': 'response', 'status': 'in_progress', 'output': []}})  # noqa: E501
                         yield f"event: response.created\ndata: {created_data}\n\n".encode("utf-8")
-                        item_added = json.dumps({'type': 'response.output_item.added', 'output_index': 0, 'item': {'type': 'message', 'id': item_id, 'status': 'in_progress', 'role': 'assistant', 'content': []}})
-                        yield f"event: response.output_item.added\ndata: {item_added}\n\n".encode("utf-8")
-                        part_added = json.dumps({'type': 'response.content_part.added', 'item_id': item_id, 'output_index': 0, 'content_index': 0, 'part': {'type': 'output_text', 'text': ''}})
-                        yield f"event: response.content_part.added\ndata: {part_added}\n\n".encode("utf-8")
+                        item_added = json.dumps({'type': 'response.output_item.added', 'output_index': 0, 'item': {'type': 'message', 'id': item_id, 'status': 'in_progress', 'role': 'assistant', 'content': []}})  # noqa: E501
+                        yield f"event: response.output_item.added\ndata: {item_added}\n\n".encode("utf-8")  # noqa: E501
+                        part_added = json.dumps({'type': 'response.content_part.added', 'item_id': item_id, 'output_index': 0, 'content_index': 0, 'part': {'type': 'output_text', 'text': ''}})  # noqa: E501
+                        yield f"event: response.content_part.added\ndata: {part_added}\n\n".encode("utf-8")  # noqa: E501
                         accumulated_text = []
                         accumulated_tool_calls = {}  # id -> {name, arguments}
 
-                    # Fix null content in streaming chunks for reasoning models using incremental decoder and line buffer
+                    # Fix null content in streaming chunks for reasoning models using incremental decoder and line buffer  # noqa: E501
                     decoder = codecs.getincrementaldecoder("utf-8")()
                     buffer = ""
                     async for chunk in resp.aiter_bytes():
@@ -479,7 +479,7 @@ async def _stream_request(
                                 for tc in _extract_tool_call_deltas(line):
                                     idx = tc.get("index", 0)
                                     if idx not in accumulated_tool_calls:
-                                        accumulated_tool_calls[idx] = {"id": "", "name": "", "arguments": ""}
+                                        accumulated_tool_calls[idx] = {"id": "", "name": "", "arguments": ""}  # noqa: E501
                                     if "id" in tc:
                                         accumulated_tool_calls[idx]["id"] = tc["id"]
                                     fn = tc.get("function", {})
@@ -487,7 +487,7 @@ async def _stream_request(
                                         accumulated_tool_calls[idx]["name"] += fn["name"]
                                     if "arguments" in fn:
                                         accumulated_tool_calls[idx]["arguments"] += fn["arguments"]
-                            processed = _fix_streaming_line(line, is_responses, responses_item_id=item_id if is_responses else "")
+                            processed = _fix_streaming_line(line, is_responses, responses_item_id=item_id if is_responses else "")  # noqa: E501
                             if processed is not None:
                                 yield (processed + "\n").encode("utf-8")
                                 if is_responses and '"delta"' in processed:
@@ -501,7 +501,7 @@ async def _stream_request(
                             for tc in _extract_tool_call_deltas(buffer):
                                 idx = tc.get("index", 0)
                                 if idx not in accumulated_tool_calls:
-                                    accumulated_tool_calls[idx] = {"id": "", "name": "", "arguments": ""}
+                                    accumulated_tool_calls[idx] = {"id": "", "name": "", "arguments": ""}  # noqa: E501
                                 if "id" in tc:
                                     accumulated_tool_calls[idx]["id"] = tc["id"]
                                 fn = tc.get("function", {})
@@ -509,7 +509,7 @@ async def _stream_request(
                                     accumulated_tool_calls[idx]["name"] += fn["name"]
                                 if "arguments" in fn:
                                     accumulated_tool_calls[idx]["arguments"] += fn["arguments"]
-                        processed = _fix_streaming_line(buffer, is_responses, responses_item_id=item_id if is_responses else "")
+                        processed = _fix_streaming_line(buffer, is_responses, responses_item_id=item_id if is_responses else "")  # noqa: E501
                         if processed is not None:
                             yield processed.encode("utf-8")
                             if is_responses and '"delta"' in processed:
@@ -521,23 +521,23 @@ async def _stream_request(
 
                     if is_responses:
                         full_text = "".join(accumulated_text)
-                        text_done = json.dumps({'type': 'response.output_text.done', 'item_id': item_id, 'output_index': 0, 'content_index': 0, 'text': full_text})
-                        yield f"event: response.output_text.done\ndata: {text_done}\n\n".encode("utf-8")
-                        part_done = json.dumps({'type': 'response.content_part.done', 'item_id': item_id, 'output_index': 0, 'content_index': 0, 'part': {'type': 'output_text', 'text': full_text}})
-                        yield f"event: response.content_part.done\ndata: {part_done}\n\n".encode("utf-8")
-                        item_done = json.dumps({'type': 'response.output_item.done', 'output_index': 0, 'item': {'type': 'message', 'id': item_id, 'status': 'completed', 'role': 'assistant', 'content': [{'type': 'output_text', 'text': full_text}]}})
-                        yield f"event: response.output_item.done\ndata: {item_done}\n\n".encode("utf-8")
+                        text_done = json.dumps({'type': 'response.output_text.done', 'item_id': item_id, 'output_index': 0, 'content_index': 0, 'text': full_text})  # noqa: E501
+                        yield f"event: response.output_text.done\ndata: {text_done}\n\n".encode("utf-8")  # noqa: E501
+                        part_done = json.dumps({'type': 'response.content_part.done', 'item_id': item_id, 'output_index': 0, 'content_index': 0, 'part': {'type': 'output_text', 'text': full_text}})  # noqa: E501
+                        yield f"event: response.content_part.done\ndata: {part_done}\n\n".encode("utf-8")  # noqa: E501
+                        item_done = json.dumps({'type': 'response.output_item.done', 'output_index': 0, 'item': {'type': 'message', 'id': item_id, 'status': 'completed', 'role': 'assistant', 'content': [{'type': 'output_text', 'text': full_text}]}})  # noqa: E501
+                        yield f"event: response.output_item.done\ndata: {item_done}\n\n".encode("utf-8")  # noqa: E501
 
                         # Log accumulated tool calls for debugging (not emitted as ACP events
                         # because OpenCode's @ai-sdk/openai SDK rejects function_call items
                         # with Zod validation errors)
-                        output_items = [{'type': 'message', 'id': item_id, 'status': 'completed', 'role': 'assistant', 'content': [{'type': 'output_text', 'text': full_text}]}]
+                        output_items = [{'type': 'message', 'id': item_id, 'status': 'completed', 'role': 'assistant', 'content': [{'type': 'output_text', 'text': full_text}]}]  # noqa: E501
                         for idx in sorted(accumulated_tool_calls.keys()):
                             tc = accumulated_tool_calls[idx]
-                            logger.info("[%s] Tool call received (not forwarded to ACP): %s(%s...)", provider_name, tc['name'], tc['arguments'][:80])
+                            logger.info("[%s] Tool call received (not forwarded to ACP): %s(%s...)", provider_name, tc['name'], tc['arguments'][:80])  # noqa: E501
 
-                        completed_data = json.dumps({'type': 'response.completed', 'response': {'id': resp_id, 'object': 'response', 'status': 'completed', 'output': output_items}})
-                        yield f"event: response.completed\ndata: {completed_data}\n\n".encode("utf-8")
+                        completed_data = json.dumps({'type': 'response.completed', 'response': {'id': resp_id, 'object': 'response', 'status': 'completed', 'output': output_items}})  # noqa: E501
+                        yield f"event: response.completed\ndata: {completed_data}\n\n".encode("utf-8")  # noqa: E501
             metrics.increment_success()
             latency_ms = int((time.time() - start_time) * 1000)
             metrics.add_latency(latency_ms)
@@ -545,17 +545,17 @@ async def _stream_request(
         except httpx.TimeoutException:
             logger.error("[%s] stream timed out", provider_name)
             metrics.increment_error()
-            err_payload = json.dumps({"error": {"message": "Upstream timeout.", "type": "upstream_error"}})
+            err_payload = json.dumps({"error": {"message": "Upstream timeout.", "type": "upstream_error"}})  # noqa: E501
             yield f"data: {err_payload}\n\n".encode("utf-8")
         except httpx.ConnectError as exc:
             logger.error("[%s] stream connection refused: %s", provider_name, exc)
             metrics.increment_error()
-            err_payload = json.dumps({"error": {"message": "Upstream connection refused.", "type": "upstream_error"}})
+            err_payload = json.dumps({"error": {"message": "Upstream connection refused.", "type": "upstream_error"}})  # noqa: E501
             yield f"data: {err_payload}\n\n".encode("utf-8")
         except Exception as exc:
             logger.error("[%s] stream unexpected error: %s", provider_name, exc)
             metrics.increment_error()
-            err_payload = json.dumps({"error": {"message": "Internal server error.", "type": "internal_error"}})
+            err_payload = json.dumps({"error": {"message": "Internal server error.", "type": "internal_error"}})  # noqa: E501
             yield f"data: {err_payload}\n\n".encode("utf-8")
 
     return StreamingResponse(_upstream_stream(), media_type="text/event-stream")
@@ -597,7 +597,7 @@ async def _stream_anthropic(resp):
                     "object": "chat.completion.chunk",
                     "created": int(time.time()),
                     "model": model,
-                    "choices": [{"index": 0, "delta": {"role": "assistant"}, "finish_reason": None}],
+                    "choices": [{"index": 0, "delta": {"role": "assistant"}, "finish_reason": None}],  # noqa: E501
                 }
                 yield f"data: {json.dumps(chunk)}\n\n".encode()
 
@@ -610,14 +610,14 @@ async def _stream_anthropic(resp):
                         "object": "chat.completion.chunk",
                         "created": int(time.time()),
                         "model": model,
-                        "choices": [{"index": 0, "delta": {"content": text}, "finish_reason": None}],
+                        "choices": [{"index": 0, "delta": {"content": text}, "finish_reason": None}],  # noqa: E501
                     }
                     yield f"data: {json.dumps(chunk)}\n\n".encode()
 
             elif event_type == "message_delta":
                 stop_reason = data.get("delta", {}).get("stop_reason", "")
                 if stop_reason:
-                    finish_reason = {"end_turn": "stop", "max_tokens": "length", "stop_sequence": "stop", "tool_use": "tool_calls"}.get(stop_reason, "stop")
+                    finish_reason = {"end_turn": "stop", "max_tokens": "length", "stop_sequence": "stop", "tool_use": "tool_calls"}.get(stop_reason, "stop")  # noqa: E501
                 usage = data.get("usage", {})
 
             elif event_type == "message_stop":
@@ -625,7 +625,7 @@ async def _stream_anthropic(resp):
                 if usage:
                     out_t = usage.get("output_tokens", 0)
                     in_t = usage.get("input_tokens", 0)
-                    openai_usage = {"prompt_tokens": in_t, "completion_tokens": out_t, "total_tokens": in_t + out_t}
+                    openai_usage = {"prompt_tokens": in_t, "completion_tokens": out_t, "total_tokens": in_t + out_t}  # noqa: E501
                 final = {
                     "id": message_id or f"chatcmpl-{int(time.time())}",
                     "object": "chat.completion.chunk",
@@ -648,14 +648,13 @@ async def _stream_anthropic(resp):
 @app.post("/v1/responses")
 async def chat_completions(request: Request, authorization: str | None = Header(None)):
     if not _check_auth(authorization):
-        return JSONResponse(status_code=401, content={"error": {"message": "Invalid API key", "type": "invalid_request_error"}})
+        return JSONResponse(status_code=401, content={"error": {"message": "Invalid API key", "type": "invalid_request_error"}})  # noqa: E501
 
-    raw_body = await request.body()
 
     try:
         body = await request.json()
     except Exception:
-        return JSONResponse(status_code=400, content={"error": {"message": "Invalid JSON body", "type": "invalid_request_error"}})
+        return JSONResponse(status_code=400, content={"error": {"message": "Invalid JSON body", "type": "invalid_request_error"}})  # noqa: E501
 
     if "input" in body and "messages" not in body:
         body["messages"] = body["input"]
@@ -691,7 +690,7 @@ async def chat_completions(request: Request, authorization: str | None = Header(
                     "content": None,
                     "tool_calls": [tool_call],
                 })
-                logger.info("[Sanitizer] Converted function_call '%s' to assistant tool_calls", msg.get("name"))
+                logger.info("[Sanitizer] Converted function_call '%s' to assistant tool_calls", msg.get("name"))  # noqa: E501
                 continue
 
             if msg_type == "function_call_output":
@@ -707,7 +706,7 @@ async def chat_completions(request: Request, authorization: str | None = Header(
             # Standard message — sanitize content block types
             if isinstance(msg.get("content"), list):
                 for block in msg["content"]:
-                    if isinstance(block, dict) and block.get("type") in ("input_text", "output_text"):
+                    if isinstance(block, dict) and block.get("type") in ("input_text", "output_text"):  # noqa: E501
                         block_type = block.get("type")
                         block["type"] = "text"
                         logger.info("[Sanitizer] Replaced %s block with standard text", block_type)
@@ -721,7 +720,7 @@ async def chat_completions(request: Request, authorization: str | None = Header(
         sanitized_tools = []
         for tool in body["tools"]:
             if isinstance(tool, dict):
-                # If the tool has type=function but does not have the 'function' object (OpenAI format requirement)
+                # If the tool has type=function but does not have the 'function' object (OpenAI format requirement)  # noqa: E501
                 if tool.get("type") == "function" and "function" not in tool:
                     # Move name, description, parameters to the 'function' nested dictionary
                     fn_data = {}
@@ -745,19 +744,19 @@ async def chat_completions(request: Request, authorization: str | None = Header(
             content={
                 "id": "health-check", "object": "chat.completion",
                 "created": int(time.time()), "model": raw_model or "default",
-                "choices": [{"index": 0, "message": {"role": "assistant", "content": "ok"}, "finish_reason": "stop"}],
+                "choices": [{"index": 0, "message": {"role": "assistant", "content": "ok"}, "finish_reason": "stop"}],  # noqa: E501
             },
         )
 
     req_id = f"req-{uuid.uuid4().hex[:8]}"
     from src.db_logger import log_leg
     log_leg(req_id, 1, "INCOMING", "opencode", "literouter", url=request.url.path, body=body)
-    logger.info("[%s] INCOMING REQUEST | Path: %s | Model: %s | Body: %s", req_id, request.url.path, raw_model, json.dumps(body))
+    logger.info("[%s] INCOMING REQUEST | Path: %s | Model: %s | Body: %s", req_id, request.url.path, raw_model, json.dumps(body))  # noqa: E501
 
     template, provider_name, provider = _get_routing(raw_model)
     is_responses = request.url.path == "/v1/responses"
     try:
-        response = await _process_request(body, provider_name, template, provider, req_id, is_responses=is_responses)
+        response = await _process_request(body, provider_name, template, provider, req_id, is_responses=is_responses)  # noqa: E501
         if isinstance(response, JSONResponse):
             # Read bytes of response for logging
             resp_content = response.body.decode("utf-8", errors="replace")
@@ -765,14 +764,14 @@ async def chat_completions(request: Request, authorization: str | None = Header(
                 resp_json = json.loads(resp_content)
             except Exception:
                 resp_json = {"raw": resp_content}
-            log_leg(req_id, 4, "OUTGOING", "literouter", "opencode", status_code=response.status_code, body=resp_json)
-            logger.info("[%s] OUTGOING RESPONSE | Status: %d | Body: %s", req_id, response.status_code, resp_content)
+            log_leg(req_id, 4, "OUTGOING", "literouter", "opencode", status_code=response.status_code, body=resp_json)  # noqa: E501
+            logger.info("[%s] OUTGOING RESPONSE | Status: %d | Body: %s", req_id, response.status_code, resp_content)  # noqa: E501
         else:
-            log_leg(req_id, 4, "OUTGOING", "literouter", "opencode", status_code=200, body={"status": "streaming started"})
+            log_leg(req_id, 4, "OUTGOING", "literouter", "opencode", status_code=200, body={"status": "streaming started"})  # noqa: E501
             logger.info("[%s] OUTGOING RESPONSE | Started Stream Response", req_id)
         return response
     except Exception as exc:
-        log_leg(req_id, 4, "OUTGOING", "literouter", "opencode", status_code=500, body={"error": str(exc)})
+        log_leg(req_id, 4, "OUTGOING", "literouter", "opencode", status_code=500, body={"error": str(exc)})  # noqa: E501
         logger.error("[%s] OUTGOING RESPONSE ERROR | %s", req_id, exc, exc_info=True)
         raise exc
 
@@ -798,8 +797,8 @@ async def health():
             },
         },
         "router": router.get_router_status(config.providers),
-        "queue": {"length": 0, "isProcessing": any(lock.locked() for lock in _provider_locks.values()), "rotateDelayMs": config.rotate_delay_ms},
-        "rateLimiter": {"providerStatus": rate_limiter.get_status(), "defaultMinDelayMs": config.rotate_delay_ms},
+        "queue": {"length": 0, "isProcessing": any(lock.locked() for lock in _provider_locks.values()), "rotateDelayMs": config.rotate_delay_ms},  # noqa: E501
+        "rateLimiter": {"providerStatus": rate_limiter.get_status(), "defaultMinDelayMs": config.rotate_delay_ms},  # noqa: E501
         "metrics": metrics.get_metrics(),
         "redis": {"connected": check_redis(), "info": _redis_info_safe()},
     })
@@ -818,7 +817,7 @@ OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models"
 @app.get("/v1/models")
 async def list_models(authorization: str | None = Header(None)):
     if not _check_auth(authorization):
-        return JSONResponse(status_code=401, content={"error": {"message": "Invalid API key", "type": "invalid_request_error"}})
+        return JSONResponse(status_code=401, content={"error": {"message": "Invalid API key", "type": "invalid_request_error"}})  # noqa: E501
 
     result = {}
     for name, provider in config.providers.items():
@@ -841,12 +840,12 @@ async def _fetch_openrouter_models(provider):
         return {"error": "No API keys available"}
     try:
         async with httpx.AsyncClient(timeout=15.0) as client:
-            resp = await client.get(OPENROUTER_MODELS_URL, headers={"Authorization": f"Bearer {keys[0]}"})
+            resp = await client.get(OPENROUTER_MODELS_URL, headers={"Authorization": f"Bearer {keys[0]}"})  # noqa: E501
         if resp.status_code == 200:
             models = resp.json().get("data", [])
             return {
                 "count": len(models),
-                "models": [{"id": m.get("id", ""), "context_length": m.get("context_length", 0), "pricing": m.get("pricing", {})} for m in models],
+                "models": [{"id": m.get("id", ""), "context_length": m.get("context_length", 0), "pricing": m.get("pricing", {})} for m in models],  # noqa: E501
             }
         return {"error": f"OpenRouter returned {resp.status_code}", "detail": resp.text[:200]}
     except Exception as exc:
@@ -869,7 +868,7 @@ async def _fetch_provider_models(name: str, provider) -> dict:
             if isinstance(raw, list):
                 models = [{"id": m.get("id", "")} for m in raw]
                 return {"configured": True, "count": len(models), "models": models}
-            return {"configured": True, "model": config.model_params.get(name, {}).get("model", "not set")}
+            return {"configured": True, "model": config.model_params.get(name, {}).get("model", "not set")}  # noqa: E501
         return {"configured": True, "error": f"API returned {resp.status_code}"}
     except Exception as exc:
         return {"configured": True, "error": str(exc)}

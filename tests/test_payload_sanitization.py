@@ -1,4 +1,3 @@
-from src.main import app
 
 
 def test_custom_blocks_sanitization():
@@ -29,7 +28,7 @@ def test_custom_blocks_sanitization():
         for msg in payload["messages"]:
             if isinstance(msg.get("content"), list):
                 for block in msg["content"]:
-                    if isinstance(block, dict) and block.get("type") in ("input_text", "output_text"):
+                    if isinstance(block, dict) and block.get("type") in ("input_text", "output_text"):  # noqa: E501
                         block["type"] = "text"
                         
     assert payload["messages"][0]["content"][0]["type"] == "text"

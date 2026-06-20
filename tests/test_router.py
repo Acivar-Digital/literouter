@@ -105,7 +105,6 @@ class TestRoundRobin:
         BUG PROBE: Two consecutive 429s should double the cooldown.
         First 429: 60s cooldown. Second 429: 120s cooldown.
         """
-        keys = ["key-a"]
         import src.router as router_mod
         from src.router import _sha256
 
@@ -121,7 +120,7 @@ class TestRoundRobin:
         self.router.report_error("test", "key-a", 429)
         second_expiry = router_mod._mem_cooldowns["test"].get(sha, 0)
         second_cooldown = second_expiry - time.time()
-        assert 110 <= second_cooldown <= 130, f"Second cooldown was {second_cooldown}s, expected ~120s"
+        assert 110 <= second_cooldown <= 130, f"Second cooldown was {second_cooldown}s, expected ~120s"  # noqa: E501
 
     def test_quarantine_is_permanent(self):
         """
@@ -230,7 +229,6 @@ class TestRoundRobin:
         import src.router as router_mod
         from src.router import _sha256
 
-        keys = ["key-a"]
         sha = _sha256("key-a")
 
         # Simulate many 429s
