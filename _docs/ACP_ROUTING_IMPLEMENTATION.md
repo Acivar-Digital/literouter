@@ -62,3 +62,7 @@ The ACP (Agentic Communication Protocol) requires a highly specific lifecycle fo
 ## Configuration Standards
 - **Client Identification**: Health checks and downstream API requests (like those in `doctor.py`) must include a proper `User-Agent` header (e.g., `User-Agent: LiteRouter/2.2`) to prevent upstream API gateways from rejecting the requests.
 - **Model Metadata Trackers**: Experimental and free-tier "Zen models" are explicitly tracked using discrete JSON catalogs (e.g., `models/zen_models.json`) to prevent pollution of the core provider configurations. Ensure JSON configurations strictly follow standards (no trailing commas) as LiteRouter's strict parser will fail on malformed definitions.
+- **Local vs VPS Configuration (Do Not Assume)**:
+  - **DO NOT ASSUME DIRECTIVE**: Never assume that changing local configurations will affect the running instance if OpenCode is configured to point to the VPS.
+  - Check the active `baseURL` in `~/.config/opencode/opencode.json` (pointing either to `localhost` or `10.32.34.243`).
+  - If pointing to the VPS, sync configuration changes to the VPS `.env` and restart the LiteRouter daemon on the VPS, and check VPS logs rather than local logs.

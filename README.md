@@ -187,6 +187,20 @@ Both providers point to the same LiteRouter endpoint. Routing is determined by t
 - `opencode run -m openrouter/owl-alpha "..."` → OpenRouter key pool
 - `opencode run -m nvidia/openai/gpt-oss-120b "..."` → Nvidia key pool
 
+## Local vs VPS Configuration (Do Not Assume)
+
+> [!IMPORTANT]
+> **DO NOT ASSUME DIRECTIVE**: Before starting or testing any configuration changes, you **MUST** verify which LiteRouter target is active. 
+> 
+> Check your global configuration at `~/.config/opencode/opencode.json` (specifically the `baseURL` under `provider.literouter.options`):
+> - If `baseURL` points to `localhost` (e.g. `http://localhost:7766/v1`), your requests route to your **local** LiteRouter instance.
+> - If `baseURL` points to the VPS IP (e.g. `http://10.32.34.243:7766/v1`), requests route to the **VPS** LiteRouter instance.
+> 
+> **Never assume that updates to your local `.env` will take effect on the VPS.** If OpenCode is configured to point to the VPS:
+> 1. You must apply/sync configuration changes (such as API keys or new providers like `zen`) directly on the VPS instance.
+> 2. You must monitor/verify VPS logs instead of local ones.
+> 3. Verify the deployment target explicitly before declaring success.
+
 ## Configuration Reference
 
 | Variable | Description |

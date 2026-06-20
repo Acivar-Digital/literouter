@@ -2,6 +2,12 @@
 
 All notable changes to LiteRouter will be documented in this file.
 
+## [2.8.0] — 2026-06-21
+
+### Added
+- **Do Not Assume Directive** — Added explicit documentation of local vs VPS configuration logic and the active target verification.
+- **Housekeeping** — Cleaned up untracked test scripts (`test_curl_rotation.py`).
+
 ## [2.7.0] — 2026-06-20
 
 ### Added
