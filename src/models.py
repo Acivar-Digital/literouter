@@ -21,7 +21,7 @@ class ChatMessage(BaseModel):
 class ChatCompletionRequest(BaseModel):
     """OpenAI-compatible chat completion request body."""
 
-    model: str  # provider name or "provider/alias"
+    model: str = "owl-alpha"  # provider name or "provider/alias"
     messages: list[ChatMessage]
     stream: bool = False
     temperature: float | None = None
