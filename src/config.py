@@ -47,7 +47,7 @@ _INTAKE_BLOCKLIST_PATTERNS: tuple[str, ...] = (
     ">",
     "example",
 )
-_MIN_KEY_LENGTH = 30
+_MIN_KEY_LENGTH = 10
 
 
 def is_invalid_api_key(key: str) -> bool:
