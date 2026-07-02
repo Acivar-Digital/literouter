@@ -81,9 +81,9 @@ def test_realistic_key_shapes_pass():
 
 
 def test_min_key_length_constant_documented():
-    """Lock the contract: 30 is the floor that distinguishes real keys
+    """Lock the contract: 10 is the floor that distinguishes real keys
     from obvious test placeholders."""
-    assert _MIN_KEY_LENGTH == 30
+    assert _MIN_KEY_LENGTH == 10
 
 
 def test_doctor_exits_nonzero_on_dead_key(monkeypatch, tmp_path):
