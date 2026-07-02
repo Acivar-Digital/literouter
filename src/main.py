@@ -871,6 +871,15 @@ async def google_models_endpoint(
     elif upstream_model.startswith("models/"):
         upstream_model = upstream_model[7:]
 
+    # Strip thinkingConfig for Gemma models as Google's API rejects it
+    if "gemma" in upstream_model.lower() and isinstance(body, dict):
+        if "generationConfig" in body and isinstance(body["generationConfig"], dict):
+            if "thinkingConfig" in body["generationConfig"]:
+                logger.info("Stripping thinkingConfig from Gemma model request payload")
+                import copy
+                body = copy.deepcopy(body)
+                del body["generationConfig"]["thinkingConfig"]
+
     provider = config.providers.get(provider_name)
     if not provider:
         return JSONResponse(
