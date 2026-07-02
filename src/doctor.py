@@ -127,7 +127,7 @@ async def _validate_provider_keys() -> dict:
                         f"{provider.base_url}/models/{test_model}:generateContent",
                         json={
                             "contents": [{"role": "user", "parts": [{"text": "hello"}]}],
-                            "generationConfig": {"maxOutputTokens": 1},
+                            "generationConfig": {"maxOutputTokens": 100},
                         },
                         params={"key": key},
                     )
