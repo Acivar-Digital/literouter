@@ -972,6 +972,9 @@ async def google_models_endpoint(
             version = "v1"
         target_url = f"{base}/{version}/models/{upstream_model}:{action}"
 
+    if request.url.query:
+        target_url = f"{target_url}?{request.url.query}"
+
     from src.db_logger import log_leg
     log_leg(req_id, 1, "INCOMING", "opencode", "literouter", url=request.url.path, body=body)
     logger.info("[%s] INCOMING GOOGLE REQUEST | Path: %s | Model: %s | Body: %s", req_id, request.url.path, raw_model, json.dumps(body))  # noqa: E501
@@ -1087,11 +1090,6 @@ async def _stream_google_request(target_url, payload, headers, provider_name, st
                     log_leg(req_id, 3, "INCOMING", "upstream", "literouter", status_code=resp.status_code, body={"status": "streaming starting"})  # noqa: E501
                     
                     async for chunk in resp.aiter_bytes():
-                        # Google Gemma 4 models emit thought blocks ("thought": true) in candidates during streaming.
-                        # The client-side Google SDK in OpenCode does not support this schema/feature and fails/crashes
-                        # upon parsing it. Filter out these intermediate thought chunks to prevent client-side crashes.
-                        if b'"thought": true' in chunk or b'"thought":true' in chunk:
-                            continue
                         yield chunk
 
                     metrics.increment_success()
