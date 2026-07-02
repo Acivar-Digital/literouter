@@ -1049,44 +1049,72 @@ async def _stream_google_request(target_url, payload, headers, provider_name, st
     from src.db_logger import log_leg
 
     async def _upstream_stream():
-        try:
-            client = _get_client()
-            stream_cm = client.stream("POST", target_url, json=payload, headers=headers)
-            async with stream_cm as resp:
-                rate_limiter.mark_call(provider_name)
-                if resp.status_code in (400, 429, 401, 403):
-                    router.report_error(provider_name, key, resp.status_code)
-                if not resp.is_success:
-                    err_body = await resp.aread()
-                    err_text = err_body.decode("utf-8", errors="replace")
-                    log_leg(req_id, 3, "INCOMING", "upstream", "literouter", status_code=resp.status_code, body={"error": err_text})  # noqa: E501
-                    logger.warning("[%s] stream upstream %d: %s", provider_name, resp.status_code, err_text)
-                    metrics.increment_error()
-                    metrics.increment_error_by_status(resp.status_code)
-                    yield f"data: {json.dumps({'error': {'message': err_text[:200], 'type': 'upstream_error'}})}\n\n".encode("utf-8")  # noqa: E501
+        current_key = key
+        max_attempts = min(5, len(config.providers[provider_name].api_keys))
+
+        for attempt in range(max_attempts):
+            import urllib.parse
+            parsed_url = urllib.parse.urlparse(target_url)
+            query_params = urllib.parse.parse_qs(parsed_url.query)
+            query_params["key"] = [current_key]
+            new_query = urllib.parse.urlencode(query_params, doseq=True)
+            attempt_url = parsed_url._replace(query=new_query).geturl()
+
+            try:
+                client = _get_client()
+                stream_cm = client.stream("POST", attempt_url, json=payload, headers=headers)
+                async with stream_cm as resp:
+                    rate_limiter.mark_call(provider_name)
+                    if resp.status_code in (400, 429, 401, 403, 500):
+                        router.report_error(provider_name, current_key, resp.status_code)
+                    
+                    if not resp.is_success:
+                        err_body = await resp.aread()
+                        err_text = err_body.decode("utf-8", errors="replace")
+                        log_leg(req_id, 3, "INCOMING", "upstream", "literouter", status_code=resp.status_code, body={"error": err_text})  # noqa: E501
+                        logger.warning("[%s] stream upstream attempt %d failed with status %d: %s. Retrying next key...", provider_name, attempt + 1, resp.status_code, err_text)
+                        
+                        next_key = router.get_next_key(provider_name, config.providers[provider_name].api_keys)
+                        if next_key:
+                            current_key = next_key
+                            continue
+                        else:
+                            metrics.increment_error()
+                            metrics.increment_error_by_status(resp.status_code)
+                            yield f"data: {json.dumps({'error': {'message': err_text[:200], 'type': 'upstream_error'}})}\n\n".encode("utf-8")  # noqa: E501
+                            return
+
+                    log_leg(req_id, 3, "INCOMING", "upstream", "literouter", status_code=resp.status_code, body={"status": "streaming starting"})  # noqa: E501
+                    
+                    async for chunk in resp.aiter_bytes():
+                        yield chunk
+
+                    metrics.increment_success()
+                    latency_ms = int((time.time() - start_time) * 1000)
+                    metrics.add_latency(latency_ms)
+                    logger.info("[%s] stream success latency=%dms", provider_name, latency_ms)
+                    log_leg(req_id, 4, "OUTGOING", "literouter", "opencode", status_code=200, body={"status": "streaming completed"})  # noqa: E501
                     return
 
-                log_leg(req_id, 3, "INCOMING", "upstream", "literouter", status_code=resp.status_code, body={"status": "streaming starting"})  # noqa: E501
+            except (httpx.TimeoutException, httpx.NetworkError) as exc:
+                log_leg(req_id, 3, "INCOMING", "upstream", "literouter", status_code=504, body={"error": str(exc)})  # noqa: E501
+                logger.error("[%s] stream attempt %d error: %s. Retrying next key...", provider_name, attempt + 1, exc)
+                router.report_error(provider_name, current_key, 502)
                 
-                async for chunk in resp.aiter_bytes():
-                    yield chunk
-
-                metrics.increment_success()
-                latency_ms = int((time.time() - start_time) * 1000)
-                metrics.add_latency(latency_ms)
-                logger.info("[%s] stream success latency=%dms", provider_name, latency_ms)
-                log_leg(req_id, 4, "OUTGOING", "literouter", "opencode", status_code=200, body={"status": "streaming completed"})  # noqa: E501
-
-        except httpx.TimeoutException:
-            log_leg(req_id, 3, "INCOMING", "upstream", "literouter", status_code=504, body={"error": "timeout"})  # noqa: E501
-            logger.error("[%s] stream timeout", provider_name)
-            metrics.increment_error()
-            yield f"data: {json.dumps({'error': {'message': 'Upstream timeout.', 'type': 'upstream_error'}})}\n\n".encode("utf-8")  # noqa: E501
-        except Exception as exc:
-            log_leg(req_id, 3, "INCOMING", "upstream", "literouter", status_code=500, body={"error": str(exc)})  # noqa: E501
-            logger.error("[%s] stream unexpected error: %s", provider_name, exc)
-            metrics.increment_error()
-            yield f"data: {json.dumps({'error': {'message': 'Internal stream error.', 'type': 'internal_error'}})}\n\n".encode("utf-8")  # noqa: E501
+                next_key = router.get_next_key(provider_name, config.providers[provider_name].api_keys)
+                if next_key:
+                    current_key = next_key
+                    continue
+                else:
+                    metrics.increment_error()
+                    yield f"data: {json.dumps({'error': {'message': f'Upstream connection error: {exc}', 'type': 'upstream_error'}})}\n\n".encode("utf-8")  # noqa: E501
+                    return
+            except Exception as exc:
+                log_leg(req_id, 3, "INCOMING", "upstream", "literouter", status_code=500, body={"error": str(exc)})  # noqa: E501
+                logger.error("[%s] stream attempt %d unexpected error: %s", provider_name, attempt + 1, exc)
+                metrics.increment_error()
+                yield f"data: {json.dumps({'error': {'message': 'Internal stream error.', 'type': 'internal_error'}})}\n\n".encode("utf-8")  # noqa: E501
+                return
 
     return StreamingResponse(_upstream_stream(), media_type="application/json")
 
