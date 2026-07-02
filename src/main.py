@@ -1087,6 +1087,11 @@ async def _stream_google_request(target_url, payload, headers, provider_name, st
                     log_leg(req_id, 3, "INCOMING", "upstream", "literouter", status_code=resp.status_code, body={"status": "streaming starting"})  # noqa: E501
                     
                     async for chunk in resp.aiter_bytes():
+                        # Google Gemma 4 models emit thought blocks ("thought": true) in candidates during streaming.
+                        # The client-side Google SDK in OpenCode does not support this schema/feature and fails/crashes
+                        # upon parsing it. Filter out these intermediate thought chunks to prevent client-side crashes.
+                        if b'"thought": true' in chunk or b'"thought":true' in chunk:
+                            continue
                         yield chunk
 
                     metrics.increment_success()
