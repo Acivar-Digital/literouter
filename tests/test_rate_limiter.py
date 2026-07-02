@@ -13,8 +13,8 @@ class TestRateLimiter:
 
     def setup_method(self):
         """Create a fresh rate limiter with no Redis."""
-        with patch("src.redis_client.get_redis_client", return_value=None):
-            with patch("src.redis_client.redis_available", return_value=False):
+        with patch("src.rate_limiter.get_redis_client", return_value=None):
+            with patch("src.rate_limiter.redis_available", return_value=False):
                 from src.rate_limiter import RedisRateLimiter
                 self.limiter = RedisRateLimiter()
                 import src.rate_limiter as rl_mod

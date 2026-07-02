@@ -814,11 +814,11 @@ async def chat_completions(request: Request, authorization: str | None = Header(
         logger.error("[%s] OUTGOING RESPONSE ERROR | %s", req_id, exc, exc_info=True)
         raise exc
 
-@app.post("/{prefix:path}/models/{model:path}:{action}")
+@app.post("/{prefix:path}/models/{model_and_action:path}")
+@app.post("/{prefix:path}/model/{model_and_action:path}")
 async def google_models_endpoint(
     prefix: str,
-    model: str,
-    action: str,
+    model_and_action: str,
     request: Request,
     authorization: str | None = Header(None),
 ):
@@ -830,13 +830,41 @@ async def google_models_endpoint(
     except Exception:
         return JSONResponse(status_code=400, content={"error": {"message": "Invalid JSON body", "type": "invalid_request_error"}})  # noqa: E501
 
-    raw_model = model
-    if "/" in raw_model:
-        provider_name = raw_model.split("/", 1)[0]
-        upstream_model = raw_model.split("/", 1)[1]
+    # 1. Parse path to resolve provider_name, upstream_model, and action
+    path = request.url.path
+    if "/models/" in path:
+        left, right = path.split("/models/", 1)
+    elif "/model/" in path:
+        left, right = path.split("/model/", 1)
     else:
-        provider_name = "google"
-        upstream_model = raw_model
+        left, right = path, ""
+
+    import urllib.parse
+    right_decoded = urllib.parse.unquote(right)
+    if ":" in right_decoded:
+        model_part, action = right_decoded.rsplit(":", 1)
+    else:
+        model_part = right_decoded
+        action = "generateContent"
+
+    raw_model = model_part
+    left_segs = [s for s in left.split("/") if s]
+    last_seg = left_segs[-1] if left_segs else ""
+
+    if last_seg in config.providers:
+        provider_name = last_seg
+        upstream_model = model_part
+    else:
+        if "/" in model_part:
+            provider_name, upstream_model = model_part.split("/", 1)
+        else:
+            provider_name = "google"
+            upstream_model = model_part
+
+    # Fallback to freetier if google provider is not configured
+    if provider_name == "google" and "google" not in config.providers:
+        if "freetier" in config.providers:
+            provider_name = "freetier"
 
     provider = config.providers.get(provider_name)
     if not provider:

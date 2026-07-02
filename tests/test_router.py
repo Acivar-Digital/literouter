@@ -16,8 +16,8 @@ class TestRoundRobin:
 
     def setup_method(self):
         """Create a fresh router with no Redis."""
-        with patch("src.redis_client.get_redis_client", return_value=None):
-            with patch("src.redis_client.redis_available", return_value=False):
+        with patch("src.router.get_redis_client", return_value=None):
+            with patch("src.router.redis_available", return_value=False):
                 from src.router import RedisRouter
                 self.router = RedisRouter()
 

@@ -210,8 +210,10 @@ class TestConfigLoading:
         """
         BUG PROBE: Multiple providers configured simultaneously.
         """
-        monkeypatch.delenv("NVIDIA_BASE_URL", raising=False)
-        monkeypatch.delenv("NVIDIA_API_KEYS", raising=False)
+        import os
+        for k in list(os.environ.keys()):
+            if k.endswith("_BASE_URL") or k.endswith("_API_KEYS"):
+                monkeypatch.delenv(k, raising=False)
         monkeypatch.setenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
         monkeypatch.setenv("OPENROUTER_API_KEYS", "sk-or-test-stub-0001-padded-padded")
         monkeypatch.setenv("ANTHROPIC_BASE_URL", "https://api.anthropic.com")
