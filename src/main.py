@@ -39,6 +39,26 @@ config = get_config()
 router = get_router()
 rate_limiter = get_rate_limiter()
 metrics = get_metrics()
+
+# Reusable async client (created once per process)
+_client: httpx.AsyncClient | None = None
+
+def _get_client() -> httpx.AsyncClient:
+    global _client
+    if _client is None:
+        _client = httpx.AsyncClient(timeout=httpx.Timeout(connect=60.0, read=300.0, write=60.0, pool=300.0))
+    return _client
+
+async def close_client() -> None:
+    global _client
+    if _client:
+        try:
+            await _client.aclose()
+        except TypeError:
+            # Handle synchronous MagicMock objects in unit tests
+            pass
+        _client = None
+
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
 
@@ -94,6 +114,7 @@ async def lifespan(app: FastAPI):
         config.template, config.provider, config.port,
     )
     yield
+    await close_client()
     logger.info("LiteRouter shutting down")
 
 
@@ -307,7 +328,10 @@ async def _process_request(body: dict, provider_name: str, template: str, provid
     if "max_output_tokens" in body and "max_tokens" not in body:
         body["max_tokens"] = body.pop("max_output_tokens")
     if "max_tokens" not in body:
-        body["max_tokens"] = 1_000_000
+        # Cap to 65,536 — a safe ceiling that fits within every provider's
+        # max_completion_tokens (owl-alpha Stealth = 262,144; nvidia = varies).
+        # Sending 1,000,000 to providers with lower limits triggers 400 errors.
+        body["max_tokens"] = 65_536
 
     # Strip provider prefix from model ID — first segment matches a provider, remove it
     raw_model = body.get("model", "")
@@ -321,11 +345,10 @@ async def _process_request(body: dict, provider_name: str, template: str, provid
     payload = body
 
     if use_gemini:
-        # Gemini pathway
-        if should_stream:
-            target_url = f"{provider.base_url}/models/{body['model']}:streamGenerateContent"
-        else:
-            target_url = f"{provider.base_url}/models/{body['model']}:generateContent"
+        # Gemini pathway — always use generateContent (non-streaming).
+        # streamGenerateContent returns a raw JSON array (not OpenAI SSE), which
+        # _fix_streaming_line cannot parse. We fake-stream the buffered response instead.
+        target_url = f"{provider.base_url}/models/{body['model']}:generateContent"
         payload = build_gemini_request_body(body)
         del headers["Authorization"]
 
@@ -344,9 +367,20 @@ async def _process_request(body: dict, provider_name: str, template: str, provid
         # OpenAI template → /chat/completions endpoint
         target_url = f"{provider.base_url}/chat/completions"
 
+    # If provider requires key as query param (e.g. local proxies), append it
+    if provider.extra_params.get("key_as_query_param"):
+        separator = "&" if "?" in target_url else "?"
+        target_url = f"{target_url}{separator}key={key}"
+        del headers["Authorization"]
+
     # Dispatch
     from src.db_logger import log_leg
     log_leg(req_id, 2, "OUTGOING", "literouter", "upstream", url=target_url, body=payload)
+    if should_stream and use_gemini:
+        # Gemini: fake-stream the buffered response as OpenAI SSE
+        return await _gemini_fake_stream(
+            target_url, payload, key, provider_name, start_time, req_id,
+        )
     if should_stream:
         return await _stream_request(
             target_url, payload, headers, key, provider_name,
@@ -358,6 +392,84 @@ async def _process_request(body: dict, provider_name: str, template: str, provid
     )
 
 
+async def _gemini_fake_stream(
+    target_url: str, payload: dict, key: str, provider_name: str,
+    start_time: float, req_id: str,
+):
+    """Fetch Gemini generateContent (buffered), transform to OpenAI format,
+    emit as a single fake SSE chunk so clients expecting streaming get a valid stream."""
+    from src.db_logger import log_leg
+    from src.gemini import transform_gemini_response
+
+    async def _stream():
+        try:
+            client = _get_client()
+            resp = await client.post(target_url, json=payload, params={"key": key})
+            rate_limiter.mark_call(provider_name)
+
+            if resp.status_code in (400, 429, 401, 403):
+                router.report_error(provider_name, key, resp.status_code)
+
+            if not resp.is_success:
+                err_text = resp.text
+                log_leg(req_id, 3, "INCOMING", "upstream", "literouter",
+                        status_code=resp.status_code, body={"error": err_text})
+                logger.warning("[%s] gemini fake-stream upstream %d: %s",
+                               provider_name, resp.status_code, err_text)
+                metrics.increment_error()
+                metrics.increment_error_by_status(resp.status_code)
+                err_payload = json.dumps({"error": {"message": err_text[:200],
+                                                    "type": "upstream_error",
+                                                    "code": resp.status_code}})
+                yield f"data: {err_payload}\n\ndata: [DONE]\n\n".encode("utf-8")
+                return
+
+            data = resp.json()
+            log_leg(req_id, 3, "INCOMING", "upstream", "literouter",
+                    status_code=resp.status_code, body=data)
+            openai_data = transform_gemini_response(data)
+            latency_ms = int((time.time() - start_time) * 1000)
+            metrics.increment_success()
+            metrics.add_latency(latency_ms)
+            logger.info("[%s] gemini fake-stream success latency=%dms", provider_name, latency_ms)
+
+            # Emit as a streaming delta chunk
+            choices = openai_data.get("choices", [])
+            chunk = {
+                "id": openai_data.get("id", f"chatcmpl-{req_id}"),
+                "object": "chat.completion.chunk",
+                "created": openai_data.get("created", int(time.time())),
+                "model": openai_data.get("model", ""),
+                "choices": [
+                    {
+                        "index": c.get("index", 0),
+                        "delta": {"role": "assistant",
+                                  "content": (c.get("message") or {}).get("content", "")},
+                        "finish_reason": c.get("finish_reason"),
+                    }
+                    for c in choices
+                ],
+            }
+            yield f"data: {json.dumps(chunk)}\n\n".encode("utf-8")
+            yield b"data: [DONE]\n\n"
+
+
+        except httpx.TimeoutException:
+            logger.error("[%s] gemini fake-stream timed out", provider_name)
+            metrics.increment_error()
+            err_payload = json.dumps({"error": {"message": "Upstream timeout.",
+                                                 "type": "upstream_error"}})
+            yield f"data: {err_payload}\n\ndata: [DONE]\n\n".encode("utf-8")
+        except Exception as exc:
+            logger.error("[%s] gemini fake-stream error: %s", provider_name, exc)
+            metrics.increment_error()
+            err_payload = json.dumps({"error": {"message": "Internal server error.",
+                                                 "type": "internal_error"}})
+            yield f"data: {err_payload}\n\ndata: [DONE]\n\n".encode("utf-8")
+
+    return StreamingResponse(_stream(), media_type="text/event-stream")
+
+
 async def _buffered_request(
     target_url, payload, headers, key, provider_name,
     use_gemini, use_anthropic, start_time, req_id,
@@ -365,46 +477,46 @@ async def _buffered_request(
     """Non-streaming: buffer full response, transform, return JSON."""
     from src.db_logger import log_leg
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(connect=60.0, read=300.0, write=60.0, pool=300.0)) as client:  # noqa: E501
-            if use_gemini:
-                resp = await client.post(target_url, json=payload, params={"key": key})
-            else:
-                resp = await client.post(target_url, json=payload, headers=headers)
+        client = _get_client()
+        if use_gemini:
+            resp = await client.post(target_url, json=payload, params={"key": key})
+        else:
+            resp = await client.post(target_url, json=payload, headers=headers)
 
-            rate_limiter.mark_call(provider_name)
+        rate_limiter.mark_call(provider_name)
 
-            if resp.status_code in (429, 401, 403):
-                router.report_error(provider_name, key, resp.status_code)
+        if resp.status_code in (400, 429, 401, 403):
+            router.report_error(provider_name, key, resp.status_code)
 
-            if not resp.is_success:
-                err_text = resp.text
-                log_leg(req_id, 3, "INCOMING", "upstream", "literouter", status_code=resp.status_code, body={"error": err_text})  # noqa: E501
-                logger.warning("[%s] upstream %d: %s | Payload sent: %s", provider_name, resp.status_code, err_text, payload)  # noqa: E501
-                metrics.increment_error()
-                metrics.increment_error_by_status(resp.status_code)
-                return JSONResponse(
-                    status_code=resp.status_code,
-                    content={"error": {"message": err_text[:200], "type": "upstream_error", "code": resp.status_code}},  # noqa: E501
-                )
+        if not resp.is_success:
+            err_text = resp.text
+            log_leg(req_id, 3, "INCOMING", "upstream", "literouter", status_code=resp.status_code, body={"error": err_text})  # noqa: E501
+            logger.warning("[%s] upstream %d: %s | Payload sent: %s", provider_name, resp.status_code, err_text, payload)  # noqa: E501
+            metrics.increment_error()
+            metrics.increment_error_by_status(resp.status_code)
+            return JSONResponse(
+                status_code=resp.status_code,
+                content={"error": {"message": err_text[:200], "type": "upstream_error", "code": resp.status_code}},  # noqa: E501
+            )
 
-            metrics.increment_success()
-            latency_ms = int((time.time() - start_time) * 1000)
-            metrics.add_latency(latency_ms)
-            logger.info("[%s] success status=%d latency=%dms", provider_name, resp.status_code, latency_ms)  # noqa: E501
+        metrics.increment_success()
+        latency_ms = int((time.time() - start_time) * 1000)
+        metrics.add_latency(latency_ms)
+        logger.info("[%s] success status=%d latency=%dms", provider_name, resp.status_code, latency_ms)  # noqa: E501
 
-            data = resp.json()
-            log_leg(req_id, 3, "INCOMING", "upstream", "literouter", status_code=resp.status_code, body=data)  # noqa: E501
-            if use_gemini:
-                data = transform_gemini_response(data)
-            # Fix null content for reasoning models (OpenCode can't parse null content)
-            for choice in data.get("choices", []):
-                msg = choice.get("message", {})
-                msg_content = msg.get("content")
-                if not msg_content:
-                    msg_reasoning = msg.get("reasoning") or msg.get("reasoning_content") or ""
-                    if msg_reasoning:
-                        msg["content"] = msg_reasoning
-            return JSONResponse(content=data)
+        data = resp.json()
+        log_leg(req_id, 3, "INCOMING", "upstream", "literouter", status_code=resp.status_code, body=data)  # noqa: E501
+        if use_gemini:
+            data = transform_gemini_response(data)
+        # Fix null content for reasoning models (OpenCode can't parse null content)
+        for choice in data.get("choices", []):
+            msg = choice.get("message", {})
+            msg_content = msg.get("content")
+            if not msg_content:
+                msg_reasoning = msg.get("reasoning") or msg.get("reasoning_content") or ""
+                if msg_reasoning:
+                    msg["content"] = msg_reasoning
+        return JSONResponse(content=data)
 
     except httpx.TimeoutException:
         log_leg(req_id, 3, "INCOMING", "upstream", "literouter", status_code=504, body={"error": "timeout"})  # noqa: E501
@@ -432,73 +544,51 @@ async def _stream_request(
 
     async def _upstream_stream():
         try:
-            async with httpx.AsyncClient(timeout=httpx.Timeout(connect=60.0, read=300.0, write=60.0, pool=300.0)) as client:  # noqa: E501
-                if use_gemini:
-                    stream_cm = client.stream("POST", target_url, json=payload, params={"key": key})
-                else:
-                    stream_cm = client.stream("POST", target_url, json=payload, headers=headers)
-                async with stream_cm as resp:
-                    rate_limiter.mark_call(provider_name)
-                    if resp.status_code in (429, 401, 403):
-                        router.report_error(provider_name, key, resp.status_code)
-                    if not resp.is_success:
-                        err_body = await resp.aread()
-                        err_text = err_body.decode("utf-8", errors="replace")
-                        log_leg(req_id, 3, "INCOMING", "upstream", "literouter", status_code=resp.status_code, body={"error": err_text})  # noqa: E501
-                        logger.warning("[%s] stream upstream %d: %s | Payload sent: %s", provider_name, resp.status_code, err_text, payload)  # noqa: E501
-                        metrics.increment_error()
-                        metrics.increment_error_by_status(resp.status_code)
-                        err_payload = json.dumps({"error": {"message": err_text[:200], "type": "upstream_error"}})  # noqa: E501
-                        yield f"data: {err_payload}\n\n".encode("utf-8")
-                        return
-                    # Log leg 3 successfully starting
-                    log_leg(req_id, 3, "INCOMING", "upstream", "literouter", status_code=resp.status_code, body={"status": "streaming starting"})  # noqa: E501
-                    
-                    if is_responses:
-                        resp_id = f"resp-{req_id}"
-                        item_id = f"msg-{req_id}"
-                        created_data = json.dumps({'type': 'response.created', 'response': {'id': resp_id, 'object': 'response', 'status': 'in_progress', 'output': []}})  # noqa: E501
-                        yield f"event: response.created\ndata: {created_data}\n\n".encode("utf-8")
-                        item_added = json.dumps({'type': 'response.output_item.added', 'output_index': 0, 'item': {'type': 'message', 'id': item_id, 'status': 'in_progress', 'role': 'assistant', 'content': []}})  # noqa: E501
-                        yield f"event: response.output_item.added\ndata: {item_added}\n\n".encode("utf-8")  # noqa: E501
-                        part_added = json.dumps({'type': 'response.content_part.added', 'item_id': item_id, 'output_index': 0, 'content_index': 0, 'part': {'type': 'output_text', 'text': ''}})  # noqa: E501
-                        yield f"event: response.content_part.added\ndata: {part_added}\n\n".encode("utf-8")  # noqa: E501
-                        accumulated_text = []
-                        accumulated_tool_calls = {}  # id -> {name, arguments}
+            client = _get_client()
+            if use_gemini:
+                stream_cm = client.stream("POST", target_url, json=payload, params={"key": key})
+            else:
+                stream_cm = client.stream("POST", target_url, json=payload, headers=headers)
+            async with stream_cm as resp:
+                rate_limiter.mark_call(provider_name)
+                if resp.status_code in (400, 429, 401, 403):
+                    router.report_error(provider_name, key, resp.status_code)
+                if not resp.is_success:
+                    err_body = await resp.aread()
+                    err_text = err_body.decode("utf-8", errors="replace")
+                    log_leg(req_id, 3, "INCOMING", "upstream", "literouter", status_code=resp.status_code, body={"error": err_text})  # noqa: E501
+                    logger.warning("[%s] stream upstream %d: %s | Payload sent: %s", provider_name, resp.status_code, err_text, payload)  # noqa: E501
+                    metrics.increment_error()
+                    metrics.increment_error_by_status(resp.status_code)
+                    err_payload = json.dumps({"error": {"message": err_text[:200], "type": "upstream_error"}})  # noqa: E501
+                    yield f"data: {err_payload}\n\n".encode("utf-8")
+                    return
+                # Log leg 3 successfully starting
+                log_leg(req_id, 3, "INCOMING", "upstream", "literouter", status_code=resp.status_code, body={"status": "streaming starting"})  # noqa: E501
+                
+                if is_responses:
+                    resp_id = f"resp-{req_id}"
+                    item_id = f"msg-{req_id}"
+                    created_data = json.dumps({'type': 'response.created', 'response': {'id': resp_id, 'object': 'response', 'status': 'in_progress', 'output': []}})  # noqa: E501
+                    yield f"event: response.created\ndata: {created_data}\n\n".encode("utf-8")
+                    item_added = json.dumps({'type': 'response.output_item.added', 'output_index': 0, 'item': {'type': 'message', 'id': item_id, 'status': 'in_progress', 'role': 'assistant', 'content': []}})  # noqa: E501
+                    yield f"event: response.output_item.added\ndata: {item_added}\n\n".encode("utf-8")  # noqa: E501
+                    part_added = json.dumps({'type': 'response.content_part.added', 'item_id': item_id, 'output_index': 0, 'content_index': 0, 'part': {'type': 'output_text', 'text': ''}})  # noqa: E501
+                    yield f"event: response.content_part.added\ndata: {part_added}\n\n".encode("utf-8")  # noqa: E501
+                    accumulated_text = []
+                    accumulated_tool_calls = {}  # id -> {name, arguments}
 
-                    # Fix null content in streaming chunks for reasoning models using incremental decoder and line buffer  # noqa: E501
-                    decoder = codecs.getincrementaldecoder("utf-8")()
-                    buffer = ""
-                    async for chunk in resp.aiter_bytes():
-                        buffer += decoder.decode(chunk)
-                        while "\n" in buffer:
-                            line, buffer = buffer.split("\n", 1)
-                            # Extract tool_call deltas from raw line BEFORE _fix_streaming_line
-                            # (which returns None for tool-call-only chunks in responses mode)
-                            if is_responses:
-                                for tc in _extract_tool_call_deltas(line):
-                                    idx = tc.get("index", 0)
-                                    if idx not in accumulated_tool_calls:
-                                        accumulated_tool_calls[idx] = {"id": "", "name": "", "arguments": ""}  # noqa: E501
-                                    if "id" in tc:
-                                        accumulated_tool_calls[idx]["id"] = tc["id"]
-                                    fn = tc.get("function", {})
-                                    if "name" in fn:
-                                        accumulated_tool_calls[idx]["name"] += fn["name"]
-                                    if "arguments" in fn:
-                                        accumulated_tool_calls[idx]["arguments"] += fn["arguments"]
-                            processed = _fix_streaming_line(line, is_responses, responses_item_id=item_id if is_responses else "")  # noqa: E501
-                            if processed is not None:
-                                yield (processed + "\n").encode("utf-8")
-                                if is_responses and '"delta"' in processed:
-                                    try:
-                                        evt = json.loads(processed.split("data: ", 1)[1])
-                                        accumulated_text.append(evt.get("delta", ""))
-                                    except Exception:
-                                        pass
-                    if buffer:
+                # Fix null content in streaming chunks for reasoning models using incremental decoder and line buffer  # noqa: E501
+                decoder = codecs.getincrementaldecoder("utf-8")()
+                buffer = ""
+                async for chunk in resp.aiter_bytes():
+                    buffer += decoder.decode(chunk)
+                    while "\n" in buffer:
+                        line, buffer = buffer.split("\n", 1)
+                        # Extract tool_call deltas from raw line BEFORE _fix_streaming_line
+                        # (which returns None for tool-call-only chunks in responses mode)
                         if is_responses:
-                            for tc in _extract_tool_call_deltas(buffer):
+                            for tc in _extract_tool_call_deltas(line):
                                 idx = tc.get("index", 0)
                                 if idx not in accumulated_tool_calls:
                                     accumulated_tool_calls[idx] = {"id": "", "name": "", "arguments": ""}  # noqa: E501
@@ -509,35 +599,57 @@ async def _stream_request(
                                     accumulated_tool_calls[idx]["name"] += fn["name"]
                                 if "arguments" in fn:
                                     accumulated_tool_calls[idx]["arguments"] += fn["arguments"]
-                        processed = _fix_streaming_line(buffer, is_responses, responses_item_id=item_id if is_responses else "")  # noqa: E501
+                        processed = _fix_streaming_line(line, is_responses, responses_item_id=item_id if is_responses else "")  # noqa: E501
                         if processed is not None:
-                            yield processed.encode("utf-8")
+                            yield (processed + "\n").encode("utf-8")
                             if is_responses and '"delta"' in processed:
                                 try:
                                     evt = json.loads(processed.split("data: ", 1)[1])
                                     accumulated_text.append(evt.get("delta", ""))
                                 except Exception:
                                     pass
-
+                if buffer:
                     if is_responses:
-                        full_text = "".join(accumulated_text)
-                        text_done = json.dumps({'type': 'response.output_text.done', 'item_id': item_id, 'output_index': 0, 'content_index': 0, 'text': full_text})  # noqa: E501
-                        yield f"event: response.output_text.done\ndata: {text_done}\n\n".encode("utf-8")  # noqa: E501
-                        part_done = json.dumps({'type': 'response.content_part.done', 'item_id': item_id, 'output_index': 0, 'content_index': 0, 'part': {'type': 'output_text', 'text': full_text}})  # noqa: E501
-                        yield f"event: response.content_part.done\ndata: {part_done}\n\n".encode("utf-8")  # noqa: E501
-                        item_done = json.dumps({'type': 'response.output_item.done', 'output_index': 0, 'item': {'type': 'message', 'id': item_id, 'status': 'completed', 'role': 'assistant', 'content': [{'type': 'output_text', 'text': full_text}]}})  # noqa: E501
-                        yield f"event: response.output_item.done\ndata: {item_done}\n\n".encode("utf-8")  # noqa: E501
+                        for tc in _extract_tool_call_deltas(buffer):
+                            idx = tc.get("index", 0)
+                            if idx not in accumulated_tool_calls:
+                                accumulated_tool_calls[idx] = {"id": "", "name": "", "arguments": ""}  # noqa: E501
+                            if "id" in tc:
+                                accumulated_tool_calls[idx]["id"] = tc["id"]
+                            fn = tc.get("function", {})
+                            if "name" in fn:
+                                accumulated_tool_calls[idx]["name"] += fn["name"]
+                            if "arguments" in fn:
+                                accumulated_tool_calls[idx]["arguments"] += fn["arguments"]
+                    processed = _fix_streaming_line(buffer, is_responses, responses_item_id=item_id if is_responses else "")  # noqa: E501
+                    if processed is not None:
+                        yield processed.encode("utf-8")
+                        if is_responses and '"delta"' in processed:
+                            try:
+                                evt = json.loads(processed.split("data: ", 1)[1])
+                                accumulated_text.append(evt.get("delta", ""))
+                            except Exception:
+                                pass
 
-                        # Log accumulated tool calls for debugging (not emitted as ACP events
-                        # because OpenCode's @ai-sdk/openai SDK rejects function_call items
-                        # with Zod validation errors)
-                        output_items = [{'type': 'message', 'id': item_id, 'status': 'completed', 'role': 'assistant', 'content': [{'type': 'output_text', 'text': full_text}]}]  # noqa: E501
-                        for idx in sorted(accumulated_tool_calls.keys()):
-                            tc = accumulated_tool_calls[idx]
-                            logger.info("[%s] Tool call received (not forwarded to ACP): %s(%s...)", provider_name, tc['name'], tc['arguments'][:80])  # noqa: E501
+                if is_responses:
+                    full_text = "".join(accumulated_text)
+                    text_done = json.dumps({'type': 'response.output_text.done', 'item_id': item_id, 'output_index': 0, 'content_index': 0, 'text': full_text})  # noqa: E501
+                    yield f"event: response.output_text.done\ndata: {text_done}\n\n".encode("utf-8")  # noqa: E501
+                    part_done = json.dumps({'type': 'response.content_part.done', 'item_id': item_id, 'output_index': 0, 'content_index': 0, 'part': {'type': 'output_text', 'text': full_text}})  # noqa: E501
+                    yield f"event: response.content_part.done\ndata: {part_done}\n\n".encode("utf-8")  # noqa: E501
+                    item_done = json.dumps({'type': 'response.output_item.done', 'output_index': 0, 'item': {'type': 'message', 'id': item_id, 'status': 'completed', 'role': 'assistant', 'content': [{'type': 'output_text', 'text': full_text}]}})  # noqa: E501
+                    yield f"event: response.output_item.done\ndata: {item_done}\n\n".encode("utf-8")  # noqa: E501
 
-                        completed_data = json.dumps({'type': 'response.completed', 'response': {'id': resp_id, 'object': 'response', 'status': 'completed', 'output': output_items}})  # noqa: E501
-                        yield f"event: response.completed\ndata: {completed_data}\n\n".encode("utf-8")  # noqa: E501
+                    # Log accumulated tool calls for debugging (not emitted as ACP events
+                    # because OpenCode's @ai-sdk/openai SDK rejects function_call items
+                    # with Zod validation errors)
+                    output_items = [{'type': 'message', 'id': item_id, 'status': 'completed', 'role': 'assistant', 'content': [{'type': 'output_text', 'text': full_text}]}]  # noqa: E501
+                    for idx in sorted(accumulated_tool_calls.keys()):
+                        tc = accumulated_tool_calls[idx]
+                        logger.info("[%s] Tool call received (not forwarded to ACP): %s(%s...)", provider_name, tc['name'], tc['arguments'][:80])  # noqa: E501
+
+                    completed_data = json.dumps({'type': 'response.completed', 'response': {'id': resp_id, 'object': 'response', 'status': 'completed', 'output': output_items}})  # noqa: E501
+                    yield f"event: response.completed\ndata: {completed_data}\n\n".encode("utf-8")  # noqa: E501
             metrics.increment_success()
             latency_ms = int((time.time() - start_time) * 1000)
             metrics.add_latency(latency_ms)
