@@ -830,6 +830,22 @@ async def google_models_endpoint(
     except Exception:
         return JSONResponse(status_code=400, content={"error": {"message": "Invalid JSON body", "type": "invalid_request_error"}})  # noqa: E501
 
+    # Merge consecutive contents with the same role to satisfy Google's strict role alternation rule
+    if isinstance(body, dict) and "contents" in body and isinstance(body["contents"], list):
+        merged_contents = []
+        for content in body["contents"]:
+            if not isinstance(content, dict) or "role" not in content or "parts" not in content:
+                merged_contents.append(content)
+                continue
+            if merged_contents and merged_contents[-1].get("role") == content["role"]:
+                if isinstance(content["parts"], list):
+                    if not isinstance(merged_contents[-1]["parts"], list):
+                        merged_contents[-1]["parts"] = [merged_contents[-1]["parts"]]
+                    merged_contents[-1]["parts"].extend(content["parts"])
+            else:
+                merged_contents.append(content)
+        body["contents"] = merged_contents
+
     # 1. Parse path to resolve provider_name, upstream_model, and action
     path = request.url.path
     if "/models/" in path:
@@ -1032,7 +1048,7 @@ async def _stream_google_request(target_url, payload, headers, provider_name, st
                     logger.warning("[%s] stream upstream %d: %s", provider_name, resp.status_code, err_text)
                     metrics.increment_error()
                     metrics.increment_error_by_status(resp.status_code)
-                    yield json.dumps({"error": {"message": err_text[:200], "type": "upstream_error"}}).encode("utf-8")  # noqa: E501
+                    yield f"data: {json.dumps({'error': {'message': err_text[:200], 'type': 'upstream_error'}})}\n\n".encode("utf-8")  # noqa: E501
                     return
 
                 log_leg(req_id, 3, "INCOMING", "upstream", "literouter", status_code=resp.status_code, body={"status": "streaming starting"})  # noqa: E501
@@ -1050,12 +1066,12 @@ async def _stream_google_request(target_url, payload, headers, provider_name, st
             log_leg(req_id, 3, "INCOMING", "upstream", "literouter", status_code=504, body={"error": "timeout"})  # noqa: E501
             logger.error("[%s] stream timeout", provider_name)
             metrics.increment_error()
-            yield json.dumps({"error": {"message": "Upstream timeout.", "type": "upstream_error"}}).encode("utf-8")  # noqa: E501
+            yield f"data: {json.dumps({'error': {'message': 'Upstream timeout.', 'type': 'upstream_error'}})}\n\n".encode("utf-8")  # noqa: E501
         except Exception as exc:
             log_leg(req_id, 3, "INCOMING", "upstream", "literouter", status_code=500, body={"error": str(exc)})  # noqa: E501
             logger.error("[%s] stream unexpected error: %s", provider_name, exc)
             metrics.increment_error()
-            yield json.dumps({"error": {"message": "Internal stream error.", "type": "internal_error"}}).encode("utf-8")  # noqa: E501
+            yield f"data: {json.dumps({'error': {'message': 'Internal stream error.', 'type': 'internal_error'}})}\n\n".encode("utf-8")  # noqa: E501
 
     return StreamingResponse(_upstream_stream(), media_type="application/json")
 
