@@ -5,8 +5,8 @@ Validates config, Redis connectivity, provider API keys, and server health.
 Usage: uv run python src/doctor.py
 """
 
-import sys
 import os
+import sys
 
 # Prevent shadow importing of local package files (like src/queue.py shadowing stdlib queue)
 script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -16,13 +16,13 @@ parent_dir = os.path.abspath(os.path.join(script_dir, ".."))
 if parent_dir not in sys.path:
     sys.path.insert(0, parent_dir)
 
-import asyncio
-import logging
-import time
+import asyncio  # noqa: E402
+import logging  # noqa: E402
+import time  # noqa: E402
 
-import httpx
+import httpx  # noqa: E402
 
-from src.config import get_config, is_gemini_provider
+from src.config import get_config, is_gemini_provider  # noqa: E402
 
 logging.basicConfig(level=logging.WARNING)
 

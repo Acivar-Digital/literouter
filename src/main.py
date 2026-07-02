@@ -435,7 +435,7 @@ async def _gemini_fake_stream(
 
             # Emit as a streaming delta chunk
             choices = openai_data.get("choices", [])
-            chunk = {
+            chunk_content = {
                 "id": openai_data.get("id", f"chatcmpl-{req_id}"),
                 "object": "chat.completion.chunk",
                 "created": openai_data.get("created", int(time.time())),
@@ -445,12 +445,28 @@ async def _gemini_fake_stream(
                         "index": c.get("index", 0),
                         "delta": {"role": "assistant",
                                   "content": (c.get("message") or {}).get("content", "")},
-                        "finish_reason": c.get("finish_reason"),
+                        "finish_reason": None,
                     }
                     for c in choices
                 ],
             }
-            yield f"data: {json.dumps(chunk)}\n\n".encode("utf-8")
+            yield f"data: {json.dumps(chunk_content)}\n\n".encode("utf-8")
+
+            chunk_stop = {
+                "id": openai_data.get("id", f"chatcmpl-{req_id}"),
+                "object": "chat.completion.chunk",
+                "created": openai_data.get("created", int(time.time())),
+                "model": openai_data.get("model", ""),
+                "choices": [
+                    {
+                        "index": c.get("index", 0),
+                        "delta": {},
+                        "finish_reason": c.get("finish_reason") or "stop",
+                    }
+                    for c in choices
+                ],
+            }
+            yield f"data: {json.dumps(chunk_stop)}\n\n".encode("utf-8")
             yield b"data: [DONE]\n\n"
 
 
