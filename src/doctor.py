@@ -5,10 +5,19 @@ Validates config, Redis connectivity, provider API keys, and server health.
 Usage: uv run python src/doctor.py
 """
 
+import sys
+import os
+
+# Prevent shadow importing of local package files (like src/queue.py shadowing stdlib queue)
+script_dir = os.path.dirname(os.path.abspath(__file__))
+if script_dir in sys.path:
+    sys.path.remove(script_dir)
+parent_dir = os.path.abspath(os.path.join(script_dir, ".."))
+if parent_dir not in sys.path:
+    sys.path.insert(0, parent_dir)
+
 import asyncio
 import logging
-import os
-import sys
 import time
 
 import httpx
@@ -231,11 +240,18 @@ async def _check_server_health() -> None:
                         if config.auth_key:
                             headers["Authorization"] = f"Bearer {config.auth_key}"
 
+                        test_model = config.model_params.get(first_provider, {}).get("model")
+                        if not test_model and config.providers.get(first_provider):
+                            test_model = config.providers[first_provider].model
+                        if not test_model:
+                            test_model = "gpt-3.5-turbo"
+                        model_id = f"{first_provider}/{test_model}"
+
                         async with httpx.AsyncClient(timeout=10.0) as c2:
                             test_resp = await c2.post(
                                 f"{server_url}/v1/chat/completions",
                                 json={
-                                    "model": first_provider,
+                                    "model": model_id,
                                     "messages": [{"role": "user", "content": "ping"}],
                                     "max_tokens": 1,
                                 },
