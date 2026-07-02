@@ -94,36 +94,6 @@ def build_gemini_request_body(body: dict) -> dict:
             stop if isinstance(stop, list) else [str(stop)]
         )
 
-    # Pass through thinkingConfig if provided (via extra_body from pydantic-ai).
-    # Gemini Gemma-4 requires this to suppress raw thought tokens in the response.
-    # Accepts both snake_case (thinking_config) and camelCase (thinkingConfig).
-    thinking_cfg = (
-        body.get("thinkingConfig")
-        or body.get("thinking_config")
-        or (body.get("extra_body") or {}).get("thinkingConfig")
-        or (body.get("extra_body") or {}).get("thinking_config")
-    )
-    model_name = body.get("model", "").lower()
-    is_reasoning = "gemma-4" in model_name or "reasoning" in model_name or "gemma-3" in model_name
-    if not thinking_cfg and is_reasoning:
-        thinking_cfg = {
-            "thinkingLevel": "minimal",
-            "includeThoughts": False
-        }
-
-    if thinking_cfg and isinstance(thinking_cfg, dict):
-        # Normalise keys to camelCase for Gemini REST API
-        normalised: dict = {}
-        if "thinkingLevel" in thinking_cfg:
-            normalised["thinkingLevel"] = thinking_cfg["thinkingLevel"]
-        elif "thinking_level" in thinking_cfg:
-            normalised["thinkingLevel"] = thinking_cfg["thinking_level"]
-        include = thinking_cfg.get("includeThoughts", thinking_cfg.get("include_thoughts"))
-        if include is not None:
-            normalised["includeThoughts"] = include
-        if normalised:
-            generation_config["thinkingConfig"] = normalised
-
     if generation_config:
         request_body["generationConfig"] = generation_config
 
@@ -156,11 +126,7 @@ def transform_gemini_response(gemini_response: dict) -> dict:
         candidate = candidates[0]
         content_obj = candidate.get("content") or {}
         parts = content_obj.get("parts") or []
-        # Filter out thought parts (thought=True) — only keep real response parts.
-        # Thought tokens must NOT be stored in the assistant message, otherwise
-        # they get sent back to Gemini on subsequent turns and break the conversation.
-        real_parts = [p for p in parts if isinstance(p, dict) and not p.get("thought", False)]
-        text = "".join(part.get("text", "") for part in real_parts)
+        text = "".join(part.get("text", "") for part in parts if isinstance(part, dict))
 
         finish_reason = candidate.get("finishReason", "stop")
         if isinstance(finish_reason, str):
