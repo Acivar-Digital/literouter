@@ -62,13 +62,22 @@ async def close_client() -> None:
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
 
-def _check_auth(authorization: str | None) -> bool:
+def _check_auth(authorization: str | None, request: Request | None = None) -> bool:
     if not config.auth_key:
         return True
-    if not authorization:
-        return False
-    token = authorization[7:].strip() if authorization.startswith("Bearer ") else ""
-    return token == config.auth_key
+    if authorization:
+        token = authorization[7:].strip() if authorization.startswith("Bearer ") else ""
+        if token == config.auth_key:
+            return True
+    if request:
+        goog_key = request.headers.get("x-goog-api-key")
+        if goog_key == config.auth_key:
+            return True
+        query_key = request.query_params.get("key")
+        if query_key == config.auth_key:
+            return True
+    return False
+
 
 
 def _get_routing(raw_model: str = "") -> tuple:
@@ -345,10 +354,11 @@ async def _process_request(body: dict, provider_name: str, template: str, provid
     payload = body
 
     if use_gemini:
-        # Gemini pathway — always use generateContent (non-streaming).
-        # streamGenerateContent returns a raw JSON array (not OpenAI SSE), which
-        # _fix_streaming_line cannot parse. We fake-stream the buffered response instead.
-        target_url = f"{provider.base_url}/models/{body['model']}:generateContent"
+        # Gemini pathway
+        if should_stream:
+            target_url = f"{provider.base_url}/models/{body['model']}:streamGenerateContent"
+        else:
+            target_url = f"{provider.base_url}/models/{body['model']}:generateContent"
         payload = build_gemini_request_body(body)
         del headers["Authorization"]
 
@@ -376,11 +386,6 @@ async def _process_request(body: dict, provider_name: str, template: str, provid
     # Dispatch
     from src.db_logger import log_leg
     log_leg(req_id, 2, "OUTGOING", "literouter", "upstream", url=target_url, body=payload)
-    if should_stream and use_gemini:
-        # Gemini: fake-stream the buffered response as OpenAI SSE
-        return await _gemini_fake_stream(
-            target_url, payload, key, provider_name, start_time, req_id,
-        )
     if should_stream:
         return await _stream_request(
             target_url, payload, headers, key, provider_name,
@@ -390,100 +395,6 @@ async def _process_request(body: dict, provider_name: str, template: str, provid
         target_url, payload, headers, key, provider_name,
         use_gemini, use_anthropic, start_time, req_id,
     )
-
-
-async def _gemini_fake_stream(
-    target_url: str, payload: dict, key: str, provider_name: str,
-    start_time: float, req_id: str,
-):
-    """Fetch Gemini generateContent (buffered), transform to OpenAI format,
-    emit as a single fake SSE chunk so clients expecting streaming get a valid stream."""
-    from src.db_logger import log_leg
-    from src.gemini import transform_gemini_response
-
-    async def _stream():
-        try:
-            client = _get_client()
-            resp = await client.post(target_url, json=payload, params={"key": key})
-            rate_limiter.mark_call(provider_name)
-
-            if resp.status_code in (400, 429, 401, 403):
-                router.report_error(provider_name, key, resp.status_code)
-
-            if not resp.is_success:
-                err_text = resp.text
-                log_leg(req_id, 3, "INCOMING", "upstream", "literouter",
-                        status_code=resp.status_code, body={"error": err_text})
-                logger.warning("[%s] gemini fake-stream upstream %d: %s",
-                               provider_name, resp.status_code, err_text)
-                metrics.increment_error()
-                metrics.increment_error_by_status(resp.status_code)
-                err_payload = json.dumps({"error": {"message": err_text[:200],
-                                                    "type": "upstream_error",
-                                                    "code": resp.status_code}})
-                yield f"data: {err_payload}\n\ndata: [DONE]\n\n".encode("utf-8")
-                return
-
-            data = resp.json()
-            log_leg(req_id, 3, "INCOMING", "upstream", "literouter",
-                    status_code=resp.status_code, body=data)
-            openai_data = transform_gemini_response(data)
-            latency_ms = int((time.time() - start_time) * 1000)
-            metrics.increment_success()
-            metrics.add_latency(latency_ms)
-            logger.info("[%s] gemini fake-stream success latency=%dms", provider_name, latency_ms)
-
-            # Emit as a streaming delta chunk
-            choices = openai_data.get("choices", [])
-            chunk_content = {
-                "id": openai_data.get("id", f"chatcmpl-{req_id}"),
-                "object": "chat.completion.chunk",
-                "created": openai_data.get("created", int(time.time())),
-                "model": openai_data.get("model", ""),
-                "choices": [
-                    {
-                        "index": c.get("index", 0),
-                        "delta": {"role": "assistant",
-                                  "content": (c.get("message") or {}).get("content", "")},
-                        "finish_reason": None,
-                    }
-                    for c in choices
-                ],
-            }
-            yield f"data: {json.dumps(chunk_content)}\n\n".encode("utf-8")
-
-            chunk_stop = {
-                "id": openai_data.get("id", f"chatcmpl-{req_id}"),
-                "object": "chat.completion.chunk",
-                "created": openai_data.get("created", int(time.time())),
-                "model": openai_data.get("model", ""),
-                "choices": [
-                    {
-                        "index": c.get("index", 0),
-                        "delta": {},
-                        "finish_reason": c.get("finish_reason") or "stop",
-                    }
-                    for c in choices
-                ],
-            }
-            yield f"data: {json.dumps(chunk_stop)}\n\n".encode("utf-8")
-            yield b"data: [DONE]\n\n"
-
-
-        except httpx.TimeoutException:
-            logger.error("[%s] gemini fake-stream timed out", provider_name)
-            metrics.increment_error()
-            err_payload = json.dumps({"error": {"message": "Upstream timeout.",
-                                                 "type": "upstream_error"}})
-            yield f"data: {err_payload}\n\ndata: [DONE]\n\n".encode("utf-8")
-        except Exception as exc:
-            logger.error("[%s] gemini fake-stream error: %s", provider_name, exc)
-            metrics.increment_error()
-            err_payload = json.dumps({"error": {"message": "Internal server error.",
-                                                 "type": "internal_error"}})
-            yield f"data: {err_payload}\n\ndata: [DONE]\n\n".encode("utf-8")
-
-    return StreamingResponse(_stream(), media_type="text/event-stream")
 
 
 async def _buffered_request(
@@ -902,6 +813,218 @@ async def chat_completions(request: Request, authorization: str | None = Header(
         log_leg(req_id, 4, "OUTGOING", "literouter", "opencode", status_code=500, body={"error": str(exc)})  # noqa: E501
         logger.error("[%s] OUTGOING RESPONSE ERROR | %s", req_id, exc, exc_info=True)
         raise exc
+
+@app.post("/{prefix:path}/models/{model:path}:{action}")
+async def google_models_endpoint(
+    prefix: str,
+    model: str,
+    action: str,
+    request: Request,
+    authorization: str | None = Header(None),
+):
+    if not _check_auth(authorization, request):
+        return JSONResponse(status_code=401, content={"error": {"message": "Invalid API key", "type": "invalid_request_error"}})  # noqa: E501
+
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse(status_code=400, content={"error": {"message": "Invalid JSON body", "type": "invalid_request_error"}})  # noqa: E501
+
+    raw_model = model
+    if "/" in raw_model:
+        provider_name = raw_model.split("/", 1)[0]
+        upstream_model = raw_model.split("/", 1)[1]
+    else:
+        provider_name = "google"
+        upstream_model = raw_model
+
+    provider = config.providers.get(provider_name)
+    if not provider:
+        return JSONResponse(
+            status_code=400,
+            content={
+                "error": {
+                    "message": f"Unknown provider '{provider_name}'. Available: {list(config.providers.keys())}",
+                    "type": "invalid_request_error"
+                }
+            }
+        )
+    if not provider.api_keys:
+        return JSONResponse(
+            status_code=503,
+            content={
+                "error": {
+                    "message": f"Provider '{provider_name}' has no API keys configured.",
+                    "type": "invalid_request_error"
+                }
+            }
+        )
+
+    should_stream = action == "streamGenerateContent"
+    min_delay_ms = config.provider_min_delays.get(provider_name, config.rotate_delay_ms)
+    
+    if provider_name not in _provider_locks:
+        _provider_locks[provider_name] = asyncio.Lock()
+    provider_lock = _provider_locks[provider_name]
+
+    async with provider_lock:
+        rl = rate_limiter.can_call(provider_name, min_delay_ms)
+        wait_ms = 0
+        if not rl["ready"]:
+            wait_ms = rl["wait_ms"]
+            metrics.increment_rate_limit_wait()
+            metrics.add_rate_limit_wait_ms(wait_ms)
+
+        key = router.get_next_key(provider_name, provider.api_keys)
+        if not key:
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "error": {
+                        "message": f"[{provider_name}] No available API keys.",
+                        "type": "invalid_request_error"
+                    }
+                }
+            )
+        logger.info("[%s] Using rotated key: %s...", provider_name, key[:15])
+
+        metrics.increment_request()
+        metrics.increment_key_usage(key)
+
+    if wait_ms > 0:
+        logger.info("[RateLimiter] %s waiting %dms (outside lock)", provider_name, wait_ms)
+        await asyncio.sleep(wait_ms / 1000.0)
+
+    start_time = time.time()
+    req_id = f"req-{uuid.uuid4().hex[:8]}"
+
+    base = provider.base_url.rstrip("/")
+    if "/v1" in base or "/v1beta" in base:
+        target_url = f"{base}/models/{upstream_model}:{action}"
+    else:
+        # Resolve version from prefix or default to v1beta
+        version = "v1beta"
+        if "v1" in prefix and "v1beta" not in prefix:
+            version = "v1"
+        target_url = f"{base}/{version}/models/{upstream_model}:{action}"
+
+    from src.db_logger import log_leg
+    log_leg(req_id, 1, "INCOMING", "opencode", "literouter", url=request.url.path, body=body)
+    logger.info("[%s] INCOMING GOOGLE REQUEST | Path: %s | Model: %s | Body: %s", req_id, request.url.path, raw_model, json.dumps(body))  # noqa: E501
+
+    log_leg(req_id, 2, "OUTGOING", "literouter", "upstream", url=target_url, body=body)
+
+    separator = "&" if "?" in target_url else "?"
+    target_url = f"{target_url}{separator}key={key}"
+
+    headers = {"Content-Type": "application/json"}
+
+    if should_stream:
+        response = await _stream_google_request(target_url, body, headers, provider_name, start_time, req_id, key)
+    else:
+        response = await _buffered_google_request(target_url, body, headers, provider_name, start_time, req_id, key)
+
+    if isinstance(response, JSONResponse):
+        resp_content = response.body.decode("utf-8", errors="replace")
+        try:
+            resp_json = json.loads(resp_content)
+        except Exception:
+            resp_json = {"raw": resp_content}
+        log_leg(req_id, 4, "OUTGOING", "literouter", "opencode", status_code=response.status_code, body=resp_json)  # noqa: E501
+        logger.info("[%s] OUTGOING RESPONSE | Status: %d | Body: %s", req_id, response.status_code, resp_content)  # noqa: E501
+    else:
+        log_leg(req_id, 4, "OUTGOING", "literouter", "opencode", status_code=200, body={"status": "streaming started"})  # noqa: E501
+        logger.info("[%s] OUTGOING RESPONSE | Started Stream Response", req_id)
+    return response
+
+
+async def _buffered_google_request(target_url, payload, headers, provider_name, start_time, req_id, key):
+    from src.db_logger import log_leg
+    try:
+        client = _get_client()
+        resp = await client.post(target_url, json=payload, headers=headers)
+        rate_limiter.mark_call(provider_name)
+        if resp.status_code in (400, 429, 401, 403):
+            router.report_error(provider_name, key, resp.status_code)
+
+        if not resp.is_success:
+            err_text = resp.text
+            log_leg(req_id, 3, "INCOMING", "upstream", "literouter", status_code=resp.status_code, body={"error": err_text})  # noqa: E501
+            logger.warning("[%s] upstream returned %d: %s", provider_name, resp.status_code, err_text)
+            metrics.increment_error()
+            metrics.increment_error_by_status(resp.status_code)
+            return JSONResponse(status_code=resp.status_code, content=resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {"error": err_text})  # noqa: E501
+
+        metrics.increment_success()
+        latency_ms = int((time.time() - start_time) * 1000)
+        metrics.add_latency(latency_ms)
+        logger.info("[%s] success status=%d latency=%dms", provider_name, resp.status_code, latency_ms)
+
+        data = resp.json()
+        log_leg(req_id, 3, "INCOMING", "upstream", "literouter", status_code=resp.status_code, body=data)
+        return JSONResponse(content=data, status_code=resp.status_code)
+
+    except httpx.TimeoutException:
+        log_leg(req_id, 3, "INCOMING", "upstream", "literouter", status_code=504, body={"error": "timeout"})  # noqa: E501
+        logger.error("[%s] request timed out", provider_name)
+        metrics.increment_error()
+        return JSONResponse(status_code=504, content={"error": {"message": "Upstream timeout.", "type": "upstream_error"}})  # noqa: E501
+    except httpx.ConnectError as exc:
+        log_leg(req_id, 3, "INCOMING", "upstream", "literouter", status_code=502, body={"error": f"connection refused: {exc}"})  # noqa: E501
+        logger.error("[%s] connection refused: %s", provider_name, exc)
+        metrics.increment_error()
+        return JSONResponse(status_code=502, content={"error": {"message": "Upstream connection refused.", "type": "upstream_error"}})  # noqa: E501
+    except Exception as exc:
+        log_leg(req_id, 3, "INCOMING", "upstream", "literouter", status_code=500, body={"error": str(exc)})  # noqa: E501
+        logger.error("[%s] unexpected error: %s", provider_name, exc)
+        metrics.increment_error()
+        return JSONResponse(status_code=500, content={"error": {"message": "Internal server error.", "type": "internal_error"}})  # noqa: E501
+
+
+async def _stream_google_request(target_url, payload, headers, provider_name, start_time, req_id, key):
+    from src.db_logger import log_leg
+
+    async def _upstream_stream():
+        try:
+            client = _get_client()
+            stream_cm = client.stream("POST", target_url, json=payload, headers=headers)
+            async with stream_cm as resp:
+                rate_limiter.mark_call(provider_name)
+                if resp.status_code in (400, 429, 401, 403):
+                    router.report_error(provider_name, key, resp.status_code)
+                if not resp.is_success:
+                    err_body = await resp.aread()
+                    err_text = err_body.decode("utf-8", errors="replace")
+                    log_leg(req_id, 3, "INCOMING", "upstream", "literouter", status_code=resp.status_code, body={"error": err_text})  # noqa: E501
+                    logger.warning("[%s] stream upstream %d: %s", provider_name, resp.status_code, err_text)
+                    metrics.increment_error()
+                    metrics.increment_error_by_status(resp.status_code)
+                    yield json.dumps({"error": {"message": err_text[:200], "type": "upstream_error"}}).encode("utf-8")  # noqa: E501
+                    return
+
+                log_leg(req_id, 3, "INCOMING", "upstream", "literouter", status_code=resp.status_code, body={"status": "streaming starting"})  # noqa: E501
+                
+                async for chunk in resp.aiter_bytes():
+                    yield chunk
+
+                metrics.increment_success()
+                latency_ms = int((time.time() - start_time) * 1000)
+                metrics.add_latency(latency_ms)
+                logger.info("[%s] stream success latency=%dms", provider_name, latency_ms)
+                log_leg(req_id, 4, "OUTGOING", "literouter", "opencode", status_code=200, body={"status": "streaming completed"})  # noqa: E501
+
+        except httpx.TimeoutException:
+            log_leg(req_id, 3, "INCOMING", "upstream", "literouter", status_code=504, body={"error": "timeout"})  # noqa: E501
+            logger.error("[%s] stream timeout", provider_name)
+            metrics.increment_error()
+            yield json.dumps({"error": {"message": "Upstream timeout.", "type": "upstream_error"}}).encode("utf-8")  # noqa: E501
+        except Exception as exc:
+            log_leg(req_id, 3, "INCOMING", "upstream", "literouter", status_code=500, body={"error": str(exc)})  # noqa: E501
+            logger.error("[%s] stream unexpected error: %s", provider_name, exc)
+            metrics.increment_error()
+            yield json.dumps({"error": {"message": "Internal stream error.", "type": "internal_error"}}).encode("utf-8")  # noqa: E501
+
+    return StreamingResponse(_upstream_stream(), media_type="application/json")
 
 
 @app.get("/health")
