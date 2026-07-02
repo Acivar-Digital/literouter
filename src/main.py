@@ -972,9 +972,9 @@ async def google_models_endpoint(
     headers = {"Content-Type": "application/json"}
 
     if should_stream:
-        response = await _stream_request(target_url, body, headers, provider_name, start_time, req_id, provider, is_responses=True)
+        response = await _stream_request(target_url, body, headers, provider_name, False, False, start_time, req_id, provider, is_responses=True)
     else:
-        response = await _buffered_request(target_url, body, headers, provider_name, start_time, req_id, provider)
+        response = await _buffered_request(target_url, body, headers, provider_name, False, False, start_time, req_id, provider)
 
     if isinstance(response, JSONResponse):
         resp_content = response.body.decode("utf-8", errors="replace")
