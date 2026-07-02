@@ -866,6 +866,11 @@ async def google_models_endpoint(
         if "freetier" in config.providers:
             provider_name = "freetier"
 
+    if upstream_model.startswith("model/"):
+        upstream_model = upstream_model[6:]
+    elif upstream_model.startswith("models/"):
+        upstream_model = upstream_model[7:]
+
     provider = config.providers.get(provider_name)
     if not provider:
         return JSONResponse(
