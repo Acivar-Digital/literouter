@@ -830,22 +830,6 @@ async def google_models_endpoint(
     except Exception:
         return JSONResponse(status_code=400, content={"error": {"message": "Invalid JSON body", "type": "invalid_request_error"}})  # noqa: E501
 
-    # Merge consecutive contents with the same role to satisfy Google's strict role alternation rule
-    if isinstance(body, dict) and "contents" in body and isinstance(body["contents"], list):
-        merged_contents = []
-        for content in body["contents"]:
-            if not isinstance(content, dict) or "role" not in content or "parts" not in content:
-                merged_contents.append(content)
-                continue
-            if merged_contents and merged_contents[-1].get("role") == content["role"]:
-                if isinstance(content["parts"], list):
-                    if not isinstance(merged_contents[-1]["parts"], list):
-                        merged_contents[-1]["parts"] = [merged_contents[-1]["parts"]]
-                    merged_contents[-1]["parts"].extend(content["parts"])
-            else:
-                merged_contents.append(content)
-        body["contents"] = merged_contents
-
     # 1. Parse path to resolve provider_name, upstream_model, and action
     path = request.url.path
     if "/models/" in path:
@@ -886,6 +870,37 @@ async def google_models_endpoint(
         upstream_model = upstream_model[6:]
     elif upstream_model.startswith("models/"):
         upstream_model = upstream_model[7:]
+
+    # Convert systemInstruction into user messages for Gemma models (upstream Google API crashes on Gemma models if systemInstruction is passed)
+    if isinstance(body, dict) and "systemInstruction" in body:
+        if "gemma" in upstream_model.lower():
+            sys_inst = body.pop("systemInstruction")
+            sys_parts = []
+            if isinstance(sys_inst, dict) and "parts" in sys_inst:
+                sys_parts = sys_inst["parts"]
+            elif isinstance(sys_inst, list):
+                sys_parts = sys_inst
+            
+            if sys_parts:
+                if "contents" not in body or not isinstance(body["contents"], list):
+                    body["contents"] = []
+                body["contents"].insert(0, {"role": "user", "parts": sys_parts})
+
+    # Merge consecutive contents with the same role to satisfy Google's strict role alternation rule
+    if isinstance(body, dict) and "contents" in body and isinstance(body["contents"], list):
+        merged_contents = []
+        for content in body["contents"]:
+            if not isinstance(content, dict) or "role" not in content or "parts" not in content:
+                merged_contents.append(content)
+                continue
+            if merged_contents and merged_contents[-1].get("role") == content["role"]:
+                if isinstance(content["parts"], list):
+                    if not isinstance(merged_contents[-1]["parts"], list):
+                        merged_contents[-1]["parts"] = [merged_contents[-1]["parts"]]
+                    merged_contents[-1]["parts"].extend(content["parts"])
+            else:
+                merged_contents.append(content)
+        body["contents"] = merged_contents
 
     provider = config.providers.get(provider_name)
     if not provider:
