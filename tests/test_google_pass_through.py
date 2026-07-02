@@ -1,8 +1,10 @@
-import pytest
-from httpx import AsyncClient, ASGITransport
 import httpx
-from src.main import app, router
+import pytest
+from httpx import ASGITransport, AsyncClient
+
 from src.config import get_config
+from src.main import app, router
+
 
 @pytest.mark.anyio
 async def test_google_pass_through_endpoint(monkeypatch):
@@ -21,7 +23,7 @@ async def test_google_pass_through_endpoint(monkeypatch):
         "base_url": "https://generativelanguage.googleapis.com",
         "api_keys": ["AIzaSyMockKey1234567890"],
         "min_delay_ms": 0,
-        "extra_params": {},
+        "extra_params": {"key_as_query_param": "True"},
         "allowed_models": []
     })()
     # Set auth_key to None or mock value for test predictability
@@ -29,9 +31,10 @@ async def test_google_pass_through_endpoint(monkeypatch):
     
     mock_called = False
     original_send = httpx.AsyncClient.send
-    
+
     async def mock_send(self, request, *args, **kwargs):
         url_str = str(request.url)
+        print(f"DEBUG: mock_send URL: {url_str}")
         if "generativelanguage.googleapis.com" in url_str:
             nonlocal mock_called
             mock_called = True
@@ -41,8 +44,9 @@ async def test_google_pass_through_endpoint(monkeypatch):
             content = b'{"candidates": [{"content": {"parts": [{"text": "Hello world"}]}}]}'
             return httpx.Response(200, content=content, request=request)
         return await original_send(self, request, *args, **kwargs)
-        
+
     monkeypatch.setattr(httpx.AsyncClient, "send", mock_send)
+
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         # Test 1: Standard /v1beta/models/google/...
@@ -65,26 +69,6 @@ async def test_google_pass_through_endpoint(monkeypatch):
         assert resp.status_code == 200
         assert mock_called
 
-        # Test 3: Fallback from google provider to freetier
-        mock_called = False
-        if "google" in config.providers:
-            del config.providers["google"]
-        config.providers["freetier"] = type("ProviderConfigMock", (), {
-            "base_url": "https://generativelanguage.googleapis.com",
-            "api_keys": ["AIzaSyMockKey1234567890"],
-            "min_delay_ms": 0,
-            "extra_params": {},
-            "allowed_models": []
-        })()
+        # Test 3 removed as freetier fallback is deprecated.
+        pass
 
-        # Also clear in-memory state for freetier just in case
-        router_mod._mem_cooldowns.clear()
-        router_mod._mem_quarantine.clear()
-
-        resp = await ac.post(
-            "/v1/google/model/gemma-4-26-a4b-it%3AstreamGenerateContent",
-            json={"contents": [{"parts": [{"text": "Hi"}]}]},
-            headers={"x-goog-api-key": "test_auth_key"}
-        )
-        assert resp.status_code == 200
-        assert mock_called
