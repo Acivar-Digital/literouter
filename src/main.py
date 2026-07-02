@@ -195,22 +195,9 @@ def _fix_streaming_line(line: str, is_responses: bool = False, responses_item_id
         choices = data.get("choices", [])
         for choice in choices:
             delta = choice.get("delta", {})
-            content = delta.get("content")
-            if content is None or content == "":
-                reasoning = delta.get("reasoning") or delta.get("reasoning_content") or ""
-                if not reasoning and "reasoning_details" in delta:
-                    details = delta["reasoning_details"]
-                    if isinstance(details, list):
-                        reasoning = "".join(d.get("text", "") for d in details if isinstance(d, dict))  # noqa: E501
-                if reasoning:
-                    delta["content"] = reasoning
+            # We no longer collapse reasoning into content
             
             msg = choice.get("message", {})
-            msg_content = msg.get("content")
-            if msg_content is None or msg_content == "":
-                msg_reasoning = msg.get("reasoning") or msg.get("reasoning_content") or ""
-                if msg_reasoning:
-                    msg["content"] = msg_reasoning
 
         if is_responses:
             for choice in choices:
@@ -305,15 +292,6 @@ async def _process_request(body: dict, provider_name: str, template: str, provid
             metrics.increment_rate_limit_wait()
             metrics.add_rate_limit_wait_ms(wait_ms)
 
-        # Get next API key
-        key = router.get_next_key(provider_name, provider.api_keys)
-        if not key:
-            raise HTTPException(status_code=503, detail=f"[{provider_name}] No available API keys.")
-        logger.info("[%s] Using rotated key: %s...", provider_name, key[:15])
-
-        metrics.increment_request()
-        metrics.increment_key_usage(key)
-
     # Sleep outside the lock
     if wait_ms > 0:
         logger.info("[RateLimiter] %s waiting %dms (outside lock)", provider_name, wait_ms)
@@ -350,7 +328,7 @@ async def _process_request(body: dict, provider_name: str, template: str, provid
             body["model"] = raw_model.split("/", 1)[1]
 
     # Build request based on template + provider
-    headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
+    headers = {"Content-Type": "application/json"}
     payload = body
 
     if use_gemini:
@@ -360,165 +338,229 @@ async def _process_request(body: dict, provider_name: str, template: str, provid
         else:
             target_url = f"{provider.base_url}/models/{body['model']}:generateContent"
         payload = build_gemini_request_body(body)
-        del headers["Authorization"]
-
     elif use_anthropic:
         # Anthropic template → /messages endpoint (transform to Anthropic Messages format)
         target_url = f"{provider.base_url}/messages"
         from src.anthropic import build_anthropic_request_body
         payload = build_anthropic_request_body(body)
-        if is_anthropic_provider(provider):
-            # Native Anthropic: use x-api-key header
-            headers["x-api-key"] = key
-            headers["anthropic-version"] = "2023-06-01"
-            del headers["Authorization"]
-
     else:
         # OpenAI template → /chat/completions endpoint
         target_url = f"{provider.base_url}/chat/completions"
-
-    # If provider requires key as query param (e.g. local proxies), append it
-    if provider.extra_params.get("key_as_query_param"):
-        separator = "&" if "?" in target_url else "?"
-        target_url = f"{target_url}{separator}key={key}"
-        del headers["Authorization"]
 
     # Dispatch
     from src.db_logger import log_leg
     log_leg(req_id, 2, "OUTGOING", "literouter", "upstream", url=target_url, body=payload)
     if should_stream:
         return await _stream_request(
-            target_url, payload, headers, key, provider_name,
-            use_gemini, use_anthropic, start_time, req_id, is_responses=is_responses,
+            target_url, payload, headers, provider_name,
+            use_gemini, use_anthropic, start_time, req_id,
+            provider, is_responses=is_responses,
         )
     return await _buffered_request(
-        target_url, payload, headers, key, provider_name,
+        target_url, payload, headers, provider_name,
         use_gemini, use_anthropic, start_time, req_id,
+        provider,
     )
 
 
 async def _buffered_request(
-    target_url, payload, headers, key, provider_name,
+    target_url, payload, headers, provider_name,
     use_gemini, use_anthropic, start_time, req_id,
+    provider,
 ):
-    """Non-streaming: buffer full response, transform, return JSON."""
+    """Non-streaming: buffer full response, transform, return JSON with retries."""
     from src.db_logger import log_leg
-    try:
-        client = _get_client()
+    
+    max_attempts = min(5, len(provider.api_keys))
+    
+    for attempt in range(max_attempts):
+        # Get a key for this attempt
+        key = router.get_next_key(provider_name, provider.api_keys)
+        if not key:
+            return JSONResponse(status_code=503, content={"error": {"message": f"[{provider_name}] No available API keys.", "type": "upstream_error"}})
+
+        logger.info("[%s] Attempt %d/%d | Using key: %s...", provider_name, attempt + 1, max_attempts, key[:15])
+        
+        # Adjust headers/params for this specific key
+        current_headers = headers.copy()
+        current_params = {}
+        
         if use_gemini:
-            resp = await client.post(target_url, json=payload, params={"key": key})
+            current_params = {"key": key}
         else:
-            resp = await client.post(target_url, json=payload, headers=headers)
+            current_headers["Authorization"] = f"Bearer {key}"
+        
+        # Handle providers that want key as query param (besides Gemini)
+        if provider.extra_params.get("key_as_query_param"):
+            current_params["key"] = key
+            if "Authorization" in current_headers:
+                del current_headers["Authorization"]
 
-        rate_limiter.mark_call(provider_name)
+        try:
+            client = _get_client()
+            resp = await client.post(target_url, json=payload, headers=current_headers, params=current_params)
+            
+            # Mark call for rate limiting
+            rate_limiter.mark_call(provider_name)
+            metrics.increment_request()
+            metrics.increment_key_usage(key)
 
-        if resp.status_code in (400, 429, 401, 403):
-            router.report_error(provider_name, key, resp.status_code)
+            if resp.status_code in (400, 429, 401, 403):
+                router.report_error(provider_name, key, resp.status_code)
 
-        if not resp.is_success:
-            err_text = resp.text
-            log_leg(req_id, 3, "INCOMING", "upstream", "literouter", status_code=resp.status_code, body={"error": err_text})  # noqa: E501
-            logger.warning("[%s] upstream %d: %s | Payload sent: %s", provider_name, resp.status_code, err_text, payload)  # noqa: E501
+            if not resp.is_success:
+                err_text = resp.text
+                log_leg(req_id, 3, "INCOMING", "upstream", "literouter", status_code=resp.status_code, body={"error": err_text})
+                
+                # Retry on 429, 401, 403, or 502/503/504
+                if resp.status_code in (429, 401, 403, 502, 503, 504):
+                    logger.warning("[%s] Attempt %d failed (%d). Retrying next key...", provider_name, attempt + 1, resp.status_code)
+                    continue
+                
+                # Non-retryable error
+                logger.warning("[%s] upstream %d: %s", provider_name, resp.status_code, err_text)
+                metrics.increment_error()
+                metrics.increment_error_by_status(resp.status_code)
+                return JSONResponse(
+                    status_code=resp.status_code,
+                    content={"error": {"message": err_text[:200], "type": "upstream_error", "code": resp.status_code}},
+                )
+
+            metrics.increment_success()
+            latency_ms = int((time.time() - start_time) * 1000)
+            metrics.add_latency(latency_ms)
+            logger.info("[%s] success status=%d latency=%dms", provider_name, resp.status_code, latency_ms)
+
+            data = resp.json()
+            log_leg(req_id, 3, "INCOMING", "upstream", "literouter", status_code=resp.status_code, body=data)
+            if use_gemini:
+                data = transform_gemini_response(data)
+            return JSONResponse(content=data)
+
+        except (httpx.TimeoutException, httpx.NetworkError) as exc:
+            logger.error("[%s] Attempt %d network error: %s. Retrying...", provider_name, attempt + 1, exc)
+            router.report_error(provider_name, key, 502)
+            continue
+        except Exception as exc:
+            log_leg(req_id, 3, "INCOMING", "upstream", "literouter", status_code=500, body={"error": str(exc)})
+            logger.error("[%s] unexpected error: %s", provider_name, exc)
             metrics.increment_error()
-            metrics.increment_error_by_status(resp.status_code)
-            return JSONResponse(
-                status_code=resp.status_code,
-                content={"error": {"message": err_text[:200], "type": "upstream_error", "code": resp.status_code}},  # noqa: E501
-            )
+            return JSONResponse(status_code=500, content={"error": {"message": "Internal server error.", "type": "internal_error"}})
 
-        metrics.increment_success()
-        latency_ms = int((time.time() - start_time) * 1000)
-        metrics.add_latency(latency_ms)
-        logger.info("[%s] success status=%d latency=%dms", provider_name, resp.status_code, latency_ms)  # noqa: E501
-
-        data = resp.json()
-        log_leg(req_id, 3, "INCOMING", "upstream", "literouter", status_code=resp.status_code, body=data)  # noqa: E501
-        if use_gemini:
-            data = transform_gemini_response(data)
-        # Fix null content for reasoning models (OpenCode can't parse null content)
-        for choice in data.get("choices", []):
-            msg = choice.get("message", {})
-            msg_content = msg.get("content")
-            if not msg_content:
-                msg_reasoning = msg.get("reasoning") or msg.get("reasoning_content") or ""
-                if msg_reasoning:
-                    msg["content"] = msg_reasoning
-        return JSONResponse(content=data)
-
-    except httpx.TimeoutException:
-        log_leg(req_id, 3, "INCOMING", "upstream", "literouter", status_code=504, body={"error": "timeout"})  # noqa: E501
-        logger.error("[%s] request timed out", provider_name)
-        metrics.increment_error()
-        return JSONResponse(status_code=504, content={"error": {"message": "Upstream timeout.", "type": "upstream_error"}})  # noqa: E501
-    except httpx.ConnectError as exc:
-        log_leg(req_id, 3, "INCOMING", "upstream", "literouter", status_code=502, body={"error": f"connection refused: {exc}"})  # noqa: E501
-        logger.error("[%s] connection refused: %s", provider_name, exc)
-        metrics.increment_error()
-        return JSONResponse(status_code=502, content={"error": {"message": "Upstream connection refused.", "type": "upstream_error"}})  # noqa: E501
-    except Exception as exc:
-        log_leg(req_id, 3, "INCOMING", "upstream", "literouter", status_code=500, body={"error": str(exc)})  # noqa: E501
-        logger.error("[%s] unexpected error: %s", provider_name, exc)
-        metrics.increment_error()
-        return JSONResponse(status_code=500, content={"error": {"message": "Internal server error.", "type": "internal_error"}})  # noqa: E501
+    # All attempts failed
+    return JSONResponse(status_code=503, content={"error": {"message": "All API keys exhausted or failed.", "type": "upstream_error"}})
 
 
 async def _stream_request(
-    target_url, payload, headers, key, provider_name,
-    use_gemini, use_anthropic, start_time, req_id, is_responses: bool = False,
+    target_url, payload, headers, provider_name,
+    use_gemini, use_anthropic, start_time, req_id,
+    provider, is_responses: bool = False,
 ):
-    """Streaming: return StreamingResponse with transformed chunks."""
+    """Streaming: return StreamingResponse with transformed chunks and retries."""
     from src.db_logger import log_leg
 
-    async def _upstream_stream():
-        try:
-            client = _get_client()
-            if use_gemini:
-                stream_cm = client.stream("POST", target_url, json=payload, params={"key": key})
-            else:
-                stream_cm = client.stream("POST", target_url, json=payload, headers=headers)
-            async with stream_cm as resp:
-                rate_limiter.mark_call(provider_name)
-                if resp.status_code in (400, 429, 401, 403):
-                    router.report_error(provider_name, key, resp.status_code)
-                if not resp.is_success:
-                    err_body = await resp.aread()
-                    err_text = err_body.decode("utf-8", errors="replace")
-                    log_leg(req_id, 3, "INCOMING", "upstream", "literouter", status_code=resp.status_code, body={"error": err_text})  # noqa: E501
-                    logger.warning("[%s] stream upstream %d: %s | Payload sent: %s", provider_name, resp.status_code, err_text, payload)  # noqa: E501
-                    metrics.increment_error()
-                    metrics.increment_error_by_status(resp.status_code)
-                    err_payload = json.dumps({"error": {"message": err_text[:200], "type": "upstream_error"}})  # noqa: E501
-                    yield f"data: {err_payload}\n\n".encode("utf-8")
-                    return
-                # Log leg 3 successfully starting
-                log_leg(req_id, 3, "INCOMING", "upstream", "literouter", status_code=resp.status_code, body={"status": "streaming starting"})  # noqa: E501
-                
-                if is_responses:
-                    resp_id = f"resp-{req_id}"
-                    item_id = f"msg-{req_id}"
-                    created_data = json.dumps({'type': 'response.created', 'response': {'id': resp_id, 'object': 'response', 'status': 'in_progress', 'output': []}})  # noqa: E501
-                    yield f"event: response.created\ndata: {created_data}\n\n".encode("utf-8")
-                    item_added = json.dumps({'type': 'response.output_item.added', 'output_index': 0, 'item': {'type': 'message', 'id': item_id, 'status': 'in_progress', 'role': 'assistant', 'content': []}})  # noqa: E501
-                    yield f"event: response.output_item.added\ndata: {item_added}\n\n".encode("utf-8")  # noqa: E501
-                    part_added = json.dumps({'type': 'response.content_part.added', 'item_id': item_id, 'output_index': 0, 'content_index': 0, 'part': {'type': 'output_text', 'text': ''}})  # noqa: E501
-                    yield f"event: response.content_part.added\ndata: {part_added}\n\n".encode("utf-8")  # noqa: E501
-                    accumulated_text = []
-                    accumulated_tool_calls = {}  # id -> {name, arguments}
+    max_attempts = min(5, len(provider.api_keys))
 
-                # Fix null content in streaming chunks for reasoning models using incremental decoder and line buffer  # noqa: E501
-                decoder = codecs.getincrementaldecoder("utf-8")()
-                buffer = ""
-                async for chunk in resp.aiter_bytes():
-                    buffer += decoder.decode(chunk)
-                    while "\n" in buffer:
-                        line, buffer = buffer.split("\n", 1)
-                        # Extract tool_call deltas from raw line BEFORE _fix_streaming_line
-                        # (which returns None for tool-call-only chunks in responses mode)
+    async def _upstream_stream():
+        current_key = None
+        
+        for attempt in range(max_attempts):
+            # Get a key for this attempt
+            current_key = router.get_next_key(provider_name, provider.api_keys)
+            if not current_key:
+                yield f"data: {json.dumps({'error': {'message': f'[{provider_name}] No available API keys.', 'type': 'upstream_error'}})}\n\n".encode("utf-8")
+                return
+
+            logger.info("[%s] Attempt %d/%d | Using key: %s...", provider_name, attempt + 1, max_attempts, current_key[:15])
+
+            # Adjust headers/params for this specific key
+            current_headers = headers.copy()
+            current_params = {}
+
+            if use_gemini:
+                current_params = {"key": current_key}
+            else:
+                current_headers["Authorization"] = f"Bearer {current_key}"
+
+            if provider.extra_params.get("key_as_query_param"):
+                current_params["key"] = current_key
+                if "Authorization" in current_headers:
+                    del current_headers["Authorization"]
+
+            try:
+                client = _get_client()
+                # Use stream() context manager
+                stream_cm = client.stream("POST", target_url, json=payload, headers=current_headers, params=current_params)
+                
+                async with stream_cm as resp:
+                    # Only a small window to check if we can retry
+                    # Once we start yielding bytes to the client, we can't swap keys
+                    
+                    # Mark call for rate limiting
+                    rate_limiter.mark_call(provider_name)
+                    metrics.increment_request()
+                    metrics.increment_key_usage(current_key)
+
+                    if resp.status_code in (400, 429, 401, 403):
+                        router.report_error(provider_name, current_key, resp.status_code)
+
+                    if not resp.is_success:
+                        err_body = await resp.aread()
+                        err_text = err_body.decode("utf-8", errors="replace")
+                        log_leg(req_id, 3, "INCOMING", "upstream", "literouter", status_code=resp.status_code, body={"error": err_text})
+                        
+                        if resp.status_code in (429, 401, 403, 502, 503, 504):
+                            logger.warning("[%s] Attempt %d failed (%d). Retrying next key...", provider_name, attempt + 1, resp.status_code)
+                            continue
+                        
+                        logger.warning("[%s] stream upstream %d: %s", provider_name, resp.status_code, err_text)
+                        metrics.increment_error()
+                        metrics.increment_error_by_status(resp.status_code)
+                        err_payload = json.dumps({"error": {"message": err_text[:200], "type": "upstream_error"}})
+                        yield f"data: {err_payload}\n\n".encode("utf-8")
+                        return
+
+                    # Log leg 3 successfully starting
+                    log_leg(req_id, 3, "INCOMING", "upstream", "literouter", status_code=resp.status_code, body={"status": "streaming starting"})
+                    
+                    if is_responses:
+                        resp_id = f"resp-{req_id}"
+                        item_id = f"msg-{req_id}"
+                        created_data = json.dumps({'type': 'response.created', 'response': {'id': resp_id, 'object': 'response', 'status': 'in_progress', 'output': []}})
+                        yield f"event: response.created\ndata: {created_data}\n\n".encode("utf-8")
+                        item_added = json.dumps({'type': 'response.output_item.added', 'output_index': 0, 'item': {'type': 'message', 'id': item_id, 'status': 'in_progress', 'role': 'assistant', 'content': []}})
+                        yield f"event: response.output_item.added\ndata: {item_added}\n\n".encode("utf-8")
+                        part_added = json.dumps({'type': 'response.content_part.added', 'item_id': item_id, 'output_index': 0, 'content_index': 0, 'part': {'type': 'output_text', 'text': ''}})
+                        yield f"event: response.content_part.added\ndata: {part_added}\n\n".encode("utf-8")
+                        accumulated_text = []
+                        accumulated_tool_calls = {}
+
+                    decoder = codecs.getincrementaldecoder("utf-8")()
+                    buffer = ""
+                    async for chunk in resp.aiter_bytes():
+                        buffer += decoder.decode(chunk)
+                        while "\n" in buffer:
+                            line, buffer = buffer.split("\n", 1)
+                            if is_responses:
+                                for tc in _extract_tool_call_deltas(line):
+                                    idx = tc.get("index", 0)
+                                    if idx not in accumulated_tool_calls:
+                                        accumulated_tool_calls[idx] = {"id": "", "name": "", "arguments": ""}
+                                    if "id" in tc:
+                                        accumulated_tool_calls[idx]["id"] = tc["id"]
+                                    fn = tc.get("function", {})
+                                    if "name" in fn:
+                                        accumulated_tool_calls[idx]["name"] += fn["name"]
+                                    if "arguments" in fn:
+                                        accumulated_tool_calls[idx]["arguments"] += fn["arguments"]
+                            yield (line + "\n").encode("utf-8")
+                    
+                    if buffer:
                         if is_responses:
-                            for tc in _extract_tool_call_deltas(line):
+                            for tc in _extract_tool_call_deltas(buffer):
                                 idx = tc.get("index", 0)
                                 if idx not in accumulated_tool_calls:
-                                    accumulated_tool_calls[idx] = {"id": "", "name": "", "arguments": ""}  # noqa: E501
+                                    accumulated_tool_calls[idx] = {"id": "", "name": "", "arguments": ""}
                                 if "id" in tc:
                                     accumulated_tool_calls[idx]["id"] = tc["id"]
                                 fn = tc.get("function", {})
@@ -526,78 +568,45 @@ async def _stream_request(
                                     accumulated_tool_calls[idx]["name"] += fn["name"]
                                 if "arguments" in fn:
                                     accumulated_tool_calls[idx]["arguments"] += fn["arguments"]
-                        processed = _fix_streaming_line(line, is_responses, responses_item_id=item_id if is_responses else "")  # noqa: E501
-                        if processed is not None:
-                            yield (processed + "\n").encode("utf-8")
-                            if is_responses and '"delta"' in processed:
-                                try:
-                                    evt = json.loads(processed.split("data: ", 1)[1])
-                                    accumulated_text.append(evt.get("delta", ""))
-                                except Exception:
-                                    pass
-                if buffer:
+                        yield (buffer + "\n").encode("utf-8")
+
                     if is_responses:
-                        for tc in _extract_tool_call_deltas(buffer):
-                            idx = tc.get("index", 0)
-                            if idx not in accumulated_tool_calls:
-                                accumulated_tool_calls[idx] = {"id": "", "name": "", "arguments": ""}  # noqa: E501
-                            if "id" in tc:
-                                accumulated_tool_calls[idx]["id"] = tc["id"]
-                            fn = tc.get("function", {})
-                            if "name" in fn:
-                                accumulated_tool_calls[idx]["name"] += fn["name"]
-                            if "arguments" in fn:
-                                accumulated_tool_calls[idx]["arguments"] += fn["arguments"]
-                    processed = _fix_streaming_line(buffer, is_responses, responses_item_id=item_id if is_responses else "")  # noqa: E501
-                    if processed is not None:
-                        yield processed.encode("utf-8")
-                        if is_responses and '"delta"' in processed:
-                            try:
-                                evt = json.loads(processed.split("data: ", 1)[1])
-                                accumulated_text.append(evt.get("delta", ""))
-                            except Exception:
-                                pass
+                        full_text = "".join(accumulated_text)
+                        text_done = json.dumps({'type': 'response.output_text.done', 'item_id': item_id, 'output_index': 0, 'content_index': 0, 'text': full_text})
+                        yield f"event: response.output_text.done\ndata: {text_done}\n\n".encode("utf-8")
+                        part_done = json.dumps({'type': 'response.content_part.done', 'item_id': item_id, 'output_index': 0, 'content_index': 0, 'part': {'type': 'output_text', 'text': full_text}})
+                        yield f"event: response.content_part.done\ndata: {part_done}\n\n".encode("utf-8")
+                        item_done = json.dumps({'type': 'response.output_item.done', 'output_index': 0, 'item': {'type': 'message', 'id': item_id, 'status': 'completed', 'role': 'assistant', 'content': [{'type': 'output_text', 'text': full_text}]}})
+                        yield f"event: response.output_item.done\ndata: {item_done}\n\n".encode("utf-8")
 
-                if is_responses:
-                    full_text = "".join(accumulated_text)
-                    text_done = json.dumps({'type': 'response.output_text.done', 'item_id': item_id, 'output_index': 0, 'content_index': 0, 'text': full_text})  # noqa: E501
-                    yield f"event: response.output_text.done\ndata: {text_done}\n\n".encode("utf-8")  # noqa: E501
-                    part_done = json.dumps({'type': 'response.content_part.done', 'item_id': item_id, 'output_index': 0, 'content_index': 0, 'part': {'type': 'output_text', 'text': full_text}})  # noqa: E501
-                    yield f"event: response.content_part.done\ndata: {part_done}\n\n".encode("utf-8")  # noqa: E501
-                    item_done = json.dumps({'type': 'response.output_item.done', 'output_index': 0, 'item': {'type': 'message', 'id': item_id, 'status': 'completed', 'role': 'assistant', 'content': [{'type': 'output_text', 'text': full_text}]}})  # noqa: E501
-                    yield f"event: response.output_item.done\ndata: {item_done}\n\n".encode("utf-8")  # noqa: E501
+                        output_items = [{'type': 'message', 'id': item_id, 'status': 'completed', 'role': 'assistant', 'content': [{'type': 'output_text', 'text': full_text}]}]
+                        for idx in sorted(accumulated_tool_calls.keys()):
+                            tc = accumulated_tool_calls[idx]
+                            logger.info("[%s] Tool call received (not forwarded to ACP): %s(%s...)", provider_name, tc['name'], tc['arguments'][:80])
 
-                    # Log accumulated tool calls for debugging (not emitted as ACP events
-                    # because OpenCode's @ai-sdk/openai SDK rejects function_call items
-                    # with Zod validation errors)
-                    output_items = [{'type': 'message', 'id': item_id, 'status': 'completed', 'role': 'assistant', 'content': [{'type': 'output_text', 'text': full_text}]}]  # noqa: E501
-                    for idx in sorted(accumulated_tool_calls.keys()):
-                        tc = accumulated_tool_calls[idx]
-                        logger.info("[%s] Tool call received (not forwarded to ACP): %s(%s...)", provider_name, tc['name'], tc['arguments'][:80])  # noqa: E501
+                        completed_data = json.dumps({'type': 'response.completed', 'response': {'id': resp_id, 'object': 'response', 'status': 'completed', 'output': output_items}})
+                        yield f"event: response.completed\ndata: {completed_data}\n\n".encode("utf-8")
 
-                    completed_data = json.dumps({'type': 'response.completed', 'response': {'id': resp_id, 'object': 'response', 'status': 'completed', 'output': output_items}})  # noqa: E501
-                    yield f"event: response.completed\ndata: {completed_data}\n\n".encode("utf-8")  # noqa: E501
-            metrics.increment_success()
-            latency_ms = int((time.time() - start_time) * 1000)
-            metrics.add_latency(latency_ms)
-            logger.info("[%s] stream success latency=%dms", provider_name, latency_ms)
-        except httpx.TimeoutException:
-            logger.error("[%s] stream timed out", provider_name)
-            metrics.increment_error()
-            err_payload = json.dumps({"error": {"message": "Upstream timeout.", "type": "upstream_error"}})  # noqa: E501
-            yield f"data: {err_payload}\n\n".encode("utf-8")
-        except httpx.ConnectError as exc:
-            logger.error("[%s] stream connection refused: %s", provider_name, exc)
-            metrics.increment_error()
-            err_payload = json.dumps({"error": {"message": "Upstream connection refused.", "type": "upstream_error"}})  # noqa: E501
-            yield f"data: {err_payload}\n\n".encode("utf-8")
-        except Exception as exc:
-            logger.error("[%s] stream unexpected error: %s", provider_name, exc)
-            metrics.increment_error()
-            err_payload = json.dumps({"error": {"message": "Internal server error.", "type": "internal_error"}})  # noqa: E501
-            yield f"data: {err_payload}\n\n".encode("utf-8")
+                    metrics.increment_success()
+                    latency_ms = int((time.time() - start_time) * 1000)
+                    metrics.add_latency(latency_ms)
+                    logger.info("[%s] stream success latency=%dms", provider_name, latency_ms)
+                    log_leg(req_id, 4, "OUTGOING", "literouter", "opencode", status_code=200, body={"status": "streaming completed"})
+                    return
+
+            except (httpx.TimeoutException, httpx.NetworkError) as exc:
+                logger.error("[%s] Attempt %d network error: %s. Retrying...", provider_name, attempt + 1, exc)
+                router.report_error(provider_name, current_key, 502)
+                continue
+            except Exception as exc:
+                logger.error("[%s] unexpected error: %s", provider_name, exc)
+                metrics.increment_error()
+                err_payload = json.dumps({"error": {"message": "Internal server error.", "type": "internal_error"}})
+                yield f"data: {err_payload}\n\n".encode("utf-8")
+                return
 
     return StreamingResponse(_upstream_stream(), media_type="text/event-stream")
+
 
 
 async def _stream_anthropic(resp):
@@ -861,11 +870,6 @@ async def google_models_endpoint(
             provider_name = "google"
             upstream_model = model_part
 
-    # Fallback to freetier if google provider is not configured
-    if provider_name == "google" and "google" not in config.providers:
-        if "freetier" in config.providers:
-            provider_name = "freetier"
-
     if upstream_model.startswith("model/"):
         upstream_model = upstream_model[6:]
     elif upstream_model.startswith("models/"):
@@ -933,27 +937,11 @@ async def google_models_endpoint(
 
     async with provider_lock:
         rl = rate_limiter.can_call(provider_name, min_delay_ms)
-        wait_ms = 0
-        if not rl["ready"]:
-            wait_ms = rl["wait_ms"]
-            metrics.increment_rate_limit_wait()
-            metrics.add_rate_limit_wait_ms(wait_ms)
-
-        key = router.get_next_key(provider_name, provider.api_keys)
-        if not key:
-            return JSONResponse(
-                status_code=503,
-                content={
-                    "error": {
-                        "message": f"[{provider_name}] No available API keys.",
-                        "type": "invalid_request_error"
-                    }
-                }
-            )
-        logger.info("[%s] Using rotated key: %s...", provider_name, key[:15])
-
-        metrics.increment_request()
-        metrics.increment_key_usage(key)
+    wait_ms = 0
+    if not rl["ready"]:
+        wait_ms = rl["wait_ms"]
+        metrics.increment_rate_limit_wait()
+        metrics.add_rate_limit_wait_ms(wait_ms)
 
     if wait_ms > 0:
         logger.info("[RateLimiter] %s waiting %dms (outside lock)", provider_name, wait_ms)
@@ -981,15 +969,12 @@ async def google_models_endpoint(
 
     log_leg(req_id, 2, "OUTGOING", "literouter", "upstream", url=target_url, body=body)
 
-    separator = "&" if "?" in target_url else "?"
-    target_url = f"{target_url}{separator}key={key}"
-
     headers = {"Content-Type": "application/json"}
 
     if should_stream:
-        response = await _stream_google_request(target_url, body, headers, provider_name, start_time, req_id, key)
+        response = await _stream_request(target_url, body, headers, provider_name, start_time, req_id, provider, is_responses=True)
     else:
-        response = await _buffered_google_request(target_url, body, headers, provider_name, start_time, req_id, key)
+        response = await _buffered_request(target_url, body, headers, provider_name, start_time, req_id, provider)
 
     if isinstance(response, JSONResponse):
         resp_content = response.body.decode("utf-8", errors="replace")
@@ -1003,124 +988,6 @@ async def google_models_endpoint(
         log_leg(req_id, 4, "OUTGOING", "literouter", "opencode", status_code=200, body={"status": "streaming started"})  # noqa: E501
         logger.info("[%s] OUTGOING RESPONSE | Started Stream Response", req_id)
     return response
-
-
-async def _buffered_google_request(target_url, payload, headers, provider_name, start_time, req_id, key):
-    from src.db_logger import log_leg
-    try:
-        client = _get_client()
-        resp = await client.post(target_url, json=payload, headers=headers)
-        rate_limiter.mark_call(provider_name)
-        if resp.status_code in (400, 429, 401, 403):
-            router.report_error(provider_name, key, resp.status_code)
-
-        if not resp.is_success:
-            err_text = resp.text
-            log_leg(req_id, 3, "INCOMING", "upstream", "literouter", status_code=resp.status_code, body={"error": err_text})  # noqa: E501
-            logger.warning("[%s] upstream returned %d: %s", provider_name, resp.status_code, err_text)
-            metrics.increment_error()
-            metrics.increment_error_by_status(resp.status_code)
-            return JSONResponse(status_code=resp.status_code, content=resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {"error": err_text})  # noqa: E501
-
-        metrics.increment_success()
-        latency_ms = int((time.time() - start_time) * 1000)
-        metrics.add_latency(latency_ms)
-        logger.info("[%s] success status=%d latency=%dms", provider_name, resp.status_code, latency_ms)
-
-        data = resp.json()
-        log_leg(req_id, 3, "INCOMING", "upstream", "literouter", status_code=resp.status_code, body=data)
-        return JSONResponse(content=data, status_code=resp.status_code)
-
-    except httpx.TimeoutException:
-        log_leg(req_id, 3, "INCOMING", "upstream", "literouter", status_code=504, body={"error": "timeout"})  # noqa: E501
-        logger.error("[%s] request timed out", provider_name)
-        metrics.increment_error()
-        return JSONResponse(status_code=504, content={"error": {"message": "Upstream timeout.", "type": "upstream_error"}})  # noqa: E501
-    except httpx.ConnectError as exc:
-        log_leg(req_id, 3, "INCOMING", "upstream", "literouter", status_code=502, body={"error": f"connection refused: {exc}"})  # noqa: E501
-        logger.error("[%s] connection refused: %s", provider_name, exc)
-        metrics.increment_error()
-        return JSONResponse(status_code=502, content={"error": {"message": "Upstream connection refused.", "type": "upstream_error"}})  # noqa: E501
-    except Exception as exc:
-        log_leg(req_id, 3, "INCOMING", "upstream", "literouter", status_code=500, body={"error": str(exc)})  # noqa: E501
-        logger.error("[%s] unexpected error: %s", provider_name, exc)
-        metrics.increment_error()
-        return JSONResponse(status_code=500, content={"error": {"message": "Internal server error.", "type": "internal_error"}})  # noqa: E501
-
-
-async def _stream_google_request(target_url, payload, headers, provider_name, start_time, req_id, key):
-    from src.db_logger import log_leg
-
-    async def _upstream_stream():
-        current_key = key
-        max_attempts = min(5, len(config.providers[provider_name].api_keys))
-
-        for attempt in range(max_attempts):
-            import urllib.parse
-            parsed_url = urllib.parse.urlparse(target_url)
-            query_params = urllib.parse.parse_qs(parsed_url.query)
-            query_params["key"] = [current_key]
-            new_query = urllib.parse.urlencode(query_params, doseq=True)
-            attempt_url = parsed_url._replace(query=new_query).geturl()
-
-            try:
-                client = _get_client()
-                stream_cm = client.stream("POST", attempt_url, json=payload, headers=headers)
-                async with stream_cm as resp:
-                    rate_limiter.mark_call(provider_name)
-                    if resp.status_code in (400, 429, 401, 403, 500):
-                        router.report_error(provider_name, current_key, resp.status_code)
-                    
-                    if not resp.is_success:
-                        err_body = await resp.aread()
-                        err_text = err_body.decode("utf-8", errors="replace")
-                        log_leg(req_id, 3, "INCOMING", "upstream", "literouter", status_code=resp.status_code, body={"error": err_text})  # noqa: E501
-                        logger.warning("[%s] stream upstream attempt %d failed with status %d: %s. Retrying next key...", provider_name, attempt + 1, resp.status_code, err_text)
-                        
-                        next_key = router.get_next_key(provider_name, config.providers[provider_name].api_keys)
-                        if next_key:
-                            current_key = next_key
-                            continue
-                        else:
-                            metrics.increment_error()
-                            metrics.increment_error_by_status(resp.status_code)
-                            yield f"data: {json.dumps({'error': {'message': err_text[:200], 'type': 'upstream_error'}})}\n\n".encode("utf-8")  # noqa: E501
-                            return
-
-                    log_leg(req_id, 3, "INCOMING", "upstream", "literouter", status_code=resp.status_code, body={"status": "streaming starting"})  # noqa: E501
-                    
-                    async for chunk in resp.aiter_bytes():
-                        yield chunk
-
-                    metrics.increment_success()
-                    latency_ms = int((time.time() - start_time) * 1000)
-                    metrics.add_latency(latency_ms)
-                    logger.info("[%s] stream success latency=%dms", provider_name, latency_ms)
-                    log_leg(req_id, 4, "OUTGOING", "literouter", "opencode", status_code=200, body={"status": "streaming completed"})  # noqa: E501
-                    return
-
-            except (httpx.TimeoutException, httpx.NetworkError) as exc:
-                log_leg(req_id, 3, "INCOMING", "upstream", "literouter", status_code=504, body={"error": str(exc)})  # noqa: E501
-                logger.error("[%s] stream attempt %d error: %s. Retrying next key...", provider_name, attempt + 1, exc)
-                router.report_error(provider_name, current_key, 502)
-                
-                next_key = router.get_next_key(provider_name, config.providers[provider_name].api_keys)
-                if next_key:
-                    current_key = next_key
-                    continue
-                else:
-                    metrics.increment_error()
-                    yield f"data: {json.dumps({'error': {'message': f'Upstream connection error: {exc}', 'type': 'upstream_error'}})}\n\n".encode("utf-8")  # noqa: E501
-                    return
-            except Exception as exc:
-                log_leg(req_id, 3, "INCOMING", "upstream", "literouter", status_code=500, body={"error": str(exc)})  # noqa: E501
-                logger.error("[%s] stream attempt %d unexpected error: %s", provider_name, attempt + 1, exc)
-                metrics.increment_error()
-                yield f"data: {json.dumps({'error': {'message': 'Internal stream error.', 'type': 'internal_error'}})}\n\n".encode("utf-8")  # noqa: E501
-                return
-
-    return StreamingResponse(_upstream_stream(), media_type="application/json")
-
 
 @app.get("/health")
 @app.get("/")
