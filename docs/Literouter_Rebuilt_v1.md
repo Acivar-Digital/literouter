@@ -4,8 +4,11 @@ You are a senior principal systems engineer specializing in high-performance Pyt
 Before outputting any code, you MUST first write a detailed, step-by-step implementation plan. 
 In your plan, outline exactly:
 1. How you will handle model-first cooldown keys in `src/router.py` (specifically making rate-limits, timeouts, and auth credentials errors model-aware since some keys have restricted permissions that only grant access to specific models).
-2. How you will handle Gemma payload cleaning, same-role message block merging, and client query parameter forwarding in `src/main.py`.
-3. The exact structure and signature of your helper methods.
+2. How you will handle the differentiated routing behaviors:
+   - **Google SDK Route (`/v1beta/models/...`)**: Pure, dumb pass-through proxy. Only rotates keys and strips `thinkingConfig` for Gemma requests. Do NOT intercept or format response bytes.
+   - **OpenAI Compatibility Route (`/v1/chat/completions`)**: Intercepts and parses SSE streams to extract Gemini reasoning (`thought`, `reasoning_content`, `thought_summary` inside candidate parts) and translates it to standard OpenAI `choices[0].delta.reasoning_content` delta property.
+3. How you will handle Gemma payload cleaning, same-role message block merging, and client query parameter forwarding in `src/main.py`.
+4. The exact structure and signature of your helper methods.
 Do NOT write any code until the implementation plan is fully laid out and completed.
 
 Your task is to write a complete, production-ready, highly optimized first draft of our API Key Rotator proxy named **LiteRouter**. 
@@ -56,15 +59,16 @@ The FastAPI application.
    * Define a global `httpx.AsyncClient` inside a FastAPI `lifespan` context manager to reuse a single connection pool.
 2. **API Routes & Gateway Access**:
    * Secure all endpoints (`/v1/chat/completions`, native Google rest endpoints) using `LITEROUTER_AUTH_KEY` validation.
-3. **Payload Sanitization & Merging for Google/Gemma**:
+3. **Google SDK Pass-Through (`/v1beta/models/{model_name}:streamGenerateContent` and `:generateContent`)**:
+   * Act as a **pure, dumb pass-through proxy** for response bytes.
+   * Do NOT parse, strip, or modify the response stream bytes. Simply stream the raw bytes back to the client.
+   * On the request side, rotate the key, forward all client query parameters (excluding the rotated `key` param), and strip `thinkingConfig`/`thinking_config` from the JSON body ONLY if the model is a Gemma variant (to prevent upstream engine crashes).
+4. **OpenAI Route & Payload Sanitization (`/v1/chat/completions`)**:
    * **Merge Consecutive Messages**: Before sending payloads to Google native/OpenAI endpoints, scan messages and merge consecutive blocks with the identical roles (e.g. user-following-user) to prevent validation crashes.
-   * **Gemma Payload Fixes**: If the model is a Gemma variant, automatically strip `thinkingConfig` / `thinking_config` or `systemInstruction` parameters that cause Gemini engine errors, and prepend/merge system contents into standard user messages if needed.
-4. **Query Parameter Forwarding**:
-   * In native Google endpoints (`/v1beta/models/{model_name}:streamGenerateContent` and `:generateContent`), extract and forward all client query parameters (excluding the `key` parameter which is populated by rotation).
-5. **Streaming Interceptor & Normalizer**:
-   * Capture and parse JSON stream chunks line-by-line.
-   * Normalize reasoning/thinking outputs to OpenAI's standard structure, mapping candidate parts `thought` or `reasoning_content` to `choices[0].delta.reasoning_content`.
-6. **Failover Retry Loop**:
+   * **Streaming Interceptor & Normalizer**:
+     - Capture and parse JSON stream chunks line-by-line.
+     - Extract Gemini's thinking outputs (e.g. from `thought`, `reasoning_content`, or `thought_summary` attributes inside candidate parts) and translate them to the standard OpenAI `choices[0].delta.reasoning_content` delta property so compatibility client SDKs (like Pydantic AI) can consume them correctly.
+5. **Failover Retry Loop**:
    * Wrap calls in a retry loop (up to 3 attempts).
    * If a key throws a timeout, 429, or auth error, catch it, call `router.report_error(provider, key, error_type, model_name)`, rotate to a new key, and try again seamlessly.
 
