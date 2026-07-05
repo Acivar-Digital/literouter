@@ -1,31 +1,3 @@
-# 🛠️ LiteRouter Rebuilt Specification (v1) & Google AI Studio Prompt
-
-This document contains the updated reference specifications and a highly detailed, copy-pasteable prompt to feed into Google AI Studio to generate a robust rebuilt version of the **LiteRouter** proxy. This specification incorporates **model-first cooldown routing** and preserves all critical production API hotfixes.
-
----
-
-## 1. Key Improvements in v1
-
-1. **Model-First Lockout (Solving the Flaw)**:
-   * Rate limits (`429`) and connection timeouts are now scoped specifically to the requested model: `cooldown:{provider}:{key_hash}:{model_name}`.
-   * Credential errors (`401` / `403`) remain scoped globally: `cooldown:{provider}:{key_hash}:global` to quarantine bad keys completely.
-   * `get_available_key` ensures candidate keys are free from both the global quarantine and the specific model cooldown.
-2. **Gemma Payload Normalization**:
-   * Auto-detect Gemma models and strip/pop `systemInstruction` or `thinkingConfig` fields that crash the Google API, prepending system instructions cleanly to the contents or messages.
-3. **Same-Role Block Merging**:
-   * Merges consecutive messages with the identical roles (e.g., consecutive `user` messages) before forwarding to Google endpoints to avoid upstream validation failures.
-4. **Query Parameter Preservation**:
-   * Preserves and forwards original query parameters from clients (like `alt=sse`) to ensure streaming endpoints serialize correctly.
-5. **Streaming Reasoning/Thought Separation**:
-   * Automatically intercepts and maps Gemini/Gemma reasoning blocks to OpenAI `choices[0].delta.reasoning_content`.
-
----
-
-## 2. Google AI Studio Copy-Paste Prompt (v1)
-
-Copy and paste the entire block below into Google AI Studio:
-
-```markdown
 You are a senior principal systems engineer specializing in high-performance Python ASGI architectures, asyncio networking, and API gateways.
 
 Your task is to write a complete, production-ready, highly optimized first draft of our API Key Rotator proxy named **LiteRouter**. 
@@ -60,8 +32,8 @@ This class manages Key Rotation, Cooldown States, and Quota Limits. It uses the 
    * For the chosen Key $K$, write rolling token usage into Valkey keys named `quota:{provider}:{key_hash}:tpm:minute_timestamp` with a 60s TTL.
 2. **Model-First Cooldown & Quarantine**:
    * When an error occurs, report it with: `report_error(provider, key, error_type, model_name)`.
-   * **Model-Specific Cooldown**: For rate limit (`429`) or `timeout`, set cooldown strictly for that model: `cooldown:{provider}:{key_hash}:{model_name}` in Valkey/Redis with a TTL (60s for 429, 10s for timeout).
-   * **Global Quarantine**: For auth failures (`401` or `403`), set a global quarantine key: `cooldown:{provider}:{key_hash}:global` with a 7-day TTL (604800s).
+   * **Model-Specific Cooldown**: For rate limit (`429`) or connection `timeout`, set cooldown strictly for that model: `cooldown:{provider}:{key_hash}:{model_name}` in Valkey/Redis with a TTL (60s for 429, 10s for timeout).
+   * **Global Quarantine**: For auth failures (`401` or `403`), set a global quarantine key: `cooldown:{provider}:{key_hash}:global` with a 7-day TTL (604800s) to completely quarantine bad credentials across all models.
 3. **Get Available Key**:
    * `async def get_available_key(self, provider: str, model_name: str, estimated_tokens: int) -> str`
    * Check each candidate key's status. **Skip** the key if:
@@ -93,4 +65,3 @@ The FastAPI application.
 ---
 
 Please provide the complete, functional code for all three files. Do not use placeholders or skip helper methods. Ensure that the code uses standard Python asyncio libraries, is clean, and contains descriptive docstrings explaining the integration logic.
-```
