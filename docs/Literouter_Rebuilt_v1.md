@@ -3,7 +3,7 @@ You are a senior principal systems engineer specializing in high-performance Pyt
 ### IMPORTANT: Implementation Plan Required First
 Before outputting any code, you MUST first write a detailed, step-by-step implementation plan. 
 In your plan, outline exactly:
-1. How you will handle model-first cooldown keys in `src/router.py` (specifically making rate-limits and timeouts model-aware while keeping auth credentials global).
+1. How you will handle model-first cooldown keys in `src/router.py` (specifically making rate-limits, timeouts, and auth credentials errors model-aware since some keys have restricted permissions that only grant access to specific models).
 2. How you will handle Gemma payload cleaning, same-role message block merging, and client query parameter forwarding in `src/main.py`.
 3. The exact structure and signature of your helper methods.
 Do NOT write any code until the implementation plan is fully laid out and completed.
@@ -37,17 +37,15 @@ This file loads environment variables via `python-dotenv` and defines model char
 This class manages Key Rotation, Cooldown States, and Quota Limits. It uses the `valkey` (or `redis`) package to connect to Valkey.
 1. **Sliding-Window Token Tracking**:
    * Implement a token-estimation heuristic: `estimated_tokens = len(prompt_characters) // 4 + max_tokens`.
-   * For the chosen Key $K$, write rolling token usage into Valkey keys named `quota:{provider}:{key_hash}:tpm:minute_timestamp` with a 60s TTL.
+   * For the chosen Key $K$ and specific model, write rolling token usage into Valkey keys named `quota:{provider}:{key_hash}:{model_name}:tpm:minute_timestamp` and `quota:{provider}:{key_hash}:{model_name}:rpm:minute_timestamp` with a 60s TTL.
 2. **Model-First Cooldown & Quarantine**:
-   * When an error occurs, report it with: `report_error(provider, key, error_type, model_name)`.
+   * All cooldowns and quarantines are model-scoped: `report_error(provider, key, error_type, model_name)`.
    * **Model-Specific Cooldown**: For rate limit (`429`) or connection `timeout`, set cooldown strictly for that model: `cooldown:{provider}:{key_hash}:{model_name}` in Valkey/Redis with a TTL (60s for 429, 10s for timeout).
-   * **Global Quarantine**: For auth failures (`401` or `403`), set a global quarantine key: `cooldown:{provider}:{key_hash}:global` with a 7-day TTL (604800s) to completely quarantine bad credentials across all models.
+   * **Model-Specific Quarantine**: For auth or permissions failures (`401` or `403`), quarantine the key strictly for that model: `cooldown:{provider}:{key_hash}:{model_name}` with a 7-day TTL (604800s). This ensures a key that lacks access to one model is not tried again for that model, but remains available for other models it has access to.
 3. **Get Available Key**:
    * `async def get_available_key(self, provider: str, model_name: str, estimated_tokens: int) -> str`
-   * Check each candidate key's status. **Skip** the key if:
-     1. The global quarantine key (`cooldown:{provider}:{key_hash}:global`) exists.
-     2. The model-specific cooldown key (`cooldown:{provider}:{key_hash}:{model_name}`) exists.
-   * If the key is clean, check its rolling TPM/RPM usage in Valkey against the model limits configured in `src/config.py`.
+   * Check each candidate key's status. **Skip** the key if the model-specific cooldown key (`cooldown:{provider}:{key_hash}:{model_name}`) exists.
+   * If the key is clean, check its rolling TPM/RPM usage for this model in Valkey against the limits configured in `src/config.py`.
    * Return the first key that has remaining quota. If all are exhausted or in cooldown, raise `NoDeploymentsAvailable`.
 
 ---
