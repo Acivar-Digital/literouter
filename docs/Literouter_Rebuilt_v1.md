@@ -7,8 +7,9 @@ In your plan, outline exactly:
 2. How you will handle the differentiated routing behaviors:
    - **Google SDK Route (`/v1beta/models/...`)**: Pure, dumb pass-through proxy. Only rotates keys and strips `thinkingConfig` for Gemma requests. Do NOT intercept or format response bytes.
    - **OpenAI Compatibility Route (`/v1/chat/completions`)**: Intercepts and parses SSE streams to extract Gemini reasoning (`thought`, `reasoning_content`, `thought_summary` inside candidate parts) and translates it to standard OpenAI `choices[0].delta.reasoning_content` delta property.
-3. How you will handle Gemma payload cleaning, same-role message block merging, and client query parameter forwarding in `src/main.py`.
-4. The exact structure and signature of your helper methods.
+3. How you will support the **Reasoning Collapsing Toggle** (`LITEROUTER_COLLAPSE_REASONING`) on the `/v1/chat/completions` route to merge reasoning text directly into the standard `content` delta to prevent client-side SDK (like `@ai-sdk/openai-compatible`) crashes if the client lacks reasoning parsing support.
+4. How you will handle Gemma payload cleaning, same-role message block merging, and client query parameter forwarding in `src/main.py`.
+5. The exact structure and signature of your helper methods.
 Do NOT write any code until the implementation plan is fully laid out and completed.
 
 Your task is to write a complete, production-ready, highly optimized first draft of our API Key Rotator proxy named **LiteRouter**. 
@@ -32,6 +33,7 @@ This file loads environment variables via `python-dotenv` and defines model char
    * `LITEROUTER_PORT` (default: 7766)
    * `LITEROUTER_AUTH_KEY` (bearer key to authorize clients calling LiteRouter)
    * `REDIS_HOST`, `REDIS_PORT`, `REDIS_PASSWORD` (used to connect to the local Valkey instance)
+   * `LITEROUTER_COLLAPSE_REASONING` (default: "false") - if "true", automatically merges thought/reasoning blocks into standard content deltas.
    * `{PROVIDER}_API_KEYS`: Comma-separated list of keys loaded dynamically. E.g. `GOOGLE_API_KEYS`, `NVIDIA_API_KEYS`, `OPENROUTER_API_KEYS`.
 
 ---
@@ -67,7 +69,9 @@ The FastAPI application.
    * **Merge Consecutive Messages**: Before sending payloads to Google native/OpenAI endpoints, scan messages and merge consecutive blocks with the identical roles (e.g. user-following-user) to prevent validation crashes.
    * **Streaming Interceptor & Normalizer**:
      - Capture and parse JSON stream chunks line-by-line.
-     - Extract Gemini's thinking outputs (e.g. from `thought`, `reasoning_content`, or `thought_summary` attributes inside candidate parts) and translate them to the standard OpenAI `choices[0].delta.reasoning_content` delta property so compatibility client SDKs (like Pydantic AI) can consume them correctly.
+     - Extract Gemini's thinking outputs (e.g. from `thought`, `reasoning_content`, or `thought_summary` attributes inside candidate parts).
+     - **Normal Mode**: When `LITEROUTER_COLLAPSE_REASONING` is "false", map reasoning text to standard OpenAI `choices[0].delta.reasoning_content`.
+     - **Collapse Mode**: When `LITEROUTER_COLLAPSE_REASONING` is "true", automatically wrap the reasoning text inside `<thought>\n...\n</thought>\n` and append it directly to `choices[0].delta.content` instead (with `choices[0].delta.reasoning_content` set to `None`).
 5. **Failover Retry Loop**:
    * Wrap calls in a retry loop (up to 3 attempts).
    * If a key throws a timeout, 429, or auth error, catch it, call `router.report_error(provider, key, error_type, model_name)`, rotate to a new key, and try again seamlessly.
