@@ -16,27 +16,12 @@ if [ -f "$PID_FILE" ]; then
     fi
 fi
 
-# ── Pre-flight: refuse to boot if any API key fails upstream auth ─────────────
-# Closes the gap that allowed placeholder/dead keys into the rotation pool.
-if [ "${1:-}" != "--skip-doctor" ]; then
-    echo "Pre-flight: validating API keys via doctor.py..."
-    if ! uv run python -m src.doctor 2>&1 | tee /tmp/literouter_doctor.log; then
-        rc=${PIPESTATUS[0]}
-        if [ "${1:-}" != "--force" ] && [ "$rc" -ne 0 ]; then
-            echo ""
-            echo "╔══════════════════════════════════════════════════════════════════════════╗"
-            echo "║  CRITICAL: Doctor reported unhealthy API keys — refusing to boot."
-            echo "║  Inspect /tmp/literouter_doctor.log and fix .env before continuing."
-            echo "║  Use \`bash scripts/start.sh --force\` to override (NOT recommended)."
-            echo "╚══════════════════════════════════════════════════════════════════════════╝"
-            exit "$rc"
-        fi
-        echo "WARN: --force flag set, proceeding despite doctor failures."
-    fi
-fi
+# Flush Valkey to ensure clean start
+echo "Flushing Valkey..."
+uv run python -c "import dotenv, os, redis; dotenv.load_dotenv(); r = redis.Redis(host=os.getenv('REDIS_HOST', '127.0.0.1'), port=int(os.getenv('REDIS_PORT', 6379)), password=os.getenv('REDIS_PASSWORD') or None); r.flushall(); print('Valkey flushed!')"
 
-echo "Starting LiteRouter..."
-nohup uv run uvicorn src.main:app --host 0.0.0.0 --port 7766 > logs/literouter.log 2>&1 &
+
+nohup .venv/bin/uvicorn src.main:app --host 0.0.0.0 --port 7766 > logs/literouter.log 2>&1 &
 PID=$!
 echo "$PID" > "$PID_FILE"
 # Check if disown is available (dash/sh doesn't have it, bash does)

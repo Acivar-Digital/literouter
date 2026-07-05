@@ -33,5 +33,10 @@ if kill -0 "$PID" 2>/dev/null; then
     sleep 1
 fi
 
+# Flush Valkey to ensure clean state
+echo "Flushing Valkey..."
+uv run python -c "import dotenv, os, redis; dotenv.load_dotenv(); r = redis.Redis(host=os.getenv('REDIS_HOST', '127.0.0.1'), port=int(os.getenv('REDIS_PORT', 6379)), password=os.getenv('REDIS_PASSWORD') or None); r.flushall(); print('Valkey flushed!')"
+
 rm -f "$PID_FILE"
 echo "LiteRouter stopped."
+

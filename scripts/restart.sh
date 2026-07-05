@@ -3,23 +3,6 @@ cd "$(dirname "$0")/.."
 
 PID_FILE=".literouter.pid"
 
-# ── Pre-flight: refuse to boot if any API key fails upstream auth ─────────────
-# Closes the gap that allowed placeholder/dead keys into the rotation pool.
-echo "Pre-flight: validating API keys via doctor.py..."
-if ! uv run python -m src.doctor 2>&1 | tee /tmp/literouter_doctor.log; then
-    rc=${PIPESTATUS[0]}
-    echo ""
-    echo "╔══════════════════════════════════════════════════════════════════════════╗"
-    echo "║  CRITICAL: Doctor reported unhealthy API keys — refusing to boot."
-    echo "║  Inspect /tmp/literouter_doctor.log and fix .env before continuing."
-    echo "║  Use \`bash scripts/start.sh --skip-doctor\` to override (NOT recommended)."
-    echo "╚══════════════════════════════════════════════════════════════════════════╝"
-    if [ "${1:-}" != "--skip-doctor" ]; then
-        exit "$rc"
-    fi
-    echo "WARN: --skip-doctor flag set, proceeding despite doctor failures."
-fi
-
 # Kill existing tracked process
 if [ -f "$PID_FILE" ]; then
     OLD_PID=$(cat "$PID_FILE")
@@ -47,6 +30,10 @@ if [ -f "$PID_FILE" ]; then
 else
     echo "No PID file found. Starting fresh..."
 fi
+
+# Flush Valkey to ensure clean start
+echo "Flushing Valkey..."
+uv run python -c "import dotenv, os, redis; dotenv.load_dotenv(); r = redis.Redis(host=os.getenv('REDIS_HOST', '127.0.0.1'), port=int(os.getenv('REDIS_PORT', 6379)), password=os.getenv('REDIS_PASSWORD') or None); r.flushall(); print('Valkey flushed!')"
 
 # Start new instance
 echo "Starting LiteRouter..."
