@@ -8,16 +8,20 @@ In your plan, outline exactly:
    - **Google SDK Route (`/v1beta/models/...`)**: Pure, dumb pass-through proxy. Only rotates keys and strips `thinkingConfig` for Gemma requests. Do NOT intercept, modify, or format response bytes. Do NOT try to parse or modify tool calling payloads/chunks.
    - **OpenAI Compatibility Route (`/v1/chat/completions`)**: Intercepts and parses SSE streams to extract Gemini reasoning (`thought`, `reasoning_content`, `thought_summary` inside candidate parts) and translates it to standard OpenAI `choices[0].delta.reasoning_content` delta property.
 3. How you will support the **Reasoning Collapsing Toggle** (`LITEROUTER_COLLAPSE_REASONING`) on the `/v1/chat/completions` route to merge reasoning text directly into the standard `content` delta to prevent client-side SDK (like `@ai-sdk/openai-compatible`) crashes if the client lacks reasoning parsing support.
-4. How you will handle Gemma payload cleaning, same-role message block merging, and client query parameter forwarding in `src/main.py`.
-5. The exact structure and signature of your helper methods.
+4. How you will handle the **API Key Validation Gates**:
+   - **Gate 1 (Static Validator)** in `src/config.py` to discard placeholder configurations at startup.
+   - **Gate 2 (Live validation Doctor)** in `src/doctor.py` to probe keys against upstream APIs in parallel before booting.
+5. How you will handle Gemma payload cleaning, same-role message block merging, client query parameter forwarding, and memory leak prevention in `src/main.py`.
+6. The exact structure and signature of your helper methods.
 Do NOT write any code until the implementation plan is fully laid out and completed.
 
 Your task is to write a complete, production-ready, highly optimized first draft of our API Key Rotator proxy named **LiteRouter**. 
 
-Write the implementation across three clean files:
+Write the implementation across four clean files:
 1. `src/config.py` (Configuration & Model Limits)
 2. `src/router.py` (Valkey Quota & Model-First Cooldown Manager)
 3. `src/main.py` (FastAPI Core, Streaming Normalization, Client Pool, & Failover Loop)
+4. `src/doctor.py` (Live API Key Validation Probe Gate)
 
 Here are the detailed technical specifications for each file:
 
@@ -35,6 +39,9 @@ This file loads environment variables via `python-dotenv` and defines model char
    * `REDIS_HOST`, `REDIS_PORT`, `REDIS_PASSWORD` (used to connect to the local Valkey instance)
    * `LITEROUTER_COLLAPSE_REASONING` (default: "false") - if "true", automatically merges thought/reasoning blocks into standard content deltas.
    * `{PROVIDER}_API_KEYS`: Comma-separated list of keys loaded dynamically. E.g. `GOOGLE_API_KEYS`, `NVIDIA_API_KEYS`, `OPENROUTER_API_KEYS`.
+3. **API Key Static Validator (Gate 1)**:
+   * When loading keys from environment arrays, implement a cheap static checker that filters out placeholder or invalid keys.
+   * Discard any key that matches common placeholder patterns (e.g., substring match on `"changeme"`, `"placeholder"`, `"your_key"`, `"todo"`, `"xxxx"`, containing `<` or `>`) or has a length of less than 30 characters. Logging statements should warn about any dropped placeholder keys.
 
 ---
 
@@ -73,10 +80,30 @@ The FastAPI application.
      - **Normal Mode**: When `LITEROUTER_COLLAPSE_REASONING` is "false", map reasoning text to standard OpenAI `choices[0].delta.reasoning_content`.
      - **Collapse Mode**: When `LITEROUTER_COLLAPSE_REASONING` is "true", automatically wrap the reasoning text inside `<thought>\n...\n</thought>\n` and append it directly to `choices[0].delta.content` instead (with `choices[0].delta.reasoning_content` set to `None`).
      - **Tool Calling**: Pass through tool calling properties (`tool_calls`, `function_call`) untouched. Do NOT attempt to rewrite or filter them.
+     - **Split Stream Yields**: Ensure the final `[DONE]` marker chunk (e.g., `data: [DONE]\n\n`) is yielded as a completely separate, subsequent stream packet rather than being fused with the last content delta packet.
 5. **Failover Retry Loop**:
    * Wrap calls in a retry loop (up to 3 attempts).
    * If a key throws a timeout, 429, or auth error, catch it, call `router.report_error(provider, key, error_type, model_name)`, rotate to a new key, and try again seamlessly.
+6. **Memory Leak Prevention**:
+   * Do not use unbounded lists or dictionaries to record runtime latency or operational metrics history. Any logging or history cache must utilize a bounded deque (e.g. `collections.deque(maxlen=5000)`) to automatically discard older entries and maintain strict memory limits.
 
 ---
 
-Please provide the complete, functional code for all three files. Do not use placeholders or skip helper methods. Ensure that the code uses standard Python asyncio libraries, is clean, and contains descriptive docstrings explaining the integration logic.
+### File 4: `src/doctor.py`
+This script acts as the **Gate 2 Live Validation Gate** and runs prior to server boot.
+1. **Parallel Upstream Probing**:
+   * Reads the configuration keys for all active providers.
+   * Probes each key concurrently by executing a minimal chat completion or stream request against its respective provider endpoint.
+2. **Gemini Probe Setup**:
+   * When probing Gemini/Google keys, set `max_tokens` (or `maxOutputTokens`) to `100` instead of a low floor (like `1` or `0`) to prevent Google reasoning engines from throwing HTTP 500 error crashes on minimal completions.
+3. **Response Classifications**:
+   * HTTP `401` (Unauthorized) or `403` Forbidden credentials failures indicate revoked keys.
+   * HTTP `429` (Rate-limited) or connection timeouts must NOT trigger a boot failure (they represent active keys that are simply hitting temporary limits).
+4. **Enforcing the Gate**:
+   * If any key fails Gate 2 live validation, exit with a non-zero exit status (`sys.exit(1)`) to abort server startup.
+   * Support a `--force` CLI option to bypass failures and boot regardless.
+   * Both `start.sh` and `restart.sh` must execute `uv run python src/doctor.py` and abort launch if it exits with error code 1.
+
+---
+
+Please provide the complete, functional code for all four files. Do not use placeholders or skip helper methods. Ensure that the code uses standard Python asyncio libraries, is clean, and contains descriptive docstrings explaining the integration logic.
