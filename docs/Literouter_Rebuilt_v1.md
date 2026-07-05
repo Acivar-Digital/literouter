@@ -5,7 +5,7 @@ Before outputting any code, you MUST first write a detailed, step-by-step implem
 In your plan, outline exactly:
 1. How you will handle model-first cooldown keys in `src/router.py` (specifically making rate-limits, timeouts, and auth credentials errors model-aware since some keys have restricted permissions that only grant access to specific models).
 2. How you will handle the differentiated routing behaviors:
-   - **Google SDK Route (`/v1beta/models/...`)**: Pure, dumb pass-through proxy. Only rotates keys and strips `thinkingConfig` for Gemma requests. Do NOT intercept or format response bytes.
+   - **Google SDK Route (`/v1beta/models/...`)**: Pure, dumb pass-through proxy. Only rotates keys and strips `thinkingConfig` for Gemma requests. Do NOT intercept, modify, or format response bytes. Do NOT try to parse or modify tool calling payloads/chunks.
    - **OpenAI Compatibility Route (`/v1/chat/completions`)**: Intercepts and parses SSE streams to extract Gemini reasoning (`thought`, `reasoning_content`, `thought_summary` inside candidate parts) and translates it to standard OpenAI `choices[0].delta.reasoning_content` delta property.
 3. How you will support the **Reasoning Collapsing Toggle** (`LITEROUTER_COLLAPSE_REASONING`) on the `/v1/chat/completions` route to merge reasoning text directly into the standard `content` delta to prevent client-side SDK (like `@ai-sdk/openai-compatible`) crashes if the client lacks reasoning parsing support.
 4. How you will handle Gemma payload cleaning, same-role message block merging, and client query parameter forwarding in `src/main.py`.
@@ -61,9 +61,9 @@ The FastAPI application.
    * Define a global `httpx.AsyncClient` inside a FastAPI `lifespan` context manager to reuse a single connection pool.
 2. **API Routes & Gateway Access**:
    * Secure all endpoints (`/v1/chat/completions`, native Google rest endpoints) using `LITEROUTER_AUTH_KEY` validation.
-3. **Google SDK Pass-Through (`/v1beta/models/{model_name}:streamGenerateContent` and `:generateContent`)**:
-   * Act as a **pure, dumb pass-through proxy** for response bytes.
-   * Do NOT parse, strip, or modify the response stream bytes. Simply stream the raw bytes back to the client.
+3. **Google SDK Pass-Through Route (`/v1beta/models/{model_name}:streamGenerateContent` and `:generateContent`)**:
+   * **The Dumb Pass-Through Philosophy**: Act as a **pure, transparent forwarding proxy** for response bytes.
+   * Do NOT parse, strip, modify, or inspect the response stream bytes. Simply stream the raw bytes back to the client. This avoids corrupting native Google SDK payloads, streaming structures, or tool calling capabilities.
    * On the request side, rotate the key, forward all client query parameters (excluding the rotated `key` param), and strip `thinkingConfig`/`thinking_config` from the JSON body ONLY if the model is a Gemma variant (to prevent upstream engine crashes).
 4. **OpenAI Route & Payload Sanitization (`/v1/chat/completions`)**:
    * **Merge Consecutive Messages**: Before sending payloads to Google native/OpenAI endpoints, scan messages and merge consecutive blocks with the identical roles (e.g. user-following-user) to prevent validation crashes.
@@ -72,6 +72,7 @@ The FastAPI application.
      - Extract Gemini's thinking outputs (e.g. from `thought`, `reasoning_content`, or `thought_summary` attributes inside candidate parts).
      - **Normal Mode**: When `LITEROUTER_COLLAPSE_REASONING` is "false", map reasoning text to standard OpenAI `choices[0].delta.reasoning_content`.
      - **Collapse Mode**: When `LITEROUTER_COLLAPSE_REASONING` is "true", automatically wrap the reasoning text inside `<thought>\n...\n</thought>\n` and append it directly to `choices[0].delta.content` instead (with `choices[0].delta.reasoning_content` set to `None`).
+     - **Tool Calling**: Pass through tool calling properties (`tool_calls`, `function_call`) untouched. Do NOT attempt to rewrite or filter them.
 5. **Failover Retry Loop**:
    * Wrap calls in a retry loop (up to 3 attempts).
    * If a key throws a timeout, 429, or auth error, catch it, call `router.report_error(provider, key, error_type, model_name)`, rotate to a new key, and try again seamlessly.
