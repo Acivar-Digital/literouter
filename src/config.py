@@ -135,6 +135,11 @@ MODEL_REGISTRY = {
     },
 
     # Nvidia Models
+    "nvidia/deepseek-ai/deepseek-v4-flash": {
+        "provider": "nvidia",
+        "upstream_model": "deepseek-ai/deepseek-v4-flash",
+        "api_url": "https://integrate.api.nvidia.com/v1/chat/completions"
+    },
     "nvidia/deepseek-ai/deepseek-v4-pro": {
         "provider": "nvidia",
         "upstream_model": "deepseek-ai/deepseek-v4-pro",
