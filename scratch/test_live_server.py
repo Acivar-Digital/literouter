@@ -16,7 +16,7 @@ def test_live_server():
     
     print("Testing Zen Deepseek v4 Flash...")
     try:
-        resp_zen = httpx.post(url, headers=headers, json=payload_zen, timeout=10.0)
+        resp_zen = httpx.post(url, headers=headers, json=payload_zen, timeout=30.0)
         print(f"Zen Response Status: {resp_zen.status_code}")
         print(f"Zen Response body: {resp_zen.text[:200]}")
     except Exception as e:
@@ -31,7 +31,7 @@ def test_live_server():
     
     print("\nTesting Nvidia Deepseek v4 Flash...")
     try:
-        resp_nvidia = httpx.post(url, headers=headers, json=payload_nvidia, timeout=10.0)
+        resp_nvidia = httpx.post(url, headers=headers, json=payload_nvidia, timeout=30.0)
         print(f"Nvidia Response Status: {resp_nvidia.status_code}")
         print(f"Nvidia Response body: {resp_nvidia.text[:200]}")
     except Exception as e:
