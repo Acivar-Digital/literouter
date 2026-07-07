@@ -1,216 +1,153 @@
 """
-config.py — Environment-based configuration loader for LiteRouter.
-
-Three routing pathways (set in .env):
-  LITEROUTER_TEMPLATE + LITEROUTER_PROVIDER
-  ─────────────────────────────────────────
-  anthropic + anthropic  → Native Anthropic SDK → api.anthropic.com
-  anthropic + openrouter → Anthropic format → OpenRouter /messages
-  openai    + openrouter → OpenAI format → OpenRouter /chat/completions
+Configuration & Model Limits Definitions
 """
 
 import logging
-from typing import Any, Optional
+import os
 
 from dotenv import load_dotenv
-from pydantic import BaseModel, Field
-from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Setup basic logging
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+logger = logging.getLogger("config")
 
 load_dotenv()
 
-logger = logging.getLogger(__name__)
+LITEROUTER_HOST = os.getenv("LITEROUTER_HOST", "0.0.0.0")
+LITEROUTER_PORT = int(os.getenv("LITEROUTER_PORT", "7766"))
+LITEROUTER_AUTH_KEY = os.getenv("LITEROUTER_AUTH_KEY", "")
+LITEROUTER_COLLAPSE_REASONING = os.getenv("LITEROUTER_COLLAPSE_REASONING", "false").lower() == "true"
 
-VALID_TEMPLATES = ("openai", "anthropic")
-VALID_PROVIDERS = ("openrouter", "anthropic")
+REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
+REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
+REDIS_PASSWORD = os.getenv("REDIS_PASSWORD", None)
 
-# ── API-key intake gate ────────────────────────────────────────────────────────
-# Defends against the "NEWNIMKEY1234567890" foot-gun: a placeholder key
-# shipped into .env bypasses the doctor, then survives until the router
-# rotates it into a real request and returns 403 to the client.
-#
-# Two layers:
-#   - _INTAKE_BLOCKLIST_PATTERNS: cheap, deterministic substring matches
-#     for known placeholder shapes (e.g. "NEWNIMKEY", "CHANGEME", "<...>").
-#   - _MIN_KEY_LENGTH: length floor. Real Nvidia keys are 70 chars;
-#     real OpenRouter/Anthropic keys are >= 40.
-_INTAKE_BLOCKLIST_PATTERNS: tuple[str, ...] = (
-    "new",
-    "nimkey",
-    "nvidia",
-    "changeme",
-    "todo",
-    "xxxx",
-    "placeholder",
-    "your-key",
-    "your_key",
-    "<",
-    ">",
-    "example",
-)
-_MIN_KEY_LENGTH = 10
+# Model Limits Database
+MODEL_LIMITS = {
+    "gemini-3.1-flash-lite": {
+        "max_tpm": 250000,
+        "max_rpm": 15,
+        "context_window": 250000
+    },
+    "gemma": {
+        "max_tpm": 100000000,  # No TPM limit (effectively unlimited)
+        "max_rpm": 15,         # 15 RPM limit per key
+        "context_window": 250000
+    }
+}
 
+PROVIDER_LIMITS = {
+    "nvidia": {
+        "max_tpm": 1000000,
+        "max_rpm": 40,
+        "context_window": 1000000
+    },
+    "openrouter": {
+        "max_tpm": 1000000,
+        "max_rpm": 20,
+        "context_window": 1000000
+    }
+}
 
-def is_invalid_api_key(key: str) -> bool:
-    """Return True if *key* obviously cannot be a real upstream credential."""
-    if not key:
-        return True
-    stripped = key.strip()
-    if not stripped or stripped != key:
-        return True
-    if len(key) < _MIN_KEY_LENGTH:
-        return True
-    lowered = key.lower()
-    return any(p in lowered for p in _INTAKE_BLOCKLIST_PATTERNS)
+DEFAULT_LIMITS = {
+    "max_tpm": 1000000,
+    "max_rpm": 15,
+    "context_window": 1000000
+}
 
+def get_model_limits(model_name: str, provider: str = None) -> dict:
+    """
+    Retrieve model limit thresholds via prefix or substring matching.
+    """
+    for key, limits in MODEL_LIMITS.items():
+        if key in model_name:
+            return limits
 
-# ── Models ─────────────────────────────────────────────────────────────────────
+    if provider and provider.lower() in PROVIDER_LIMITS:
+        return PROVIDER_LIMITS[provider.lower()]
 
+    return DEFAULT_LIMITS
 
-class ProviderConfig(BaseModel):
-    base_url: str
-    api_keys: list[str]
-    model: str = ""
-    temperature: float = 0.0
-    min_delay_ms: int = 2000
-    extra_params: dict[str, Any] = Field(default_factory=dict)
+def static_validate_keys(provider: str, keys_str: str) -> list[str]:
+    """
+    Gate 1: Static Validator.
+    Screens out placeholder and invalid credentials at initialization time.
+    """
+    if not keys_str:
+        return []
 
+    raw_keys = [k.strip() for k in keys_str.split(",") if k.strip()]
+    valid_keys = []
 
-class LiteRouterConfig(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="LITEROUTER_", env_file=".env", extra="allow")
+    placeholders = ["changeme", "placeholder", "your_key", "todo", "xxxx"]
 
-    host: str = "0.0.0.0"
-    port: int = 7766
-    auth_key: Optional[str] = None
-    rotate_delay_ms: int = 2000
-    template: str = "openai"
-    provider: str = "openrouter"
+    for key in raw_keys:
+        lower_key = key.lower()
+        is_placeholder = any(p in lower_key for p in placeholders)
+        has_angle_brackets = "<" in key or ">" in key
+        too_short = len(key) < 30
 
-    providers: dict[str, ProviderConfig] = Field(default_factory=dict)
-    model_params: dict[str, dict[str, Any]] = Field(default_factory=dict)
-    provider_min_delays: dict[str, int] = Field(default_factory=dict)
-
-    def __init__(self, **kwargs: Any) -> None:
-        super().__init__(**kwargs)
-        self._validate_routing()
-        self._scan_providers()
-
-    def _validate_routing(self) -> None:
-        """Validate the template+provider combination."""
-        if self.template not in VALID_TEMPLATES:
+        if is_placeholder or has_angle_brackets or too_short:
+            masked = f"'{key[:6]}...{key[-4:] if len(key) > 10 else ''}'"
             logger.warning(
-                "[Config] Invalid template '%s', falling back to 'openai'. Valid: %s",
-                self.template, VALID_TEMPLATES,
+                f"[{provider}] Gate 1 Static Validator: Discarded placeholder/invalid key: {masked} "
+                f"(reason: placeholder={is_placeholder}, brackets={has_angle_brackets}, length={len(key)}<30)"
             )
-            self.template = "openai"
-        if self.provider not in VALID_PROVIDERS:
-            logger.warning(
-                "[Config] Invalid provider '%s', falling back to 'openrouter'. Valid: %s",
-                self.provider, VALID_PROVIDERS,
-            )
-            self.provider = "openrouter"
-        if self.template == "anthropic" and self.provider == "openrouter":
-            logger.info("[Config] Pathway: anthropic template → OpenRouter /messages")
-        elif self.template == "anthropic" and self.provider == "anthropic":
-            logger.info("[Config] Pathway: anthropic template → Native Anthropic API")
-        elif self.template == "openai" and self.provider == "openrouter":
-            logger.info("[Config] Pathway: OpenAI template → OpenRouter /chat/completions")
+        else:
+            valid_keys.append(key)
 
-    def _scan_providers(self) -> None:
-        """Scan os.environ for *_BASE_URL vars and build provider configs."""
-        import os
+    return valid_keys
 
-        for env_key in [k for k in os.environ if k.endswith("_BASE_URL")]:
-            prefix = env_key.replace("_BASE_URL", "")
-            provider_name = prefix.lower()
-            base_url = os.environ.get(env_key, "").rstrip("/")
-            raw_keys = [
-                k.strip()
-                for k in os.environ.get(f"{prefix}_API_KEYS", "").split(",")
-            ]
-            dropped = [(idx, k) for idx, k in enumerate(raw_keys) if is_invalid_api_key(k)]
-            api_keys = [k for k in raw_keys if not is_invalid_api_key(k)]
-            for idx, dropped_key in dropped:
-                logger.warning(
-                    "[Config] %s key #%d LOOKS LIKE A PLACEHOLDER "
-                    "(len=%d prefix='%s') — filtered out. "
-                    "Run `uv run python src/doctor.py` to confirm.",
-                    prefix, idx + 1, len(dropped_key), dropped_key[:8],
-                )
+GOOGLE_API_KEYS = static_validate_keys("GOOGLE", os.getenv("GOOGLE_API_KEYS", ""))
+NVIDIA_API_KEYS = static_validate_keys("NVIDIA", os.getenv("NVIDIA_API_KEYS", ""))
+OPENROUTER_API_KEYS = static_validate_keys("OPENROUTER", os.getenv("OPENROUTER_API_KEYS", ""))
+ZEN_API_KEYS = static_validate_keys("ZEN", os.getenv("ZEN_API_KEYS", ""))
+ZEN_BASE_URL = os.getenv("ZEN_BASE_URL", "https://opencode.ai/zen/v1")
 
-            if not base_url:
-                logger.warning("[Config] %s is empty, skipping '%s'", env_key, provider_name)
-                continue
-            if not api_keys:
-                logger.warning(
-                    "[Config] %s_API_KEYS empty for '%s' — skipping",
-                    prefix, provider_name,
-                )
-                continue
+# Model Routing Registry Map
+# Maps client model ID to its provider, upstream model name, and target API endpoint URL.
+MODEL_REGISTRY = {
+    # Google / Gemma (using native OpenAI compatibility endpoint)
+    "freetier/gemma-4-31b-it": {
+        "provider": "google",
+        "upstream_model": "gemma-4-31b-it",
+        "api_url": "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+    },
+    "freetier/gemma-4-26b-a4b-it": {
+        "provider": "google",
+        "upstream_model": "gemma-4-26b-a4b-it",
+        "api_url": "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+    },
+    "gemini-3.1-flash-lite": {
+        "provider": "google",
+        "upstream_model": "gemini-3.1-flash-lite",
+        "api_url": "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+    },
 
-            min_delay = int(os.environ.get(f"{prefix}_MIN_DELAY_MS", "0")) or None
-            model = os.environ.get(f"{prefix}_MODEL", "")
-            temperature = float(os.environ.get(f"{prefix}_TEMPERATURE", "0.0"))
+    # Nvidia Models
+    "nvidia/deepseek-ai/deepseek-v4-pro": {
+        "provider": "nvidia",
+        "upstream_model": "deepseek-ai/deepseek-v4-pro",
+        "api_url": "https://integrate.api.nvidia.com/v1/chat/completions"
+    },
+    "nvidia/qwen/qwen3-next-80b-a3b-instruct": {
+        "provider": "nvidia",
+        "upstream_model": "qwen/qwen3-next-80b-a3b-instruct",
+        "api_url": "https://integrate.api.nvidia.com/v1/chat/completions"
+    },
 
-            extra: dict[str, Any] = {}
-            skip = {"BASE_URL", "API_KEYS", "API_KEY", "MIN_DELAY_MS", "MODEL", "TEMPERATURE"}
-            for k, v in os.environ.items():
-                if k.startswith(f"{prefix}_") and k.replace(f"{prefix}_", "") not in skip:
-                    extra[k.replace(f"{prefix}_", "").lower()] = v
+    # Zen Models
+    "zen/deepseek-v4-flash-free": {
+        "provider": "zen",
+        "upstream_model": "deepseek-v4-flash-free",
+        "api_url": "{ZEN_BASE_URL}/chat/completions"
+    },
 
-            self.providers[provider_name] = ProviderConfig(
-                base_url=base_url,
-                api_keys=api_keys,
-                model=model,
-                temperature=temperature,
-                min_delay_ms=min_delay if min_delay else self.rotate_delay_ms,
-                extra_params=extra,
-            )
-            self.provider_min_delays[provider_name] = (
-                min_delay if min_delay else self.rotate_delay_ms
-            )
-            if model:
-                params: dict[str, Any] = {"model": model, "temperature": temperature}
-                params.update(extra)
-                self.model_params[provider_name] = params
+    # OpenRouter Models
+    "openrouter/nvidia/nemotron-3-nano-30b-a3b:free": {
+        "provider": "openrouter",
+        "upstream_model": "nvidia/nemotron-3-nano-30b-a3b:free",
+        "api_url": "https://openrouter.ai/api/v1/chat/completions"
+    }
+}
 
-        if not self.providers:
-            logger.warning("[Config] No providers defined in environment variables")
-
-
-# ── Singleton ──────────────────────────────────────────────────────────────────
-
-_cached_config: Optional[LiteRouterConfig] = None
-
-
-def get_config() -> LiteRouterConfig:
-    global _cached_config
-    if _cached_config is None:
-        _cached_config = LiteRouterConfig()
-    return _cached_config
-
-
-# ── Helpers ────────────────────────────────────────────────────────────────────
-
-
-def is_gemini_provider(provider: ProviderConfig) -> bool:
-    return "generativelanguage.googleapis.com" in provider.base_url
-
-
-def is_anthropic_provider(provider: ProviderConfig) -> bool:
-    return "api.anthropic.com" in provider.base_url
-
-
-def is_openrouter_provider(provider: ProviderConfig) -> bool:
-    return "openrouter.ai" in provider.base_url
-
-
-def is_anthropic_model(model: str | None) -> bool:
-    """Return True if the model identifier indicates an Anthropic model."""
-    if not model:
-        return False
-    model_lower = model.lower()
-    return (
-        model_lower.startswith("anthropic/")
-        or model_lower.startswith("claude-")
-        or "claude" in model_lower
-    )

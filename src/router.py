@@ -1,361 +1,143 @@
 """
-router.py — Redis-backed round-robin API key router for LiteRouter.
-
-Per-provider round-robin key rotation with Redis persistence for counters,
-cooldowns (exponential backoff), and quarantine lists. Falls back to
-in-memory state if Redis is unavailable.
+Valkey Quota & Model-First Cooldown Manager
 """
 
 import hashlib
 import logging
 import time
-from typing import Optional
+from typing import List, Optional
 
-from src.config import ProviderConfig
-from src.redis_client import get_redis_client, redis_available
+import redis.asyncio as redis
 
-logger = logging.getLogger(__name__)
+from src.config import REDIS_HOST, REDIS_PASSWORD, REDIS_PORT, get_model_limits
 
-# ── Constants ──────────────────────────────────────────────────────────────────
+logger = logging.getLogger("router")
 
-COOLDOWN_TTL = 3600  # 1 hour max TTL for cooldown keys
-BASE_COOLDOWN_SEC = 60  # initial cooldown for 429
-BASE_COOLDOWN_403_SEC = 600  # 10 min initial cooldown for 403 (key limit exceeded)
-MAX_COOLDOWN_SEC = 3600  # 1 hour cap
+class NoDeploymentsAvailable(Exception):
+    """Raised when no active keys remain eligible for use."""
+    pass
 
-# ── In-memory fallback state ───────────────────────────────────────────────────
+def estimate_tokens(prompt_text: str, max_tokens: int = 2048) -> int:
+    """
+    Token-estimation heuristic based on prompt characters and requested outputs.
+    """
+    return (len(prompt_text) // 4) + max_tokens
 
-_mem_counters: dict[str, int] = {}
-_mem_cooldowns: dict[str, dict[str, float]] = {}  # provider -> {sha -> expiry_ts}
-_mem_quarantine: dict[str, set[str]] = {}  # provider -> set of sha
+class ModelFirstRouter:
+    def __init__(self, google_keys: List[str], nvidia_keys: List[str], openrouter_keys: List[str], zen_keys: List[str]):
+        self.keys = {
+            "google": google_keys,
+            "nvidia": nvidia_keys,
+            "openrouter": openrouter_keys,
+            "zen": zen_keys
+        }
+        self.redis: Optional[redis.Redis] = None
 
+    async def connect(self):
+        """Initialize Redis/Valkey async connection client."""
+        if not self.redis:
+            self.redis = redis.Redis(
+                host=REDIS_HOST,
+                port=REDIS_PORT,
+                password=REDIS_PASSWORD,
+                decode_responses=True
+            )
+            # Verify connectivity
+            await self.redis.ping()
+            logger.info("Successfully connected to Valkey/Redis instance.")
 
-# ── Helpers ────────────────────────────────────────────────────────────────────
+    async def disconnect(self):
+        """Close Redis connection resources."""
+        if self.redis:
+            await self.redis.close()
+            self.redis = None
 
+    def _hash_key(self, api_key: str) -> str:
+        """Hash key to prevent leak of raw API keys in Redis/Valkey logs."""
+        return hashlib.sha256(api_key.encode("utf-8")).hexdigest()[:16]
 
-def _sha256(key: str) -> str:
-    """Return a 12-char hex SHA-256 hash of an API key."""
-    return hashlib.sha256(key.encode()).hexdigest()[:12]
-
-
-def _counter_key(provider: str) -> str:
-    return f"literouter:counter:{provider}"
-
-
-def _cooldown_key(provider: str, key_sha: str) -> str:
-    return f"literouter:cooldown:{provider}:{key_sha}"
-
-
-def _quarantine_key(provider: str) -> str:
-    return f"literouter:quarantine:{provider}"
-
-
-# ── RedisRouter ────────────────────────────────────────────────────────────────
-
-
-class RedisRouter:
-    """Redis-backed round-robin API key router with in-memory fallback."""
-
-    def __init__(self) -> None:
-        self._redis = get_redis_client()
-
-    def _is_redis(self) -> bool:
-        return self._redis is not None and redis_available()
-
-    # ── get_next_key ───────────────────────────────────────────────────────
-
-    def get_next_key(
-        self, provider_name: str, api_keys: list[str]
-    ) -> Optional[str]:
-        """Return the next available API key for *provider_name* using round-robin.
-
-        Filters out quarantined keys and keys on cooldown.  Returns ``None``
-        when every key is unavailable.
+    async def get_available_key(self, provider: str, model_name: str, estimated_tokens: int) -> str:
         """
-        if not api_keys:
-            return None
+        Retrieves the next available key that is not in cooldown and has remaining RPM/TPM quota.
+        """
+        if not self.redis:
+            await self.connect()
 
-        if self._is_redis():
-            return self._get_next_key_redis(provider_name, api_keys)
-        return self._get_next_key_mem(provider_name, api_keys)
+        candidate_keys = self.keys.get(provider.lower(), [])
+        if not candidate_keys:
+            raise NoDeploymentsAvailable(f"No keys configured for provider: {provider}")
 
-    # ── Redis path ─────────────────────────────────────────────────────────
+        limits = get_model_limits(model_name, provider)
+        max_tpm = limits["max_tpm"]
+        max_rpm = limits["max_rpm"]
 
-    def _get_next_key_redis(
-        self, provider_name: str, api_keys: list[str]
-    ) -> Optional[str]:
-        assert self._redis is not None
-        now = time.time()
+        minute_ts = int(time.time() // 60)
 
-        # Build sha -> key mapping and filter quarantined / cooldown keys
-        sha_map: dict[str, str] = {}
-        alive_shas: list[str] = []
-        pipe = self._redis.pipeline()
+        for key in candidate_keys:
+            key_hash = self._hash_key(key)
+            cooldown_key = f"cooldown:{provider}:{key_hash}:{model_name}"
 
-        for key in api_keys:
-            sha = _sha256(key)
-            sha_map[sha] = key
-            pipe.sismember(_quarantine_key(provider_name), sha)
-            pipe.get(_cooldown_key(provider_name, sha))
-
-        results = pipe.execute()
-
-        for i, key in enumerate(api_keys):
-            sha = _sha256(key)
-            is_quarantined = bool(results[i * 2])
-            cooldown_raw = results[i * 2 + 1]
-
-            if is_quarantined:
+            # Check model-specific cooldown/quarantine status
+            is_cooldown = await self.redis.exists(cooldown_key)
+            if is_cooldown:
                 continue
 
-            if cooldown_raw is not None:
-                cooldown_expiry = float(cooldown_raw)
-                if now < cooldown_expiry:
-                    continue
+            tpm_key = f"quota:{provider}:{key_hash}:{model_name}:tpm:{minute_ts}"
+            rpm_key = f"quota:{provider}:{key_hash}:{model_name}:rpm:{minute_ts}"
 
-            alive_shas.append(sha)
+            # Fetch active metric counters
+            usage = await self.redis.mget(tpm_key, rpm_key)
+            current_tpm = int(usage[0]) if usage[0] is not None else 0
+            current_rpm = int(usage[1]) if usage[1] is not None else 0
 
-        if not alive_shas:
-            return None
-
-        # Atomic INCR — returns the new counter value without a separate GET
-        counter = self._redis.incr(_counter_key(provider_name))
-        start = (counter - 1) % len(alive_shas)
-
-        for i in range(len(alive_shas)):
-            idx = (start + i) % len(alive_shas)
-            chosen_sha = alive_shas[idx]
-            # Verify once more that the key is still available (race condition)
-            is_quarantined = self._redis.sismember(
-                _quarantine_key(provider_name), chosen_sha
-            )
-            if is_quarantined:
-                continue
-            cooldown_raw = self._redis.get(
-                _cooldown_key(provider_name, chosen_sha)
-            )
-            if cooldown_raw is not None and time.time() < float(cooldown_raw):
+            # Verify budget bounds
+            if current_rpm >= max_rpm or (current_tpm + estimated_tokens) > max_tpm:
+                logger.warning(
+                    f"[{provider.upper()}] Key {key_hash} skipped due to quota limits for {model_name}. "
+                    f"TPM: {current_tpm}/{max_tpm}, RPM: {current_rpm}/{max_rpm}."
+                )
                 continue
 
-            return sha_map[chosen_sha]
+            # Update counters atomically
+            pipe = self.redis.pipeline()
+            pipe.incrby(tpm_key, estimated_tokens)
+            pipe.expire(tpm_key, 60)
+            pipe.incr(rpm_key)
+            pipe.expire(rpm_key, 60)
+            await pipe.execute()
 
-        return None
-
-    # ── In-memory fallback ─────────────────────────────────────────────────
-
-    def _get_next_key_mem(
-        self, provider_name: str, api_keys: list[str]
-    ) -> Optional[str]:
-        now = time.time()
-
-        if provider_name not in _mem_counters:
-            _mem_counters[provider_name] = 0
-        if provider_name not in _mem_cooldowns:
-            _mem_cooldowns[provider_name] = {}
-        if provider_name not in _mem_quarantine:
-            _mem_quarantine[provider_name] = set()
-
-        quarantined = _mem_quarantine[provider_name]
-        cooldowns = _mem_cooldowns[provider_name]
-
-        alive: list[str] = []
-        for key in api_keys:
-            sha = _sha256(key)
-            if sha in quarantined:
-                continue
-            if sha in cooldowns and now < cooldowns[sha]:
-                continue
-            alive.append(key)
-
-        if not alive:
-            return None
-
-        counter = _mem_counters[provider_name]
-        start = counter % len(alive)
-
-        for i in range(len(alive)):
-            idx = (start + i) % len(alive)
-            key = alive[idx]
-            sha = _sha256(key)
-            if sha in cooldowns and now < cooldowns[sha]:
-                continue
-            _mem_counters[provider_name] = counter + i + 1
             return key
 
-        return None
+        raise NoDeploymentsAvailable(
+            f"All keys for {provider} are in cooldown or have exhausted quota for model {model_name}."
+        )
 
-    # ── report_error ───────────────────────────────────────────────────────
-
-    def report_error(self, provider_name: str, key: str, status: int) -> None:
-        """Handle an upstream error for *key*.
-
-        - 429 → exponential backoff cooldown (60 s → 120 s → … → 1 h max)
-        - 403 → cooldown (10 min base, exponential to 1 h max)
-        - 401 → permanent quarantine
+    async def report_error(self, provider: str, key: str, error_type: str, model_name: str):
         """
-        sha = _sha256(key)
+        Reports error to initiate model-scoped cooldown or quarantine state.
+        """
+        if not self.redis:
+            await self.connect()
 
-        if self._is_redis():
-            self._report_error_redis(provider_name, key, sha, status)
+        key_hash = self._hash_key(key)
+        cooldown_key = f"cooldown:{provider}:{key_hash}:{model_name}"
+
+        # Classify severity and configure quarantine durations
+        if error_type in ("429", "rate_limit"):
+            ttl = 60
+            state = "rate_limited"
+        elif error_type in ("timeout", "503", "504"):
+            ttl = 10
+            state = "timed_out"
+        elif error_type in ("401", "403", "auth", "permission_denied"):
+            ttl = 604800  # 7 days quarantine for authorization failures
+            state = "quarantined"
         else:
-            self._report_error_mem(provider_name, key, sha, status)
+            ttl = 30
+            state = f"error_{error_type}"
 
-    def _report_error_redis(
-        self, provider_name: str, key: str, sha: str, status: int
-    ) -> None:
-        assert self._redis is not None
-        now = time.time()
-
-        if status in (429, 403):
-            base = BASE_COOLDOWN_403_SEC if status == 403 else BASE_COOLDOWN_SEC
-            cooldown_raw = self._redis.get(_cooldown_key(provider_name, sha))
-            base_delay = base
-
-            if cooldown_raw is not None:
-                remaining = float(cooldown_raw) - now
-                if remaining > 0:
-                    base_delay = min(remaining * 2, MAX_COOLDOWN_SEC)
-
-            expiry = now + base_delay
-            self._redis.setex(
-                _cooldown_key(provider_name, sha), COOLDOWN_TTL, str(expiry)
-            )
-            logger.info(
-                f"[{provider_name}] {status} for key {key[:10]}... | "
-                f"{int(base_delay)}s cooldown"
-            )
-        elif status == 401:
-            self._redis.sadd(_quarantine_key(provider_name), sha)
-            logger.warning(
-                f"[{provider_name}] 401 for key {key[:10]}... | "
-                f"Quarantined permanently"
-            )
-
-    def _report_error_mem(
-        self, provider_name: str, key: str, sha: str, status: int
-    ) -> None:
-        now = time.time()
-
-        if provider_name not in _mem_cooldowns:
-            _mem_cooldowns[provider_name] = {}
-        if provider_name not in _mem_quarantine:
-            _mem_quarantine[provider_name] = set()
-
-        if status in (429, 403):
-            cooldowns = _mem_cooldowns[provider_name]
-            existing = cooldowns.get(sha, 0.0)
-            base = BASE_COOLDOWN_403_SEC if status == 403 else BASE_COOLDOWN_SEC
-            base_delay = base
-            if existing > now:
-                base_delay = min((existing - now) * 2, MAX_COOLDOWN_SEC)
-            cooldowns[sha] = now + base_delay
-            logger.info(
-                f"[{provider_name}] {status} for key {key[:10]}... | "
-                f"{int(base_delay)}s cooldown (memory)"
-            )
-        elif status == 401:
-            _mem_quarantine[provider_name].add(sha)
-            logger.warning(
-                f"[{provider_name}] 401 for key {key[:10]}... | "
-                f"Quarantined permanently (memory)"
-            )
-
-    # ── get_router_status ──────────────────────────────────────────────────
-
-    def get_router_status(
-        self, providers: dict[str, ProviderConfig]
-    ) -> dict:
-        """Return per-provider router status (total keys, quarantine, cooldowns)."""
-        if self._is_redis():
-            return self._get_status_redis(providers)
-        return self._get_status_mem(providers)
-
-    def _get_status_redis(
-        self, providers: dict[str, ProviderConfig]
-    ) -> dict:
-        assert self._redis is not None
-        now = time.time()
-        status: dict = {}
-
-        for name, provider in providers.items():
-            quarantine_members = self._redis.smembers(
-                _quarantine_key(name)
-            )
-            quarantined_count = len(quarantine_members)
-
-            # Scan cooldown keys for this provider
-            cooldowns: list[dict] = []
-            cursor = 0
-            prefix = f"literouter:cooldown:{name}:"
-            while True:
-                cursor, keys = self._redis.scan(
-                    cursor, match=f"{prefix}*", count=100
-                )
-                for ck in keys:
-                    sha = ck.replace(prefix, "")
-                    val = self._redis.get(ck)
-                    if val is not None:
-                        expiry = float(val)
-                        if expiry > now:
-                            cooldowns.append(
-                                {
-                                    "key": f"{sha}...",
-                                    "remainingSec": int(expiry - now),
-                                }
-                            )
-                if cursor == 0:
-                    break
-
-            counter_raw = self._redis.get(_counter_key(name))
-            counter = int(counter_raw) if counter_raw is not None else 0
-
-            status[name] = {
-                "totalKeys": len(provider.api_keys),
-                "deadKeysCount": quarantined_count,
-                "quarantinedKeys": [
-                    f"{m[:10]}..." for m in quarantine_members
-                ],
-                "activeCooldowns": cooldowns,
-                "counterPosition": counter,
-            }
-
-        return status
-
-    def _get_status_mem(
-        self, providers: dict[str, ProviderConfig]
-    ) -> dict:
-        now = time.time()
-        status: dict = {}
-
-        for name, provider in providers.items():
-            quarantined = _mem_quarantine.get(name, set())
-            cooldowns = _mem_cooldowns.get(name, {})
-
-            active_cooldowns = [
-                {"key": f"{sha}...", "remainingSec": int(exp - now)}
-                for sha, exp in cooldowns.items()
-                if exp > now
-            ]
-
-            status[name] = {
-                "totalKeys": len(provider.api_keys),
-                "deadKeysCount": len(quarantined),
-                "quarantinedKeys": [f"{m[:10]}..." for m in quarantined],
-                "activeCooldowns": active_cooldowns,
-                "counterPosition": _mem_counters.get(name, 0),
-            }
-
-        return status
-
-
-# ── Singleton ──────────────────────────────────────────────────────────────────
-
-_router: Optional[RedisRouter] = None
-
-
-def get_router() -> RedisRouter:
-    """Return the singleton RedisRouter instance."""
-    global _router
-    if _router is None:
-        _router = RedisRouter()
-    return _router
+        await self.redis.set(cooldown_key, state, ex=ttl)
+        logger.error(
+            f"[{provider.upper()}] Placed key {key_hash} on {state} cooldown for model {model_name} "
+            f"with TTL {ttl}s."
+        )
