@@ -24,12 +24,12 @@ REDIS_PASSWORD = os.getenv("REDIS_PASSWORD", None)
 
 # Model Limits Database
 MODEL_LIMITS = {
-    "gemini-3.1-flash-lite": {
+    "google/gemini-3.1-flash-lite": {
         "max_tpm": 250000,
         "max_rpm": 15,
         "context_window": 250000
     },
-    "gemma": {
+    "google/gemma": {
         "max_tpm": 100000000,  # No TPM limit (effectively unlimited)
         "max_rpm": 15,         # 15 RPM limit per key
         "context_window": 250000
@@ -57,14 +57,24 @@ DEFAULT_LIMITS = {
 
 def get_model_limits(model_name: str, provider: str = None) -> dict:
     """
-    Retrieve model limit thresholds via prefix or substring matching.
+    Retrieve model limit thresholds via provider prefix matching first,
+    then fallback to provider limits.
     """
-    for key, limits in MODEL_LIMITS.items():
-        if key in model_name:
-            return limits
+    if provider:
+        provider_lower = provider.lower()
+        for key, limits in MODEL_LIMITS.items():
+            if "/" in key:
+                key_prov, key_model = key.split("/", 1)
+                if key_prov == provider_lower and key_model in model_name:
+                    return limits
 
-    if provider and provider.lower() in PROVIDER_LIMITS:
-        return PROVIDER_LIMITS[provider.lower()]
+        if provider_lower in PROVIDER_LIMITS:
+            return PROVIDER_LIMITS[provider_lower]
+
+    # Backward compatibility / legacy matching (keys without a provider prefix)
+    for key, limits in MODEL_LIMITS.items():
+        if "/" not in key and key in model_name:
+            return limits
 
     return DEFAULT_LIMITS
 
