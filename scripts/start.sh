@@ -21,18 +21,26 @@ echo "Flushing Valkey..."
 uv run python -c "import dotenv, os, redis; dotenv.load_dotenv(); r = redis.Redis(host=os.getenv('REDIS_HOST', '127.0.0.1'), port=int(os.getenv('REDIS_PORT', 6379)), password=os.getenv('REDIS_PASSWORD') or None); r.flushall(); print('Valkey flushed!')"
 
 
-nohup .venv/bin/uvicorn src.main:app --host 0.0.0.0 --port 7766 > logs/literouter.log 2>&1 &
-PID=$!
-echo "$PID" > "$PID_FILE"
-# Check if disown is available (dash/sh doesn't have it, bash does)
-if [ -n "$BASH_VERSION" ] || type disown >/dev/null 2>&1; then
-    disown "$PID" 2>/dev/null || true
+if ! command -v tmux >/dev/null 2>&1; then
+    echo "ERROR: tmux is not installed"
+    exit 1
 fi
 
+echo "Starting LiteRouter inside tmux session 'literouter'..."
+tmux new-session -d -s literouter
+tmux send-keys -t literouter "cd /home/yapilwsl/arthityap/literouter" C-m
+tmux send-keys -t literouter "uv run uvicorn src.main:app --host 0.0.0.0 --port 7766" C-m
 
 sleep 2
 
-if kill -0 "$PID" 2>/dev/null; then
+PID=$(pgrep -f "uvicorn src.main:app" | head -n 1)
+if [ -z "$PID" ]; then
+    PID=$(tmux list-panes -t literouter -F "#{pane_active_pid}" 2>/dev/null)
+fi
+
+echo "$PID" > "$PID_FILE"
+
+if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
     LAN_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
     echo ""
     echo "╔══════════════════════════════════════════════════════════════╗"
