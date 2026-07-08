@@ -287,11 +287,14 @@ def transform_non_streaming(response_data: dict, collapse_reasoning: bool) -> di
 # Route 1: Google SDK Route - Pure Pass-Through Proxy
 # =====================================================================
 @app.post("/v1beta/models/{model_name_and_action:path}", dependencies=[Depends(verify_auth_key)])
+@app.post("/v1beta/{model_name_and_action:path}", dependencies=[Depends(verify_auth_key)])
 async def google_sdk_route(model_name_and_action: str, request: Request):
     """
     Pure pass-through router for native Google SDK requests.
     Excludes formatting adjustments on response streams to preserve complex features.
     """
+    if model_name_and_action.startswith("models/"):
+        model_name_and_action = model_name_and_action[7:]
     model_name = model_name_and_action.split(":")[0]
     action = model_name_and_action.split(":")[1] if ":" in model_name_and_action else "generateContent"
 

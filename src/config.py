@@ -118,12 +118,12 @@ ZEN_BASE_URL = os.getenv("ZEN_BASE_URL", "https://opencode.ai/zen/v1")
 # Maps client model ID to its provider, upstream model name, and target API endpoint URL.
 MODEL_REGISTRY = {
     # Google / Gemma (using native OpenAI compatibility endpoint)
-    "gemma-4-31b-it": {
+    "freetier/gemma-4-31b-it": {
         "provider": "google",
         "upstream_model": "gemma-4-31b-it",
         "api_url": "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
     },
-    "gemma-4-26b-a4b-it": {
+    "freetier/gemma-4-26b-a4b-it": {
         "provider": "google",
         "upstream_model": "gemma-4-26b-a4b-it",
         "api_url": "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
