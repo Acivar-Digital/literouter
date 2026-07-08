@@ -330,9 +330,13 @@ The first segment of the model ID (before `/`) IS the provider name. No keyword 
 | `openrouter/cohere/north-mini-code:free` | OpenRouter | `cohere/north-mini-code:free` |
 | `nvidia/deepseek-ai/deepseek-v4-flash` | Nvidia | `deepseek-ai/deepseek-v4-flash` |
 
-To add a model: (1) add to `opencode.json` under `provider.literouter.models`, (2) save metadata snapshot to `models/`. See the playbook `setup.md` for the full template.
-
 To remove a model: delete from `opencode.json` and optionally from `models/`.
+
+### Valkey Database Backend
+- **No Redis Dependency**: LiteRouter does NOT run a Redis database server. We use **Valkey** (the fully open-source key-value database engine) on port `6379`.
+- **Client Library Driver**: The codebase uses the standard Python `redis` package for API and protocol compatibility with third-party libraries (e.g. `redisvl`).
+- **Environment Variables**: We use standard Redis-compatible environment variable keys (`REDIS_HOST`, `REDIS_PASSWORD`, etc.) to configure connection endpoints to Valkey.
+- **Scanner Warnings**: Any code hygiene alerts flagging environment drift or missing packages for "Redis" are false positives. Valkey and Redis are used interchangeably here.
 
 ## Critical Patterns
 - Auto mode collects only: alias, gender, dob, location -> engine computes all pillars/strength

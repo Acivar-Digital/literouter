@@ -4,9 +4,9 @@ cd "$(dirname "$0")/.."
 PID_FILE=".literouter.pid"
 TS_PID_FILE=".literouter-ts.pid"
 
-echo "🛑 Stopping LiteRouter..."
+echo "🛑 Stopping LiteRouter proxies..."
 
-# 1. Stop Python proxy in tmux session (for compatibility/cleaning if running)
+# 1. Stop Python proxy in tmux session
 if tmux has-session -t literouter 2>/dev/null; then
     echo "   - Stopping Python LiteRouter in tmux session..."
     tmux send-keys -t literouter C-c
@@ -16,7 +16,7 @@ fi
 
 # 2. Stop TypeScript proxy in tmux session
 if tmux has-session -t literouter-ts 2>/dev/null; then
-    echo "   - Stopping LiteRouter in tmux session..."
+    echo "   - Stopping TypeScript LiteRouter in tmux session..."
     tmux send-keys -t literouter-ts C-c
     sleep 1
     tmux kill-session -t literouter-ts 2>/dev/null
