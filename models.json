@@ -11,21 +11,21 @@
     "provider": "nvidia",
     "upstream_id": "meta/llama-3.1-8b-instruct",
     "context": 131072,
-    "max_output": 4096
+    "max_output": 65535
   },
   {
     "system_id": "nvidia/meta/llama-3.1-70b-instruct",
     "provider": "nvidia",
     "upstream_id": "meta/llama-3.1-70b-instruct",
     "context": 131072,
-    "max_output": 4096
+    "max_output": 65535
   },
   {
     "system_id": "nvidia/mistralai/mistral-large",
     "provider": "nvidia",
     "upstream_id": "mistralai/mistral-large",
     "context": 131072,
-    "max_output": 4096
+    "max_output": 65535
   },
   {
     "system_id": "nvidia/openai/gpt-oss-120b",
@@ -165,21 +165,21 @@
     "provider": "zen",
     "upstream_id": "deepseek-v4-flash-free",
     "context": 1048576,
-    "max_output": 65536
+    "max_output": 65535
   },
   {
     "system_id": "zen/big-pickle",
     "provider": "zen",
     "upstream_id": "big-pickle",
     "context": 131072,
-    "max_output": 4096
+    "max_output": 65535
   },
   {
     "system_id": "zen/qwen3.6-plus-free",
     "provider": "zen",
     "upstream_id": "qwen3.6-plus-free",
     "context": 131072,
-    "max_output": 4096
+    "max_output": 65535
   },
   {
     "system_id": "zen/minimax-m3-free",
@@ -193,14 +193,14 @@
     "provider": "nvidia",
     "upstream_id": "qwen/qwen3-next-80b-a3b-instruct",
     "context": 262144,
-    "max_output": 16384
+    "max_output": 65535
   },
   {
     "system_id": "nvidia/qwen/qwen3.5-122b-a10b",
     "provider": "nvidia",
     "upstream_id": "qwen/qwen3.5-122b-a10b",
     "context": 262144,
-    "max_output": 16384
+    "max_output": 65535
   },
   {
     "system_id": "nvidia/nemotron-3-ultra-550b-a55b",
@@ -243,111 +243,111 @@
     "provider": "google",
     "upstream_id": "gemini-1.5-pro",
     "context": 1048576,
-    "max_output": 8129
+    "max_output": 65535
   },
   {
     "system_id": "google/antigravity-gemini-3-flash",
     "provider": "google",
     "upstream_id": "gemini-1.5-flash",
     "context": 1048576,
-    "max_output": 8129
+    "max_output": 65535
   },
   {
     "system_id": "google/antigravity-gemini-3.1-pro",
     "provider": "google",
     "upstream_id": "gemini-1.5-pro",
     "context": 1048576,
-    "max_output": 8129
+    "max_output": 65535
   },
   {
     "system_id": "google/antigravity-gemini-3.5-flash-low",
     "provider": "google",
     "upstream_id": "gemini-1.5-flash",
     "context": 1048576,
-    "max_output": 8129
+    "max_output": 65535
   },
   {
     "system_id": "google/antigravity-gemini-3.5-flash-extra-low",
     "provider": "google",
     "upstream_id": "gemini-1.5-flash",
     "context": 1048576,
-    "max_output": 65536
+    "max_output": 65535
   },
   {
     "system_id": "google/antigravity-gemini-3.5-flash-high",
     "provider": "google",
     "upstream_id": "gemini-1.5-flash",
     "context": 1048576,
-    "max_output": 65536
+    "max_output": 65535
   },
   {
     "system_id": "google/antigravity-claude-sonnet-4-6",
     "provider": "google",
     "upstream_id": "claude-3-5-sonnet",
     "context": 200000,
-    "max_output": 64000
+    "max_output": 65535
   },
   {
     "system_id": "google/antigravity-claude-opus-4-6-thinking",
     "provider": "google",
     "upstream_id": "claude-3-opus",
     "context": 200000,
-    "max_output": 64000
+    "max_output": 65535
   },
   {
     "system_id": "google/gemini-2.5-flash",
     "provider": "google",
     "upstream_id": "gemini-2.5-flash",
     "context": 1048576,
-    "max_output": 65536
+    "max_output": 65535
   },
   {
     "system_id": "google/gemini-2.5-pro",
     "provider": "google",
     "upstream_id": "gemini-2.5-pro",
     "context": 1048576,
-    "max_output": 65536
+    "max_output": 65535
   },
   {
     "system_id": "google/gemini-3-flash-preview",
     "provider": "google",
     "upstream_id": "gemini-2.5-flash",
     "context": 1048576,
-    "max_output": 65536
+    "max_output": 65535
   },
   {
     "system_id": "google/gemini-3-pro-image-preview",
     "provider": "google",
     "upstream_id": "gemini-2.5-pro",
     "context": 1048576,
-    "max_output": 8129
+    "max_output": 65535
   },
   {
     "system_id": "google/gemini-3-pro-preview",
     "provider": "google",
     "upstream_id": "gemini-2.5-pro",
     "context": 1048576,
-    "max_output": 8129
+    "max_output": 65535
   },
   {
     "system_id": "google/gemini-3.1-flash-image-preview",
     "provider": "google",
     "upstream_id": "gemini-2.5-flash",
     "context": 1048576,
-    "max_output": 8129
+    "max_output": 65535
   },
   {
     "system_id": "google/gemini-3.1-pro-preview",
     "provider": "google",
     "upstream_id": "gemini-2.5-pro",
     "context": 1048576,
-    "max_output": 8129
+    "max_output": 65535
   },
   {
     "system_id": "google/gemini-3.1-pro-preview-customtools",
     "provider": "google",
     "upstream_id": "gemini-2.5-pro",
     "context": 1048576,
-    "max_output": 8129
+    "max_output": 65535
   }
 ]
