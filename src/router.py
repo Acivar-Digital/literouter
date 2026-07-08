@@ -181,7 +181,7 @@ class ModelFirstRouter:
 
         # Classify severity and configure quarantine durations
         if error_type in ("429", "rate_limit"):
-            ttl = 60
+            ttl = 65
             state = "rate_limited"
         elif error_type in ("timeout", "503", "504"):
             ttl = 10
