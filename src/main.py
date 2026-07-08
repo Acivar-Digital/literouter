@@ -439,6 +439,10 @@ async def openai_compatibility_route(request: Request):
     messages = req_json.get("messages", [])
     req_json["messages"] = _merge_consecutive_messages(messages)
 
+    # Strip reasoning rules if targeting a Gemma-style model
+    if "gemma" in upstream_model.lower():
+        req_json = _clean_gemma_payload(req_json)
+
     # Estimate capacity loads
     prompt_str = str(req_json["messages"])
     estimated_tokens = estimate_tokens(prompt_str, req_json.get("max_tokens") or 2048)
