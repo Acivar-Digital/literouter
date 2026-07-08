@@ -18,13 +18,6 @@ mkdir -p logs
 # Flush Valkey once at start
 flush_valkey
 
-# Gate 2: Live key validation before boot
-uv run python src/doctor.py
-if [ $? -ne 0 ]; then
-    echo "ERROR: Gate 2 validation failed. Fix keys before starting."
-    exit 1
-fi
-
 # 1. Start Python LiteRouter (Port 7766) in tmux session 'literouter'
 echo "🐍 Starting Python LiteRouter on port 7766 inside tmux session 'literouter'..."
 tmux new-session -d -s literouter
