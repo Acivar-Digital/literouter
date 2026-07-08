@@ -1,5 +1,7 @@
 #!/bin/bash
+set -o pipefail
 cd "$(dirname "$0")/.."
+source scripts/lib/flush_valkey.sh
 
 PID_FILE=".literouter.pid"
 TS_PID_FILE=".literouter-ts.pid"
@@ -35,8 +37,7 @@ if [ -f "$TS_PID_FILE" ]; then
 fi
 
 # Flush Valkey once at shutdown
-echo "🧹 Flushing Valkey/Redis state..."
-uv run python -c "import dotenv, os, redis; dotenv.load_dotenv(); r = redis.Redis(host=os.getenv('REDIS_HOST', '127.0.0.1'), port=int(os.getenv('REDIS_PORT', 6379)), password=os.getenv('REDIS_PASSWORD') or None); r.flushall(); print('Valkey flushed!')"
+flush_valkey
 
 # Clean up log folder to keep context window lean for the LLM
 echo "🗑️ Cleaning logs directory..."
