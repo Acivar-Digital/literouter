@@ -12,7 +12,7 @@ from typing import Any, AsyncGenerator
 
 import httpx
 from fastapi import Depends, FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 
 from src.config import (
     GOOGLE_API_KEYS,
@@ -361,6 +361,15 @@ async def google_sdk_route(model_name_and_action: str, request: Request):
 
             if upstream_resp.status_code >= 400:
                 await upstream_resp.aread()  # Avoid connection leaking
+                # LONG-RUNNING FIX: a 400 is the client's bad request, not a key/node
+                # failure. Return it verbatim; do NOT report_error (no cooldown burn).
+                if upstream_resp.status_code == 400:
+                    return Response(
+                        content=upstream_resp.content,
+                        status_code=400,
+                        headers={k: v for k, v in upstream_resp.headers.items()
+                                 if k.lower() not in ("transfer-encoding", "content-encoding")},
+                    )
                 upstream_resp.raise_for_status()
 
             async def generate_bytes():
@@ -472,6 +481,15 @@ async def openai_compatibility_route(request: Request):
             if upstream_resp.status_code >= 400:
                 if is_stream:
                     await upstream_resp.aread()
+
+                # LONG-RUNNING FIX: 400 = client error, return verbatim, no key burn.
+                if upstream_resp.status_code == 400:
+                    return Response(
+                        content=upstream_resp.content,
+                        status_code=400,
+                        headers={k: v for k, v in upstream_resp.headers.items()
+                                 if k.lower() not in ("transfer-encoding", "content-encoding")},
+                    )
                 upstream_resp.raise_for_status()
 
             if is_stream:

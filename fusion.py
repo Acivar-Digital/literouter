@@ -25,6 +25,7 @@ import json
 import logging
 import os
 import sys
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -50,6 +51,24 @@ class FusionGroup(BaseModel):
 
 fusion_groups: Dict[str, FusionGroup] = {}
 http_client: Optional[httpx.AsyncClient] = None
+
+# Per-model circuit breaker: mirrors the gateway's 65s rate-limit cooldown.
+# A model that returns a "all keys cooled/exhausted" 429 is skipped for this window
+# across requests, so the sidecar stops re-burning its keys and freezing the trio.
+CIRCUIT_TTL = 65.0
+circuit_open_until: Dict[str, float] = {}
+
+
+def _open_circuit(upstream_id: str) -> None:
+    circuit_open_until[upstream_id] = time.time() + CIRCUIT_TTL
+
+
+def _circuit_open(upstream_id: str) -> bool:
+    return time.time() < circuit_open_until.get(upstream_id, 0.0)
+
+
+def _close_circuit(upstream_id: str) -> None:
+    circuit_open_until.pop(upstream_id, None)
 
 
 @asynccontextmanager
@@ -171,6 +190,11 @@ async def chat_completions(request: Request):
     # ---------------------------------------------------------
     chain = fusion_groups[model].chain
     for i, upstream_id in enumerate(chain):
+        # Skip an upstream we know is currently cooled; don't re-burn its keys.
+        if _circuit_open(upstream_id):
+            logger.info(f"{model} {upstream_id} {i + 1}/{len(chain)} circuit-open, skipping")
+            continue
+
         body["model"] = upstream_id
         try:
             req = http_client.build_request(
@@ -181,7 +205,18 @@ async def chat_completions(request: Request):
             # Advance on 429 (exhausted/cooldown) or 5xx (upstream failure)
             if resp.status_code == 429 or resp.status_code >= 500:
                 logger.info(f"{model} {upstream_id} {i + 1}/{len(chain)} -> {resp.status_code}")
-                await resp.aclose()
+
+                detail = ""
+                try:
+                    detail = (await resp.aread()).decode("utf-8", "ignore")
+                except Exception:
+                    pass
+                finally:
+                    await resp.aclose()  # Guarantee the connection is released
+
+                if "cooldown" in detail or "exhausted quota" in detail:
+                    _open_circuit(upstream_id)
+                    logger.warning(f"{model} {upstream_id} circuit OPEN (cooldown detected)")
                 continue
 
             # Halt on 400, 401, 403 (client/auth errors)
@@ -194,7 +229,8 @@ async def chat_completions(request: Request):
                     headers=clean_headers(resp.headers),
                 )
 
-            # Success (2xx)
+            # Success (2xx) — recover the model early.
+            _close_circuit(upstream_id)
             logger.info(f"{model} {upstream_id} {i+1}/{len(chain)} stream={is_stream}")
             resp_headers = clean_headers(resp.headers)
             resp_headers["X-Literouter-Model"] = upstream_id
