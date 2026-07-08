@@ -2,19 +2,46 @@
 
 You are tasked with implementing a TypeScript port of the LiteRouter API Gateway to run natively on the **Bun** runtime on port **7767**.
 
+---
+
 ## Core Architectural Requirements
 
 1. **Runtime & Framework:** Use **pure `Bun.serve`** (do not use Elysia, Hono, or any external framework). Implement native HTTP request/response piping and Web Streams.
 2. **Port Configuration:** Listen on port **7767**.
-3. **API Key & State Rotation (Valkey/Redis):** 
+3. **Dynamic Configuration via `models.json`:**
+   - The TypeScript proxy must **not** hardcode the `MODEL_REGISTRY` mapping.
+   - Instead, load `models.json` from the root directory dynamically on startup.
+   - The schema of `models.json` is a JSON array of objects:
+     ```json
+     {
+       "system_id": "nvidia/deepseek-ai/deepseek-v4-flash",
+       "provider": "nvidia",
+       "upstream_id": "deepseek-ai/deepseek-v4-flash",
+       "context": 1048576,
+       "max_output": 65535
+     }
+     ```
+   - Resolve the target `api_url` dynamically on startup by matching the `provider` and constructing it using the environment variable base URLs (e.g. `NVIDIA_BASE_URL + "/chat/completions"`, `OPENROUTER_BASE_URL + "/chat/completions"`, or `ZEN_BASE_URL + "/chat/completions"`).
+4. **API Key & State Rotation (Valkey/Redis):** 
    - Connect to the same Valkey/Redis instance (`REDIS_HOST` defaulting to `127.0.0.1`, `REDIS_PORT` to `6379`).
    - **Must share the exact same DB keys and namespace format** as the Python version:
      - Cooldown key: `cooldown:${provider}:${key_hash}:${model_name}`
      - Minute TPM quota: `quota:${provider}:${key_hash}:${model_name}:tpm:${minute_ts}`
      - Minute RPM quota: `quota:${provider}:${key_hash}:${model_name}:rpm:${minute_ts}`
    - This ensures rotation, cooldown, and quarantine states are fully synchronized in real-time between the Python (7766) and TS (7767) ports.
-4. **Protocols:** Support standard OpenAI `/v1/chat/completions` requests. Route correctly, sanitize message payloads (e.g., merging consecutive messages with identical roles, cleaning LaTeX symbols, and handling reasoning formats), and proxy upstream.
-5. **No External LLM Calls:** Since LiteRouter is a transparent proxy, it does not perform LLM calls itself (so it does not use `pydantic-ai` or `instructor`). However, it must cleanly forward standard Server-Sent Events (SSE) stream chunks and tool call payloads so that downstream clients using `instructor` or `vercel-ai-sdk` can parse them.
+5. **Configurable Rotation Retry Delay:**
+   - Load `LITEROUTER_ROTATE_DELAY_MS` from `.env` (default to 2000ms if missing).
+   - If `NoDeploymentsAvailable` is raised (all keys in cooldown or exhausted), the failover retry loop should sleep for `LITEROUTER_ROTATE_DELAY_MS / 1000` seconds before making the next attempt.
+6. **Coordinated Start & End (Orchestration):**
+   - Create startup and shutdown scripts to manage **both** the Python (7766) and TypeScript (7767) processes together (Option A).
+   - Flush Valkey once at coordinated startup, and once at coordinated shutdown.
+7. **Isolated & Automated Log Cleaning:**
+   - Keep log outputs strictly isolated:
+     - Python logs to `logs/literouter.log`
+     - TypeScript/Bun logs to `logs/literouter-ts.log`
+   - Every time the coordinated shutdown/stop script is executed, automatically clean the entire `logs/` directory (`rm -f logs/*.log logs/*.db`) so that the workspace files remain lean and don't bloat the context window of AI agents.
+8. **Protocols:** Support standard OpenAI `/v1/chat/completions` requests. Route correctly, sanitize message payloads (e.g., merging consecutive messages with identical roles, cleaning LaTeX symbols, and handling reasoning formats), and proxy upstream.
+9. **No External LLM Calls:** Since LiteRouter is a transparent proxy, it does not perform LLM calls itself (so it does not use `pydantic-ai` or `instructor`). However, it must cleanly forward standard Server-Sent Events (SSE) stream chunks and tool call payloads so that downstream clients using `instructor` or `vercel-ai-sdk` can parse them.
 
 ---
 
@@ -24,27 +51,7 @@ The original Python codebase is staged in `admin/studio/upload/`:
 - `config.py`: Contains static key validation, model limit definitions, and the `MODEL_REGISTRY` mapping.
 - `router.py`: Implements the key rotation, cooldown tracking, error reporting, and Valkey transaction pipeline.
 - `main.py`: Implements FastAPI routing, message cleansing, streaming SSE transformations, and failover/retry loop logic.
-
----
-
-## Detailed Implementation Tasks
-
-### 1. Configuration & Model Limits (`ts-src/src/config.ts`)
-- Translate the Python `MODEL_REGISTRY`, `MODEL_LIMITS`, `PROVIDER_LIMITS`, and `DEFAULT_LIMITS` data structures.
-- Implement `get_model_limits(model_name: string, provider?: string): ModelLimits` to prioritize specific model matching (e.g., `google/gemini-3.1-flash-lite`), then fallback to provider limits (40 RPM for `nvidia`, 20 RPM for `openrouter`), and finally default limits.
-- Implement static validation of incoming API keys matching the logic in `static_validate_keys`.
-
-### 2. Valkey Router (`ts-src/src/router.ts`)
-- Implement `ModelFirstRouter` class using Bun's native Redis driver (`import { connect } from "bun"` or standard redis connection).
-- Implement `getAvailableKey(provider: string, modelName: string, estimatedTokens: number): Promise<string>` matching the atomic pipeline increment (`incrby` TPM and `incr` RPM with 60s expiration).
-- Implement `reportError(provider: string, key: string, errorType: string, modelName: string): Promise<void>` supporting standard cooldown mappings (Rate limited: 60s, Timeout/503/504: 10s, Auth/401: 7 days, other errors: 30s).
-
-### 3. Server Core & Streaming (`ts-src/src/main.ts`)
-- Implement pure `Bun.serve` startup.
-- Validate `Authorization` headers against `LITEROUTER_AUTH_KEY`.
-- Implement `_mergeConsecutiveMessages` and `_cleanLatexSymbols` converters.
-- Implement the 3-attempt failover retry loop inside standard HTTP handler.
-- Use Web Streams / ReadableStream to transform and yield SSE event streams (`data: ...\n\n`) safely, handling reasoning format extraction correctly.
+- `models.json`: The dynamic registry database source of truth.
 
 ---
 
