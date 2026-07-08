@@ -1,11 +1,15 @@
 import httpx
 
-def test_live_server():
-    url = "http://localhost:7766/v1/chat/completions"
+def test_port(port, label):
+    url = f"http://localhost:{port}/v1/chat/completions"
     headers = {
         "Authorization": "Bearer sk-lr-8f2a9e3b1c4d7e5f",
         "Content-Type": "application/json"
     }
+
+    print(f"\n==========================================")
+    print(f" TESTING {label} on Port {port}")
+    print(f"==========================================")
 
     # 1. Test Zen model
     payload_zen = {
@@ -38,4 +42,5 @@ def test_live_server():
         print(f"Nvidia request failed: {e}")
 
 if __name__ == "__main__":
-    test_live_server()
+    test_port(7766, "Python Proxy")
+    test_port(7767, "TypeScript/Bun Proxy")
