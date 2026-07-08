@@ -41,7 +41,7 @@ class ModelFirstRouter:
         per_provider = os.getenv(f"{provider.upper()}_MIN_DELAY_MS")
         if per_provider is not None:
             return int(per_provider)
-        return int(os.getenv("LITEROUTER_ROTATE_DELAY_MS", "2000"))
+        return int(os.getenv("LITEROUTER_ROTATE_DELAY_MS", "10000"))
 
     async def connect(self):
         """Initialize Redis/Valkey async connection client."""
