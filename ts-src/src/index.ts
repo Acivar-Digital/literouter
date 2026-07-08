@@ -44,7 +44,6 @@ const BASE_URLS: Record<string, string> = {
         ? Bun.env.GOOGLE_BASE_URL
         : `${Bun.env.GOOGLE_BASE_URL}/openai`
       : null) || "https://generativelanguage.googleapis.com/v1beta/openai",
-  mcpmart: Bun.env.MCPMART_BASE_URL || "https://mcpmart.example.com/v1",
 };
 
 const MODEL_REGISTRY: Record<string, any> = {};
