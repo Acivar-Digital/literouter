@@ -20,10 +20,10 @@
   "pydantic/nvidia": {
     "description": "NVIDIA-hosted fusion via Python gateway OpenAI-compat (/v1), for pydantic-ai",
     "chain": [
-      "nvidia/qwen/qwen3.5-122b-a10b",
-      "nvidia/minimaxai/minimax-m2.7",
       "nvidia/z-ai/glm-5.2",
-      "nvidia/deepseek-ai/deepseek-v4-pro"
+      "nvidia/qwen/qwen3.5-122b-a10b",
+      "nvidia/deepseek-ai/deepseek-v4-pro",
+      "nvidia/minimaxai/minimax-m2.7"
     ],
     "upstream": "http://localhost:7766/v1/chat/completions"
   }
