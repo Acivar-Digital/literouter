@@ -299,6 +299,43 @@ function cleanLatexSymbols(text: string): string {
   return cleaned;
 }
 
+function cleanGemmaPayload(data: any): any {
+  if (data && typeof data === "object") {
+    if (Array.isArray(data)) {
+      return data.map(cleanGemmaPayload);
+    }
+    const cleaned: Record<string, any> = {};
+    for (const [k, v] of Object.entries(data)) {
+      if (k !== "thinkingConfig" && k !== "thinking_config") {
+        cleaned[k] = cleanGemmaPayload(v);
+      }
+    }
+    return cleaned;
+  }
+  return data;
+}
+
+function verifyAuthKey(req: Request, url: URL): boolean {
+  if (!LITEROUTER_AUTH_KEY) return true;
+
+  // 1. Bearer Token
+  const authHeader = req.headers.get("Authorization") || "";
+  if (authHeader.startsWith("Bearer ")) {
+    const token = authHeader.split("Bearer ")[1].trim();
+    if (token === LITEROUTER_AUTH_KEY) return true;
+  }
+
+  // 2. x-goog-api-key header
+  const googKey = req.headers.get("x-goog-api-key") || "";
+  if (googKey.trim() === LITEROUTER_AUTH_KEY) return true;
+
+  // 3. key query parameter
+  const queryKey = url.searchParams.get("key") || "";
+  if (queryKey.trim() === LITEROUTER_AUTH_KEY) return true;
+
+  return false;
+}
+
 function createStreamTransformer(collapseReasoning: boolean) {
   let buffer = "";
   let hasStartedThought = false;
@@ -440,16 +477,145 @@ serve({
   port: LITEROUTER_PORT,
   async fetch(req) {
     const url = new URL(req.url);
+
+    // Google native SDK pass-through route
+    if (url.pathname.startsWith("/v1beta/models/")) {
+      const modelNameAndAction = url.pathname.substring("/v1beta/models/".length);
+      const parts = modelNameAndAction.split(":");
+      const modelName = parts[0];
+      const action = parts[1] || "generateContent";
+
+      // Auth Gate
+      if (!verifyAuthKey(req, url)) {
+        return new Response(
+          JSON.stringify({ error: "Unauthorized client credentials" }),
+          { status: 401 },
+        );
+      }
+
+      let meta = MODEL_REGISTRY[modelName];
+      if (!meta) {
+        meta = MODEL_REGISTRY["google/" + modelName];
+      }
+
+      if (!meta) {
+        return new Response(
+          JSON.stringify({ error: `Model '${modelName}' is not recognized or whitelisted in LiteRouter.` }),
+          { status: 400 },
+        );
+      }
+
+      if (meta.provider !== "google") {
+        return new Response(
+          JSON.stringify({ error: `Model '${modelName}' is not a Google model and cannot be queried via Google REST endpoint.` }),
+          { status: 400 },
+        );
+      }
+
+      let reqJson;
+      try {
+        reqJson = await req.json();
+      } catch (e) {
+        reqJson = {};
+      }
+
+      if (meta.upstream_model.toLowerCase().includes("gemma")) {
+        reqJson = cleanGemmaPayload(reqJson);
+      }
+
+      const estimatedTokens = Math.floor(JSON.stringify(reqJson).length / 4) + 1024;
+
+      for (let attempt = 0; attempt < 3; attempt++) {
+        let activeKey = null;
+        try {
+          activeKey = await router.getAvailableKey(
+            meta.provider,
+            meta.upstream_model,
+            estimatedTokens,
+          );
+
+          const targetUrl = new URL(`https://generativelanguage.googleapis.com/v1beta/models/${meta.upstream_model}:${action}`);
+          for (const [k, v] of url.searchParams.entries()) {
+            targetUrl.searchParams.set(k, v);
+          }
+          targetUrl.searchParams.set("key", activeKey);
+
+          const headers: Record<string, string> = {};
+          req.headers.forEach((v, k) => {
+            if (!["host", "authorization", "content-length"].includes(k.toLowerCase())) {
+              headers[k] = v;
+            }
+          });
+
+          const upstreamRes = await fetch(targetUrl.toString(), {
+            method: "POST",
+            headers,
+            body: JSON.stringify(reqJson),
+          });
+
+          if (!upstreamRes.ok) {
+            const status = upstreamRes.status.toString();
+            await router.reportError(
+              meta.provider,
+              activeKey,
+              status,
+              meta.upstream_model,
+            );
+            if (attempt === 2)
+              return new Response(`Upstream failed: ${status}`, { status: 502 });
+            continue;
+          }
+
+          const responseHeaders: Record<string, string> = {};
+          upstreamRes.headers.forEach((v, k) => {
+            if (!["transfer-encoding", "content-encoding"].includes(k.toLowerCase())) {
+              responseHeaders[k] = v;
+            }
+          });
+
+          return new Response(upstreamRes.body, {
+            status: upstreamRes.status,
+            headers: responseHeaders,
+          });
+
+        } catch (e: any) {
+          if (e.message.includes("NoDeploymentsAvailable")) {
+            if (attempt === 2) {
+              console.error(`No keys available for ${meta.provider} on model ${meta.upstream_model}: ${e.message}`);
+              return new Response(JSON.stringify({ error: e.message }), {
+                status: 429,
+              });
+            }
+            await new Promise((r) => setTimeout(r, LITEROUTER_ROTATE_DELAY_MS));
+            continue;
+          }
+          if (activeKey)
+            await router.reportError(
+              meta.provider,
+              activeKey,
+              "timeout",
+              meta.upstream_model,
+            );
+          if (attempt === 2) {
+            console.error(`Failover loop exhausted on Google native route: ${e.message}`);
+            return new Response(
+              JSON.stringify({ error: `All upstream nodes failed to resolve request: ${e.message}` }),
+              { status: 502 },
+            );
+          }
+        }
+      }
+      return new Response(JSON.stringify({ error: "Failover loop exhausted." }), {
+        status: 502,
+      });
+    }
+
     if (url.pathname !== "/v1/chat/completions") {
       return new Response("Not Found", { status: 404 });
     }
 
     // Auth Gate
-    const authHeader = req.headers.get("Authorization") || "";
-    const token = authHeader.startsWith("Bearer ")
-      ? authHeader.split("Bearer ")[1].trim()
-      : "";
-    if (LITEROUTER_AUTH_KEY && token !== LITEROUTER_AUTH_KEY) {
+    if (!verifyAuthKey(req, url)) {
       return new Response(
         JSON.stringify({ error: "Unauthorized client credentials" }),
         { status: 401 },
@@ -466,7 +632,11 @@ serve({
     }
 
     const modelName = reqJson.model;
-    const meta = MODEL_REGISTRY[modelName];
+    let meta = MODEL_REGISTRY[modelName];
+    if (!meta) {
+      meta = MODEL_REGISTRY["google/" + modelName];
+    }
+
     if (!meta) {
       return new Response(
         JSON.stringify({ error: `Model '${modelName}' is not recognized or whitelisted in LiteRouter.` }),
