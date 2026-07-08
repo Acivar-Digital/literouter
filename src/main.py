@@ -295,13 +295,19 @@ async def google_sdk_route(model_name_and_action: str, request: Request):
     model_name = model_name_and_action.split(":")[0]
     action = model_name_and_action.split(":")[1] if ":" in model_name_and_action else "generateContent"
 
-    if model_name not in MODEL_REGISTRY:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Model '{model_name}' is not recognized or whitelisted in LiteRouter."
-        )
+    registry_key = model_name
+    if registry_key not in MODEL_REGISTRY:
+        # Fallback to suffix match (e.g. "gemma-4-31b-it" matches "freetier/gemma-4-31b-it")
+        matching_key = next((k for k in MODEL_REGISTRY.keys() if k.endswith(f"/{model_name}")), None)
+        if matching_key:
+            registry_key = matching_key
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Model '{model_name}' is not recognized or whitelisted in LiteRouter."
+            )
 
-    meta = MODEL_REGISTRY[model_name]
+    meta = MODEL_REGISTRY[registry_key]
     provider = meta["provider"]
     upstream_model = meta["upstream_model"]
 
@@ -400,13 +406,22 @@ async def openai_compatibility_route(request: Request):
         raise HTTPException(status_code=400, detail=f"Invalid payload JSON: {e}")
 
     model_name = req_json.get("model")
-    if not model_name or model_name not in MODEL_REGISTRY:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Model '{model_name}' is not recognized or whitelisted in LiteRouter."
-        )
+    if not model_name:
+        raise HTTPException(status_code=400, detail="Missing model parameter.")
 
-    meta = MODEL_REGISTRY[model_name]
+    registry_key = model_name
+    if registry_key not in MODEL_REGISTRY:
+        # Fallback to suffix match
+        matching_key = next((k for k in MODEL_REGISTRY.keys() if k.endswith(f"/{model_name}")), None)
+        if matching_key:
+            registry_key = matching_key
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Model '{model_name}' is not recognized or whitelisted in LiteRouter."
+            )
+
+    meta = MODEL_REGISTRY[registry_key]
     provider = meta["provider"]
     upstream_model = meta["upstream_model"]
     api_url = meta["api_url"].format(ZEN_BASE_URL=ZEN_BASE_URL)
