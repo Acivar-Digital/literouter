@@ -72,6 +72,45 @@ def _close_circuit(upstream_id: str) -> None:
     circuit_open_until.pop(upstream_id, None)
 
 
+# Sticky fallback: once the chain falls back to a lower-priority model,
+# subsequent requests start from that position instead of from the top.
+# This gives higher-priority models real cooldown time (not just 65s).
+STICKY_TTL = 300.0  # 5 minutes
+sticky_position: Dict[str, tuple[str, float]] = {}  # group_id -> (upstream_id, expiry_time)
+
+
+def _get_sticky_start(group_id: str, chain: List[str]) -> int:
+    """Return chain index to start from. 0 = start from top (no stickiness)."""
+    entry = sticky_position.get(group_id)
+    if entry is None:
+        return 0
+    upstream_id, expiry = entry
+    if time.time() >= expiry:
+        del sticky_position[group_id]
+        logger.info(f"{group_id} sticky {upstream_id} expired, will try higher-priority models")
+        return 0
+    try:
+        idx = chain.index(upstream_id)
+        if idx > 0:
+            logger.info(
+                f"{group_id} sticky at {upstream_id} (idx {idx}), "
+                f"skipping {idx} higher model(s)"
+            )
+        return idx
+    except ValueError:
+        sticky_position.pop(group_id, None)
+        return 0
+
+
+def _set_sticky(group_id: str, upstream_id: str) -> None:
+    sticky_position[group_id] = (upstream_id, time.time() + STICKY_TTL)
+    logger.info(f"{group_id} sticky set to {upstream_id} for {STICKY_TTL:.0f}s")
+
+
+def _clear_sticky(group_id: str) -> None:
+    sticky_position.pop(group_id, None)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global fusion_groups, http_client
@@ -190,7 +229,11 @@ async def chat_completions(request: Request):
     # PATH B: Fusion fallback logic
     # ---------------------------------------------------------
     chain = fusion_groups[model].chain
+    start_idx = _get_sticky_start(model, chain)
     for i, upstream_id in enumerate(chain):
+        if i < start_idx:
+            continue
+
         # Skip an upstream we know is currently cooled; don't re-burn its keys.
         if _circuit_open(upstream_id):
             logger.info(f"{model} {upstream_id} {i + 1}/{len(chain)} circuit-open, skipping")
@@ -232,6 +275,10 @@ async def chat_completions(request: Request):
 
             # Success (2xx) — recover the model early.
             _close_circuit(upstream_id)
+            if i > 0:
+                _set_sticky(model, upstream_id)
+            else:
+                _clear_sticky(model)
             logger.info(f"{model} {upstream_id} {i+1}/{len(chain)} stream={is_stream}")
             resp_headers = clean_headers(resp.headers)
             resp_headers["X-Literouter-Model"] = upstream_id
@@ -308,7 +355,11 @@ async def fusion_native(model_name_and_action: str, request: Request):
 
     # Fusion group -> priority chain over native Google models
     chain = fusion_groups[model_name].chain
+    start_idx = _get_sticky_start(model_name, chain)
     for i, upstream_id in enumerate(chain):
+        if i < start_idx:
+            continue
+
         if _circuit_open(upstream_id):
             logger.info(f"{model_name} {upstream_id} {i + 1}/{len(chain)} circuit-open, skipping")
             continue
@@ -349,6 +400,10 @@ async def fusion_native(model_name_and_action: str, request: Request):
 
         # Success — relay the native stream, tag the served model
         _close_circuit(upstream_id)
+        if i > 0:
+            _set_sticky(model_name, upstream_id)
+        else:
+            _clear_sticky(model_name)
         logger.info(f"{model_name} {upstream_id} {i + 1}/{len(chain)} native action={action}")
         return _relay_native(resp, upstream_id)
 
