@@ -568,4 +568,4 @@ serve({
   },
 });
 
-console.log(`🚀 LiteRouter TS Proxy running on port ${LITEROUTER_PORT}`);
+console.log(`🚀 LiteRouter running on port ${LITEROUTER_PORT}`);
