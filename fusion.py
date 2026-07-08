@@ -40,6 +40,7 @@ logger = logging.getLogger(__name__)
 
 FUSION_PORT = int(os.getenv("FUSION_PORT", "7768"))
 FUSION_UPSTREAM_URL = os.getenv("FUSION_UPSTREAM_URL", "http://localhost:7766/v1/chat/completions")
+FUSION_UPSTREAM_URL_NATIVE = os.getenv("FUSION_UPSTREAM_URL_NATIVE", "http://localhost:7766/v1beta")
 
 BASE_DIR = Path(__file__).resolve().parent
 
@@ -264,6 +265,104 @@ async def chat_completions(request: Request):
         status_code=429,
         content={"error": "all fusion backends exhausted", "model": model, "attempted": chain},
     )
+
+
+@app.post("/v1beta/models/{model_name_and_action:path}")
+@app.post("/v1beta/{model_name_and_action:path}")
+async def fusion_native(model_name_and_action: str, request: Request):
+    """
+    Native Google proxy that mirrors 7766's /v1beta route. Dumb forwarder:
+    the request (native Google payload, query params, headers) is relayed
+    verbatim to 7766. For a fusion-group model it substitutes the upstream
+    model in the URL and rotates across the chain on 429/5xx. No param
+    manipulation — 7766 owns key rotation, thinking-strip, etc.
+    """
+    if ":" in model_name_and_action:
+        model_name, action = model_name_and_action.split(":", 1)
+    else:
+        model_name, action = model_name_and_action, "generateContent"
+
+    # Strip 'models/' prefix if the client included it in the path
+    if model_name.startswith("models/"):
+        model_name = model_name[len("models/"):]
+
+    req_headers = {
+        k: v for k, v in request.headers.items()
+        if k.lower() not in ("host", "content-length")
+    }
+    query = dict(request.query_params)
+    body = await request.body()
+
+    # Non-fusion model -> straight dumb forward as-is
+    if model_name not in fusion_groups:
+        target = f"{FUSION_UPSTREAM_URL_NATIVE}/models/{model_name}:{action}"
+        try:
+            req = http_client.build_request(
+                "POST", target, params=query, headers=req_headers, content=body
+            )
+            resp = await http_client.send(req, stream=True)
+            return _relay_native(resp, None)
+        except Exception as e:
+            logger.error(f"fusion native passthrough error for {model_name}: {e}")
+            return JSONResponse({"error": "Bad Gateway", "details": str(e)}, status_code=502)
+
+    # Fusion group -> priority chain over native Google models
+    chain = fusion_groups[model_name].chain
+    for i, upstream_id in enumerate(chain):
+        if _circuit_open(upstream_id):
+            logger.info(f"{model_name} {upstream_id} {i + 1}/{len(chain)} circuit-open, skipping")
+            continue
+        target = f"{FUSION_UPSTREAM_URL_NATIVE}/models/{upstream_id}:{action}"
+        try:
+            req = http_client.build_request(
+                "POST", target, params=query, headers=req_headers, content=body
+            )
+            resp = await http_client.send(req, stream=True)
+        except (httpx.RequestError, httpx.TimeoutException) as e:
+            logger.info(f"{model_name} {upstream_id} {i + 1}/{len(chain)} error: {e}")
+            continue
+
+        # Advance on 429 (exhausted/cooldown) or 5xx (upstream failure)
+        if resp.status_code == 429 or resp.status_code >= 500:
+            logger.info(f"{model_name} {upstream_id} {i + 1}/{len(chain)} -> {resp.status_code}")
+            detail = ""
+            try:
+                detail = (await resp.aread()).decode("utf-8", "ignore")
+            except Exception:
+                pass
+            finally:
+                await resp.aclose()
+            if "cooldown" in detail or "exhausted quota" in detail:
+                _open_circuit(upstream_id)
+                logger.warning(f"{model_name} {upstream_id} circuit OPEN (cooldown detected)")
+            continue
+
+        # Success — relay the native stream, tag the served model
+        _close_circuit(upstream_id)
+        logger.info(f"{model_name} {upstream_id} {i + 1}/{len(chain)} native action={action}")
+        return _relay_native(resp, upstream_id)
+
+    logger.warning(f"fusion group={model_name} exhausted all backends")
+    return JSONResponse(
+        status_code=429,
+        content={"error": "all fusion backends exhausted", "model": model_name, "attempted": chain},
+    )
+
+
+def _relay_native(resp: httpx.Response, served_model: Optional[str]):
+    """Stream a native upstream response back to the client, unchanged."""
+    headers = clean_headers(resp.headers)
+    if served_model:
+        headers["X-Literouter-Model"] = served_model
+
+    async def stream_gen(response):
+        try:
+            async for chunk in response.aiter_bytes():
+                yield chunk
+        finally:
+            await response.aclose()
+
+    return StreamingResponse(stream_gen(resp), status_code=resp.status_code, headers=headers)
 
 
 if __name__ == "__main__":
