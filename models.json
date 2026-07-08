@@ -205,14 +205,14 @@
   {
     "system_id": "google/gemma-4-26b-a4b-it",
     "provider": "google",
-    "upstream_id": "gemma-2-27b-it",
+    "upstream_id": "gemma-4-26b-a4b-it",
     "context": 250000,
     "max_output": 16384
   },
   {
     "system_id": "google/gemma-4-31b-it",
     "provider": "google",
-    "upstream_id": "gemma-2-27b-it",
+    "upstream_id": "gemma-4-31b-it",
     "context": 250000,
     "max_output": 16384
   },

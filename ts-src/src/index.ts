@@ -648,6 +648,9 @@ serve({
     }
 
     reqJson.model = meta.upstream_model;
+    if (meta.upstream_model.toLowerCase().includes("gemma")) {
+      reqJson = cleanGemmaPayload(reqJson);
+    }
     reqJson.messages = mergeConsecutiveMessages(reqJson.messages || []);
     const isStream = reqJson.stream === true;
     const estimatedTokens =

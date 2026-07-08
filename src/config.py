@@ -123,7 +123,17 @@ MODEL_REGISTRY = {
         "upstream_model": "gemma-4-31b-it",
         "api_url": "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
     },
+    "gemma-4-31b-it": {
+        "provider": "google",
+        "upstream_model": "gemma-4-31b-it",
+        "api_url": "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+    },
     "freetier/gemma-4-26b-a4b-it": {
+        "provider": "google",
+        "upstream_model": "gemma-4-26b-a4b-it",
+        "api_url": "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+    },
+    "gemma-4-26b-a4b-it": {
         "provider": "google",
         "upstream_model": "gemma-4-26b-a4b-it",
         "api_url": "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
