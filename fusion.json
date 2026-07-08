@@ -1,0 +1,10 @@
+{
+  "local/google": {
+    "description": "Google fusion: gemma-4-31b primary, gemini-3.1-flash-lite backup, gemma-4-26b tertiary",
+    "chain": [
+      "google/gemma-4-31b-it",
+      "google/gemini-3.1-flash-lite",
+      "google/gemma-4-26b-a4b-it"
+    ]
+  }
+}
