@@ -337,6 +337,16 @@ async def fusion_native(model_name_and_action: str, request: Request):
                 logger.warning(f"{model_name} {upstream_id} circuit OPEN (cooldown detected)")
             continue
 
+        # Halt on 400, 401, 403 (client/auth errors) — return verbatim
+        if 400 <= resp.status_code < 500 and resp.status_code != 429:
+            logger.info(f"{model_name} {upstream_id} {i + 1}/{len(chain)} halt {resp.status_code}")
+            content = await resp.aread()
+            return Response(
+                content=content,
+                status_code=resp.status_code,
+                headers=clean_headers(resp.headers),
+            )
+
         # Success — relay the native stream, tag the served model
         _close_circuit(upstream_id)
         logger.info(f"{model_name} {upstream_id} {i + 1}/{len(chain)} native action={action}")
