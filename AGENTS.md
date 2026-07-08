@@ -224,6 +224,12 @@ and follows Chapter 02 Rule 2.1 literally. Audited and confirmed in BUGS_CHAP12_
 book's Case 12.1 doesn't show it. Preserved as a safety net - when a clashed branch
 releases strong output elements, draining the DM is a real effect. See s10.2 in audit.
 
+### True Rolling Window Rate Limiting
+The `ModelFirstRouter` in `src/router.py` uses a Redis Sorted Set (ZSET) to implement a true rolling 60-second window for RPM and TPM tracking. 
+- **Mechanism**: Every request is recorded as a timestamped member in a ZSET.
+- **Verification**: The router purges events older than 60s and sums the remaining members to verify quota.
+- **Why**: Prevents "boundary bursting" seen in fixed-minute buckets, matching professional upstream provider behavior.
+
 ## Code Style & Conventions
 - Python 3.14+ required (see pyproject.toml)
 - Use `lunar-python` for all Bazi calculations - never implement Pillar/strength logic manually
@@ -285,7 +291,8 @@ so it's clear how far execution got before failure.
 
 Then read the relevant appendix:
 - **[`setup.md`](.opencode/skills/literouter-playbook/setup.md)** — Ops, routing, adding models/keys/providers
-- **[`troubleshoot.md`](.opencode/skills/literouter-playbook/troubleshoot.md)** — `ZodValidationError`, JSON Parse errors, ACP lifecycle, missing legs analysis
+- **[`setup.md`](.opencode/skills/literouter-playbook/setup.md)** — Ops, routing, adding models/keys/providers
+- **[`troubleshoot.md`](.opencode/skills/literouter-playbook/troubleshoot.md)** — `ZodValidationError`, JSON Parse errors, and rotating proxy debugging
 
 ### ⚠️ THE MANDATORY SDK REQUIREMENT: `@ai-sdk/openai-compatible` ⚠️
 
@@ -293,18 +300,18 @@ Then read the relevant appendix:
 
 #### Why? (The Protocol Mismatch Root Cause)
 1. **The Endpoint Mismatch**: `@ai-sdk/openai` uses the modern `/v1/responses` (Agentic Communication Protocol / ACP) endpoint by default. However, upstream providers like OpenRouter and Nvidia only accept standard OpenAI ChatCompletions (`/v1/chat/completions`).
-2. **Fragile Protocol Translation**: While LiteRouter includes an endpoint mapping layer to translate `/v1/responses` ↔ `/v1/chat/completions`, this translation layer is extremely fragile and prone to failure:
-   - **Tool Call Failures**: Upstream models (like `owl-alpha`) emitting `finish_reason: "tool_calls"` had their structured tool outputs dropped or malformed by the ACP translator, leading to client-side `ZodValidationError` errors ("expected object, received undefined").
+2. **Fragile Protocol Translation (Removed):** LiteRouter previously included an endpoint mapping layer to translate `/v1/responses` ↔ `/v1/chat/completions`. This layer was extremely fragile and prone to:
+   - **Tool Call Failures**: Upstream models emitting `finish_reason: "tool_calls"` had their structured tool outputs dropped or malformed by the ACP translator, leading to client-side `ZodValidationError` errors.
    - **Stream Corruption**: Attempting to inject missing ACP structures/tokens into the SSE stream often broke the `\n\n` event delimiters, resulting in consecutive events fusing and throwing JSON Parse errors.
+   **Consequently, this translation layer has been REMOVED. LiteRouter now acts as a pure rotating proxy for standard OpenAI endpoints.**
 3. **The Simple Solution**: By switching the provider npm package in `opencode.json` to `@ai-sdk/openai-compatible`, the client communicates natively via standard `/v1/chat/completions`. LiteRouter then behaves as a pure rotating proxy (only swapping authorization headers and forwarding bytes), completely bypassing the fragile protocol translation code.
 
 ### Core Architecture & File Map
-- `src/main.py` - **The Core Engine**: Handles `/v1/chat/completions` and `/v1/responses`, sanitizes ACP input (e.g., stripping `function_call` without roles), and manages the SSE streaming lifecycle. Routing is **first-segment-as-provider**: `openrouter/owl-alpha` → first segment = `openrouter` → routes to OpenRouter.
+- `src/main.py` - **The Core Engine**: Handles `/v1/chat/completions` (OpenAI compatible) and native Google REST routes (`/v1beta/...`), implements reasoning normalization and payload sanitization.
 - `src/config.py` - **Provider Discovery**: Scans env vars ending with `_BASE_URL` to build the provider table. No hardcoded routing here — providers are purely data-driven from `.env`.
-- `src/router.py` - **Key Rotation**: Uses Redis or in-memory fallback to atomically cycle through available API keys per provider.
-- `src/config.py` - **Provider Discovery**: `{NAME}_BASE_URL` → provider named `{name}`. No manual registration needed.
+- `src/router.py` - **Key Rotation**: Uses Redis/Valkey or in-memory fallback to atomically cycle through available API keys per provider.
 - `logs/literouter.log` & `logs/literouter_logs.db` - **The Truth**: The primary locations to check for stack traces, Zod validation errors, and raw incoming/outgoing request bodies. (Local logs under `logs/` are ignored in Git to prevent leaks.)
-- `models/` - **Model metadata snapshots**: One `.json` file per model, fetched from the provider API for quick reference (e.g., `openrouter_owl-alpha.json`, `nvidia_deepseek-ai_deepseek-v4-flash.json`)
+- `models.json` - **Model Registry**: Central mapping of system IDs to providers and upstream model IDs.
 
 ### Operations & Testing
 - Run LiteRouter locally: `nohup uv run uvicorn src.main:app --host 0.0.0.0 --port 7766 > logs/literouter.log 2>&1 & echo $! > .literouter.pid`
@@ -330,7 +337,7 @@ The first segment of the model ID (before `/`) IS the provider name. No keyword 
 | `openrouter/cohere/north-mini-code:free` | OpenRouter | `cohere/north-mini-code:free` |
 | `nvidia/deepseek-ai/deepseek-v4-flash` | Nvidia | `deepseek-ai/deepseek-v4-flash` |
 
-To remove a model: delete from `opencode.json` and optionally from `models/`.
+To remove a model: delete from `opencode.json` and `models.json`.
 
 ### Valkey Database Backend
 - **No Redis Dependency**: LiteRouter does NOT run a Redis database server. We use **Valkey** (the fully open-source key-value database engine) on port `6379`.

@@ -230,7 +230,7 @@ async def stream_transformer(response_stream, collapse_reasoning: bool) -> Async
                     choices[0]["delta"] = delta
                     chunk_json["choices"] = choices
 
-                yield f"data: {json.dumps(chunk_json)}\n\n"
+                yield f"data: {json.dumps(chunk_json, ensure_ascii=False)}\n\n"
 
     # Close thinking tags if ending stream unexpectedly
     if collapse_reasoning and has_started_thought and not has_ended_thought:
@@ -242,7 +242,7 @@ async def stream_transformer(response_stream, collapse_reasoning: bool) -> Async
                 }
             }]
         }
-        yield f"data: {json.dumps(closing_chunk)}\n\n"
+        yield f"data: {json.dumps(closing_chunk, ensure_ascii=False)}\n\n"
 
     yield "data: [DONE]\n\n"
 
@@ -395,7 +395,10 @@ async def google_sdk_route(model_name_and_action: str, request: Request):
             metrics_history.append((time.time(), model_name, str(status)))
 
             if active_key:
-                await router.report_error("google", active_key, str(status), model_name)
+                try:
+                    await router.report_error("google", active_key, str(status), model_name)
+                except Exception as report_err:
+                    logger.error(f"report_error failed for google key {active_key[:6]}...{active_key[-4:]}: {report_err}")
 
             if attempt == num_keys:
                 logger.error(f"Failover loop exhausted. Service execution failed on error: {exc}")
@@ -501,7 +504,10 @@ async def openai_compatibility_route(request: Request):
             metrics_history.append((time.time(), upstream_model, str(status)))
 
             if active_key:
-                await router.report_error(provider, active_key, str(status), upstream_model)
+                try:
+                    await router.report_error(provider, active_key, str(status), upstream_model)
+                except Exception as report_err:
+                    logger.error(f"report_error failed for {provider} key {active_key[:6]}...{active_key[-4:]}: {report_err}")
 
             if attempt == num_keys:
                 logger.error(f"Failover loop exhausted on OpenAI route: {exc}")
