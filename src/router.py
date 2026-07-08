@@ -82,7 +82,6 @@ class ModelFirstRouter:
         max_tpm = limits["max_tpm"]
         max_rpm = limits["max_rpm"]
 
-        minute_ts = int(time.time() // 60)
         now = time.time()
         min_delay = self._get_min_delay_ms(provider) / 1000.0
 
@@ -104,13 +103,10 @@ class ModelFirstRouter:
             if is_cooldown:
                 continue
 
-            tpm_key = f"quota:{provider}:{key_hash}:{model_name}:tpm:{minute_ts}"
-            rpm_key = f"quota:{provider}:{key_hash}:{model_name}:rpm:{minute_ts}"
-
-            # Fetch active metric counters
-            usage = await self.redis.mget(tpm_key, rpm_key)
-            current_tpm = int(usage[0]) if usage[0] is not None else 0
-            current_rpm = int(usage[1]) if usage[1] is not None else 0
+            rolling_key = f"rolling:{provider}:{key_hash}:{model_name}"
+            members = await self.redis.zrangebyscore(rolling_key, now - 60, now)
+            current_rpm = len(members)
+            current_tpm = sum(int(m.split(":", 1)[1]) for m in members) if members else 0
 
             # Verify budget bounds
             if current_rpm >= max_rpm or (current_tpm + estimated_tokens) > max_tpm:
@@ -131,7 +127,7 @@ class ModelFirstRouter:
                 continue
 
             # This key passes all checks — use it
-            await self._record_usage(provider, key_hash, model_name, tpm_key, rpm_key, estimated_tokens)
+            await self._record_usage(provider, key_hash, model_name, estimated_tokens)
             self._last_used[last_used_key] = now
             self._next_index[provider] = (idx + 1) % n
             logger.info(
@@ -144,9 +140,7 @@ class ModelFirstRouter:
         if lru_candidate is not None:
             key, idx, _ = lru_candidate
             key_hash = self._hash_key(key)
-            tpm_key = f"quota:{provider}:{key_hash}:{model_name}:tpm:{minute_ts}"
-            rpm_key = f"quota:{provider}:{key_hash}:{model_name}:rpm:{minute_ts}"
-            await self._record_usage(provider, key_hash, model_name, tpm_key, rpm_key, estimated_tokens)
+            await self._record_usage(provider, key_hash, model_name, estimated_tokens)
             self._last_used[f"{provider}:{key_hash}"] = now
             self._next_index[provider] = (idx + 1) % n
             logger.warning(
@@ -160,13 +154,15 @@ class ModelFirstRouter:
         )
 
     async def _record_usage(self, provider: str, key_hash: str, model_name: str,
-                            tpm_key: str, rpm_key: str, estimated_tokens: int):
-        """Atomically increment RPM/TPM counters for a key selection."""
+                            estimated_tokens: int):
+        """Atomically record usage in a rolling 60-second window."""
+        now = time.time()
+        member = f"{time.time_ns()}:{estimated_tokens}"
+        key = f"rolling:{provider}:{key_hash}:{model_name}"
         pipe = self.redis.pipeline()
-        pipe.incrby(tpm_key, estimated_tokens)
-        pipe.expire(tpm_key, 60)
-        pipe.incr(rpm_key)
-        pipe.expire(rpm_key, 60)
+        pipe.zremrangebyscore(key, 0, now - 60)
+        pipe.zadd(key, {member: now})
+        pipe.expire(key, 120)
         await pipe.execute()
 
     async def report_error(self, provider: str, key: str, error_type: str, model_name: str):
