@@ -45,7 +45,7 @@ async def lifespan(app: FastAPI):
     await router.connect()
     # Configure custom high-performance connection pool parameters
     limits = httpx.Limits(max_keepalive_connections=100, max_connections=500)
-    timeout = httpx.Timeout(connect=5.0, read=30.0, write=10.0, pool=5.0)
+    timeout = httpx.Timeout(connect=5.0, read=15.0, write=10.0, pool=5.0)
     http_client = httpx.AsyncClient(limits=limits, timeout=timeout)
     logger.info("Persistent Gateway Connection Pools initialized.")
     yield
@@ -331,8 +331,9 @@ async def google_sdk_route(model_name_and_action: str, request: Request):
     prompt_str = str(req_json)
     estimated_tokens = estimate_tokens(prompt_str, 1024)
 
-    # Dynamic failover retry loop up to 3 times
-    for attempt in range(3):
+    # Dynamic failover retry loop across all keys
+    num_keys = len(router.keys.get('google', []))
+    for attempt in range(num_keys + 1):
         active_key = None
         try:
             active_key = await router.get_available_key(provider, upstream_model, estimated_tokens)
@@ -371,7 +372,7 @@ async def google_sdk_route(model_name_and_action: str, request: Request):
             return StreamingResponse(generate_bytes(), status_code=upstream_resp.status_code, headers=response_headers)
 
         except NoDeploymentsAvailable as exc:
-            if attempt == 2:
+            if attempt == num_keys:
                 logger.error(f"No keys available for google on model {model_name}: {exc}")
                 raise HTTPException(status_code=429, detail=str(exc))
             await asyncio.sleep(0.5)
@@ -383,7 +384,7 @@ async def google_sdk_route(model_name_and_action: str, request: Request):
             if active_key:
                 await router.report_error("google", active_key, str(status), model_name)
 
-            if attempt == 2:
+            if attempt == num_keys:
                 logger.error(f"Failover loop exhausted. Service execution failed on error: {exc}")
                 raise HTTPException(status_code=502, detail=f"Upstream provider failed: {exc}")
 
@@ -426,7 +427,8 @@ async def openai_compatibility_route(request: Request):
     prompt_str = str(req_json["messages"])
     estimated_tokens = estimate_tokens(prompt_str, req_json.get("max_tokens") or 2048)
 
-    for attempt in range(3):
+    num_keys = len(router.keys.get(provider, []))
+    for attempt in range(num_keys + 1):
         active_key = None
         try:
             active_key = await router.get_available_key(provider, upstream_model, estimated_tokens)
@@ -463,7 +465,7 @@ async def openai_compatibility_route(request: Request):
                 return JSONResponse(content=transformed_data, status_code=upstream_resp.status_code)
 
         except NoDeploymentsAvailable as exc:
-            if attempt == 2:
+            if attempt == num_keys:
                 logger.error(f"No keys available for {provider} on model {upstream_model}: {exc}")
                 raise HTTPException(status_code=429, detail=str(exc))
             await asyncio.sleep(0.5)
@@ -475,7 +477,7 @@ async def openai_compatibility_route(request: Request):
             if active_key:
                 await router.report_error(provider, active_key, str(status), upstream_model)
 
-            if attempt == 2:
+            if attempt == num_keys:
                 logger.error(f"Failover loop exhausted on OpenAI route: {exc}")
                 raise HTTPException(status_code=502, detail=f"All upstream nodes failed to resolve request: {exc}")
 
