@@ -334,6 +334,7 @@ async def google_sdk_route(model_name_and_action: str, request: Request):
     # Dynamic failover retry loop across all keys
     num_keys = len(router.keys.get('google', []))
     for attempt in range(num_keys + 1):
+        attempt_start = time.time()
         active_key = None
         try:
             active_key = await router.get_available_key(provider, upstream_model, estimated_tokens)
@@ -378,6 +379,18 @@ async def google_sdk_route(model_name_and_action: str, request: Request):
             await asyncio.sleep(0.5)
             continue
         except (httpx.HTTPStatusError, httpx.RequestError) as exc:
+            elapsed = time.time() - attempt_start
+            exc_type = type(exc).__name__
+            key_masked = f"{active_key[:6]}...{active_key[-4:]}" if active_key else "none"
+            logger.error(
+                f"[GOOGLE] Attempt {attempt+1}/{num_keys+1} failed: "
+                f"exc_type={exc_type}, detail={exc}, "
+                f"elapsed={elapsed:.1f}s, "
+                f"key={key_masked}, model={model_name}, "
+                f"prompt_tokens={estimated_tokens}"
+            )
+            logger.debug(f"Traceback for {exc_type} on key {key_masked}:", exc_info=True)
+
             status = getattr(getattr(exc, "response", None), "status_code", "timeout")
             metrics_history.append((time.time(), model_name, str(status)))
 
@@ -429,6 +442,7 @@ async def openai_compatibility_route(request: Request):
 
     num_keys = len(router.keys.get(provider, []))
     for attempt in range(num_keys + 1):
+        attempt_start = time.time()
         active_key = None
         try:
             active_key = await router.get_available_key(provider, upstream_model, estimated_tokens)
@@ -471,6 +485,18 @@ async def openai_compatibility_route(request: Request):
             await asyncio.sleep(0.5)
             continue
         except (httpx.HTTPStatusError, httpx.RequestError) as exc:
+            elapsed = time.time() - attempt_start
+            exc_type = type(exc).__name__
+            key_masked = f"{active_key[:6]}...{active_key[-4:]}" if active_key else "none"
+            logger.error(
+                f"[{provider.upper()}] Attempt {attempt+1}/{num_keys+1} failed: "
+                f"exc_type={exc_type}, detail={exc}, "
+                f"elapsed={elapsed:.1f}s, "
+                f"key={key_masked}, model={model_name}, "
+                f"prompt_tokens={estimated_tokens}"
+            )
+            logger.debug(f"Traceback for {exc_type} on key {key_masked}:", exc_info=True)
+
             status = getattr(getattr(exc, "response", None), "status_code", "timeout")
             metrics_history.append((time.time(), upstream_model, str(status)))
 
