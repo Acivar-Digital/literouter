@@ -678,6 +678,8 @@ serve({
 
         if (!upstreamRes.ok) {
           const status = upstreamRes.status.toString();
+          const errText = await upstreamRes.text();
+          console.error(`[GOOGLE] Upstream completions failed with status ${status}:`, errText);
           await router.reportError(
             meta.provider,
             activeKey,
