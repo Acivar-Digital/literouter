@@ -9,7 +9,7 @@ import time
 from typing import List, Optional
 
 import redis.asyncio as redis
-import redis.exceptions
+from redis.exceptions import NoScriptError
 
 from src.config import REDIS_HOST, REDIS_PASSWORD, REDIS_PORT, REDIS_DB, get_model_limits
 
@@ -111,7 +111,7 @@ class ModelFirstRouter:
                 self._quota_script_sha, 1, rolling_key,
                 now, max_rpm, max_tpm, estimated_tokens, member
             )
-        except redis.exceptions.NoScriptError:
+        except NoScriptError:
             res = await self.redis.eval(
                 QUOTA_CHECK_SCRIPT, 1, rolling_key,
                 now, max_rpm, max_tpm, estimated_tokens, member
