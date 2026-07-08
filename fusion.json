@@ -1,10 +1,20 @@
 {
   "local/google": {
-    "description": "Google fusion: gemma-4-31b primary, gemini-3.1-flash-lite backup, gemma-4-26b tertiary",
+    "description": "Google fusion via TS proxy (native /v1beta), for OpenCode",
     "chain": [
       "google/gemma-4-31b-it",
       "google/gemini-3.1-flash-lite",
       "google/gemma-4-26b-a4b-it"
-    ]
+    ],
+    "upstream": "http://localhost:7767/v1beta"
+  },
+  "pydantic/google": {
+    "description": "Google fusion via Python gateway OpenAI-compat (/v1), for pydantic-ai",
+    "chain": [
+      "google/gemma-4-31b-it",
+      "google/gemini-3.1-flash-lite",
+      "google/gemma-4-26b-a4b-it"
+    ],
+    "upstream": "http://localhost:7766/v1/chat/completions"
   }
 }

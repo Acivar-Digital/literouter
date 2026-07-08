@@ -2,8 +2,9 @@
 """
 LiteRouter Fusion Sidecar
 
-Standalone FastAPI service that fronts the existing 7766 gateway and provides a
-priority fallback chain for synthetic "fusion" models (e.g. local/google).
+Standalone FastAPI service that fronts the existing 7766 gateway and the 7767 TS
+proxy, providing a priority fallback chain ("fusion") for synthetic models such
+as local/google and pydantic/google.
 
 Launch with:
     uv run uvicorn fusion:app --host 0.0.0.0 --port 7768
@@ -14,10 +15,16 @@ Launch with:
 Design notes:
 - This sidecar does NOT import or modify src/main.py, src/router.py, src/config.py or models.json.
 - Clients (opencode / pydantic-ai) target this sidecar on :7768.
-- For a fusion model it calls the 7766 gateway once per upstream model in the chain,
-  reusing 7766's key rotation + cooldowns. It advances to the next upstream only when the
-  current one returns 429 (all keys exhausted), 5xx (upstream failure after key rotation),
-  or a network error/timeout. It halts (returns the error) on 400/401/403.
+- For a fusion-group model it calls the configured upstream once per upstream model
+  in the chain, reusing the upstream's key rotation + cooldowns. It advances to the
+  next upstream only when the current one returns 429 (all keys exhausted), 5xx
+  (upstream failure after key rotation), or a network error/timeout. It halts
+  (returns the error) on 400/401/403.
+- Routing is by FUSION GROUP, not by entry path. Each group in fusion.json declares
+  its own `upstream` URL; the protocol (native /v1beta vs OpenAI-compat /v1) is
+  inferred from that URL. This lets one group forward to the TS proxy natively
+  (local/google -> 7767/v1beta) while another forwards OpenAI-compat payloads to the
+  Python gateway (pydantic/google -> 7766/v1).
 - Every successful response carries X-Literouter-Model = the upstream that served it.
 """
 
@@ -29,6 +36,10 @@ import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Dict, List, Optional
+
+from dotenv import load_dotenv
+
+load_dotenv()
 
 import httpx
 from fastapi import FastAPI, Request, Response
@@ -48,6 +59,7 @@ BASE_DIR = Path(__file__).resolve().parent
 class FusionGroup(BaseModel):
     description: str
     chain: List[str]
+    upstream: Optional[str] = None  # per-group upstream; protocol inferred from URL
 
 
 fusion_groups: Dict[str, FusionGroup] = {}
@@ -111,6 +123,23 @@ def _clear_sticky(group_id: str) -> None:
     sticky_position.pop(group_id, None)
 
 
+def _resolve_upstream(group: FusionGroup, path_is_native: bool):
+    """Return (upstream_url, protocol) for a fusion group.
+
+    protocol is inferred from the group's `upstream` URL: a URL containing
+    '/v1beta' is treated as the native Google SDK endpoint; anything else is
+    treated as an OpenAI-compat /chat/completions endpoint. Falls back to the
+    legacy global per-path URL when a group omits `upstream`.
+    """
+    if group.upstream:
+        if "/v1beta" in group.upstream:
+            return group.upstream, "native"
+        return group.upstream, "openai"
+    if path_is_native:
+        return FUSION_UPSTREAM_URL_NATIVE, "native"
+    return FUSION_UPSTREAM_URL, "openai"
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global fusion_groups, http_client
@@ -138,7 +167,9 @@ async def lifespan(app: FastAPI):
                     )
                     sys.exit(1)
             fusion_groups[group_id] = group
-            logger.info(f"Loaded fusion group '{group_id}' with chain: {group.chain}")
+            logger.info(
+                f"Loaded fusion group '{group_id}' chain={group.chain} upstream={group.upstream}"
+            )
     except FileNotFoundError:
         logger.error("fusion.json not found at repository root")
         sys.exit(1)
@@ -170,6 +201,167 @@ def clean_headers(headers: httpx.Headers) -> dict:
     return h
 
 
+async def _run_openai_fusion(
+    group_id: str,
+    chain: List[str],
+    body: dict,
+    req_headers: dict,
+    is_stream: bool,
+    upstream: str,
+):
+    """Fusion fallback for an OpenAI-compat upstream (/v1/chat/completions)."""
+    start_idx = _get_sticky_start(group_id, chain)
+    for i, upstream_id in enumerate(chain):
+        if i < start_idx:
+            continue
+
+        if _circuit_open(upstream_id):
+            logger.info(f"{group_id} {upstream_id} {i + 1}/{len(chain)} circuit-open, skipping")
+            continue
+
+        body["model"] = upstream_id
+        try:
+            req = http_client.build_request(
+                "POST", upstream, headers=req_headers, json=body
+            )
+            resp = await http_client.send(req, stream=True)
+
+            # Advance on 429 (exhausted/cooldown) or 5xx (upstream failure)
+            if resp.status_code == 429 or resp.status_code >= 500:
+                logger.info(f"{group_id} {upstream_id} {i + 1}/{len(chain)} -> {resp.status_code}")
+
+                detail = ""
+                try:
+                    detail = (await resp.aread()).decode("utf-8", "ignore")
+                except Exception:
+                    pass
+                finally:
+                    await resp.aclose()  # Guarantee the connection is released
+
+                if "cooldown" in detail or "exhausted quota" in detail:
+                    _open_circuit(upstream_id)
+                    logger.warning(f"{group_id} {upstream_id} circuit OPEN (cooldown detected)")
+                continue
+
+            # Halt on 400, 401, 403 (client/auth errors)
+            if 400 <= resp.status_code < 500 and resp.status_code != 429:
+                logger.info(f"{group_id} {upstream_id} {i + 1}/{len(chain)} halt {resp.status_code}")
+                content = await resp.aread()
+                return Response(
+                    content=content,
+                    status_code=resp.status_code,
+                    headers=clean_headers(resp.headers),
+                )
+
+            # Success (2xx) — recover the model early.
+            _close_circuit(upstream_id)
+            if i > 0:
+                _set_sticky(group_id, upstream_id)
+            else:
+                _clear_sticky(group_id)
+            logger.info(f"{group_id} {upstream_id} {i+1}/{len(chain)} stream={is_stream}")
+            resp_headers = clean_headers(resp.headers)
+            resp_headers["X-Literouter-Model"] = upstream_id
+
+            if is_stream:
+
+                async def stream_gen(response):
+                    try:
+                        async for chunk in response.aiter_raw():
+                            yield chunk
+                    finally:
+                        await response.aclose()
+
+                return StreamingResponse(
+                    stream_gen(resp), status_code=resp.status_code, headers=resp_headers
+                )
+            else:
+                content = await resp.aread()
+                return Response(content=content, status_code=resp.status_code, headers=resp_headers)
+
+        except (httpx.RequestError, httpx.TimeoutException) as e:
+            # Advance on network timeout / connection error to upstream
+            logger.info(f"{group_id} {upstream_id} {i + 1}/{len(chain)} error: {e}")
+            continue
+
+    logger.warning(f"fusion group={group_id} exhausted all backends")
+    return JSONResponse(
+        status_code=429,
+        content={"error": "all fusion backends exhausted", "model": group_id, "attempted": chain},
+    )
+
+
+async def _run_native_fusion(
+    group_id: str,
+    chain: List[str],
+    model_name: str,
+    action: str,
+    query: dict,
+    req_headers: dict,
+    body_bytes: bytes,
+    upstream: str,
+):
+    """Fusion fallback for a native Google SDK upstream (/v1beta/models/...:action)."""
+    start_idx = _get_sticky_start(group_id, chain)
+    for i, upstream_id in enumerate(chain):
+        if i < start_idx:
+            continue
+
+        if _circuit_open(upstream_id):
+            logger.info(f"{group_id} {upstream_id} {i + 1}/{len(chain)} circuit-open, skipping")
+            continue
+
+        target = f"{upstream}/models/{upstream_id}:{action}"
+        try:
+            req = http_client.build_request(
+                "POST", target, params=query, headers=req_headers, content=body_bytes
+            )
+            resp = await http_client.send(req, stream=True)
+        except (httpx.RequestError, httpx.TimeoutException) as e:
+            logger.info(f"{group_id} {upstream_id} {i + 1}/{len(chain)} error: {e}")
+            continue
+
+        # Advance on 429 (exhausted/cooldown) or 5xx (upstream failure)
+        if resp.status_code == 429 or resp.status_code >= 500:
+            logger.info(f"{group_id} {upstream_id} {i + 1}/{len(chain)} -> {resp.status_code}")
+            detail = ""
+            try:
+                detail = (await resp.aread()).decode("utf-8", "ignore")
+            except Exception:
+                pass
+            finally:
+                await resp.aclose()
+            if "cooldown" in detail or "exhausted quota" in detail:
+                _open_circuit(upstream_id)
+                logger.warning(f"{group_id} {upstream_id} circuit OPEN (cooldown detected)")
+            continue
+
+        # Halt on 400, 401, 403 (client/auth errors) — return verbatim
+        if 400 <= resp.status_code < 500 and resp.status_code != 429:
+            logger.info(f"{group_id} {upstream_id} {i + 1}/{len(chain)} halt {resp.status_code}")
+            content = await resp.aread()
+            return Response(
+                content=content,
+                status_code=resp.status_code,
+                headers=clean_headers(resp.headers),
+            )
+
+        # Success — relay the native stream, tag the served model
+        _close_circuit(upstream_id)
+        if i > 0:
+            _set_sticky(group_id, upstream_id)
+        else:
+            _clear_sticky(group_id)
+        logger.info(f"{group_id} {upstream_id} {i + 1}/{len(chain)} native action={action}")
+        return _relay_native(resp, upstream_id)
+
+    logger.warning(f"fusion group={group_id} exhausted all backends")
+    return JSONResponse(
+        status_code=429,
+        content={"error": "all fusion backends exhausted", "model": group_id, "attempted": chain},
+    )
+
+
 @app.post("/v1/chat/completions")
 async def chat_completions(request: Request):
     try:
@@ -191,7 +383,7 @@ async def chat_completions(request: Request):
     is_stream = bool(body.get("stream"))
 
     # ---------------------------------------------------------
-    # PATH A: Passthrough for non-fusion models (proxied unchanged to 7766)
+    # PATH A: Passthrough for non-fusion models (proxied unchanged)
     # ---------------------------------------------------------
     if model not in fusion_groups:
         try:
@@ -226,91 +418,29 @@ async def chat_completions(request: Request):
             return JSONResponse({"error": "Bad Gateway", "details": str(e)}, status_code=502)
 
     # ---------------------------------------------------------
-    # PATH B: Fusion fallback logic
+    # PATH B: Fusion group — route by the group's protocol
     # ---------------------------------------------------------
-    chain = fusion_groups[model].chain
-    start_idx = _get_sticky_start(model, chain)
-    for i, upstream_id in enumerate(chain):
-        if i < start_idx:
-            continue
-
-        # Skip an upstream we know is currently cooled; don't re-burn its keys.
-        if _circuit_open(upstream_id):
-            logger.info(f"{model} {upstream_id} {i + 1}/{len(chain)} circuit-open, skipping")
-            continue
-
-        body["model"] = upstream_id
-        try:
-            req = http_client.build_request(
-                "POST", FUSION_UPSTREAM_URL, headers=req_headers, json=body
-            )
-            resp = await http_client.send(req, stream=True)
-
-            # Advance on 429 (exhausted/cooldown) or 5xx (upstream failure)
-            if resp.status_code == 429 or resp.status_code >= 500:
-                logger.info(f"{model} {upstream_id} {i + 1}/{len(chain)} -> {resp.status_code}")
-
-                detail = ""
-                try:
-                    detail = (await resp.aread()).decode("utf-8", "ignore")
-                except Exception:
-                    pass
-                finally:
-                    await resp.aclose()  # Guarantee the connection is released
-
-                if "cooldown" in detail or "exhausted quota" in detail:
-                    _open_circuit(upstream_id)
-                    logger.warning(f"{model} {upstream_id} circuit OPEN (cooldown detected)")
-                continue
-
-            # Halt on 400, 401, 403 (client/auth errors)
-            if 400 <= resp.status_code < 500 and resp.status_code != 429:
-                logger.info(f"{model} {upstream_id} {i + 1}/{len(chain)} halt {resp.status_code}")
-                content = await resp.aread()
-                return Response(
-                    content=content,
-                    status_code=resp.status_code,
-                    headers=clean_headers(resp.headers),
-                )
-
-            # Success (2xx) — recover the model early.
-            _close_circuit(upstream_id)
-            if i > 0:
-                _set_sticky(model, upstream_id)
-            else:
-                _clear_sticky(model)
-            logger.info(f"{model} {upstream_id} {i+1}/{len(chain)} stream={is_stream}")
-            resp_headers = clean_headers(resp.headers)
-            resp_headers["X-Literouter-Model"] = upstream_id
-
-            if is_stream:
-
-                async def stream_gen(response):
-                    try:
-                        async for chunk in response.aiter_raw():
-                            yield chunk
-                    finally:
-                        await response.aclose()
-
-                return StreamingResponse(
-                    stream_gen(resp), status_code=resp.status_code, headers=resp_headers
-                )
-            else:
-                content = await resp.aread()
-                return Response(content=content, status_code=resp.status_code, headers=resp_headers)
-
-        except (httpx.RequestError, httpx.TimeoutException) as e:
-            # Advance on network timeout / connection error to 7766
-            logger.info(f"{model} {upstream_id} {i + 1}/{len(chain)} error: {e}")
-            continue
-
-    # ---------------------------------------------------------
-    # Exhausted all backends
-    # ---------------------------------------------------------
-    logger.warning(f"fusion group={model} exhausted all backends")
-    return JSONResponse(
-        status_code=429,
-        content={"error": "all fusion backends exhausted", "model": model, "attempted": chain},
+    group = fusion_groups[model]
+    upstream, protocol = _resolve_upstream(group, False)
+    if protocol == "native":
+        body_bytes = (await request.body()) or b"{}"
+        return await _run_native_fusion(
+            group_id=model,
+            chain=group.chain,
+            model_name=model,
+            action="generateContent",
+            query=dict(request.query_params),
+            req_headers=req_headers,
+            body_bytes=body_bytes,
+            upstream=upstream,
+        )
+    return await _run_openai_fusion(
+        group_id=model,
+        chain=group.chain,
+        body=body,
+        req_headers=req_headers,
+        is_stream=is_stream,
+        upstream=upstream,
     )
 
 
@@ -318,11 +448,11 @@ async def chat_completions(request: Request):
 @app.post("/v1beta/{model_name_and_action:path}")
 async def fusion_native(model_name_and_action: str, request: Request):
     """
-    Native Google proxy that mirrors 7766's /v1beta route. Dumb forwarder:
-    the request (native Google payload, query params, headers) is relayed
-    verbatim to 7766. For a fusion-group model it substitutes the upstream
-    model in the URL and rotates across the chain on 429/5xx. No param
-    manipulation — 7766 owns key rotation, thinking-strip, etc.
+    Native Google proxy that mirrors 7766's /v1beta route. Dumb forwarder for
+    non-fusion models; for a fusion-group model it substitutes the upstream model
+    in the URL and rotates across the chain on 429/5xx. The protocol (native vs
+    OpenAI-compat) is taken from the fusion group's `upstream`, so a group such as
+    pydantic/google entered here still forwards its OpenAI payload correctly.
     """
     if ":" in model_name_and_action:
         model_name, action = model_name_and_action.split(":", 1)
@@ -338,14 +468,14 @@ async def fusion_native(model_name_and_action: str, request: Request):
         if k.lower() not in ("host", "content-length")
     }
     query = dict(request.query_params)
-    body = await request.body()
+    body_bytes = await request.body()
 
     # Non-fusion model -> straight dumb forward as-is
     if model_name not in fusion_groups:
         target = f"{FUSION_UPSTREAM_URL_NATIVE}/models/{model_name}:{action}"
         try:
             req = http_client.build_request(
-                "POST", target, params=query, headers=req_headers, content=body
+                "POST", target, params=query, headers=req_headers, content=body_bytes
             )
             resp = await http_client.send(req, stream=True)
             return _relay_native(resp, None)
@@ -353,64 +483,34 @@ async def fusion_native(model_name_and_action: str, request: Request):
             logger.error(f"fusion native passthrough error for {model_name}: {e}")
             return JSONResponse({"error": "Bad Gateway", "details": str(e)}, status_code=502)
 
-    # Fusion group -> priority chain over native Google models
-    chain = fusion_groups[model_name].chain
-    start_idx = _get_sticky_start(model_name, chain)
-    for i, upstream_id in enumerate(chain):
-        if i < start_idx:
-            continue
+    # Fusion group -> route by the group's protocol
+    group = fusion_groups[model_name]
+    upstream, protocol = _resolve_upstream(group, True)
+    if protocol == "native":
+        return await _run_native_fusion(
+            group_id=model_name,
+            chain=group.chain,
+            model_name=model_name,
+            action=action,
+            query=query,
+            req_headers=req_headers,
+            body_bytes=body_bytes,
+            upstream=upstream,
+        )
 
-        if _circuit_open(upstream_id):
-            logger.info(f"{model_name} {upstream_id} {i + 1}/{len(chain)} circuit-open, skipping")
-            continue
-        target = f"{FUSION_UPSTREAM_URL_NATIVE}/models/{upstream_id}:{action}"
-        try:
-            req = http_client.build_request(
-                "POST", target, params=query, headers=req_headers, content=body
-            )
-            resp = await http_client.send(req, stream=True)
-        except (httpx.RequestError, httpx.TimeoutException) as e:
-            logger.info(f"{model_name} {upstream_id} {i + 1}/{len(chain)} error: {e}")
-            continue
-
-        # Advance on 429 (exhausted/cooldown) or 5xx (upstream failure)
-        if resp.status_code == 429 or resp.status_code >= 500:
-            logger.info(f"{model_name} {upstream_id} {i + 1}/{len(chain)} -> {resp.status_code}")
-            detail = ""
-            try:
-                detail = (await resp.aread()).decode("utf-8", "ignore")
-            except Exception:
-                pass
-            finally:
-                await resp.aclose()
-            if "cooldown" in detail or "exhausted quota" in detail:
-                _open_circuit(upstream_id)
-                logger.warning(f"{model_name} {upstream_id} circuit OPEN (cooldown detected)")
-            continue
-
-        # Halt on 400, 401, 403 (client/auth errors) — return verbatim
-        if 400 <= resp.status_code < 500 and resp.status_code != 429:
-            logger.info(f"{model_name} {upstream_id} {i + 1}/{len(chain)} halt {resp.status_code}")
-            content = await resp.aread()
-            return Response(
-                content=content,
-                status_code=resp.status_code,
-                headers=clean_headers(resp.headers),
-            )
-
-        # Success — relay the native stream, tag the served model
-        _close_circuit(upstream_id)
-        if i > 0:
-            _set_sticky(model_name, upstream_id)
-        else:
-            _clear_sticky(model_name)
-        logger.info(f"{model_name} {upstream_id} {i + 1}/{len(chain)} native action={action}")
-        return _relay_native(resp, upstream_id)
-
-    logger.warning(f"fusion group={model_name} exhausted all backends")
-    return JSONResponse(
-        status_code=429,
-        content={"error": "all fusion backends exhausted", "model": model_name, "attempted": chain},
+    # OpenAI-compat group entered via /v1beta: parse body, run openai fusion
+    try:
+        body = json.loads(body_bytes) if body_bytes else {}
+    except Exception:
+        body = {}
+    is_stream = bool(body.get("stream"))
+    return await _run_openai_fusion(
+        group_id=model_name,
+        chain=group.chain,
+        body=body,
+        req_headers=req_headers,
+        is_stream=is_stream,
+        upstream=upstream,
     )
 
 
