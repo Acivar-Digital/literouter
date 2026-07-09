@@ -3,8 +3,8 @@
     "system_id": "openrouter/tencent/hy3:free",
     "provider": "openrouter",
     "upstream_id": "tencent/hy3:free",
-    "context": 250000,
-    "max_output": 65535
+    "context": 262144,
+    "max_output": 262144
   },
   {
     "system_id": "nvidia/meta/llama-3.1-8b-instruct",
@@ -38,8 +38,8 @@
     "system_id": "openrouter/nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
     "provider": "openrouter",
     "upstream_id": "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
-    "context": 250000,
-    "max_output": 65535
+    "context": 256000,
+    "max_output": 65536
   },
   {
     "system_id": "nvidia/minimaxai/minimax-m3",
@@ -101,29 +101,29 @@
     "system_id": "openrouter/cohere/north-mini-code:free",
     "provider": "openrouter",
     "upstream_id": "cohere/north-mini-code:free",
-    "context": 250000,
-    "max_output": 65535
+    "context": 256000,
+    "max_output": 64000
   },
   {
     "system_id": "openrouter/openai/gpt-oss-120b:free",
     "provider": "openrouter",
     "upstream_id": "openai/gpt-oss-120b:free",
     "context": 131072,
-    "max_output": 65535
+    "max_output": 131072
   },
   {
     "system_id": "openrouter/nvidia/nemotron-3-nano-30b-a3b:free",
     "provider": "openrouter",
     "upstream_id": "nvidia/nemotron-3-nano-30b-a3b:free",
-    "context": 250000,
+    "context": 256000,
     "max_output": 65535
   },
   {
     "system_id": "openrouter/poolside/laguna-xs.2:free",
     "provider": "openrouter",
     "upstream_id": "poolside/laguna-xs.2:free",
-    "context": 250000,
-    "max_output": 65535
+    "context": 262144,
+    "max_output": 32768
   },
   {
     "system_id": "zen/mimo-v2.5-free",
