@@ -29,6 +29,11 @@ from src.config import (
 )
 from src.router import ModelFirstRouter, NoDeploymentsAvailable, estimate_tokens
 
+# Backoff (seconds) between key-failover retries when all keys are cooling down.
+# Reuses LITEROUTER_ROTATE_DELAY_MS so 7766 and 7767 back off identically
+# on the same NoDeploymentsAvailable condition (TS reads it in ms).
+ROTATE_DELAY_S = float(os.getenv("LITEROUTER_ROTATE_DELAY_MS", "10000")) / 1000.0
+
 logger = logging.getLogger("gateway")
 
 # Bounded queue to track metrics and operational warnings without memory leaks
@@ -395,7 +400,7 @@ async def google_sdk_route(model_name_and_action: str, request: Request):
             if attempt == num_keys:
                 logger.error(f"No keys available for google on model {model_name}: {exc}")
                 raise HTTPException(status_code=429, detail=str(exc))
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(ROTATE_DELAY_S)
             continue
         except (httpx.HTTPStatusError, httpx.RequestError) as exc:
             elapsed = time.time() - attempt_start
@@ -519,7 +524,7 @@ async def openai_compatibility_route(request: Request):
             if attempt == num_keys:
                 logger.error(f"No keys available for {provider} on model {upstream_model}: {exc}")
                 raise HTTPException(status_code=429, detail=str(exc))
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(ROTATE_DELAY_S)
             continue
         except (httpx.HTTPStatusError, httpx.RequestError) as exc:
             elapsed = time.time() - attempt_start

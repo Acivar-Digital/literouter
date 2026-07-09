@@ -22,6 +22,12 @@ const LITEROUTER_HTTP_TIMEOUT_MS = parseInt(
   10,
 ) * 1000;
 
+// Max retry attempts per request (key failover). Shared across routes via .env.
+const LITEROUTER_MAX_ATTEMPTS = parseInt(
+  Bun.env.LITEROUTER_MAX_ATTEMPTS || "3",
+  10,
+);
+
 const REDIS_HOST = Bun.env.REDIS_HOST || "127.0.0.1";
 const REDIS_PORT = parseInt(Bun.env.REDIS_PORT || "6379", 10);
 const REDIS_PASSWORD = Bun.env.REDIS_PASSWORD || undefined;
@@ -538,7 +544,7 @@ serve({
 
       const estimatedTokens = Math.floor(JSON.stringify(reqJson).length / 4) + 1024;
 
-      for (let attempt = 0; attempt < 3; attempt++) {
+      for (let attempt = 0; attempt < LITEROUTER_MAX_ATTEMPTS; attempt++) {
         let activeKey = null;
         try {
           activeKey = await router.getAvailableKey(
@@ -577,7 +583,7 @@ serve({
               status,
               meta.upstream_model,
             );
-          if (attempt === 2)
+          if (attempt === LITEROUTER_MAX_ATTEMPTS - 1)
             return new Response(`Upstream failed: ${status}`, { status: 502 });
           continue;
         }
@@ -597,7 +603,7 @@ serve({
 
         } catch (e: any) {
           if (e.message.includes("NoDeploymentsAvailable")) {
-            if (attempt === 2) {
+            if (attempt === LITEROUTER_MAX_ATTEMPTS - 1) {
               console.error(`No keys available for ${meta.provider} on model ${meta.upstream_model}: ${e.message}`);
               return new Response(JSON.stringify({ error: e.message }), {
                 status: 429,
@@ -613,7 +619,7 @@ serve({
               "timeout",
               meta.upstream_model,
             );
-          if (attempt === 2) {
+          if (attempt === LITEROUTER_MAX_ATTEMPTS - 1) {
             console.error(`Failover loop exhausted on Google native route: ${e.message}`);
             return new Response(
               JSON.stringify({ error: `All upstream nodes failed to resolve request: ${e.message}` }),
@@ -673,7 +679,7 @@ serve({
       (reqJson.max_tokens || 2048);
 
     // Failover Loop
-    for (let attempt = 0; attempt < 3; attempt++) {
+    for (let attempt = 0; attempt < LITEROUTER_MAX_ATTEMPTS; attempt++) {
       let activeKey = null;
       try {
         activeKey = await router.getAvailableKey(
@@ -702,7 +708,7 @@ serve({
             status,
             meta.upstream_model,
           );
-          if (attempt === 2)
+          if (attempt === LITEROUTER_MAX_ATTEMPTS - 1)
             return new Response(
               JSON.stringify({ error: `All upstream nodes failed to resolve request: Server error '${status}'` }),
               { status: 502 }
@@ -732,7 +738,7 @@ serve({
         }
       } catch (e: any) {
         if (e.message.includes("NoDeploymentsAvailable")) {
-          if (attempt === 2) {
+          if (attempt === LITEROUTER_MAX_ATTEMPTS - 1) {
             console.error(`No keys available for ${meta.provider} on model ${meta.upstream_model}: ${e.message}`);
             return new Response(JSON.stringify({ error: e.message }), {
               status: 429,
@@ -748,7 +754,7 @@ serve({
             "timeout",
             meta.upstream_model,
           );
-        if (attempt === 2) {
+        if (attempt === LITEROUTER_MAX_ATTEMPTS - 1) {
           console.error(`Failover loop exhausted on OpenAI route: ${e.message}`);
           return new Response(
             JSON.stringify({ error: `All upstream nodes failed to resolve request: ${e.message}` }),
