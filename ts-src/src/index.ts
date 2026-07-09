@@ -489,10 +489,11 @@ function transformNonStreaming(data: any, collapseReasoning: boolean) {
 // =====================================================================
 serve({
   port: LITEROUTER_PORT,
-  // Keep client connections alive at least as long as the upstream timeout.
-  // Bun's default idleTimeout is 10s, which kills slow-starting streams
-  // (e.g. HY3) with "[Bun.serve]: request timed out after 10 seconds".
-  idleTimeout: LITEROUTER_HTTP_TIMEOUT_MS / 1000,
+  // Bun caps idleTimeout at 255s and rejects higher values, so cap it here.
+  // Its default (10s) was killing slow-starting streams (e.g. HY3) with
+  // "[Bun.serve]: request timed out after 10 seconds". The upstream fetch
+  // timeout (AbortSignal.timeout, 300s) is separate and unaffected by this cap.
+  idleTimeout: Math.min(LITEROUTER_HTTP_TIMEOUT_MS / 1000, 255),
   async fetch(req) {
     const url = new URL(req.url);
 
