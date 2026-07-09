@@ -115,9 +115,12 @@ def main():
         with open(prov_dir / safe, "w") as f:
             json.dump(match, f, indent=2)
 
-        # Update context / max_output
-        ctx = match.get("context_length")
-        max_out = (match.get("top_provider") or {}).get("max_completion_tokens")
+        # Map OpenRouter detail -> our models.json fields
+        #   context_length        -> context
+        #   max_completion_tokens -> max_output
+        tp = match.get("top_provider") or {}
+        ctx = match.get("context_length") or tp.get("context_length")
+        max_out = tp.get("max_completion_tokens") or match.get("max_completion_tokens")
         if ctx:
             m["context"] = ctx
         if max_out:
