@@ -22,10 +22,11 @@ def _setup_app(tmp_path, monkeypatch):
     monkeypatch.delenv("LITEROUTER_AUTH_KEY", raising=False)
     monkeypatch.chdir(tmp_path)
 
-    import src.config as config_mod
     import src.metrics as metrics_mod
     import src.rate_limiter as rl_mod
     import src.redis_client as redis_mod
+
+    import src.config as config_mod
     import src.router as router_mod
 
     config_mod._cached_config = None

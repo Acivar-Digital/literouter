@@ -38,13 +38,20 @@ async def probe_google_key(key: str) -> bool:
                 logger.info(f"[GOOGLE] Key '{key[:6]}...{key[-4:]}' is healthy (200 OK).")
                 return True
             elif resp.status_code in (401, 403):
-                logger.error(f"[GOOGLE] Key '{key[:6]}...{key[-4:]}' failed Gate 2 with status {resp.status_code} (UNAUTHORIZED).")
+                logger.error(
+                    f"[GOOGLE] Key '{key[:6]}...{key[-4:]}' failed Gate 2 with "
+                    f"status {resp.status_code} (UNAUTHORIZED)."
+                )
                 return False
             elif resp.status_code == 429:
-                logger.warning(f"[GOOGLE] Key '{key[:6]}...{key[-4:]}' is rate-limited (429) but validated as operational.")
+                logger.warning(
+                    f"[GOOGLE] Key '{key[:6]}...{key[-4:]}' is rate-limited (429) but validated as operational."
+                )
                 return True
             else:
-                logger.warning(f"[GOOGLE] Key '{key[:6]}...{key[-4:]}' warning status {resp.status_code}: {resp.text[:100]}")
+                logger.warning(
+                    f"[GOOGLE] Key '{key[:6]}...{key[-4:]}' warning status {resp.status_code}: {resp.text[:100]}"
+                )
                 return True
         except httpx.RequestError as exc:
             logger.warning(f"[GOOGLE] Connection error for key '{key[:6]}...{key[-4:]}': {exc}. Treating as warnings.")
@@ -68,10 +75,15 @@ async def probe_nvidia_key(key: str) -> bool:
                 logger.info(f"[NVIDIA] Key '{key[:6]}...{key[-4:]}' is healthy (200 OK).")
                 return True
             elif resp.status_code in (401, 403):
-                logger.error(f"[NVIDIA] Key '{key[:6]}...{key[-4:]}' failed Gate 2 with status {resp.status_code} (UNAUTHORIZED).")
+                logger.error(
+                    f"[NVIDIA] Key '{key[:6]}...{key[-4:]}' failed Gate 2 with "
+                    f"status {resp.status_code} (UNAUTHORIZED)."
+                )
                 return False
             elif resp.status_code == 429:
-                logger.warning(f"[NVIDIA] Key '{key[:6]}...{key[-4:]}' is rate-limited (429) but validated as operational.")
+                logger.warning(
+                    f"[NVIDIA] Key '{key[:6]}...{key[-4:]}' is rate-limited (429) but validated as operational."
+                )
                 return True
             else:
                 logger.warning(f"[NVIDIA] Key '{key[:6]}...{key[-4:]}' warning status {resp.status_code}.")
@@ -98,10 +110,15 @@ async def probe_openrouter_key(key: str) -> bool:
                 logger.info(f"[OPENROUTER] Key '{key[:6]}...{key[-4:]}' is healthy (200 OK).")
                 return True
             elif resp.status_code in (401, 403):
-                logger.error(f"[OPENROUTER] Key '{key[:6]}...{key[-4:]}' failed Gate 2 with status {resp.status_code} (UNAUTHORIZED).")
+                logger.error(
+                    f"[OPENROUTER] Key '{key[:6]}...{key[-4:]}' failed Gate 2 with "
+                    f"status {resp.status_code} (UNAUTHORIZED)."
+                )
                 return False
             elif resp.status_code == 429:
-                logger.warning(f"[OPENROUTER] Key '{key[:6]}...{key[-4:]}' is rate-limited (429) but validated as operational.")
+                logger.warning(
+                    f"[OPENROUTER] Key '{key[:6]}...{key[-4:]}' is rate-limited (429) but validated as operational."
+                )
                 return True
             else:
                 logger.warning(f"[OPENROUTER] Key '{key[:6]}...{key[-4:]}' warning status {resp.status_code}.")
@@ -128,10 +145,14 @@ async def probe_zen_key(key: str) -> bool:
                 logger.info(f"[ZEN] Key '{key[:6]}...{key[-4:]}' is healthy (200 OK).")
                 return True
             elif resp.status_code in (401, 403):
-                logger.error(f"[ZEN] Key '{key[:6]}...{key[-4:]}' failed Gate 2 with status {resp.status_code} (UNAUTHORIZED).")
+                logger.error(
+                    f"[ZEN] Key '{key[:6]}...{key[-4:]}' failed Gate 2 with status {resp.status_code} (UNAUTHORIZED)."
+                )
                 return False
             elif resp.status_code == 429:
-                logger.warning(f"[ZEN] Key '{key[:6]}...{key[-4:]}' is rate-limited (429) but validated as operational.")
+                logger.warning(
+                    f"[ZEN] Key '{key[:6]}...{key[-4:]}' is rate-limited (429) but validated as operational."
+                )
                 return True
             else:
                 logger.warning(f"[ZEN] Key '{key[:6]}...{key[-4:]}' warning status {resp.status_code}.")
@@ -170,7 +191,9 @@ async def run_diagnostics(force: bool) -> None:
             logger.critical("Aborting server start up due to key validation failures. Set --force to override.")
             sys.exit(1)
         else:
-            logger.warning("Boot validation failures detected, but override option '--force' is set. Proceeding to boot...")
+            logger.warning(
+                "Boot validation failures detected, but override option '--force' is set. Proceeding to boot..."
+            )
     else:
         logger.info("Gate 2 Diagnostics complete. All keys validated successfully.")
 

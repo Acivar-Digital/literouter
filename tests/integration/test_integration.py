@@ -37,10 +37,11 @@ def app_with_openrouter(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
 
     # Reset all singletons
-    import src.config as config_mod
     import src.metrics as metrics_mod
     import src.rate_limiter as rl_mod
     import src.redis_client as redis_mod
+
+    import src.config as config_mod
     import src.router as router_mod
 
     config_mod._cached_config = None
@@ -66,10 +67,11 @@ def app_with_auth(tmp_path, monkeypatch):
     monkeypatch.setenv("LITEROUTER_AUTH_KEY", "my-secret-key")
     monkeypatch.chdir(tmp_path)
 
-    import src.config as config_mod
     import src.metrics as metrics_mod
     import src.rate_limiter as rl_mod
     import src.redis_client as redis_mod
+
+    import src.config as config_mod
     import src.router as router_mod
 
     config_mod._cached_config = None

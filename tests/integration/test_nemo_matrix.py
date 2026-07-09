@@ -1,6 +1,7 @@
 import asyncio
-import httpx
 import json
+
+import httpx
 
 GATEWAY_URL = "http://localhost:7766"
 AUTH_TOKEN = "sk-lr-8f2a9e3b1c4d7e5f"
@@ -41,7 +42,13 @@ async def execute_test(stream: bool, use_tools: bool) -> bool:
     try:
         async with httpx.AsyncClient() as client:
             if stream:
-                async with client.stream("POST", f"{GATEWAY_URL}/v1/chat/completions", headers=headers, json=payload, timeout=30.0) as response:
+                async with client.stream(
+                    "POST",
+                    f"{GATEWAY_URL}/v1/chat/completions",
+                    headers=headers,
+                    json=payload,
+                    timeout=30.0,
+                ) as response:
                     if response.status_code != 200:
                         print(f"FAIL: HTTP {response.status_code}")
                         return False
@@ -80,7 +87,12 @@ async def execute_test(stream: bool, use_tools: bool) -> bool:
                             print("FAIL: Stream returned no content.")
                             return False
             else:
-                resp = await client.post(f"{GATEWAY_URL}/v1/chat/completions", headers=headers, json=payload, timeout=30.0)
+                resp = await client.post(
+                    f"{GATEWAY_URL}/v1/chat/completions",
+                    headers=headers,
+                    json=payload,
+                    timeout=30.0,
+                )
                 if resp.status_code != 200:
                     print(f"FAIL: HTTP {resp.status_code} - {resp.text}")
                     return False
@@ -107,7 +119,7 @@ async def execute_test(stream: bool, use_tools: bool) -> bool:
                         print("FAIL: Non-stream returned no content.")
                         return False
 
-    except Exception as e:
+    except Exception:
         import traceback
         traceback.print_exc()
         return False

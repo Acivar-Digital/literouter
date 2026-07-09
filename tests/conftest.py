@@ -22,10 +22,11 @@ def reset_singletons():
         if module_name in sys.modules:
             del sys.modules[module_name]
 
-    import src.config as config_mod
     import src.metrics as metrics_mod
     import src.rate_limiter as rl_mod
     import src.redis_client as redis_mod
+
+    import src.config as config_mod
     import src.router as router_mod
 
     # Reset config singleton

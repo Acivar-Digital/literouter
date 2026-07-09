@@ -39,7 +39,10 @@ async def test_google_pass_through_endpoint(monkeypatch):
             nonlocal mock_called
             mock_called = True
             assert "key=AIzaSyMockKey1234567890" in url_str
-            assert "models/gemma-4-26-a4b-it:generateContent" in url_str or "models/gemma-4-26-a4b-it:streamGenerateContent" in url_str
+            assert (
+                "models/gemma-4-26-a4b-it:generateContent" in url_str
+                or "models/gemma-4-26-a4b-it:streamGenerateContent" in url_str
+            )
             assert "/v1beta/" in url_str or "/v1/" in url_str
             content = b'{"candidates": [{"content": {"parts": [{"text": "Hello world"}]}}]}'
             return httpx.Response(200, content=content, request=request)

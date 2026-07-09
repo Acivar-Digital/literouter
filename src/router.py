@@ -11,7 +11,7 @@ from typing import List, Optional
 import redis.asyncio as redis
 from redis.exceptions import NoScriptError
 
-from src.config import REDIS_HOST, REDIS_PASSWORD, REDIS_PORT, REDIS_DB, get_model_limits
+from src.config import REDIS_DB, REDIS_HOST, REDIS_PASSWORD, REDIS_PORT, get_model_limits
 
 logger = logging.getLogger("router")
 

@@ -41,10 +41,10 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-import httpx
-from fastapi import FastAPI, Request, Response
-from fastapi.responses import JSONResponse, StreamingResponse
-from pydantic import BaseModel, ValidationError
+import httpx  # noqa: E402
+from fastapi import FastAPI, Request, Response  # noqa: E402
+from fastapi.responses import JSONResponse, StreamingResponse  # noqa: E402
+from pydantic import BaseModel, ValidationError  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
