@@ -264,16 +264,39 @@ async def _run_openai_fusion(
             resp_headers["X-Literouter-Model"] = upstream_id
 
             if is_stream:
+                raw_it = resp.aiter_raw()
+                try:
+                    first_chunk = await raw_it.__anext__()
+                except StopAsyncIteration:
+                    await resp.aclose()
+                    logger.warning(
+                        f"{group_id} {upstream_id} {i + 1}/{len(chain)} empty stream, advancing"
+                    )
+                    continue
+                except Exception as e:
+                    await resp.aclose()
+                    logger.warning(
+                        f"{group_id} {upstream_id} {i + 1}/{len(chain)} "
+                        f"early stream failure: {e}, advancing"
+                    )
+                    continue
 
-                async def stream_gen(response):
+                async def stream_gen(response, it, first):
                     try:
-                        async for chunk in response.aiter_raw():
+                        yield first
+                        async for chunk in it:
                             yield chunk
+                    except Exception as ex:
+                        logger.error(
+                            f"upstream stream broken mid-stream (model={upstream_id}): {ex}"
+                        )
                     finally:
                         await response.aclose()
 
                 return StreamingResponse(
-                    stream_gen(resp), status_code=resp.status_code, headers=resp_headers
+                    stream_gen(resp, raw_it, first_chunk),
+                    status_code=resp.status_code,
+                    headers=resp_headers,
                 )
             else:
                 content = await resp.aread()
@@ -346,14 +369,34 @@ async def _run_native_fusion(
                 headers=clean_headers(resp.headers),
             )
 
-        # Success — relay the native stream, tag the served model
+        # Success — read the first chunk NOW so an upstream that closes the
+        # stream before emitting any bytes (e.g. Google dropping the SSE early)
+        # falls back to the next chain model instead of poisoning the client
+        # stream with a truncated / broken response.
+        native_it = resp.aiter_bytes()
+        try:
+            first_chunk = await native_it.__anext__()
+        except StopAsyncIteration:
+            await resp.aclose()
+            logger.warning(
+                f"{group_id} {upstream_id} {i + 1}/{len(chain)} empty stream, advancing"
+            )
+            continue
+        except Exception as e:
+            await resp.aclose()
+            logger.warning(
+                f"{group_id} {upstream_id} {i + 1}/{len(chain)} "
+                f"early stream failure: {e}, advancing"
+            )
+            continue
+
         _close_circuit(upstream_id)
         if i > 0:
             _set_sticky(group_id, upstream_id)
         else:
             _clear_sticky(group_id)
         logger.info(f"{group_id} {upstream_id} {i + 1}/{len(chain)} native action={action}")
-        return _relay_native(resp, upstream_id)
+        return _relay_native(resp, upstream_id, native_it, first_chunk)
 
     logger.warning(f"fusion group={group_id} exhausted all backends")
     return JSONResponse(
@@ -514,20 +557,38 @@ async def fusion_native(model_name_and_action: str, request: Request):
     )
 
 
-def _relay_native(resp: httpx.Response, served_model: Optional[str]):
-    """Stream a native upstream response back to the client, unchanged."""
+def _relay_native(
+    resp: httpx.Response,
+    served_model: Optional[str],
+    iterator=None,
+    first_chunk=None,
+):
+    """Stream a native upstream response back to the client, unchanged.
+
+    `iterator` is the already-started async iterator (resp.aiter_bytes()).
+    `first_chunk` is the chunk already consumed from `iterator` for early-failure
+    detection; it is yielded first so the remainder of `iterator` continues
+    seamlessly. Mid-stream transport errors are caught and logged rather than
+    crashing the request handler with a raw traceback.
+    """
     headers = clean_headers(resp.headers)
     if served_model:
         headers["X-Literouter-Model"] = served_model
+    if iterator is None:
+        iterator = resp.aiter_bytes()
 
-    async def stream_gen(response):
+    async def stream_gen():
         try:
-            async for chunk in response.aiter_bytes():
+            if first_chunk is not None:
+                yield first_chunk
+            async for chunk in iterator:
                 yield chunk
+        except Exception as e:
+            logger.error(f"upstream stream broken mid-stream (model={served_model}): {e}")
         finally:
-            await response.aclose()
+            await resp.aclose()
 
-    return StreamingResponse(stream_gen(resp), status_code=resp.status_code, headers=headers)
+    return StreamingResponse(stream_gen(), status_code=resp.status_code, headers=headers)
 
 
 if __name__ == "__main__":
