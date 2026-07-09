@@ -1,0 +1,20 @@
+# LiteRouter code-hygiene pre-commit config.
+#
+# This file is the canonical config. It lives in admin/code_hygiene/ to keep
+# tooling consolidated. To activate locally, either:
+#   pre-commit install --config admin/code_hygiene/pre-commit-config.yaml
+# or symlink it to the repo root:
+#   ln -s admin/code_hygiene/pre-commit-config.yaml .pre-commit-config.yaml
+#
+# Manual run on all files:
+#   pre-commit run --all-files --config admin/code_hygiene/pre-commit-config.yaml
+#
+# ruff reads its rules/line-length from pyproject.toml ([tool.ruff]).
+# The `ruff` hook fixes check errors; `ruff-format` reformats touched files.
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.13
+    hooks:
+      - id: ruff
+        args: [--fix]
+      - id: ruff-format

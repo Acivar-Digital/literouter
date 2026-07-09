@@ -1,0 +1,26 @@
+name: Code Hygiene (ruff)
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  lint:
+    name: ruff check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        run: curl -LsSf https://astral.sh/uv/install.sh | sh
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Sync dependencies (incl. dev group with ruff)
+        run: uv sync
+
+      - name: Run code-hygiene gate
+        run: bash admin/code_hygiene/lint-gate.sh
