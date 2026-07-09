@@ -5,6 +5,7 @@ FastAPI Core, Streaming Normalization, Client Pool, & Failover Loop
 import asyncio
 import json
 import logging
+import os
 import time
 from collections import deque
 from contextlib import asynccontextmanager
@@ -45,7 +46,8 @@ async def lifespan(app: FastAPI):
     await router.connect()
     # Configure custom high-performance connection pool parameters
     limits = httpx.Limits(max_keepalive_connections=100, max_connections=500)
-    timeout = httpx.Timeout(connect=5.0, read=120.0, write=10.0, pool=5.0)
+    http_timeout = float(os.getenv("LITEROUTER_HTTP_TIMEOUT", "300"))
+    timeout = httpx.Timeout(connect=5.0, read=http_timeout, write=10.0, pool=5.0)
     http_client = httpx.AsyncClient(limits=limits, timeout=timeout)
     logger.info("Persistent Gateway Connection Pools initialized.")
     yield

@@ -16,6 +16,12 @@ const LITEROUTER_ROTATE_DELAY_MS = parseInt(
   10,
 );
 
+// Unified upstream HTTP client timeout (seconds) shared with 7766/7768 via .env.
+const LITEROUTER_HTTP_TIMEOUT_MS = parseInt(
+  Bun.env.LITEROUTER_HTTP_TIMEOUT || "300",
+  10,
+) * 1000;
+
 const REDIS_HOST = Bun.env.REDIS_HOST || "127.0.0.1";
 const REDIS_PORT = parseInt(Bun.env.REDIS_PORT || "6379", 10);
 const REDIS_PASSWORD = Bun.env.REDIS_PASSWORD || undefined;
@@ -558,6 +564,7 @@ serve({
             method: "POST",
             headers,
             body: JSON.stringify(reqJson),
+            signal: AbortSignal.timeout(LITEROUTER_HTTP_TIMEOUT_MS),
           });
 
           if (!upstreamRes.ok) {
@@ -682,6 +689,7 @@ serve({
             "Content-Type": "application/json",
           },
           body: JSON.stringify(reqJson),
+          signal: AbortSignal.timeout(LITEROUTER_HTTP_TIMEOUT_MS),
         });
 
         if (!upstreamRes.ok) {

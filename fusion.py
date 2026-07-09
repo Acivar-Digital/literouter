@@ -178,7 +178,8 @@ async def lifespan(app: FastAPI):
         sys.exit(1)
 
     # 3. Init HTTP client
-    http_client = httpx.AsyncClient(timeout=httpx.Timeout(300.0))
+    http_timeout = float(os.getenv("LITEROUTER_HTTP_TIMEOUT", "300"))
+    http_client = httpx.AsyncClient(timeout=httpx.Timeout(http_timeout))
 
     yield
 
