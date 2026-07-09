@@ -29,7 +29,7 @@ LiteRouter ships with pre-configured support and metadata for "Zen models" (free
 - `nemotron-3-ultra-free`
 - `north-mini-code-free`
 
-Model metadata configurations are tracked in `models/zen_models.json`.
+Model metadata configurations are tracked in `models.json`.
 
 **One endpoint, multiple providers.** Each provider has its own pool of API keys with independent rotation, health tracking, and rate limiting.
 

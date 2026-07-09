@@ -29,7 +29,7 @@ All notable changes to LiteRouter will be documented in this file.
 ## [2.7.0] — 2026-06-20
 
 ### Added
-- **Zen Models Configuration** — Added tracking and metadata for Zen models (`big-pickle`, `deepseek-v4-flash-free`, `mimo-v2.5-free`, `qwen3.6-plus-free`, `minimax-m3-free`, `nemotron-3-ultra-free`, `north-mini-code-free`) in `models/zen_models.json`.
+- **Zen Models Configuration** — Added tracking and metadata for Zen models (`big-pickle`, `deepseek-v4-flash-free`, `mimo-v2.5-free`, `qwen3.6-plus-free`, `minimax-m3-free`, `nemotron-3-ultra-free`, `north-mini-code-free`) in `models.json`.
 
 ### Fixed
 - **Configuration Fixes** — Fixed trailing commas in `opencode.json` configuration and added `User-Agent: LiteRouter/2.2` header to `src/doctor.py` to prevent validation rejections.
