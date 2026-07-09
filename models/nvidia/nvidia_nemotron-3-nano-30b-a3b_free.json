@@ -1,11 +1,11 @@
 {
-  "id": "nvidia/nemotron-3-nano-30b-a3b:free",
+  "id": "nvidia/nemotron-3-nano-30b-a3b",
   "canonical_slug": "nvidia/nemotron-3-nano-30b-a3b",
   "hugging_face_id": "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16",
-  "name": "NVIDIA: Nemotron 3 Nano 30B A3B (free)",
+  "name": "NVIDIA: Nemotron 3 Nano 30B A3B",
   "created": 1765731275,
   "description": "NVIDIA Nemotron 3 Nano 30B A3B is a small language MoE model with highest compute efficiency and accuracy for developers to build specialized agentic AI systems. The model is fully...",
-  "context_length": 256000,
+  "context_length": 262144,
   "architecture": {
     "modality": "text->text",
     "input_modalities": [
@@ -18,23 +18,34 @@
     "instruct_type": null
   },
   "pricing": {
-    "prompt": "0",
-    "completion": "0"
+    "prompt": "0.00000005",
+    "completion": "0.0000002"
   },
   "top_provider": {
-    "context_length": 256000,
-    "max_completion_tokens": null,
+    "context_length": 262144,
+    "max_completion_tokens": 228000,
     "is_moderated": false
   },
   "per_request_limits": null,
   "supported_parameters": [
+    "frequency_penalty",
     "include_reasoning",
+    "logit_bias",
+    "logprobs",
     "max_tokens",
+    "min_p",
+    "presence_penalty",
     "reasoning",
+    "repetition_penalty",
+    "response_format",
     "seed",
+    "stop",
+    "structured_outputs",
     "temperature",
     "tool_choice",
     "tools",
+    "top_k",
+    "top_logprobs",
     "top_p"
   ],
   "default_parameters": {

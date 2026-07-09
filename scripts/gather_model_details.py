@@ -9,35 +9,74 @@ logger = logging.getLogger("gather_details")
 MODELS_JSON = Path(__file__).resolve().parent.parent / "models.json"
 MODELS_DIR = Path(__file__).resolve().parent.parent / "models"
 
-# Static org-name aliases: our upstream_id org -> OpenRouter's org.
-# These do not change (NVIDIA vs OpenRouter naming conventions).
-ORG_ALIASES = {
+# --- ONE-TIME STATIC SETUP (top of script) ---
+
+# 1. Strip these suffixes before matching (OpenRouter has no -free / :free variants)
+FREE_SUFFIXES = (":free", "-free")
+
+# 2. Org remap: our upstream org -> OpenRouter's org.
+#    These do not change (NVIDIA/zen vs OpenRouter naming conventions).
+ORG_MAP = {
     "meta": "meta-llama",
     "minimaxai": "minimax",
     "deepseek-ai": "deepseek",
     "stepfun-ai": "stepfun",
 }
 
-def _alias(model_id):
-    """Return model_id with its first path segment replaced via ORG_ALIASES."""
+# 3. zen/deepseek* -> OpenRouter deepseek catalog entry (org remap + suffix strip)
+ZEN_DEEPSEEK_ORG = "deepseek"
+
+
+def _strip_free(model_id):
+    """Remove :free / -free suffixes from the id."""
+    s = model_id
+    for suf in FREE_SUFFIXES:
+        if s.endswith(suf):
+            s = s[: -len(suf)]
+    return s
+
+
+def _remap_org(model_id):
+    """Replace first path segment via ORG_MAP if present."""
     if "/" in model_id:
         org, rest = model_id.split("/", 1)
-        if org in ORG_ALIASES:
-            return f"{ORG_ALIASES[org]}/{rest}"
+        if org in ORG_MAP:
+            return f"{ORG_MAP[org]}/{rest}"
+    return model_id
+
+
+def _zen_deepseek(model_id):
+    """zen/deepseek-X-free -> deepseek/deepseek-X."""
+    if model_id.startswith("zen/deepseek"):
+        rest = model_id.split("/", 1)[1]      # deepseek-v4-flash-free
+        rest = _strip_free(rest)                # deepseek-v4-flash
+        return f"{ZEN_DEEPSEEK_ORG}/{rest}"     # deepseek/deepseek-v4-flash
     return None
 
+
 def match_openrouter(or_catalog, sys_id, upstream_id):
-    """Try to find a model in OpenRouter's catalog by several ID variants."""
-    candidates = [sys_id, upstream_id]
+    """Normalize ids (strip free, remap org) and find in OpenRouter catalog."""
+    candidates = []
     for cid in (sys_id, upstream_id):
+        if not cid:
+            continue
+        # original with only provider prefix dropped (keeps :free if present)
         if "/" in cid:
-            candidates.append(cid.split("/", 1)[1])  # drop first prefix
-    for cid in (sys_id, upstream_id):
-        a = _alias(cid)
-        if a:
-            candidates.append(a)
-            if "/" in a:
-                candidates.append(a.split("/", 1)[1])
+            candidates.append(cid.split("/", 1)[1])
+        base = _strip_free(cid)
+        candidates.append(base)                       # full normalized id
+        if "/" in base:
+            candidates.append(base.split("/", 1)[1])  # drop provider prefix
+        remapped = _remap_org(base)
+        if remapped != base:
+            candidates.append(remapped)              # org-remapped id
+            if "/" in remapped:
+                candidates.append(remapped.split("/", 1)[1])
+    # zen/deepseek special case
+    z = _zen_deepseek(sys_id)
+    if z:
+        candidates.append(z)
+
     for c in candidates:
         if c in or_catalog:
             return or_catalog[c]
