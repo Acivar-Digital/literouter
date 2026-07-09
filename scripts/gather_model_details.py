@@ -9,9 +9,35 @@ logger = logging.getLogger("gather_details")
 MODELS_JSON = Path(__file__).resolve().parent.parent / "models.json"
 MODELS_DIR = Path(__file__).resolve().parent.parent / "models"
 
+# Static org-name aliases: our upstream_id org -> OpenRouter's org.
+# These do not change (NVIDIA vs OpenRouter naming conventions).
+ORG_ALIASES = {
+    "meta": "meta-llama",
+    "minimaxai": "minimax",
+    "deepseek-ai": "deepseek",
+    "stepfun-ai": "stepfun",
+}
+
+def _alias(model_id):
+    """Return model_id with its first path segment replaced via ORG_ALIASES."""
+    if "/" in model_id:
+        org, rest = model_id.split("/", 1)
+        if org in ORG_ALIASES:
+            return f"{ORG_ALIASES[org]}/{rest}"
+    return None
+
 def match_openrouter(or_catalog, sys_id, upstream_id):
     """Try to find a model in OpenRouter's catalog by several ID variants."""
-    candidates = [sys_id, upstream_id, sys_id.split("/", 1)[-1], upstream_id.split("/", 1)[-1]]
+    candidates = [sys_id, upstream_id]
+    for cid in (sys_id, upstream_id):
+        if "/" in cid:
+            candidates.append(cid.split("/", 1)[1])  # drop first prefix
+    for cid in (sys_id, upstream_id):
+        a = _alias(cid)
+        if a:
+            candidates.append(a)
+            if "/" in a:
+                candidates.append(a.split("/", 1)[1])
     for c in candidates:
         if c in or_catalog:
             return or_catalog[c]

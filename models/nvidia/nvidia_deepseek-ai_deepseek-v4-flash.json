@@ -1,0 +1,139 @@
+{
+  "id": "deepseek/deepseek-v4-flash",
+  "canonical_slug": "deepseek/deepseek-v4-flash-20260423",
+  "hugging_face_id": "deepseek-ai/DeepSeek-V4-Flash",
+  "name": "DeepSeek: DeepSeek V4 Flash",
+  "created": 1777000666,
+  "description": "DeepSeek V4 Flash is an efficiency-optimized Mixture-of-Experts model from DeepSeek with 284B total parameters and 13B activated parameters, supporting a 1M-token context window. It is designed for fast inference and...",
+  "context_length": 1048576,
+  "architecture": {
+    "modality": "text->text",
+    "input_modalities": [
+      "text"
+    ],
+    "output_modalities": [
+      "text"
+    ],
+    "tokenizer": "DeepSeek",
+    "instruct_type": null
+  },
+  "pricing": {
+    "prompt": "0.00000009",
+    "completion": "0.00000018",
+    "input_cache_read": "0.000000018"
+  },
+  "top_provider": {
+    "context_length": 1048576,
+    "max_completion_tokens": 65536,
+    "is_moderated": false
+  },
+  "per_request_limits": null,
+  "supported_parameters": [
+    "frequency_penalty",
+    "include_reasoning",
+    "logit_bias",
+    "logprobs",
+    "max_tokens",
+    "min_p",
+    "presence_penalty",
+    "reasoning",
+    "repetition_penalty",
+    "response_format",
+    "seed",
+    "stop",
+    "structured_outputs",
+    "temperature",
+    "tool_choice",
+    "tools",
+    "top_k",
+    "top_logprobs",
+    "top_p"
+  ],
+  "default_parameters": {
+    "temperature": null,
+    "top_p": null,
+    "top_k": null,
+    "frequency_penalty": null,
+    "presence_penalty": null,
+    "repetition_penalty": null
+  },
+  "supported_voices": null,
+  "knowledge_cutoff": null,
+  "expiration_date": null,
+  "links": {
+    "details": "/api/v1/models/deepseek/deepseek-v4-flash-20260423/endpoints"
+  },
+  "benchmarks": {
+    "design_arena": [
+      {
+        "arena": "models",
+        "category": "3d",
+        "elo": 1266,
+        "win_rate": 50,
+        "rank": 28
+      },
+      {
+        "arena": "models",
+        "category": "asciiart",
+        "elo": 1169,
+        "win_rate": 44.9,
+        "rank": 35
+      },
+      {
+        "arena": "models",
+        "category": "codecategories",
+        "elo": 1251,
+        "win_rate": 50,
+        "rank": 32
+      },
+      {
+        "arena": "models",
+        "category": "dataviz",
+        "elo": 1161,
+        "win_rate": 40.9,
+        "rank": 64
+      },
+      {
+        "arena": "models",
+        "category": "gamedev",
+        "elo": 1263,
+        "win_rate": 50.7,
+        "rank": 28
+      },
+      {
+        "arena": "models",
+        "category": "svg",
+        "elo": 1213,
+        "win_rate": 49,
+        "rank": 25
+      },
+      {
+        "arena": "models",
+        "category": "uicomponent",
+        "elo": 1217,
+        "win_rate": 45.9,
+        "rank": 41
+      },
+      {
+        "arena": "models",
+        "category": "website",
+        "elo": 1247,
+        "win_rate": 50.5,
+        "rank": 32
+      }
+    ],
+    "artificial_analysis": {
+      "intelligence_index": 40.3,
+      "coding_index": 56.2,
+      "agentic_index": 31.1
+    }
+  },
+  "reasoning": {
+    "mandatory": false,
+    "supported_efforts": [
+      "xhigh",
+      "high"
+    ],
+    "default_effort": "high"
+  }
+}

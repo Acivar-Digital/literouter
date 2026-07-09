@@ -11,14 +11,14 @@
     "provider": "nvidia",
     "upstream_id": "meta/llama-3.1-8b-instruct",
     "context": 131072,
-    "max_output": 65535
+    "max_output": 16384
   },
   {
     "system_id": "nvidia/meta/llama-3.1-70b-instruct",
     "provider": "nvidia",
     "upstream_id": "meta/llama-3.1-70b-instruct",
     "context": 131072,
-    "max_output": 65535
+    "max_output": 16384
   },
   {
     "system_id": "nvidia/mistralai/mistral-large",
@@ -45,15 +45,15 @@
     "system_id": "nvidia/minimaxai/minimax-m3",
     "provider": "nvidia",
     "upstream_id": "minimaxai/minimax-m3",
-    "context": 250000,
-    "max_output": 65535
+    "context": 1048576,
+    "max_output": 512000
   },
   {
     "system_id": "nvidia/minimaxai/minimax-m2.7",
     "provider": "nvidia",
     "upstream_id": "minimaxai/minimax-m2.7",
-    "context": 250000,
-    "max_output": 65535
+    "context": 204800,
+    "max_output": 196608
   },
   {
     "system_id": "nvidia/moonshotai/kimi-k2.6",
@@ -66,8 +66,8 @@
     "system_id": "nvidia/stepfun-ai/step-3.7-flash",
     "provider": "nvidia",
     "upstream_id": "stepfun-ai/step-3.7-flash",
-    "context": 250000,
-    "max_output": 65535
+    "context": 256000,
+    "max_output": 256000
   },
   {
     "system_id": "nvidia/mistralai/mistral-medium-3.5-128b",
@@ -81,14 +81,14 @@
     "provider": "nvidia",
     "upstream_id": "deepseek-ai/deepseek-v4-pro",
     "context": 1048576,
-    "max_output": 65535
+    "max_output": 384000
   },
   {
     "system_id": "nvidia/deepseek-ai/deepseek-v4-flash",
     "provider": "nvidia",
     "upstream_id": "deepseek-ai/deepseek-v4-flash",
     "context": 1048576,
-    "max_output": 65535
+    "max_output": 65536
   },
   {
     "system_id": "nvidia/nemotron-3-nano-30b-a3b:free",
