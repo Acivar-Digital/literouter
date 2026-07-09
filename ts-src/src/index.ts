@@ -480,12 +480,17 @@ serve({
   async fetch(req) {
     const url = new URL(req.url);
 
-    // Google native SDK pass-through route
-    if (url.pathname.startsWith("/v1beta/models/")) {
-      const modelNameAndAction = url.pathname.substring("/v1beta/models/".length);
+    // Google native SDK pass-through route (mirror main.py:289-296)
+    if (url.pathname.startsWith("/v1beta/")) {
+      let modelNameAndAction = url.pathname.substring("/v1beta/".length);
+      if (modelNameAndAction.startsWith("models/")) {
+        modelNameAndAction = modelNameAndAction.substring("models/".length);
+      }
       const parts = modelNameAndAction.split(":");
       const modelName = parts[0];
       const action = parts[1] || "generateContent";
+
+      console.log(`[REQ-GOOGLE] ${modelName}:${action} (provider=google)`);
 
       // Auth Gate
       if (!verifyAuthKey(req, url)) {
@@ -557,18 +562,21 @@ serve({
 
           if (!upstreamRes.ok) {
             const status = upstreamRes.status.toString();
+            const errText = await upstreamRes.text();
+            console.error(`[GOOGLE] Upstream native failed with status ${status}: ${errText}`);
             await router.reportError(
               meta.provider,
               activeKey,
               status,
               meta.upstream_model,
             );
-            if (attempt === 2)
-              return new Response(`Upstream failed: ${status}`, { status: 502 });
-            continue;
-          }
+          if (attempt === 2)
+            return new Response(`Upstream failed: ${status}`, { status: 502 });
+          continue;
+        }
 
-          const responseHeaders: Record<string, string> = {};
+        console.log(`[GOOGLE] Served ${modelName}:${action} (upstream=${meta.upstream_model}) attempt ${attempt + 1}`);
+        const responseHeaders: Record<string, string> = {};
           upstreamRes.headers.forEach((v, k) => {
             if (!["transfer-encoding", "content-encoding"].includes(k.toLowerCase())) {
               responseHeaders[k] = v;
@@ -652,6 +660,7 @@ serve({
     }
     reqJson.messages = mergeConsecutiveMessages(reqJson.messages || []);
     const isStream = reqJson.stream === true;
+    console.log(`[REQ] ${modelName} (provider=${meta.provider}, upstream=${meta.upstream_model}, stream=${isStream})`);
     const estimatedTokens =
       Math.floor(JSON.stringify(reqJson.messages).length / 4) +
       (reqJson.max_tokens || 2048);
@@ -693,6 +702,7 @@ serve({
           continue;
         }
 
+        console.log(`[${meta.provider.toUpperCase()}] Served ${modelName} (upstream=${meta.upstream_model}) attempt ${attempt + 1}`);
         if (isStream) {
           const transformStream = createStreamTransformer(
             LITEROUTER_COLLAPSE_REASONING,

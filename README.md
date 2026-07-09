@@ -47,9 +47,27 @@ curl -X POST http://localhost:7766/v1/chat/completions \
 
 The provider prefix is automatically stripped before forwarding to the upstream API (e.g., `nvidia/openai/gpt-oss-120b` → `openai/gpt-oss-120b`).
 
+## Fusion Sidecar (Port 7768)
+
+LiteRouter includes a **Fusion Sidecar** that fronts the main gateway to provide "virtual" models with automatic priority-based failover.
+
+- **Priority Fallback Chains**: Define a sequence of models (e.g., `gemma-31b` $\rightarrow$ `gemini-flash` $\rightarrow$ `gemma-26b`). If the primary model returns a `429` or `5xx`, Fusion automatically falls back to the next model in the chain.
+- **Sticky Fallback**: To prevent "freezing" the system by repeatedly hitting a rate-limited primary, Fusion "sticks" to the successful fallback model for 5 minutes, skipping higher-priority models until the cooldown expires.
+- **Group-Aware Routing**: Support for different protocols per group (e.g., `local/google` uses Native Google SDK, `pydantic/google` uses OpenAI-compat).
+
+**Example Usage**:
+```bash
+# Target the Fusion sidecar on 7768
+curl -X POST http://localhost:7768/v1/chat/completions \
+  -H "Authorization: Bearer sk-lr-your-auth-key" \
+  -d '{"model": "local/google", "messages": [{"role": "user", "content": "Hello"}]}'
+```
+The response header `X-Literouter-Model` reveals which model in the chain actually served the request.
+
 ## Features
 
 - **Multi-provider** — OpenRouter, Nvidia, Anthropic (and more) through a single endpoint
+- **Priority Fallback Chains** — Automatic failover across model tiers via the Fusion sidecar (Port 7768)
 - **Model-based routing** — Provider selected automatically from the model prefix
 - **Redis-backed round-robin** — Atomic key rotation with persistent counter
 - **Automatic cooldown** — Exponential backoff (60s → 120s → … → 1h max) on 429s
@@ -115,6 +133,8 @@ Add as many providers as you want — just follow the `{PROVIDER}_BASE_URL` + `{
 ./scripts/status.sh    # Check if running
 ./scripts/restart.sh   # Graceful restart
 ./scripts/stop.sh      # Stop
+uv run uvicorn fusion:app --host 0.0.0.0 --port 7768 # Start Fusion Sidecar
+
 ```
 
 ## Usage

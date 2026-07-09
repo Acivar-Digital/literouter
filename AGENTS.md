@@ -5,6 +5,7 @@ This file provides mandatory operational guidance to agents when working with co
 ## Technical Knowledge Base
 For all system design, folder maps, design decisions, and architectural constraints, refer to:
 👉 `docs/ARCHITECTURE.md`
+👉 `docs/Longrunning_Mode.md` (Fusion Sticky Fallback details)
 
 ---
 

@@ -1,69 +1,189 @@
-# Instruction: Build LiteRouter TypeScript/Bun Proxy (Port 7767)
+# Outsource Prompt: Fix LiteRouter Atomicity & Encoding Bugs
 
-You are tasked with implementing a TypeScript port of the LiteRouter API Gateway to run natively on the **Bun** runtime on port **7767**.
+## Context
 
----
+You are implementing bug fixes for **LiteRouter**, a Python rotating API gateway that proxies requests to Google, Nvidia, OpenRouter, and Zen providers. It uses Redis/Valkey sorted sets for rolling 60-second RPM/TPM quota enforcement (recently upgraded from wall-clock minute buckets — you can ignore the old code).
 
-## Core Architectural Requirements
+## Files Staged for Editing
 
-1. **Runtime & Framework:** Use **pure `Bun.serve`** (do not use Elysia, Hono, or any external framework). Implement native HTTP request/response piping and Web Streams.
-2. **Port Configuration:** Listen on port **7767**.
-3. **Dynamic Configuration via `models.json`:**
-   - The TypeScript proxy must **not** hardcode the `MODEL_REGISTRY` mapping.
-   - Instead, load `models.json` from the root directory dynamically on startup.
-   - The schema of `models.json` is a JSON array of objects:
-     ```json
-     {
-       "system_id": "nvidia/deepseek-ai/deepseek-v4-flash",
-       "provider": "nvidia",
-       "upstream_id": "deepseek-ai/deepseek-v4-flash",
-       "context": 1048576,
-       "max_output": 65535
-     }
-     ```
-   - Resolve the target `api_url` dynamically on startup by matching the `provider` and constructing it using the environment variable base URLs (e.g. `NVIDIA_BASE_URL + "/chat/completions"`, `OPENROUTER_BASE_URL + "/chat/completions"`, or `ZEN_BASE_URL + "/chat/completions"`).
-4. **API Key & State Rotation (Valkey/Redis):** 
-   - Connect to the same Valkey/Redis instance (`REDIS_HOST` defaulting to `127.0.0.1`, `REDIS_PORT` to `6379`).
-   - **Must share the exact same DB keys and namespace format** as the Python version:
-     - Cooldown key: `cooldown:${provider}:${key_hash}:${model_name}`
-     - Minute TPM quota: `quota:${provider}:${key_hash}:${model_name}:tpm:${minute_ts}`
-     - Minute RPM quota: `quota:${provider}:${key_hash}:${model_name}:rpm:${minute_ts}`
-   - This ensures rotation, cooldown, and quarantine states are fully synchronized in real-time between the Python (7766) and TS (7767) ports.
-5. **Configurable Rotation Retry Delay:**
-   - Load `LITEROUTER_ROTATE_DELAY_MS` from `.env` (default to 2000ms if missing).
-   - If `NoDeploymentsAvailable` is raised (all keys in cooldown or exhausted), the failover retry loop should sleep for `LITEROUTER_ROTATE_DELAY_MS / 1000` seconds before making the next attempt.
-6. **Coordinated Start & End (Orchestration):**
-   - Create startup and shutdown scripts to manage **both** the Python (7766) and TypeScript (7767) processes together (Option A).
-   - Flush Valkey once at coordinated startup, and once at coordinated shutdown.
-7. **Isolated & Automated Log Cleaning:**
-   - Keep log outputs strictly isolated:
-     - Python logs to `logs/literouter.log`
-     - TypeScript/Bun logs to `logs/literouter-ts.log`
-   - Every time the coordinated shutdown/stop script is executed, automatically clean the entire `logs/` directory (`rm -f logs/*.log logs/*.db`) so that the workspace files remain lean and don't bloat the context window of AI agents.
-8. **Protocols:** Support standard OpenAI `/v1/chat/completions` requests. Route correctly, sanitize message payloads (e.g., merging consecutive messages with identical roles, cleaning LaTeX symbols, and handling reasoning formats), and proxy upstream.
-9. **No External LLM Calls:** Since LiteRouter is a transparent proxy, it does not perform LLM calls itself (so it does not use `pydantic-ai` or `instructor`). However, it must cleanly forward standard Server-Sent Events (SSE) stream chunks and tool call payloads so that downstream clients using `instructor` or `vercel-ai-sdk` can parse them.
+`admin/studio/upload/` contains:
+- `router.py` — Core key rotation and quota logic (main target)
+- `main.py` — FastAPI routes, streaming, failover (secondary target)
+- `config.py` — Configuration, model registry, env vars
+- `start.sh` — Boot script
+- `.env` — Environment reference
 
----
+## Bugs to Fix
 
-## Code Base Reference (Python Context)
+### Bug 1: TOCTOU Race in Quota Check (HIGH — router.py)
 
-The original Python codebase is staged in `admin/studio/upload/`:
-- `config.py`: Contains static key validation, model limit definitions, and the `MODEL_REGISTRY` mapping.
-- `router.py`: Implements the key rotation, cooldown tracking, error reporting, and Valkey transaction pipeline.
-- `main.py`: Implements FastAPI routing, message cleansing, streaming SSE transformations, and failover/retry loop logic.
-- `models.json`: The dynamic registry database source of truth.
+**Location**: `get_available_key()` method (around lines 115-170) and `_record_usage()` (lines 165-175)
 
----
+**Problem**: Quota is READ (Redis ZRANGEBYSCORE) then later WRITTEN (Redis ZADD + EXPIRE). Between read and write, another concurrent request can also read under-limit quota. Both pass — RPM/TPM overrun by N concurrent burst requests.
 
-## Outsource Compliance Checklist
+```python
+# L116 — READ quota
+members = await self.redis.zrangebyscore(rolling_key, now - 60, now)
+current_rpm = len(members)
+current_tpm = sum(...)
 
-- **Q1: Are they fully Pydantic v2.0+ compliant?**
-  * *Answer:* This is a TypeScript port using pure Bun.serve, so Pydantic is not used. We use typed TypeScript interfaces to enforce safety.
-- **Q2: Do scripts involving LLM operations use `pydantic-ai` v2.0+ or `instructor`?**
-  * *Answer:* The proxy does not run LLM calls, but must fully support forwarding tool calls and streamed chunks so that downstream clients using `instructor` or `vercel-ai-sdk` can parse them.
-- **Q3: Are we cleaning up dead code?**
-  * *Answer:* Yes, all legacy, unused variables, and dead code pathways present in the Python reference must be skipped.
-- **Q4: Have we considered the upstream and downstream scripts that might need refactoring?**
-  * *Answer:* Yes, coordinated startup/shutdown scripts (Option A) will be created to manage both ports.
-- **Q5: Under what conditions should we use or avoid Instructor?**
-  * *Answer:* We avoid it here as it is a proxy, but we ensure all data streams are perfectly transparent for clients that do use it.
+# ... several Python lines (min_delay check, next key loop) ...
+
+# L172 — WRITE usage (much later, non-atomic)
+pipe.zadd(key, {member: now})
+pipe.expire(key, 120)
+```
+
+**Fix**: Replace the READ+WRITE pattern with an **atomic Lua script** that does prune, check, and record in one EVAL/EVALSHA call.
+
+Design the Lua script to:
+1. Take `KEYS[1]` = rolling key, `ARGV` = `[now, max_rpm, max_tpm, estimated_tokens, member_string]`
+2. `ZREMRANGEBYSCORE` old entries (score `-inf` to `now - 60`)
+3. `ZRANGEBYSCORE` remaining entries (score `now - 60` to `now`)
+4. Count members = RPM, sum token values = TPM
+5. If RPM >= max_rpm OR TPM + estimated_tokens > max_tpm: return `0` (QUOTA_EXCEEDED)
+6. Else: `ZADD` + `EXPIRE 120`, return `1` (OK)
+
+In Python:
+- Load script once in `connect()` via `script_load()`, store SHA in `self._quota_script_sha`
+- Replace the quota read block + `_record_usage()` call with `evalsha(...)` in both:
+  - The main loop (line ~116-139)
+  - The LRU fallback path (line ~149-158)
+- The Lua script result (`1` = OK, `0` = exceeded) determines whether to use the key
+- Remove `_record_usage()` method entirely — it is replaced by the Lua script
+
+**Important**: The LRU fallback must also re-check quota via the Lua script (not assume the earlier check is still valid), because concurrent requests may have consumed quota between the main loop pass and the LRU fallback.
+
+### Bug 2: `report_error()` Exception in Failover Catch Block (HIGH — main.py)
+
+**Location**: Two identical patterns — Google SDK route (around line 609) and OpenAI route (around line 715)
+
+**Problem**: When a request fails and `report_error()` is called inside the `except` block, a Valkey outage will cause `report_error()` to throw. Since this isn't inside another try/except, the exception escapes the failover loop, returning HTTP 500 instead of retrying the next key.
+
+```python
+except (httpx.HTTPStatusError, httpx.RequestError) as exc:
+    ...
+    if active_key:
+        await router.report_error(...)  # If Valkey is down, this throws!
+    if attempt == num_keys:
+        raise HTTPException(status_code=502, ...)
+```
+
+**Fix**: Wrap each `report_error()` call in try/except:
+
+```python
+if active_key:
+    try:
+        await router.report_error(provider, active_key, str(status), upstream_model)
+    except Exception as report_err:
+        logger.error(f"report_error failed for {provider} key {active_key[:6]}...{active_key[-4:]}: {report_err}")
+```
+
+Apply to BOTH the Google SDK route AND the OpenAI route failover catch blocks.
+
+### Bug 3: `ensure_ascii=True` in Streaming SSE (HIGH — main.py)
+
+**Location**: Line 445 in `stream_transformer()` — the JSON serialization of streaming chunks
+
+**Problem**: `json.dumps(chunk_json)` uses default `ensure_ascii=True`, which escapes ALL non-ASCII characters as `\uXXXX`. This affects:
+- Chinese/Japanese text in model responses
+- Emojis
+- LaTeX symbols after `_clean_latex_symbols_bytes` substitution
+- Any Unicode content
+
+```python
+yield f"data: {json.dumps(chunk_json)}\n\n"
+```
+
+**Fix**: Add `ensure_ascii=False`:
+```python
+yield f"data: {json.dumps(chunk_json, ensure_ascii=False)}\n\n"
+```
+
+No other changes needed.
+
+### Bug 4: `REDIS_DB` Environment Variable Ignored (MEDIUM — config.py + router.py)
+
+**Location**: `config.py` never reads `REDIS_DB`; `router.py` uses Redis default `db=0`
+
+**Problem**: `.env` has `REDIS_DB=0` but if a user changes it to `REDIS_DB=1`, the setting is silently ignored because neither `config.py` nor `router.py` reference it.
+
+**Fix in `config.py`**:
+```python
+REDIS_DB = int(os.getenv("REDIS_DB", "0"))
+```
+
+**Fix in `router.py`**:
+Update the import and pass `db=REDIS_DB` to `redis.Redis()`:
+```python
+from src.config import REDIS_HOST, REDIS_PASSWORD, REDIS_PORT, REDIS_DB, get_model_limits
+
+# In connect():
+self.redis = redis.Redis(
+    host=REDIS_HOST,
+    port=REDIS_PORT,
+    password=REDIS_PASSWORD,
+    db=REDIS_DB,
+    decode_responses=True
+)
+```
+
+### Bug 5: `zremrangebyscore` Min Score Should Be `-inf` (MEDIUM — router.py)
+
+**Location**: `_record_usage()` line 172 (will be removed by Bug 1 fix, but if kept in LRU path, fix here)
+
+**Problem**: `pipe.zremrangebyscore(key, 0, now - 60)` uses `0` as minimum score instead of `-inf`. Works by coincidence because `time.time()` always returns >0, but semantically wrong.
+
+**Fix**: This is automatically resolved by Bug 1 (removing `_record_usage()`). If you keep a pipeline in any code path, use `-inf`:
+```python
+pipe.zremrangebyscore(key, '-inf', now - 60)
+```
+
+### Bug 6: Gate 2 Bypass on Restart (MEDIUM — start.sh)
+
+**Location**: `start.sh` directly boots the server without running `doctor.py`
+
+**Problem**: If a key was revoked between restarts, the server starts healthy but silently fails on every request using that key, until runtime error handling eventually quarantines it.
+
+**Fix**: Before starting the server, run the doctor gate:
+```bash
+uv run python src/doctor.py
+if [ $? -ne 0 ]; then
+    echo "ERROR: Gate 2 validation failed. Fix keys before starting."
+    exit 1
+fi
+```
+
+Add this after `flush_valkey` and before the `tmux new-session` commands in `start.sh`.
+
+## Implementation Guidelines
+
+1. **No other changes**: Do not refactor, reformat, or rename anything beyond the specific changes requested above.
+2. **Preserve logging format**: Keep the existing log message format exactly as-is (same wording, same variables).
+3. **Lua script style**: Write the Lua script as a raw string at module level in `router.py` (a `QUOTA_CHECK_SCRIPT` constant), then load via `script_load` in `connect()`.
+4. **Error handling**: The Lua script `evalsha` call may fail if the script isn't loaded — catch `redis.exceptions.NoScriptError` and fall back to `eval()` with the raw script as string.
+5. **Return types**: The Lua script must return integer `1` (OK, quota available) or `0` (quota exceeded). Redis Lua converts these to integers in the response.
+6. **Imports**: Only add imports that are actually needed (e.g., you won't need new imports for the Lua script).
+7. **Don't break the Google SDK route**: The Google SDK route (`google_sdk_route`) also uses `_record_usage` through the `router` object — but it goes through `get_available_key()`, not `_record_usage()` directly. So removing `_record_usage()` is safe as long as both call paths in `get_available_key()` use the Lua script.
+
+## Expected Output
+
+Generate the complete modified files. Mark each change with a clear comment showing which bug number it fixes:
+- `# BUG 1: TOCTOU race — atomic Lua script`
+- `# BUG 2: report_error failover cascade protection`
+- `# BUG 3: ensure_ascii=False for streaming`
+- `# BUG 4: REDIS_DB config drift`
+- `# BUG 5: zremrangebyscore -inf`
+- `# BUG 6: Gate 2 on start.sh`
+
+## Verification
+
+After implementing, confirm:
+1. `router.py`: `_record_usage()` method is removed, replaced by Lua script `evalsha` in both the main loop and LRU fallback
+2. `router.py`: All ZRANGEBYSCORE quota reads inside `get_available_key()` are removed (replaced by Lua script)
+3. `router.py`: `connect()` has `script_load()` call for the Lua script
+4. `main.py`: Two `report_error()` call sites wrapped in try/except
+5. `main.py`: One `json.dumps()` call updated with `ensure_ascii=False`
+6. `config.py`: `REDIS_DB` variable added
+7. `router.py`: Redis constructor uses `db=REDIS_DB`
+8. `start.sh`: `uv run python src/doctor.py` added before boot

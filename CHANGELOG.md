@@ -2,6 +2,24 @@
 
 All notable changes to LiteRouter will be documented in this file.
 
+## [2.9.2] — 2026-07-08
+
+### Added
+- **Fusion Sidecar Service** — Introduced `fusion.py` (port `7768`), a lightweight proxy that implements priority-based model fallback chains. It enables "virtual" models (e.g., `local/google`) that automatically fail over from primary to secondary models upon `429` or `5xx` errors from the main gateway.
+
+### Fixed
+- **Longrunning Mode (Sticky Fallback)** — Verified implementation of the sticky fallback mechanism in `fusion.py` to ensure priority chains correctly "stick" to successful models for 5 minutes, preventing wasteful retries of rate-limited primaries.
+- **Gemma Payload Sanitization** — Fixed engine crashes for Gemma models when using the OpenAI compatibility route (`/v1/chat/completions`) by applying `_clean_gemma_payload` to strip prohibited `thinkingConfig` fields.
+
+## [2.9.1] — 2026-07-08
+
+## [2.9.0] — 2026-07-08
+
+### Fixed
+- **Atomic Quota Management** — Replaced "Check-then-Act" rolling window with an atomic Redis Lua script. This eliminates race conditions where multiple concurrent requests could bypass rate limits (boundary bursting).
+- **Router Hardening** — Added `NoScriptError` handling for Lua scripts to ensure the proxy recovers automatically after Redis restarts.
+- **Key Rotation Fixes** — Implemented cascade protection in `report_error` and integrated `REDIS_DB` configuration for better database isolation.
+
 ## [2.8.0] — 2026-06-21
 
 ### Added

@@ -1,0 +1,10 @@
+{
+  "id": "qwen/qwen3-next-80b-a3b-instruct",
+  "object": "model",
+  "created": 735790403,
+  "owned_by": "qwen",
+  "retrieved_at": "2026-06-26",
+  "context_length": 262144,
+  "max_completion_tokens": 16384,
+  "source": "openrouter_fallback"
+}

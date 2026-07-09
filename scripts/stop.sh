@@ -3,38 +3,38 @@ set -o pipefail
 cd "$(dirname "$0")/.."
 source scripts/lib/flush_valkey.sh
 
+TMUX_SESSION="literouter"
+
 PID_FILE=".literouter.pid"
 TS_PID_FILE=".literouter-ts.pid"
+FUSION_PID_FILE=".literouter-fusion.pid"
 
 echo "🛑 Stopping LiteRouter proxies..."
 
-# 1. Stop Python proxy in tmux session
-if tmux has-session -t literouter 2>/dev/null; then
-    echo "   - Stopping Python LiteRouter in tmux session..."
-    tmux send-keys -t literouter C-c
+# Stop the single consolidated tmux session (all three panes)
+if tmux has-session -t "$TMUX_SESSION" 2>/dev/null; then
+    echo "   - Sending Ctrl-C to all panes in tmux session '$TMUX_SESSION'..."
+    tmux send-keys -t "$TMUX_SESSION" C-c
     sleep 1
-    tmux kill-session -t literouter 2>/dev/null
+    tmux kill-session -t "$TMUX_SESSION" 2>/dev/null
 fi
 
-# 2. Stop TypeScript proxy in tmux session
+# Transition cleanup: kill legacy separate TS session if it still exists
 if tmux has-session -t literouter-ts 2>/dev/null; then
-    echo "   - Stopping TypeScript LiteRouter in tmux session..."
+    echo "   - Stopping legacy TypeScript session 'literouter-ts'..."
     tmux send-keys -t literouter-ts C-c
     sleep 1
     tmux kill-session -t literouter-ts 2>/dev/null
 fi
 
-# Clean up PID files
-if [ -f "$PID_FILE" ]; then
-    PID=$(cat "$PID_FILE")
-    kill "$PID" 2>/dev/null
-    rm -f "$PID_FILE"
-fi
-if [ -f "$TS_PID_FILE" ]; then
-    TS_PID=$(cat "$TS_PID_FILE")
-    kill "$TS_PID" 2>/dev/null
-    rm -f "$TS_PID_FILE"
-fi
+# Clean up PID files (best-effort kill of any stragglers)
+for f in "$PID_FILE" "$TS_PID_FILE" "$FUSION_PID_FILE"; do
+    if [ -f "$f" ]; then
+        PID=$(cat "$f")
+        [ -n "$PID" ] && kill "$PID" 2>/dev/null
+        rm -f "$f"
+    fi
+done
 
 # Flush Valkey once at shutdown
 flush_valkey

@@ -2,8 +2,10 @@
 Configuration & Model Limits Definitions
 """
 
+import json
 import logging
 import os
+from pathlib import Path
 
 from dotenv import load_dotenv
 
@@ -114,55 +116,82 @@ OPENROUTER_API_KEYS = static_validate_keys("OPENROUTER", os.getenv("OPENROUTER_A
 ZEN_API_KEYS = static_validate_keys("ZEN", os.getenv("ZEN_API_KEYS", ""))
 ZEN_BASE_URL = os.getenv("ZEN_BASE_URL", "https://opencode.ai/zen/v1")
 
+# Provider → API URL mapping (single source for both proxies)
+PROVIDER_API_URLS = {
+    "nvidia": "https://integrate.api.nvidia.com/v1/chat/completions",
+    "openrouter": "https://openrouter.ai/api/v1/chat/completions",
+    "google": "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+    "zen": "{ZEN_BASE_URL}/chat/completions",
+}
+
+# Backward-compatible aliases for model IDs that changed in models.json
+_OLD_MODEL_ALIASES = {
+    "freetier/gemma-4-31b-it": "google/gemma-4-31b-it",
+    "gemma-4-31b-it": "google/gemma-4-31b-it",
+    "freetier/gemma-4-26b-a4b-it": "google/gemma-4-26b-a4b-it",
+    "gemma-4-26b-a4b-it": "google/gemma-4-26b-a4b-it",
+    "gemini-3.1-flash-lite": "google/gemini-3.1-flash-lite",
+}
+
+
+def _load_model_registry() -> dict:
+    """Load models.json and build MODEL_REGISTRY dict.
+
+    Reads the shared models.json (single source of truth used by both
+    TS and Python proxies), translates array entries into the dict format
+    expected by main.py, and registers backward aliases.
+    """
+    models_path = Path(__file__).resolve().parent.parent / "models.json"
+
+    if not models_path.exists():
+        logger.error(f"models.json not found at {models_path}")
+        raise FileNotFoundError(f"models.json not found at {models_path}")
+
+    with open(models_path) as f:
+        models_list = json.load(f)
+
+    registry: dict[str, dict] = {}
+
+    for m in models_list:
+        provider = m.get("provider", "").lower()
+        system_id = m.get("system_id", "")
+        upstream_id = m.get("upstream_id", "")
+
+        if not provider or not system_id or not upstream_id:
+            logger.warning(f"Skipping invalid model entry: {m}")
+            continue
+
+        api_url = PROVIDER_API_URLS.get(provider)
+        if not api_url:
+            logger.info(f"Skipping model {system_id}: unknown provider '{provider}'")
+            continue
+
+        registry[system_id] = {
+            "provider": provider,
+            "upstream_model": upstream_id,
+            "api_url": api_url,
+        }
+
+    # Register backward-compatible aliases
+    alias_count = 0
+    for alias, target in _OLD_MODEL_ALIASES.items():
+        if alias not in registry and target in registry:
+            registry[alias] = registry[target]
+            alias_count += 1
+
+    if not registry:
+        raise RuntimeError("Model registry is empty — no usable models found in models.json")
+
+    n_canonical = len(registry) - alias_count
+    logger.info(
+        f"Loaded {len(registry)} model entries from models.json "
+        f"({n_canonical} canonical + {alias_count} backward aliases)"
+    )
+
+    return registry
+
+
 # Model Routing Registry Map
 # Maps client model ID to its provider, upstream model name, and target API endpoint URL.
-MODEL_REGISTRY = {
-    # Google / Gemma (using native OpenAI compatibility endpoint)
-    "freetier/gemma-4-31b-it": {
-        "provider": "google",
-        "upstream_model": "gemma-4-31b-it",
-        "api_url": "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
-    },
-    "freetier/gemma-4-26b-a4b-it": {
-        "provider": "google",
-        "upstream_model": "gemma-4-26b-a4b-it",
-        "api_url": "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
-    },
-    "gemini-3.1-flash-lite": {
-        "provider": "google",
-        "upstream_model": "gemini-3.1-flash-lite",
-        "api_url": "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
-    },
-
-    # Nvidia Models
-    "nvidia/deepseek-ai/deepseek-v4-flash": {
-        "provider": "nvidia",
-        "upstream_model": "deepseek-ai/deepseek-v4-flash",
-        "api_url": "https://integrate.api.nvidia.com/v1/chat/completions"
-    },
-    "nvidia/deepseek-ai/deepseek-v4-pro": {
-        "provider": "nvidia",
-        "upstream_model": "deepseek-ai/deepseek-v4-pro",
-        "api_url": "https://integrate.api.nvidia.com/v1/chat/completions"
-    },
-    "nvidia/qwen/qwen3-next-80b-a3b-instruct": {
-        "provider": "nvidia",
-        "upstream_model": "qwen/qwen3-next-80b-a3b-instruct",
-        "api_url": "https://integrate.api.nvidia.com/v1/chat/completions"
-    },
-
-    # Zen Models
-    "zen/deepseek-v4-flash-free": {
-        "provider": "zen",
-        "upstream_model": "deepseek-v4-flash-free",
-        "api_url": "{ZEN_BASE_URL}/chat/completions"
-    },
-
-    # OpenRouter Models
-    "openrouter/nvidia/nemotron-3-nano-30b-a3b:free": {
-        "provider": "openrouter",
-        "upstream_model": "nvidia/nemotron-3-nano-30b-a3b:free",
-        "api_url": "https://openrouter.ai/api/v1/chat/completions"
-    }
-}
+MODEL_REGISTRY = _load_model_registry()
 

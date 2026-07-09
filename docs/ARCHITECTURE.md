@@ -1,230 +1,148 @@
-# LiteRouter Architecture
+# LiteRouter Technical Architecture
 
-## System Overview
+This document serves as the technical blueprint for LiteRouter, detailing the system design, architectural constraints, and key implementation decisions.
 
-LiteRouter is a Python + Redis API key load balancer that distributes LLM requests across multiple API keys using intelligent round-robin routing with automatic cooldown, quarantine, and rate limiting.
+## Known Design Decisions (DO NOT REVERSE)
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                        Client Application                       │
-└────────────────────────────┬────────────────────────────────────┘
-                             │ POST /v1/chat/completions
-                             ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                     FastAPI Application                         │
-│  ┌───────────────────────────────────────────────────────────┐  │
-│  │                    Request Handler                         │  │
-│  │  1. Parse request (provider, model, messages)             │  │
-│  │  2. Validate against config                               │  │
-│  │  3. Enqueue for sequential processing                     │  │
-│  └────────────────────────┬──────────────────────────────────┘  │
-│                           │                                     │
-│  ┌────────────────────────▼──────────────────────────────────┐  │
-│  │                    Router Core                             │  │
-│  │  1. Get available keys (filter cooldown/quarantine)       │  │
-│  │  2. Apply round-robin selection                           │  │
-│  │  3. Check rate limits                                     │  │
-│  │  4. Return selected key index                             │  │
-│  └────────────────────────┬──────────────────────────────────┘  │
-│                           │                                     │
-│  ┌────────────────────────▼──────────────────────────────────┐  │
-│  │                  Provider Adapter                          │  │
-│  │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐    │  │
-│  │  │ OpenRouter   │  │   Gemini     │  │   Future     │    │  │
-│  │  │  Adapter     │  │   Adapter    │  │   Adapter    │    │  │
-│  │  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘    │  │
-│  └─────────┼─────────────────┼─────────────────┼────────────┘  │
-└────────────┼─────────────────┼─────────────────┼───────────────┘
-             │                 │                 │
-             ▼                 ▼                 ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                     Redis State Store                           │
-│  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐          │
-│  │ Round-   │ │ Cooldown │ │Quarantine│ │ Rate     │          │
-│  │ Robin    │ │  State   │ │  State   │ │ Limits   │          │
-│  │ Counter  │ │          │ │          │ │          │          │
-│  └──────────┘ └──────────┘ └──────────┘ └──────────┘          │
-└─────────────────────────────────────────────────────────────────┘
-```
+### Tier 1 DM Strength Formula: Flat 0.3 Hidden Stems
+The pedagogical Tier 1 formula in `module2_root.py:calculate_dm_strength_tier1()` uses
+a flat 0.3 for ALL hidden stems regardless of internal weight proportion. This is
+INTENTIONAL - the book uses a simplified model. The production formula
+`get_root_sub_score()` uses proper `weight x pillar_weight` proportional weighting.
+BUG 4 in the Chapter 12 audit was reviewed and SKIPPED for this reason.
 
-## Components
+### Clash Hidden Stem Extraction: Uniform hidden_ratio
+`calculate_clash_adjusted_dm_score()` (module2_root.py:462-470) applies `hidden_ratio=1.0`
+to ALL hidden stems in a clashed branch (not just DM-element stems). The book's Case 12.1
+is inconsistent on this point. The code's uniform treatment is architecturally cleaner
+and follows Chapter 02 Rule 2.1 literally. Audited and confirmed in BUGS_CHAP12_AUDIT.md.
 
-### 1. FastAPI Application (`main.py`)
+### Output Drain in Clash-Adjusted Formula
+`calculate_clash_adjusted_dm_score()` includes `- (output_dm x 1.0)` even though the
+book's Case 12.1 doesn't show it. Preserved as a safety net - when a clashed branch
+releases strong output elements, draining the DM is a real effect. See s10.2 in audit.
 
-The entry point for all HTTP requests. Exposes:
-- `POST /v1/chat/completions` — Main routing endpoint
-- `GET /metrics` — Request metrics and statistics
-- `GET /health` — System health check
-- `GET /health/keys` — Per-key health status
+### True Rolling Window Rate Limiting (Atomic)
+The `ModelFirstRouter` in `src/router.py` implements a professional-grade rolling 60-second window for RPM and TPM tracking using Redis Sorted Sets (ZSETs) and an atomic Lua script.
+- **Mechanism**: Every request is recorded as a timestamped member in a ZSET.
+- **Atomicity**: The quota check and recording are performed in a single Redis Lua script to prevent race conditions (boundary bursting) and ensure strict adherence to provider limits.
+- **Verification**: The router purges events older than 60s and sums the remaining members to verify quota.
+- **Why**: Matches professional upstream provider behavior and prevents API key bans caused by request spikes at the edge of fixed-minute buckets.
 
-### 2. Configuration Manager (`config.py`)
+### Gemma Payload Sanitization
+To prevent upstream engine crashes, all requests targeting Gemma models must be sanitized.
+- **Requirement**: The properties `thinkingConfig` and `thinking_config` must be recursively stripped from the payload.
+- **Enforcement**: This is handled by `_clean_gemma_payload` in `src/main.py` and is applied to both the Native Google route and the OpenAI compatibility route.
 
-Loads and validates environment variables. Supports:
-- Multiple provider configurations (OpenRouter, Gemini)
-- Comma-separated key lists
-- Routing parameters (cooldown, quarantine, rate limits)
-- Runtime validation with clear error messages
+## Code Style & Conventions
+- Python 3.14+ required (see pyproject.toml)
+- Use `lunar-python` for all Bazi calculations - never implement Pillar/strength logic manually
+- All Bazi data is in `src/engine/bazi_data.py` as deterministic lookup tables
+- Classical citations must use `BaziRAG` with technical Chinese keywords only
+- No LLM inference for Bazi math - only for narrative generation
+- **Zero-Speculation**: Before suggesting architectural changes, consult `_docs/PM/GRAVEYARD.md` to avoid proposing rejected "shit" ideas (e.g., Medallion, DST, LLM-Math).
 
-### 3. Pydantic Models (`models.py`)
+## Key Architecture
+- `src/engine/` - Pure Python deterministic Bazi engine (modules 0-5, 8-12)
+- `src/bot/` - Telegram bot, intake, validation, orchestration
+- `src/config/intake_schema.json` - Defines auto vs manual intake modes
+- `src/bot/conductor.py` - LLM-driven conversational intake (3 states: CHOOSING, COLLECTING, CONFIRM)
+- `src/engine/openrouter.py` - LLM API calls for narrative generation
+- `_docs/IMPACT_MAP.md` - **Change Impact Map**: Internal module dependency graph organized by blast radius. **Always consult before making architectural changes.**
 
-Defines request/response schemas:
-- `ChatRequest` — Incoming request with provider, model, messages
-- `ChatResponse` — Standardized response format
-- `MetricsResponse` — Metrics endpoint output
-- `HealthStatus` — Key health information
+## LiteRouter Proxy Guidelines
 
-### 4. Router Core (`router.py`)
+**High-Level Purpose**: LiteRouter is a high-performance proxy that distributes requests across multiple API keys using round-robin routing with automatic cooldown, quarantine, and rate limiting. It translates upstream calls for providers like OpenRouter, Nvidia, and Anthropic.
 
-The heart of LiteRouter. Implements:
-- Round-robin key selection with Redis persistence
-- Cooldown filtering (skip keys in cooldown period)
-- Quarantine filtering (skip keys exceeding failure threshold)
-- Rate limit checking before key selection
-- Failure tracking and automatic quarantine promotion
+### 🚨 MANDATORY SKILL 🚨
+**For ANY LiteRouter work, load the playbook first:**
+`view_file` on `.opencode/skills/literouter-playbook/SKILL.md`
 
-### 5. Redis Client (`redis_client.py`)
+Then read the relevant appendix:
+- **[`setup.md`](.opencode/skills/literouter-playbook/setup.md)** — Ops, routing, adding models/keys/providers
+- **[`troubleshoot.md`](.opencode/skills/literouter-playbook/troubleshoot.md)** — `ZodValidationError`, JSON Parse errors, and rotating proxy debugging
 
-Manages Redis connections:
-- Connection pooling for performance
-- Separate databases for routing state and token storage
-- Automatic reconnection on failure
-- Key namespace isolation (`lr:` prefix)
+### ⚠️ THE MANDATORY SDK REQUIREMENT: `@ai-sdk/openai-compatible` ⚠️
 
-### 6. Request Queue (`queue.py`)
+**DO NOT use `@ai-sdk/openai` in OpenCode config (`opencode.json`) for LiteRouter endpoints. You MUST use `@ai-sdk/openai-compatible` instead.**
 
-Ensures sequential processing:
-- Redis-backed FIFO queue
-- Prevents concurrent key usage conflicts
-- Supports priority ordering if needed
-- Automatic cleanup of stale entries
+#### Why? (The Protocol Mismatch Root Cause)
+1. **The Endpoint Mismatch**: `@ai-sdk/openai` uses the modern `/v1/responses` (Agentic Communication Protocol / ACP) endpoint by default. However, upstream providers like OpenRouter and Nvidia only accept standard OpenAI ChatCompletions (`/v1/chat/completions`).
+2. **Fragile Protocol Translation (Removed):** LiteRouter previously included an endpoint mapping layer to translate `/v1/responses` ↔ `/v1/chat/completions`. This layer was extremely fragile and prone to:
+   - **Tool Call Failures**: Upstream models emitting `finish_reason: "tool_calls"` had their structured tool outputs dropped or malformed by the ACP translator, leading to client-side `ZodValidationError` errors.
+   - **Stream Corruption**: Attempting to inject missing ACP structures/tokens into the SSE stream often broke the `\n\n` event delimiters, resulting in consecutive events fusing and throwing JSON Parse errors.
+   **Consequently, this translation layer has been REMOVED. LiteRouter now acts as a pure rotating proxy for standard OpenAI endpoints.**
+3. **The Simple Solution**: By switching the provider npm package in `opencode.json` to `@ai-sdk/openai-compatible`, the client communicates natively via standard `/v1/chat/completions`. LiteRouter then behaves as a pure rotating proxy (only swapping authorization headers and forwarding bytes), completely bypassing the fragile protocol translation code.
 
-### 7. Rate Limiter (`rate_limiter.py`)
+### Core Architecture & File Map
+- `src/main.py` - **The Core Engine**: Handles `/v1/chat/completions` (OpenAI compatible) and native Google REST routes (`/v1beta/...`), implements reasoning normalization and payload sanitization.
+- `src/config.py` - **Provider Discovery**: Scans env vars ending with `_BASE_URL` to build the provider table. No hardcoded routing here — providers are purely data-driven from `.env`.
+- `src/router.py` - **Key Rotation**: Uses Redis/Valkey or in-memory fallback to atomically cycle through available API keys per provider.
+- `logs/literouter.log` & `logs/literouter_logs.db` - **The Truth**: The primary locations to check for stack traces, Zod validation errors, and raw incoming/outgoing request bodies. (Local logs under `logs/` are ignored in Git to prevent leaks.)
+- `models.json` - **Model Registry**: Central mapping of system IDs to providers and upstream model IDs.
 
-Per-key and global rate limiting:
-- Sliding window algorithm
-- Configurable RPM and window size
-- Burst allowance support
-- Redis-backed counters with TTL
+### Operations & Testing
+- Run LiteRouter locally: `nohup uv run uvicorn src.main:app --host 0.0.0.0 --port 7766 > logs/literouter.log 2>&1 & echo $! > .literouter.pid`
+- Falls back gracefully to in-memory key rotation if the Redis server is unavailable.
+- **Mandatory E2E Test Protocol**: All testing must follow the "right-way" testing protocol detailed in `tests/right-way-test.md`. You must read `tests/right-way-test.md` and verify the live running daemon process using actual client requests before asserting complete status.
+- **Code Change Test Protocol (`right-way-test`)**:
+  1. Check all API keys are healthy for rotation.
+  2. Run a Python script to perform a curl test. Send "hi" to the model $N + 1$ times (where $N$ is the number of keys; e.g., if there are 5 keys, say "hi" 6 times) and log down if key rotation occurred.
+  3. Check logs to verify that the keys were indeed rotated.
+  4. Insert the configuration into OpenCode if necessary.
+  5. Otherwise, test the OpenCode CLI model using the setup in step 2 but via OpenCode directly.
+  6. Verify the logs again to ensure rotation happened.
+  7. Consider the test passed only when all steps pass successfully.
 
-### 8. Metrics Collector (`metrics.py`)
+### Model Naming Quick Reference
 
-Tracks system performance:
-- Total request count
-- Error count and error rate
-- Rolling average latency
-- Per-key success/failure ratios
-- Health score calculation
+The first segment of the model ID (before `/`) IS the provider name. No keyword overrides, no catch-all.
 
-### 9. Doctor CLI (`doctor.py`)
+| OpenCode model key | Routes to | Sent upstream as |
+|---|---|---|
+| `openrouter/owl-alpha` | OpenRouter | `owl-alpha` |
+| `openrouter/openai/gpt-oss-120b:free` | OpenRouter | `openai/gpt-oss-120b:free` |
+| `openrouter/cohere/north-mini-code:free` | OpenRouter | `cohere/north-mini-code:free` |
+| `nvidia/deepseek-ai/deepseek-v4-flash` | Nvidia | `deepseek-ai/deepseek-v4-flash` |
 
-Diagnostics and health checks:
-- Redis connectivity test
-- Key configuration validation
-- Provider API key verification
-- Rate limit status check
-- System resource monitoring
+To remove a model: delete from `opencode.json` and `models.json`.
 
-### 10. Gemini Adapter (`gemini.py`)
+### Valkey Database Backend
+- **No Redis Dependency**: LiteRouter does NOT run a Redis database server. We use **Valkey** (the fully open-source key-value database engine) on port `6379`.
+- **Client Library Driver**: The codebase uses the standard Python `redis` package for API and protocol compatibility with third-party libraries (e.g. `redisvl`).
+- **Environment Variables**: We use standard Redis-compatible environment variable keys (`REDIS_HOST`, `REDIS_PASSWORD`, etc.) to configure connection endpoints to Valkey.
+- **Scanner Warnings**: Any code hygiene alerts flagging environment drift or missing packages for "Redis" are false positives. Valkey and Redis are used interchangeably here.
 
-Google Gemini provider integration:
-- Request format translation
-- Response normalization
-- Error handling specific to Gemini API
-- Model mapping and validation
+## Critical Patterns
+- Auto mode collects only: alias, gender, dob, location -> engine computes all pillars/strength
+- Never ask for computed fields: year_pillar, month_pillar, day_pillar, hour_pillar, da_yun_pillar, etc.
+- Natal Sacrosanctity: full 4-pillar birth data injected into every Chronomancer prompt
+- 3-Pillar Robustness: The engine supports profiles without birth hours (3 pillars); do not treat missing hours as a critical failure.
+- Deterministic math only - fix `src/engine/` if calculations are wrong, never the LLM prompts
 
-### 11. Embedding Cache (`embed_cache.py`)
+## BaziRAG Usage
 
-Optional embedding result caching:
-- Redis-backed cache for embedding results
-- TTL-based expiration
-- Reduces redundant API calls
+BaziRAG MCP provides classical text retrieval from four Chinese sources:
+- Yuan Hai Zi Ping
+- San Ming Tong Hui
+- Di Tian Sui
+- Qiong Tong Bao Jian
 
-### 12. Test Suite (`tests/`)
+**Usage**: The `query_classical_text_async` tool performs semantic search over these classical texts for grounding and verification.
 
-Unit and integration tests:
-- Router logic tests
-- Round-robin distribution verification
-- Cooldown/quarantine state transitions
-- Rate limit enforcement
+**Keywords**: Always use technical Chinese terminology (e.g., cai xing, guan sha, yang ren, shi shang, zheng yin, pian cai, etc.)
+English search terms will fail - always translate concepts to Chinese technical terms first.
 
-## Redis Key Schema
+**Best practices**:
+- Use `rerank` with original query if results are too broad
+- BaziRAG failures raise RuntimeError (no silent degradation, per our guiding principles)
+- Validate returned citations against query context
+- RAG cache (`rag_cache/`) available as fallback if BaziRAG is unavailable
 
-| Key Pattern | Type | Description | TTL |
-|---|---|---|---|
-| `lr:rr:{provider}` | STRING | Current round-robin index | None |
-| `lr:cooldown:{provider}:{key_idx}` | STRING | Cooldown expiration timestamp (Unix) | Dynamic (COOLDOWN_SECONDS) |
-| `lr:quarantine:{provider}:{key_idx}` | STRING | Quarantine expiration timestamp (Unix) | Dynamic (QUARANTINE_DURATION) |
-| `lr:failures:{provider}:{key_idx}` | STRING | Consecutive failure count | None |
-| `lr:ratelimit:{provider}:{key_idx}` | HASH | Rate limit state: `{window_start, count}` | Dynamic (RATE_LIMIT_WINDOW) |
-| `lr:metrics:requests` | STRING | Total request count | None |
-| `lr:metrics:errors` | STRING | Total error count | None |
-| `lr:metrics:latency` | STRING | Rolling average latency (ms) | None |
-| `lr:queue` | LIST | Pending request IDs (FIFO) | None |
-
-## Graceful Degradation Pattern
-
-LiteRouter implements multiple layers of graceful degradation:
-
-```
-┌─────────────────────────────────────────────────────────┐
-│                    Degradation Levels                    │
-├─────────────────────────────────────────────────────────┤
-│                                                         │
-│  Level 0: Normal Operation                              │
-│  All keys healthy, round-robin distributes evenly       │
-│                                                         │
-│  Level 1: Key Cooldown                                  │
-│  Individual keys enter cooldown after rate limit hit    │
-│  Remaining keys absorb traffic                          │
-│                                                         │
-│  Level 2: Key Quarantine                                │
-│  Keys with repeated failures quarantined                │
-│  Pool shrinks but continues serving                     │
-│                                                         │
-│  Level 3: Partial Provider Failure                      │
-│  If all keys for a provider unavailable                 │
-│  Return 503 with specific error message                 │
-│                                                         │
-│  Level 4: Redis Failure                                 │
-│  If Redis unreachable, fallback to in-memory state      │
-│  Round-robin continues (non-persistent)                 │
-│  Cooldown/quarantine disabled until Redis recovers      │
-│                                                         │
-└─────────────────────────────────────────────────────────┘
-```
-
-## Multi-Instance Coordination
-
-### Architecture
-
-```
-┌──────────────┐    ┌──────────────┐    ┌──────────────┐
-│  Instance A  │    │  Instance B  │    │  Instance C  │
-│  :8000       │    │  :8000       │    │  :8000       │
-└──────┬───────┘    └──────┬───────┘    └──────┬───────┘
-       │                   │                   │
-       └───────────────────┼───────────────────┘
-                           │
-              ┌────────────▼────────────┐
-              │      Redis Server       │
-              │    localhost:6379       │
-              │  DB 0: Routing State    │
-              │  DB 1: Token Storage    │
-              └─────────────────────────┘
-```
-
-### Coordination Mechanisms
-
-1. **Atomic Round-Robin** — `INCR` operation ensures no two instances select the same key index simultaneously
-2. **Shared Cooldown State** — All instances see the same cooldown timestamps
-3. **Distributed Quarantine** — Failure counts aggregated across all instances
-4. **Global Rate Limits** — Rate limit counters shared via Redis hashes
-5. **Queue Serialization** — `BLPOP` ensures only one instance processes each queued request
-
-### Deployment Considerations
-
-- Load balancer (nginx, HAProxy) distributes incoming requests across instances
-- All instances must connect to the same Redis server
-- Redis should be configured for persistence (RDB/AOF) to survive restarts
-- Monitor Redis memory usage — key count scales with `providers × keys`
-- Consider Redis Sentinel or Cluster for high-availability deployments
+## Ironclad Stability (V31-T10)
+- **Zero-Fault Pipeline**: Content is sanitized (\xa0, CRLF normalization) *before* AST validation to ensure resilience against dirty input.
+- **Windows Concurrency Retry**: If you encounter `PermissionError` (Access Denied) on Windows, the server now automatically retries the write 5 times.
+- **Transactional Atomicity**: `move_symbol` now uses a "Two-Phase Commit" pattern. If the destination write fails, the source file is automatically restored from memory.
+- **Verification**: After making structural changes to the MCP server itself, always run `uv run python codebase/test_codebase_mcp.py` to verify the 100% stability score.
+- **Physical Dependency Map**: `build_repo_graph` now resolves imports to physical `.py` files, preventing the discovery of "ghost" modules.
+- **Zero-Speculation Edits**: Never "clean up" adjacent code while performing a surgical edit. Maintain absolute functional parsimony.
