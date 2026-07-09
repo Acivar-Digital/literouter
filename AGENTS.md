@@ -197,10 +197,11 @@ Before marking a task as complete, you MUST act as a Critic:
 - Start Fusion Sidecar: `uv run uvicorn fusion:app --host 0.0.0.0 --port 7768`
 
 ## Agent Guardrail & Sanitization
-To prevent broken scripts and escape artifacts (`\\n`, `\\u`), always use the guardrail workflow:
-1. **Checkpoint**: `uv run python src/agents/agent_guardrail.py checkpoint <path>` (Run BEFORE editing)
+To prevent broken scripts and escape artifacts (`\\n`, `\\u`), always use the guardrail workflow
+(tools live in `admin/code_hygiene/`, synced from baziforecaster):
+1. **Checkpoint**: `uv run python admin/code_hygiene/agent_guardrail.py checkpoint <path>` (Run BEFORE editing)
 2. **Edit**: Make your changes to the file.
-3. **Validate**: `uv run python src/agents/agent_guardrail.py validate <path>` (Run AFTER editing)
+3. **Validate**: `uv run python admin/code_hygiene/agent_guardrail.py validate <path>` (Run AFTER editing)
    - If it fails: Check the output diff and fix errors.
    - If it passes: It automatically runs `agent_sanitizer.py` to fix escape artifacts.
 
