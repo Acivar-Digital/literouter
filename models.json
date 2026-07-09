@@ -24,7 +24,7 @@
     "system_id": "nvidia/mistralai/mistral-large",
     "provider": "nvidia",
     "upstream_id": "mistralai/mistral-large",
-    "context": 131072,
+    "context": 128000,
     "max_output": 65535
   },
   {
@@ -32,7 +32,7 @@
     "provider": "nvidia",
     "upstream_id": "openai/gpt-oss-120b",
     "context": 131072,
-    "max_output": 65535
+    "max_output": 131072
   },
   {
     "system_id": "openrouter/nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
@@ -59,8 +59,8 @@
     "system_id": "nvidia/moonshotai/kimi-k2.6",
     "provider": "nvidia",
     "upstream_id": "moonshotai/kimi-k2.6",
-    "context": 250000,
-    "max_output": 65535
+    "context": 262144,
+    "max_output": 262144
   },
   {
     "system_id": "nvidia/stepfun-ai/step-3.7-flash",
@@ -94,7 +94,7 @@
     "system_id": "nvidia/nemotron-3-nano-30b-a3b:free",
     "provider": "nvidia",
     "upstream_id": "nemotron-3-nano-30b-a3b",
-    "context": 250000,
+    "context": 256000,
     "max_output": 65535
   },
   {
@@ -172,21 +172,21 @@
     "provider": "nvidia",
     "upstream_id": "qwen/qwen3-next-80b-a3b-instruct",
     "context": 262144,
-    "max_output": 65535
+    "max_output": 16384
   },
   {
     "system_id": "nvidia/qwen/qwen3.5-122b-a10b",
     "provider": "nvidia",
     "upstream_id": "qwen/qwen3.5-122b-a10b",
     "context": 262144,
-    "max_output": 65535
+    "max_output": 262144
   },
   {
     "system_id": "nvidia/z-ai/glm-5.2",
     "provider": "nvidia",
     "upstream_id": "z-ai/glm-5.2",
-    "context": 250000,
-    "max_output": 65535
+    "context": 1048576,
+    "max_output": 131072
   },
   {
     "system_id": "google/gemini-3.1-flash-lite",
