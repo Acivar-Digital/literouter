@@ -2,6 +2,11 @@
 
 All notable changes to LiteRouter will be documented in this file.
 
+## [2.9.3] — 2026-07-10
+
+### Removed
+- **admin/studio/** — Deleted redundant outsource pipeline staging folder (contained stale model reference for dead `laguna-xs.2:free`)
+
 ## [2.9.2] — 2026-07-08
 
 ### Added
