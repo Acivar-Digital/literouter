@@ -5,7 +5,10 @@ All notable changes to LiteRouter will be documented in this file.
 ## [2.9.3] — 2026-07-10
 
 ### Added
-- **setup_checklist.md** — New executable checklist document with task-item workflows for Add Model, Delete Model, Add Provider, Delete Provider operations.
+- **setup_checklist.md** — New executable checklist document with task-item workflows for Add Model, Delete Model, Add Provider, Delete Provider operations. Includes explicit approval gates, file naming patterns, and verification criteria.
+
+### Changed
+- **setup.md** — Simplified to technical reference; checklists moved to setup_checklist.md for executable workflows.
 
 ### Removed
 - **admin/studio/** — Deleted redundant outsource pipeline staging folder (contained stale model reference for dead `laguna-xs.2:free`)
