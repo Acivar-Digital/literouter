@@ -33,6 +33,7 @@
     "max_tokens",
     "presence_penalty",
     "reasoning",
+    "reasoning_effort",
     "repetition_penalty",
     "seed",
     "stop",

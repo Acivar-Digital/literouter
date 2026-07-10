@@ -32,6 +32,7 @@
     "max_tokens",
     "min_p",
     "reasoning",
+    "reasoning_effort",
     "seed",
     "stop",
     "temperature",
@@ -57,21 +58,21 @@
       {
         "arena": "models",
         "category": "3d",
-        "elo": 977,
+        "elo": 976,
         "win_rate": 29.4,
         "rank": 92
       },
       {
         "arena": "models",
         "category": "codecategories",
-        "elo": 1009,
+        "elo": 1007,
         "win_rate": 33.4,
         "rank": 98
       },
       {
         "arena": "models",
         "category": "dataviz",
-        "elo": 1042,
+        "elo": 1041,
         "win_rate": 45.1,
         "rank": 88
       },
@@ -92,7 +93,7 @@
       {
         "arena": "models",
         "category": "website",
-        "elo": 1007,
+        "elo": 1004,
         "win_rate": 32.5,
         "rank": 101
       }
