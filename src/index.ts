@@ -3,13 +3,25 @@ import { serve } from "bun";
 import Redis from "ioredis";
 import * as fs from "fs";
 import * as path from "path";
+import {
+  MODEL_LIMITS,
+  PROVIDER_LIMITS,
+  DEFAULT_LIMITS,
+  getModelLimits,
+  staticValidateKeys,
+  estimateTokens,
+  cleanGemmaPayload,
+  cleanLatexSymbols,
+  mergeConsecutiveMessages,
+  transformNonStreaming,
+} from "./lib";
 
 // ============================================================================
 // 0. Emoji State Logging & Trace Archive
 // ============================================================================
 
 const ROOT_DIR = import.meta.dir
-  ? path.resolve(import.meta.dir, "../..")
+  ? path.resolve(import.meta.dir, "..")
   : process.cwd();
 
 // Intuitive per-state emoji prefixes for terminal readability. Text tags are
@@ -178,72 +190,9 @@ const PROVIDER_API_URLS: Record<string, string> = {
 
 // ============================================================================
 // 2. Model Limits & Registry
+// (MODEL_LIMITS, PROVIDER_LIMITS, DEFAULT_LIMITS, getModelLimits and
+//  staticValidateKeys are imported from ./lib)
 // ============================================================================
-const MODEL_LIMITS: Record<string, any> = {
-  "google/gemini-3.1-flash-lite": {
-    max_tpm: 250000,
-    max_rpm: 15,
-    context_window: 250000,
-  },
-  "google/gemma": { max_tpm: 100000000, max_rpm: 15, context_window: 250000 },
-};
-
-const PROVIDER_LIMITS: Record<string, any> = {
-  nvidia: { max_tpm: 1000000, max_rpm: 40, context_window: 1000000 },
-  openrouter: { max_tpm: 1000000, max_rpm: 20, context_window: 1000000 },
-};
-
-const DEFAULT_LIMITS = {
-  max_tpm: 1000000,
-  max_rpm: 15,
-  context_window: 1000000,
-};
-
-function getModelLimits(modelName: string, provider?: string) {
-  if (provider) {
-    const provLower = provider.toLowerCase();
-    for (const [key, limits] of Object.entries(MODEL_LIMITS)) {
-      if (
-        key.includes("/") &&
-        key.split("/")[0] === provLower &&
-        modelName.includes(key.split("/")[1])
-      ) {
-        return limits;
-      }
-    }
-    if (PROVIDER_LIMITS[provLower]) return PROVIDER_LIMITS[provLower];
-  }
-  for (const [key, limits] of Object.entries(MODEL_LIMITS)) {
-    if (!key.includes("/") && modelName.includes(key)) return limits;
-  }
-  return DEFAULT_LIMITS;
-}
-
-function staticValidateKeys(provider: string, keysStr: string): string[] {
-  if (!keysStr) return [];
-  const rawKeys = keysStr
-    .split(",")
-    .map((k) => k.trim())
-    .filter(Boolean);
-  const placeholders = ["changeme", "placeholder", "your_key", "todo", "xxxx"];
-  const validKeys: string[] = [];
-
-  for (const key of rawKeys) {
-    const lower = key.toLowerCase();
-    const isPlaceholder = placeholders.some((p) => lower.includes(p));
-    const hasBrackets = key.includes("<") || key.includes(">");
-    const tooShort = key.length < 30;
-
-    if (isPlaceholder || hasBrackets || tooShort) {
-      console.warn(
-        `[${provider}] Gate 1 Static Validator: Discarded invalid key.`,
-      );
-    } else {
-      validKeys.push(key);
-    }
-  }
-  return validKeys;
-}
 
 const API_KEYS = {
   google: staticValidateKeys("GOOGLE", Bun.env.GOOGLE_API_KEYS || ""),
@@ -344,7 +293,7 @@ end
 `;
 
 class ModelFirstRouter {
-  private redis: Redis | null = null;
+  private redis: Redis;
   private scriptSha: string | null = null;
   private lastUsed = new Map<string, number>();
   private nextIndex = new Map<string, number>();
@@ -357,7 +306,10 @@ class ModelFirstRouter {
       db: REDIS_DB,
       lazyConnect: true,
     });
-    this.redis.on("error", (err) => console.error("Redis error:", err));
+    this.redis.on("error", (err) => {
+      logError(EMOJI.error, `Redis error: ${err} — exiting (no fallback)`);
+      process.exit(1);
+    });
   }
 
   async connect() {
@@ -366,11 +318,8 @@ class ModelFirstRouter {
       this.scriptSha = await this.redis!.script("LOAD", QUOTA_CHECK_SCRIPT);
       console.log("Connected to Redis/Valkey. Lua script loaded.");
     } catch (e) {
-      console.error(
-        "Failed to connect to Redis. Running in degraded mode (no quotas).",
-        e,
-      );
-      this.redis = null;
+      logError(EMOJI.error, `Failed to connect to Redis. Exiting (no fallback): ${e}`);
+      process.exit(1);
     }
   }
 
@@ -394,13 +343,6 @@ class ModelFirstRouter {
     const keys = API_KEYS[provider as keyof typeof API_KEYS] || [];
     if (!keys.length)
       throw new Error(`No keys configured for provider: ${provider}`);
-
-    if (!this.redis) {
-      // Degraded mode: simple round-robin
-      const idx = this.nextIndex.get(provider) || 0;
-      this.nextIndex.set(provider, (idx + 1) % keys.length);
-      return {key: keys[idx], currentRpm: 0};
-    }
 
     const limits = getModelLimits(modelName, provider);
     const now = Date.now() / 1000;
@@ -585,115 +527,9 @@ function clearSticky(groupId: string) {
 
 // ============================================================================
 // 5. Payload Processing Utilities
+// (estimateTokens, cleanGemmaPayload, cleanLatexSymbols, mergeConsecutiveMessages
+//  and transformNonStreaming are imported from ./lib)
 // ============================================================================
-function estimateTokens(promptText: string, maxTokens: number = 2048): number {
-  return Math.floor(promptText.length / 4) + maxTokens;
-}
-
-const GEMMA_UNSUPPORTED = new Set([
-  "thinkingConfig",
-  "thinking_config",
-  "presence_penalty",
-  "frequency_penalty",
-  "logit_bias",
-  "user",
-  "seed",
-  "logprobs",
-  "top_logprobs",
-]);
-
-function cleanGemmaPayload(data: any): any {
-  if (Array.isArray(data)) return data.map(cleanGemmaPayload);
-  if (data !== null && typeof data === "object") {
-    const cleaned: any = {};
-    for (const [k, v] of Object.entries(data)) {
-      if (!GEMMA_UNSUPPORTED.has(k)) {
-        cleaned[k] = cleanGemmaPayload(v);
-      }
-    }
-    return cleaned;
-  }
-  return data;
-}
-
-function cleanLatexSymbols(text: string): string {
-  let res = text.replace(/\\{1,2}times\s*(\d+(?:\.\d+)?)/g, "× $1");
-  const replacements: [RegExp, string][] = [
-    [
-      /(\$\\\\rightarrow\$|\\\\rightarrow|\$\\\\to\$|\\\\to|\$\\rightarrow\$|\\rightarrow|\$\\to\$|\\to)/g,
-      "→",
-    ],
-    [/(\$\\\\times\$|\\\\times|\$\\times\$|\\times)/g, "×"],
-  ];
-  for (const [reg, rep] of replacements) {
-    res = res.replace(reg, rep);
-  }
-  return res;
-}
-
-function mergeConsecutiveMessages(messages: any[]): any[] {
-  if (!messages || !Array.isArray(messages)) return [];
-  const merged: any[] = [];
-  for (const msg of messages) {
-    if (merged.length === 0) {
-      merged.push({ ...msg });
-      continue;
-    }
-    const prev = merged[merged.length - 1];
-    if (prev.role === msg.role) {
-      const pContent = prev.content || "";
-      const cContent = msg.content || "";
-      if (typeof pContent === "string" && typeof cContent === "string") {
-        prev.content = pContent + "\n\n" + cContent;
-      } else if (Array.isArray(pContent) && Array.isArray(cContent)) {
-        prev.content = pContent.concat(cContent);
-      } else if (Array.isArray(pContent) && typeof cContent === "string") {
-        prev.content = pContent.concat([{ type: "text", text: cContent }]);
-      } else if (typeof pContent === "string" && Array.isArray(cContent)) {
-        prev.content = [{ type: "text", text: pContent }].concat(cContent);
-      } else {
-        prev.content = String(pContent) + "\n\n" + String(cContent);
-      }
-    } else {
-      merged.push({ ...msg });
-    }
-  }
-  return merged;
-}
-
-function transformNonStreaming(data: any, collapseReasoning: boolean): any {
-  const choices = data.choices || [];
-  if (!choices.length) return data;
-
-  const message = choices[0].message || {};
-  const rawReasoning =
-    message.reasoning_content ||
-    message.reasoningContent ||
-    message.thought ||
-    message.thought_summary;
-
-  let reasoning = "";
-  if (typeof rawReasoning === "object" && rawReasoning !== null) {
-    reasoning = rawReasoning.reasoningContent || rawReasoning.text || "";
-  } else if (typeof rawReasoning === "string") {
-    reasoning = rawReasoning;
-  }
-
-  delete message.reasoningContent;
-  delete message.thought;
-  delete message.thought_summary;
-
-  if (reasoning) {
-    if (collapseReasoning) {
-      const orig = message.content || "";
-      message.content = `<thought>\n${reasoning}\n</thought>\n${orig}`;
-      message.reasoning_content = null;
-    } else {
-      message.reasoning_content = reasoning;
-    }
-  }
-  return data;
-}
 
 function createStreamTransformer(collapseReasoning: boolean) {
   let buffer = "";

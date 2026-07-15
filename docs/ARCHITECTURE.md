@@ -23,7 +23,7 @@ book's Case 12.1 doesn't show it. Preserved as a safety net - when a clashed bra
 releases strong output elements, draining the DM is a real effect. See s10.2 in audit.
 
 ### True Rolling Window Rate Limiting (Atomic)
-The `ModelFirstRouter` in `src/router.py` implements a professional-grade rolling 60-second window for RPM and TPM tracking using Redis Sorted Sets (ZSETs) and an atomic Lua script.
+The `ModelFirstRouter` class in `src/index.ts` implements a professional-grade rolling 60-second window for RPM and TPM tracking using Redis Sorted Sets (ZSETs) and an atomic Lua script.
 - **Mechanism**: Every request is recorded as a timestamped member in a ZSET.
 - **Atomicity**: The quota check and recording are performed in a single Redis Lua script to prevent race conditions (boundary bursting) and ensure strict adherence to provider limits.
 - **Verification**: The router purges events older than 60s and sums the remaining members to verify quota.
@@ -32,7 +32,7 @@ The `ModelFirstRouter` in `src/router.py` implements a professional-grade rollin
 ### Gemma Payload Sanitization
 To prevent upstream engine crashes, all requests targeting Gemma models must be sanitized.
 - **Requirement**: The properties `thinkingConfig` and `thinking_config` must be recursively stripped from the payload.
-- **Enforcement**: This is handled by `_clean_gemma_payload` in `src/main.py` and is applied to both the Native Google route and the OpenAI compatibility route.
+- **Enforcement**: This is handled in `src/index.ts` (payload sanitization) and is applied to both the Native Google route and the OpenAI compatibility route.
 
 ## Code Style & Conventions
 - Python 3.14+ required (see pyproject.toml)
@@ -47,7 +47,7 @@ To prevent upstream engine crashes, all requests targeting Gemma models must be 
 - `src/bot/` - Telegram bot, intake, validation, orchestration
 - `src/config/intake_schema.json` - Defines auto vs manual intake modes
 - `src/bot/conductor.py` - LLM-driven conversational intake (3 states: CHOOSING, COLLECTING, CONFIRM)
-- `src/engine/openrouter.py` - LLM API calls for narrative generation
+- `src/index.ts` - LLM API calls / upstream proxying for all providers (OpenRouter, Nvidia, Anthropic, Google)
 - `_docs/IMPACT_MAP.md` - **Change Impact Map**: Internal module dependency graph organized by blast radius. **Always consult before making architectural changes.**
 
 ## LiteRouter Proxy Guidelines
@@ -75,15 +75,15 @@ Then read the relevant appendix:
 3. **The Simple Solution**: By switching the provider npm package in `opencode.json` to `@ai-sdk/openai-compatible`, the client communicates natively via standard `/v1/chat/completions`. LiteRouter then behaves as a pure rotating proxy (only swapping authorization headers and forwarding bytes), completely bypassing the fragile protocol translation code.
 
 ### Core Architecture & File Map
-- `src/main.py` - **The Core Engine**: Handles `/v1/chat/completions` (OpenAI compatible) and native Google REST routes (`/v1beta/...`), implements reasoning normalization and payload sanitization.
-- `src/config.py` - **Provider Discovery**: Scans env vars ending with `_BASE_URL` to build the provider table. No hardcoded routing here — providers are purely data-driven from `.env`.
-- `src/router.py` - **Key Rotation**: Uses Redis/Valkey or in-memory fallback to atomically cycle through available API keys per provider.
+- `src/index.ts` - **The Core Engine** (single Bun process, port 7766): Handles `/v1/chat/completions` (OpenAI compatible) and native Google REST routes (`/v1beta/...`), implements reasoning normalization, payload sanitization, fusion, and key rotation.
+- `src/index.ts` - **Provider Discovery**: Scans env vars ending with `_BASE_URL` to build the provider table. No hardcoded routing here — providers are purely data-driven from `.env`.
+- `src/index.ts` (`ModelFirstRouter`) - **Key Rotation**: Uses Redis/Valkey ZSET+Lua to atomically cycle through available API keys per provider. Redis/Valkey is REQUIRED — the gateway exits(1) on a connection error (no in-memory fallback).
 - `logs/literouter.log` & `logs/literouter_logs.db` - **The Truth**: The primary locations to check for stack traces, Zod validation errors, and raw incoming/outgoing request bodies. (Local logs under `logs/` are ignored in Git to prevent leaks.)
 - `models.json` - **Model Registry**: Central mapping of system IDs to providers and upstream model IDs.
 
 ### Operations & Testing
-- Run LiteRouter locally: `nohup uv run uvicorn src.main:app --host 0.0.0.0 --port 7766 > logs/literouter.log 2>&1 & echo $! > .literouter.pid`
-- Falls back gracefully to in-memory key rotation if the Redis server is unavailable.
+- Run LiteRouter locally: `bash scripts/start.sh` (daemonizes in tmux) or `bun run src/index.ts` (foreground).
+- Redis/Valkey is REQUIRED — the gateway exits(1) on a connection error (no in-memory fallback).
 - **Mandatory E2E Test Protocol**: All testing must follow the "right-way" testing protocol detailed in `tests/right-way-test.md`. You must read `tests/right-way-test.md` and verify the live running daemon process using actual client requests before asserting complete status.
 - **Code Change Test Protocol (`right-way-test`)**:
   1. Check all API keys are healthy for rotation.

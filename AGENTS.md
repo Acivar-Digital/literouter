@@ -94,19 +94,18 @@ When halted at an Approval Gate (major change >50 lines, new deps, schema change
 
 | Gate | Command | Evidence Required | Environment |
 |------|---------|-------------------|-------------|
-| Lint | `uv run ruff check .` | Zero errors output | Local |
-| Unit | `uv run pytest TEST/unit/` | All pass, exit code 0 | Local |
-| Integration | `uv run pytest TEST/integration/` | All pass, exit code 0 | Local |
-| Regression | `uv run pytest TEST/regression/` | No benchmark score changes without documented rationale | Local |
-| Full Suite | `uv run python TEST/test_run.py` | `TEST/test_results.md` updated with current timestamp | Local |
-| E2E / UAT Smoke | `uv run pytest TEST/e2e/ --env=uat` | Must run against UAT URL from `.env.uat`, not localhost | **UAT** |
+| Lint | `uv run ruff check .` | Zero errors output (Python test files) | Local |
+| Unit | `bun test` | All pass, exit code 0 | Local |
+| Integration / Smoke | `uv run pytest tests/integration/` | All pass against a running gateway, exit code 0 | Local |
+| Full Suite | `bun test && uv run pytest tests/integration/` | `tests/test_results.md` updated with current timestamp | Local |
+| E2E / UAT Smoke | `uv run pytest tests/integration/ --env=uat` | Must run against UAT URL from `.env.uat`, not localhost | **UAT** |
 | Cutover | `bd human <golive-bead-id>` | Human approval in chat | Human gate |
 
 **Rules:**
 - Running E2E tests against `localhost` does NOT constitute UAT validation.
 - The UAT smoke test MUST use the live UAT environment URL defined in `.env.uat`.
 - Do NOT auto-proceed past the Cutover gate - it requires explicit human `APPROVED`.
-- Commit `TEST/test_results.md` with the test run output before requesting GoLive approval.
+- Commit `tests/test_results.md` with the test run output before requesting GoLive approval.
 
 ### ARTEFACT TIMESTAMP RULE (Anti-Simulation Trap)
 
@@ -124,17 +123,17 @@ When halted at an Approval Gate (major change >50 lines, new deps, schema change
 
 3. **Before claiming any gate passed, run this verification sequence:**
    ```bash
-   # Step 1: Record exact run time
-   echo "Run started: $(date -u +"%Y-%m-%dT%H:%M:%SZ")" | tee -a TEST/test_results.md
+    # Step 1: Record exact run time
+    echo "Run started: $(date -u +"%Y-%m-%dT%H:%M:%SZ")" | tee -a tests/test_results.md
 
-   # Step 2: Execute the gate command (example: full suite)
-   uv run python TEST/test_run.py 2>&1 | tee -a TEST/test_results.md
+    # Step 2: Execute the gate command (example: full suite)
+    bun test && uv run pytest tests/integration/ 2>&1 | tee -a tests/test_results.md
 
-   # Step 3: Confirm the file exists and show its tail
-   echo "--- ARTEFACT PROOF ---" && tail -30 TEST/test_results.md
+    # Step 3: Confirm the file exists and show its tail
+    echo "--- ARTEFACT PROOF ---" && tail -30 tests/test_results.md
 
-   # Step 4: Show file metadata (size + modified time)
-   ls -lh TEST/test_results.md
+    # Step 4: Show file metadata (size + modified time)
+    ls -lh tests/test_results.md
    ```
    The output of Step 3 and Step 4 MUST be pasted verbatim into the chat before claiming the gate passed.
 
@@ -185,16 +184,18 @@ This avoids unnecessary planning overhead while maintaining tracking.
 ### Self-Review (Critic Role)
 Before marking a task as complete, you MUST act as a Critic:
 1. Run linters: `uv run ruff check .`
-2. Run tests: `uv run python TEST/test_run.py`
+2. Run tests: `bun test` (unit) + `uv run pytest tests/integration/` (smoke)
 3. Verify the implementation matches the original request exactly (no gold-plating).
 4. If any check fails, fix it before proceeding.
 
 ## Build/Lint/Test Commands
-- Run tests: `uv run python TEST/test_run.py`
-- Run linters: `uv run ruff check .`
-- Install dependencies: `uv sync`
-- Start main app: `uv run start.py`
-- Start Fusion Sidecar: `uv run uvicorn fusion:app --host 0.0.0.0 --port 7768`
+- Run unit tests (TS logic): `bun test`
+- Run integration/smoke tests (live gateway): `uv run pytest tests/integration/`
+- Run linters: `uv run ruff check .` (Python test files)
+- Install dependencies: `bun install` (gateway) + `uv sync` (pytest smoke deps)
+- Start gateway (daemon, tmux `literouter`): `bash scripts/start.sh`
+- Run gateway in foreground: `bun run src/index.ts`
+- Health probe (FYI key validation — does NOT gate boot): `bun run scripts/doctor.ts`
 
 ## Agent Guardrail & Sanitization
 To prevent broken scripts and escape artifacts (`\\n`, `\\u`), always use the guardrail workflow

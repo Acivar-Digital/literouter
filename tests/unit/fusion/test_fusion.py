@@ -1,8 +1,8 @@
 # tests/test_fusion.py
 """
-Live smoke test for the LiteRouter Fusion Sidecar (fusion.py on :7768).
+Live smoke test for the LiteRouter Fusion Sidecar (fusion.py on :7766).
 
-Assumes BOTH the sidecar (7768) and the gateway (7766) are running.
+Assumes BOTH the sidecar (7766) and the gateway (7766) are running.
 Run with:  uv run python tests/test_fusion.py
 
 Note: this is a live test — it needs valid GOOGLE_API_KEYS in the gateway's .env
@@ -16,7 +16,7 @@ import sys
 
 import httpx
 
-FUSION_URL = "http://localhost:7768/v1/chat/completions"
+FUSION_URL = "http://localhost:7766/v1/chat/completions"
 # Gateway auth token (matches LITEROUTER_AUTH_KEY in .env). Override via env if different.
 AUTH_HEADER = {
     "Authorization": f"Bearer {os.getenv('LITEROUTER_AUTH_KEY', 'sk-lr-8f2a9e3b1c4d7e5f')}"
@@ -24,16 +24,16 @@ AUTH_HEADER = {
 
 
 async def run_tests():
-    print("Running fusion sidecar smoke tests against live 7768 + gateway 7766...")
+    print("Running fusion sidecar smoke tests against live 7766 + gateway 7766...")
 
     async with httpx.AsyncClient(timeout=60.0) as client:
         # 1. Health check
         try:
-            resp = await client.get("http://localhost:7768/health")
+            resp = await client.get("http://localhost:7766/health")
             assert resp.status_code == 200, "Health check failed"
             print("✅ Health check passed")
         except httpx.ConnectError:
-            print("❌ Could not connect to fusion.py on port 7768. Is it running?")
+            print("❌ Could not connect to fusion.py on port 7766. Is it running?")
             sys.exit(1)
 
         # 2. Passthrough (non-fusion model) — must NOT carry X-Literouter-Model

@@ -4,7 +4,8 @@
   "description": "LiteRouter TypeScript Proxy on Bun",
   "main": "src/index.ts",
   "scripts": {
-    "start": "bun run src/index.ts"
+    "start": "bun run src/index.ts",
+    "test": "bun test"
   },
   "dependencies": {
     "ioredis": "^5.3.2"

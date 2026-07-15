@@ -26,12 +26,12 @@ flush_valkey
 echo "🥟 Starting LiteRouter (Bun) on port $PORT..."
 tmux new-session -d -s "$TMUX_SESSION"
 tmux send-keys -t "$TMUX_SESSION" "cd $(pwd)" C-m
-tmux send-keys -t "$TMUX_SESSION" "export LITEROUTER_PORT=$PORT && bun run ts-src/src/index.ts" C-m
+tmux send-keys -t "$TMUX_SESSION" "export LITEROUTER_PORT=$PORT && bun run src/index.ts" C-m
 
 sleep 2
 
 # Retrieve and write PID
-BUN_PID=$(pgrep -f "bun run ts-src/src/index.ts" | head -n 1)
+BUN_PID=$(pgrep -f "bun run src/index.ts" | head -n 1)
 echo "${BUN_PID:-}" > "$PID_FILE"
 
 # Verify it is running

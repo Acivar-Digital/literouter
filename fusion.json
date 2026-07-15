@@ -1,15 +1,15 @@
 {
   "local/google": {
-    "description": "Google fusion via TS proxy (native /v1beta), for OpenCode",
+    "description": "Google fusion via Bun Gateway (native /v1beta), for OpenCode",
     "chain": [
       "google/gemma-4-31b-it",
       "google/gemini-3.1-flash-lite",
       "google/gemma-4-26b-a4b-it"
     ],
-    "upstream": "http://localhost:7767/v1beta"
+    "upstream": "http://localhost:7766/v1beta"
   },
   "pydantic/google": {
-    "description": "Google fusion via Python gateway OpenAI-compat (/v1), for pydantic-ai",
+    "description": "Google fusion via Bun Gateway (OpenAI-compat /v1), for pydantic-ai",
     "chain": [
       "google/gemma-4-31b-it",
       "google/gemini-3.1-flash-lite",
@@ -18,7 +18,7 @@
     "upstream": "http://localhost:7766/v1/chat/completions"
   },
   "pydantic/nvidia": {
-    "description": "NVIDIA-hosted fusion via Python gateway OpenAI-compat (/v1), for pydantic-ai",
+    "description": "NVIDIA-hosted fusion via Bun Gateway (OpenAI-compat /v1), for pydantic-ai",
     "chain": [
       "nvidia/deepseek-ai/deepseek-v4-pro",
       "nvidia/z-ai/glm-5.2",

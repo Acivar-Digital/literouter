@@ -93,9 +93,9 @@ If any step fails:
   PROVIDER_NAME_API_KEYS=key1,key2,key3...
   PROVIDER_NAME_BASE_URL=https://api.provider.com/v1
   ```
-- [ ] Read `ts-src/src/index.ts` to find `PROVIDER_API_URLS` dictionary and add provider's URL entry
-- [ ] Read `ts-src/src/index.ts` to find `API_KEYS` object and add provider's key parser
-- [ ] Read `ts-src/src/index.ts` to find `PROVIDER_LIMITS` and add provider-level rate limits
+- [ ] Read `src/index.ts` to find `PROVIDER_API_URLS` dictionary and add provider's URL entry
+- [ ] Read `src/index.ts` to find `API_KEYS` object and add provider's key parser
+- [ ] Read `src/index.ts` to find `PROVIDER_LIMITS` and add provider-level rate limits
 - [ ] Add provider's models to `models.json` (use format: `{ "system_id": "...", "provider": "...", "upstream_id": "...", "context": ..., "max_output": ... }`)
 - [ ] Extend `ORG_MAP` in `scripts/gather_model_details.py` (if provider's models are on OpenRouter under different org name)
 - [ ] Run `uv run python scripts/gather_model_details.py`
@@ -113,7 +113,7 @@ If any step fails:
 - [ ] If approved, search `models.json` for `"provider":"PROVIDER_NAME"` and remove all matching entries
 - [ ] Delete all metadata files: `rm models/PROVIDER_NAME/*.json` (verify first with `ls models/PROVIDER_NAME/`)
 - [ ] Remove provider env vars from `.env` (lines matching `{PROVIDER}_API_KEYS` and `{PROVIDER}_BASE_URL`)
-- [ ] Edit `ts-src/src/index.ts`:
+- [ ] Edit `src/index.ts`:
   - Search `PROVIDER_API_URLS` and remove provider's URL entry
   - Search `API_KEYS` and remove provider's key parser
   - Search `PROVIDER_LIMITS` and remove provider's rate limit entry
@@ -165,7 +165,7 @@ If any step fails:
 
 ## 11. Agent Reminders (Anti-Fuckup Guide)
 
-0. **Config is at the top**: All env-driven constants in `ts-src/src/index.ts` lines 7-31 — one screen, no digging
+0. **Config is at the top**: All env-driven constants in `src/index.ts` near the top — one screen, no digging
 
 1. **CLI Naming Convention**: Use `literouter/` prefix for `opencode` CLI commands
    - ❌ `opencode -m openrouter/model-id`

@@ -84,7 +84,7 @@ Key insight: Google's OpenAI-compatibility endpoint lives at `/v1beta/openai/` o
 The Bun process uses a Redis Lua script for atomic true-rolling rate limiting:
 
 ```lua
--- QUOTA_CHECK_SCRIPT (ts-src/src/index.ts)
+-- QUOTA_CHECK_SCRIPT (src/index.ts)
 ZREMRANGEBYSCORE key '-inf' now-60       -- purge events >60s old
 ZRANGEBYSCORE key now-60 now              -- count remaining members
 -- count RPM = #members

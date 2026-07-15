@@ -49,7 +49,7 @@ Fusion groups are defined in `fusion.json` and reference existing models from `m
 
 ### Prerequisites
 - [Bun](https://bun.sh) 1.2+
-- Redis / Valkey server (optional — falls back to in-memory)
+- Redis / Valkey server (REQUIRED — the gateway exits(1) on a connection error; there is no in-memory fallback)
 - API key(s) for your chosen provider(s)
 
 ### Installation
@@ -67,7 +67,7 @@ Edit `.env`:
 LITEROUTER_PORT=7766
 LITEROUTER_AUTH_KEY=sk-lr-your-auth-key
 
-# Redis (optional — leave REDIS_HOST empty to use in-memory mode)
+# Redis (REQUIRED — the gateway fails loud if Redis/Valkey is unreachable)
 REDIS_HOST=localhost
 REDIS_PORT=6379
 REDIS_PASSWORD=your-redis-password
@@ -206,7 +206,7 @@ Both providers point to the same LiteRouter endpoint. Routing is determined by t
 
 ```
 literouter/
-├── ts-src/src/
+├── src/
 │   └── index.ts             # Bun server: routing, ZSET+Lua quota, fusion, streaming
 ├── models.json              # Model routing registry (system_id → upstream)
 ├── fusion.json              # Fusion group definitions (priority chains)
@@ -229,7 +229,7 @@ literouter/
 | `rolling:{provider}:{hash}:{model}` | ZSET — atomic rolling 60s quota window (Lua) |
 | `cooldown:{provider}:{hash}:{model}` | Per-key, per-model cooldown state (rate_limited: 65s, timed_out: 10s, quarantined: 7d) |
 
-Redis/Valkey is optional. When unavailable, rate limiting falls back to in-memory.
+Redis/Valkey is REQUIRED. When unavailable, the gateway exits(1) on the connection error (no in-memory fallback).
 
 ## License
 
