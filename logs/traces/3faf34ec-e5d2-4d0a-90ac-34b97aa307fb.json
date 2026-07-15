@@ -1,0 +1,48 @@
+{
+  "reqId": "3faf34ec-e5d2-4d0a-90ac-34b97aa307fb",
+  "model": "google/gemma-4-26b-a4b-it",
+  "provider": "google",
+  "ts": "2026-07-15T23:55:12.103Z",
+  "downstream": {
+    "model": "gemma-4-26b-a4b-it",
+    "messages": [
+      {
+        "role": "user",
+        "content": "say OK"
+      }
+    ],
+    "temperature": 0.1,
+    "max_tokens": 200,
+    "stream": false
+  },
+  "status": 200,
+  "upstream": {
+    "status": 200,
+    "body": {
+      "choices": [
+        {
+          "finish_reason": "stop",
+          "index": 0,
+          "message": {
+            "content": "<thought>The user said \"say OK\".\nThe user wants me to output the word \"OK\".\nRespond with \"OK\".</thought>OK",
+            "extra_content": {
+              "google": {
+                "thought": true
+              }
+            },
+            "role": "assistant"
+          }
+        }
+      ],
+      "created": 1784159713,
+      "id": "4B1YaqOlCYTijuMPioWFsQs",
+      "model": "gemma-4-26b-a4b-it",
+      "object": "chat.completion",
+      "usage": {
+        "completion_tokens": 1,
+        "prompt_tokens": 3,
+        "total_tokens": 29
+      }
+    }
+  }
+}

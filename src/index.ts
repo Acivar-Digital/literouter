@@ -11,6 +11,7 @@ import {
   staticValidateKeys,
   estimateTokens,
   cleanGemmaPayload,
+  cleanGoogleOpenAICompat,
   cleanLatexSymbols,
   mergeConsecutiveMessages,
   transformNonStreaming,
@@ -676,6 +677,7 @@ async function executeOpenAICompat(
   const { provider, upstream_model, api_url } = meta;
   reqJson.model = upstream_model;
   reqJson.messages = mergeConsecutiveMessages(reqJson.messages);
+  if (provider === "google") reqJson = cleanGoogleOpenAICompat(reqJson);
   if (upstream_model.toLowerCase().includes("gemma"))
     reqJson = cleanGemmaPayload(reqJson);
   logState(EMOJI.inbound, `[REQ ${reqId}] model=${modelName} provider=${provider} upstream=${upstream_model} stream=${!!reqJson.stream}`);

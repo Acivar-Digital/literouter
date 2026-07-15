@@ -98,6 +98,32 @@ export function cleanGemmaPayload(data: any): any {
   return data;
 }
 
+// Google's OpenAI-compat endpoint rejects native-genai extension fields.
+// Strip them on the /v1 (OpenAI-compat) path so any client payload
+// (incl. pydantic-ai extra_body={"google": {...}}) cannot 400/500.
+const GOOGLE_OPENAI_COMPAT_UNSUPPORTED = new Set([
+  "thinking",
+  "thinkingConfig",
+  "thinking_config",
+  "reasoning_effort",
+  "reasoning",
+  "google",
+]);
+
+export function cleanGoogleOpenAICompat(data: any): any {
+  if (Array.isArray(data)) return data.map(cleanGoogleOpenAICompat);
+  if (data !== null && typeof data === "object") {
+    const cleaned: any = {};
+    for (const [k, v] of Object.entries(data)) {
+      if (!GOOGLE_OPENAI_COMPAT_UNSUPPORTED.has(k)) {
+        cleaned[k] = cleanGoogleOpenAICompat(v);
+      }
+    }
+    return cleaned;
+  }
+  return data;
+}
+
 export function cleanLatexSymbols(text: string): string {
   let res = text.replace(/\\{1,2}times\s*(\d+(?:\.\d+)?)/g, "× $1");
   const replacements: [RegExp, string][] = [
