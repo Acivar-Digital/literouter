@@ -44,3 +44,4 @@ data/
 
 # agent_guardrail checkpoints
 .checkpoints/
+logs/traces/
