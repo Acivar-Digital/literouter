@@ -37,7 +37,7 @@ LiteRouter has been consolidated from three processes (Python `:7766` + TypeScri
 - **Verbose logging restored** — `attempt X/Y`, `[PROVIDER_LIMIT]`, `[SYSTEM_LIMIT]` logs all active on both native and OpenAI-compat routes.
 - **Native route transparent pass-through** — `cleanGemmaPayload` removed from native route (`/v1beta/`). OpenAI-compat route (`/v1/`) still scrubs `thinkingConfig`. Native route now passes request body unchanged to Google.
 - **Standardized key rotation delay to 10s** — Removed `GOOGLE_MIN_DELAY_MS=2000` override. All providers now use `LITEROUTER_ROTATE_DELAY_MS=10000`.
-- **Cleaned up verbose logging** — Removed request/response body dumping from `[REQ-NATIVE]`, `[GOOGLE-UPSTREAM]`, `[PROVIDER_LIMIT]` logs. Only metadata lines remain.
+- **Telemetry sanitization** — Removed raw request body dumps from native logging. Logs now only capture metadata.
 - **Port consistency** — `start.sh` now reads port from `.env` `LITEROUTER_PORT` instead of hardcoding.
 
 ## [2.9.3] — 2026-07-10

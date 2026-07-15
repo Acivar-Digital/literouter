@@ -903,6 +903,7 @@ async function executeGoogleNative(
         const headers = cleanHeaders(reqHeaders);
         headers.delete("authorization");
 
+        console.log(`[GOOGLE-UPSTREAM] url=${url.toString().replace(activeKey, "REDACTED")}`);
         const resp = await fetch(url.toString(), {
           method: "POST",
           headers,
