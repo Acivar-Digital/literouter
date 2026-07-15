@@ -760,12 +760,13 @@ async function executeOpenAICompat(
             });
           }
           const errText = await resp.text();
+          const errSnippet = errText.substring(0, 300).replace(/\n/g, " ");
           if (
             errText.includes("cooldown") ||
             errText.includes("exhausted quota")
           ) {
             await router.reportError(provider, activeKey, "429", upstream_model);
-            console.log(`[PROVIDER_LIMIT] key=${activeKey.substring(0, 6)}... model=${upstream_model} (${resp.status}) rpm ${currentRpm + 1}/${getModelLimits(modelName, provider).max_rpm}`);
+            console.log(`[PROVIDER_LIMIT] key=${activeKey.substring(0, 6)}... model=${upstream_model} (${resp.status}) rpm ${currentRpm + 1}/${getModelLimits(modelName, provider).max_rpm} body=${errSnippet}`);
           } else {
             await router.reportError(
               provider,
@@ -773,7 +774,7 @@ async function executeOpenAICompat(
               resp.status.toString(),
               upstream_model,
             );
-            console.log(`[PROVIDER_LIMIT] key=${activeKey.substring(0, 6)}... model=${upstream_model} (${resp.status}) rpm ${currentRpm + 1}/${getModelLimits(modelName, provider).max_rpm}`);
+            console.log(`[PROVIDER_LIMIT] key=${activeKey.substring(0, 6)}... model=${upstream_model} (${resp.status}) rpm ${currentRpm + 1}/${getModelLimits(modelName, provider).max_rpm} body=${errSnippet}`);
           }
           continue;
         }
@@ -902,7 +903,6 @@ async function executeGoogleNative(
         const headers = cleanHeaders(reqHeaders);
         headers.delete("authorization");
 
-        console.log(`[GOOGLE-UPSTREAM] url=${url.toString().replace(activeKey, "REDACTED")} body=${JSON.stringify(reqJson).substring(0, 800)}`);
         const resp = await fetch(url.toString(), {
           method: "POST",
           headers,
@@ -919,12 +919,13 @@ async function executeGoogleNative(
             });
           }
           const errText = await resp.text();
+          const errSnippet = errText.substring(0, 300).replace(/\n/g, " ");
           if (
             errText.includes("cooldown") ||
             errText.includes("exhausted quota")
           ) {
             await router.reportError("google", activeKey, "429", upstream_model);
-            console.log(`[PROVIDER_LIMIT] key=${activeKey.substring(0, 6)}... model=${upstream_model} (429) rpm ${currentRpm + 1}/${getModelLimits(modelName, "google").max_rpm}`);
+            console.log(`[PROVIDER_LIMIT] key=${activeKey.substring(0, 6)}... model=${upstream_model} (429) rpm ${currentRpm + 1}/${getModelLimits(modelName, "google").max_rpm} body=${errSnippet}`);
           } else {
             await router.reportError(
               "google",
@@ -932,7 +933,7 @@ async function executeGoogleNative(
               resp.status.toString(),
               upstream_model,
             );
-            console.log(`[PROVIDER_LIMIT] key=${activeKey.substring(0, 6)}... model=${upstream_model} (${resp.status}) rpm ${currentRpm + 1}/${getModelLimits(modelName, "google").max_rpm}`);
+            console.log(`[PROVIDER_LIMIT] key=${activeKey.substring(0, 6)}... model=${upstream_model} (${resp.status}) rpm ${currentRpm + 1}/${getModelLimits(modelName, "google").max_rpm} body=${errSnippet}`);
           }
           await new Promise((r) => setTimeout(r, getProviderDelayMs("google")));
           continue;
