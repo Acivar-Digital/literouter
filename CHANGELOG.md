@@ -2,6 +2,12 @@
 
 All notable changes to LiteRouter will be documented in this file.
 
+## [3.1.0] — 2026-07-16
+
+### Added
+- **Emoji state logging** — Terminal logs now carry intuitive per-state emoji prefixes for faster visual scanning (🔵 inbound request, 🔄 rotate/backoff, ⚠️ provider limit, 🔴 system limit exhausted, 🟢 served, 🔗 fusion, 🚀 boot, 📝 trace, 💥 error). Existing text tags (`[REQ]`, `[PROVIDER_LIMIT]`, `[FUSION]`, etc.) are preserved for grep-ability.
+- **Request trace archive** — Every request is assigned a `crypto.randomUUID()` `reqId` threaded through all handlers and the fusion chain. Raw **downstream** (request body sent upstream) and **upstream** (provider response) payloads are matched by `reqId` and written to `logs/traces/<reqId>.json` for post-crash investigation. Writes are non-blocking (fire-and-forget, `0600` perms) to avoid I/O lag on the request path; there is no in-memory buffer (files are the sole archive). The `logs/traces/` directory is cleared at every boot via `clearTraces()`, mirroring the Valkey flush.
+
 ## [3.0.0] — 2026-07-16
 
 ### Architecture — Single Bun Process (BREAKING)

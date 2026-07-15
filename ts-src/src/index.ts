@@ -5,6 +5,92 @@ import * as fs from "fs";
 import * as path from "path";
 
 // ============================================================================
+// 0. Emoji State Logging & Trace Archive
+// ============================================================================
+
+const ROOT_DIR = import.meta.dir
+  ? path.resolve(import.meta.dir, "../..")
+  : process.cwd();
+
+// Intuitive per-state emoji prefixes for terminal readability. Text tags are
+// preserved alongside for grep-ability.
+function logState(emoji: string, msg: string): void {
+  console.log(`${emoji} ${msg}`);
+}
+function logWarn(emoji: string, msg: string): void {
+  console.warn(`${emoji} ${msg}`);
+}
+function logError(emoji: string, msg: string): void {
+  console.error(`${emoji} ${msg}`);
+}
+
+const EMOJI = {
+  inbound: "🔵",
+  rotate: "🔄",
+  limit: "⚠️",
+  exhausted: "🔴",
+  served: "🟢",
+  boot: "🚀",
+  error: "💥",
+  fusion: "🔗",
+  trace: "📝",
+};
+
+// Trace archive: raw downstream (request body sent upstream) + upstream
+// (provider response) matched by reqId. Written non-blocking (fire-and-forget)
+// to avoid I/O lag on the request path. Cleared at boot (see clearTraces()).
+const TRACES_DIR = path.resolve(ROOT_DIR, "logs", "traces");
+
+function clearTraces(): void {
+  try {
+    if (fs.existsSync(TRACES_DIR)) {
+      for (const f of fs.readdirSync(TRACES_DIR)) {
+        fs.rmSync(path.join(TRACES_DIR, f), { force: true });
+      }
+    } else {
+      fs.mkdirSync(TRACES_DIR, { recursive: true });
+    }
+    logState(EMOJI.trace, `Trace archive cleared at boot (${TRACES_DIR})`);
+  } catch (e) {
+    logError(EMOJI.error, `Failed to clear trace archive: ${e}`);
+  }
+}
+
+// Append a trace part (downstream or upstream) for a reqId. Non-blocking:
+// reads existing file if present, merges, writes back detached via void.
+function recordTrace(
+  reqId: string,
+  part: "downstream" | "upstream",
+  payload: unknown,
+  meta: { model: string; provider: string; status?: number },
+): void {
+  void (async () => {
+    try {
+      fs.mkdirSync(TRACES_DIR, { recursive: true });
+      const file = path.join(TRACES_DIR, `${reqId}.json`);
+      let record: any = {};
+      if (fs.existsSync(file)) {
+        try {
+          record = JSON.parse(fs.readFileSync(file, "utf-8"));
+        } catch {
+          record = {};
+        }
+      }
+      record.reqId = reqId;
+      record.model = meta.model;
+      record.provider = meta.provider;
+      if (meta.status !== undefined) record.status = meta.status;
+      record.ts = record.ts || new Date().toISOString();
+      record[part] = payload;
+      fs.writeFileSync(file, JSON.stringify(record, null, 2), { mode: 0o600 });
+    } catch (e) {
+      // Trace archival must never break the request path.
+      logError(EMOJI.error, `Trace write failed for ${reqId}/${part}: ${e}`);
+    }
+  })();
+}
+
+// ============================================================================
 // 1. Configuration & Environment
 // ============================================================================
 
@@ -181,10 +267,6 @@ const FUSION_GROUPS = new Map<
   { description: string; chain: string[]; upstream?: string }
 >();
 
-const ROOT_DIR = import.meta.dir
-  ? path.resolve(import.meta.dir, "../..")
-  : process.cwd();
-
 function loadRegistries() {
   try {
     const modelsPath = path.resolve(ROOT_DIR, "models.json");
@@ -222,6 +304,7 @@ function loadRegistries() {
   }
 }
 loadRegistries();
+clearTraces();
 
 // ============================================================================
 // 3. Redis Router (ZSET + Lua Quota & Cooldowns)
@@ -745,6 +828,7 @@ async function executeOpenAICompat(
   reqHeaders: Headers,
   servedModelId?: string,
   fromFusion?: boolean,
+  reqId?: string,
 ): Promise<Response> {
   const meta = MODEL_REGISTRY.get(modelName);
   if (!meta)
@@ -758,7 +842,8 @@ async function executeOpenAICompat(
   reqJson.messages = mergeConsecutiveMessages(reqJson.messages);
   if (upstream_model.toLowerCase().includes("gemma"))
     reqJson = cleanGemmaPayload(reqJson);
-  console.log(`[REQ] model=${modelName} provider=${provider} upstream=${upstream_model} stream=${!!reqJson.stream}`);
+  logState(EMOJI.inbound, `[REQ ${reqId}] model=${modelName} provider=${provider} upstream=${upstream_model} stream=${!!reqJson.stream}`);
+  if (reqId) recordTrace(reqId, "downstream", reqJson, { model: modelName, provider });
 
   const isStream = !!reqJson.stream;
   const estimatedTokens = estimateTokens(
@@ -807,7 +892,7 @@ async function executeOpenAICompat(
             errText.includes("exhausted quota")
           ) {
             await router.reportError(provider, activeKey, "429", upstream_model);
-            console.log(`[PROVIDER_LIMIT] key=${activeKey.substring(0, 6)}... model=${upstream_model} (${resp.status}) rpm ${currentRpm + 1}/${getModelLimits(modelName, provider).max_rpm}`);
+            logState(EMOJI.limit, `[PROVIDER_LIMIT ${reqId}] key=${activeKey.substring(0, 6)}... model=${upstream_model} (${resp.status}) rpm ${currentRpm + 1}/${getModelLimits(modelName, provider).max_rpm}`);
           } else {
             await router.reportError(
               provider,
@@ -815,14 +900,16 @@ async function executeOpenAICompat(
               resp.status.toString(),
               upstream_model,
             );
-            console.log(`[PROVIDER_LIMIT] key=${activeKey.substring(0, 6)}... model=${upstream_model} (${resp.status}) rpm ${currentRpm + 1}/${getModelLimits(modelName, provider).max_rpm}`);
+            logState(EMOJI.limit, `[PROVIDER_LIMIT ${reqId}] key=${activeKey.substring(0, 6)}... model=${upstream_model} (${resp.status}) rpm ${currentRpm + 1}/${getModelLimits(modelName, provider).max_rpm}`);
           }
+          if (reqId) recordTrace(reqId, "upstream", { status: resp.status, body: errText }, { model: modelName, provider, status: resp.status });
           continue;
         }
 
       const outHeaders = cleanHeaders(resp.headers);
       if (servedModelId) outHeaders.set("X-Literouter-Model", servedModelId);
-      console.log(`[${provider.toUpperCase()}] Served ${modelName} (upstream=${upstream_model}, key=${activeKey.substring(0, 6)}...) attempt ${attempt + 1}/${maxAttempts} rpm ${currentRpm + 1}/${getModelLimits(modelName, provider).max_rpm}`);
+      logState(EMOJI.served, `[${provider.toUpperCase()} ${reqId}] Served ${modelName} (upstream=${upstream_model}, key=${activeKey.substring(0, 6)}...) attempt ${attempt + 1}/${maxAttempts} rpm ${currentRpm + 1}/${getModelLimits(modelName, provider).max_rpm}`);
+      if (reqId && isStream) recordTrace(reqId, "upstream", { status: resp.status, body: "(stream)" }, { model: modelName, provider, status: resp.status });
 
       if (isStream) {
         return new Response(
@@ -842,6 +929,7 @@ async function executeOpenAICompat(
           LITEROUTER_COLLAPSE_REASONING,
         );
         extractThoughtSignature(data);
+        if (reqId) recordTrace(reqId, "upstream", { status: resp.status, body: data }, { model: modelName, provider, status: resp.status });
         return new Response(JSON.stringify(data), {
           status: resp.status,
           headers: outHeaders,
@@ -859,9 +947,7 @@ async function executeOpenAICompat(
             });
           }
           if (round < BACKOFF_MS.length) {
-            console.warn(
-              `[${provider.toUpperCase()}] All keys exhausted, backing off ${BACKOFF_MS[round] / 1000}s (round ${round + 1}/${BACKOFF_MS.length})`,
-            );
+            logWarn(EMOJI.rotate, `[${provider.toUpperCase()} ${reqId}] All keys exhausted, backing off ${BACKOFF_MS[round] / 1000}s (round ${round + 1}/${BACKOFF_MS.length})`);
             await new Promise((r) => setTimeout(r, BACKOFF_MS[round]));
             break;
           }
@@ -887,7 +973,7 @@ async function executeOpenAICompat(
       return new Response(JSON.stringify({ error: "Max attempts exhausted" }), { status: 429 });
     }
   }
-  console.log(`[SYSTEM_LIMIT] Max attempts (${LITEROUTER_MAX_ATTEMPTS}) reached for ${modelName}, all keys exhausted.`);
+  logState(EMOJI.exhausted, `[SYSTEM_LIMIT ${reqId}] Max attempts (${LITEROUTER_MAX_ATTEMPTS}) reached for ${modelName}, all keys exhausted.`);
   return new Response(JSON.stringify({ error: "Failover loop exhausted" }), {
     status: 502,
   });
@@ -901,6 +987,7 @@ async function executeGoogleNative(
   reqHeaders: Headers,
   servedModelId?: string,
   fromFusion?: boolean,
+  reqId?: string,
 ): Promise<Response> {
   let meta =
     MODEL_REGISTRY.get(modelName) || MODEL_REGISTRY.get(`google/${modelName}`);
@@ -918,7 +1005,8 @@ async function executeGoogleNative(
   const { upstream_model } = meta;
   if (upstream_model.toLowerCase().includes("gemma"))
     reqJson = cleanGemmaPayload(reqJson);
-  console.log(`[REQ-NATIVE] model=${modelName} action=${action} provider=google upstream=${upstream_model}`);
+  logState(EMOJI.inbound, `[REQ-NATIVE ${reqId}] model=${modelName} action=${action} provider=google upstream=${upstream_model}`);
+  if (reqId) recordTrace(reqId, "downstream", reqJson, { model: modelName, provider: "google" });
 
   const estimatedTokens = estimateTokens(JSON.stringify(reqJson), 1024);
   const numKeys = API_KEYS.google.length;
@@ -968,7 +1056,7 @@ async function executeGoogleNative(
             errText.includes("exhausted quota")
           ) {
             await router.reportError("google", activeKey, "429", upstream_model);
-            console.log(`[PROVIDER_LIMIT] key=${activeKey.substring(0, 6)}... model=${upstream_model} (429) rpm ${currentRpm + 1}/${getModelLimits(modelName, "google").max_rpm}`);
+            logState(EMOJI.limit, `[PROVIDER_LIMIT ${reqId}] key=${activeKey.substring(0, 6)}... model=${upstream_model} (429) rpm ${currentRpm + 1}/${getModelLimits(modelName, "google").max_rpm}`);
           } else {
             await router.reportError(
               "google",
@@ -976,15 +1064,17 @@ async function executeGoogleNative(
               resp.status.toString(),
               upstream_model,
             );
-            console.log(`[PROVIDER_LIMIT] key=${activeKey.substring(0, 6)}... model=${upstream_model} (${resp.status}) rpm ${currentRpm + 1}/${getModelLimits(modelName, "google").max_rpm}`);
+            logState(EMOJI.limit, `[PROVIDER_LIMIT ${reqId}] key=${activeKey.substring(0, 6)}... model=${upstream_model} (${resp.status}) rpm ${currentRpm + 1}/${getModelLimits(modelName, "google").max_rpm}`);
           }
+          if (reqId) recordTrace(reqId, "upstream", { status: resp.status, body: errText }, { model: modelName, provider: "google", status: resp.status });
           await new Promise((r) => setTimeout(r, getProviderDelayMs("google")));
           continue;
         }
 
         const outHeaders = cleanHeaders(resp.headers);
       if (servedModelId) outHeaders.set("X-Literouter-Model", servedModelId);
-      console.log(`[GOOGLE] Served native ${modelName}:${action} (upstream=${upstream_model}, attempt ${attempt + 1}/${maxAttempts}, rpm ${currentRpm + 1}/${getModelLimits(modelName, "google").max_rpm})`);
+      logState(EMOJI.served, `[GOOGLE ${reqId}] Served native ${modelName}:${action} (upstream=${upstream_model}, attempt ${attempt + 1}/${maxAttempts}, rpm ${currentRpm + 1}/${getModelLimits(modelName, "google").max_rpm})`);
+      if (reqId) recordTrace(reqId, "upstream", { status: resp.status, body: "(stream)" }, { model: modelName, provider: "google", status: resp.status });
 
         const decoder = new TextDecoder();
         const encoder = new TextEncoder();
@@ -1012,9 +1102,7 @@ async function executeGoogleNative(
             });
           }
           if (round < BACKOFF_MS.length) {
-            console.warn(
-              `[GOOGLE] All keys exhausted, backing off ${BACKOFF_MS[round] / 1000}s (round ${round + 1}/${BACKOFF_MS.length})`,
-            );
+            logWarn(EMOJI.rotate, `[GOOGLE ${reqId}] All keys exhausted, backing off ${BACKOFF_MS[round] / 1000}s (round ${round + 1}/${BACKOFF_MS.length})`);
             await new Promise((r) => setTimeout(r, BACKOFF_MS[round]));
             break;
           }
@@ -1040,7 +1128,7 @@ async function executeGoogleNative(
       return new Response(JSON.stringify({ error: "Max attempts exhausted" }), { status: 429 });
     }
   }
-  console.log(`[SYSTEM_LIMIT] Max attempts (${LITEROUTER_MAX_ATTEMPTS}) reached for ${modelName}, all keys exhausted.`);
+  logState(EMOJI.exhausted, `[SYSTEM_LIMIT ${reqId}] Max attempts (${LITEROUTER_MAX_ATTEMPTS}) reached for ${modelName}, all keys exhausted.`);
   return new Response(JSON.stringify({ error: "Failover loop exhausted" }), {
     status: 502,
   });
@@ -1054,11 +1142,12 @@ async function executeFusion(
   queryParams: URLSearchParams,
   isNativeRoute: boolean,
   action: string,
+  reqId?: string,
 ): Promise<Response> {
   const isNativeUpstream = isNativeRoute || (group.upstream?.includes("/v1beta") ?? false);
   const chain: string[] = group.chain;
   const startIdx = getStickyStart(groupId, chain);
-  console.log(`[FUSION] group=${groupId} chain=${chain.join("->")} start=${chain[startIdx]}`);
+  logState(EMOJI.fusion, `[FUSION ${reqId}] group=${groupId} chain=${chain.join("->")} start=${chain[startIdx]}`);
 
   for (let i = startIdx; i < chain.length; i++) {
     const upstreamId = chain[i];
@@ -1074,6 +1163,7 @@ async function executeFusion(
         headers,
         upstreamId,
         true,
+        reqId,
       );
     } else {
       resp = await executeOpenAICompat(
@@ -1082,21 +1172,18 @@ async function executeFusion(
         headers,
         upstreamId,
         true,
+        reqId,
       );
     }
 
     if (resp.status === 429 || resp.status >= 500) {
       openCircuit(upstreamId);
-      console.warn(
-        `[FUSION] ${groupId} -> ${upstreamId} failed (${resp.status}), advancing chain.`,
-      );
+      logWarn(EMOJI.rotate, `[FUSION ${reqId}] ${groupId} -> ${upstreamId} failed (${resp.status}), advancing chain.`);
       continue;
     }
 
     if (resp.status >= 400 && resp.status < 500) {
-      console.warn(
-        `[FUSION] ${groupId} -> ${upstreamId} halted on client error (${resp.status}).`,
-      );
+      logWarn(EMOJI.limit, `[FUSION ${reqId}] ${groupId} -> ${upstreamId} halted on client error (${resp.status}).`);
       return resp;
     }
 
@@ -1128,6 +1215,7 @@ serve({
     if (!verifyAuthKey(req, url)) {
       return new Response("Unauthorized", { status: 401 });
     }
+    const reqId = crypto.randomUUID();
     const bodyText = await req.text();
     let reqJson = {};
     if (bodyText) {
@@ -1136,7 +1224,10 @@ serve({
       } catch (e) {}
     }
 
-    if (url.pathname === "/v1/chat/completions") {
+    if (
+      url.pathname === "/v1/chat/completions" ||
+      url.pathname === "/v1beta/openai/chat/completions"
+    ) {
       const modelName = (reqJson as any).model;
       if (!modelName)
         return new Response(
@@ -1153,9 +1244,10 @@ serve({
           url.searchParams,
           false,
           "",
+          reqId,
         );
       }
-      return executeOpenAICompat(modelName, reqJson, req.headers);
+      return executeOpenAICompat(modelName, reqJson, req.headers, undefined, false, reqId);
     }
 
     const nativeMatch = url.pathname.match(
@@ -1174,6 +1266,7 @@ serve({
           url.searchParams,
           true,
           action,
+          reqId,
         );
       }
       return executeGoogleNative(
@@ -1182,6 +1275,9 @@ serve({
         url.searchParams,
         reqJson,
         req.headers,
+        undefined,
+        false,
+        reqId,
       );
     }
 
@@ -1193,4 +1289,4 @@ serve({
   },
 });
 
-console.log(`🚀 LiteRouter (Bun) running on port ${LITEROUTER_PORT}`);
+logState(EMOJI.boot, `LiteRouter (Bun) running on port ${LITEROUTER_PORT}`);
