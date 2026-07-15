@@ -163,28 +163,35 @@ async def probe_zen_key(key: str) -> bool:
 
 async def run_diagnostics(force: bool) -> None:
     """
-    Orchestrates Gate 2 live diagnostic evaluation across active key pools in parallel.
+    Orchestrates Gate 2 live diagnostic evaluation across active key pools.
+    Probes provider pools in parallel, but sequential within each pool (2s wait).
     """
-    logger.info("Starting Gate 2 Parallel Live Validation Probes...")
+    logger.info("Starting Gate 2 sequential validation probes (2s wait per key)...")
 
-    tasks = []
+    async def probe_pool(probes):
+        results = []
+        for probe in probes:
+            results.append(await probe)
+            await asyncio.sleep(2)
+        return results
 
-    for key in GOOGLE_API_KEYS:
-        tasks.append(probe_google_key(key))
-    for key in NVIDIA_API_KEYS:
-        tasks.append(probe_nvidia_key(key))
-    for key in OPENROUTER_API_KEYS:
-        tasks.append(probe_openrouter_key(key))
-    for key in ZEN_API_KEYS:
-        tasks.append(probe_zen_key(key))
+    google_tasks = [probe_google_key(k) for k in GOOGLE_API_KEYS]
+    nvidia_tasks = [probe_nvidia_key(k) for k in NVIDIA_API_KEYS]
+    openrouter_tasks = [probe_openrouter_key(k) for k in OPENROUTER_API_KEYS]
+    zen_tasks = [probe_zen_key(k) for k in ZEN_API_KEYS]
 
-    if not tasks:
-        logger.warning("No active keys configured to execute live diagnostics.")
-        return
+    # Run providers in parallel, but sequential within the pool
+    results = await asyncio.gather(
+        probe_pool(google_tasks),
+        probe_pool(nvidia_tasks),
+        probe_pool(openrouter_tasks),
+        probe_pool(zen_tasks)
+    )
 
-    results = await asyncio.gather(*tasks)
-
-    failures = results.count(False)
+    # Flatten results
+    flat_results = [r for sublist in results for r in sublist]
+    
+    failures = flat_results.count(False)
     if failures > 0:
         logger.error(f"Gate 2 Live Validation failed. {failures} key(s) returned fatal authentication failures.")
         if not force:

@@ -7,6 +7,33 @@ import * as path from "path";
 // ============================================================================
 // 1. Configuration & Environment
 // ============================================================================
+
+const thoughtSignatureStore = new Map<string, string>();
+
+function injectThoughtSignature(body: any): void {
+  if (!body.messages) return;
+  for (const msg of body.messages) {
+    if (msg.role === "assistant" && msg.tool_calls) {
+      for (const tc of msg.tool_calls) {
+        if (!tc.extra_content?.google?.thought_signature && tc.id && thoughtSignatureStore.has(tc.id)) {
+          tc.extra_content = tc.extra_content || {};
+          tc.extra_content.google = tc.extra_content.google || {};
+          tc.extra_content.google.thought_signature = thoughtSignatureStore.get(tc.id)!;
+        }
+      }
+    }
+  }
+}
+
+function extractThoughtSignature(data: any): void {
+  const toolCalls = data.choices?.[0]?.message?.tool_calls || data.choices?.[0]?.delta?.tool_calls;
+  if (!toolCalls) return;
+  for (const tc of toolCalls) {
+    if (tc.id && tc.extra_content?.google?.thought_signature) {
+      thoughtSignatureStore.set(tc.id, tc.extra_content.google.thought_signature);
+    }
+  }
+}
 const LITEROUTER_PORT = parseInt(
   (Bun.env.LITEROUTER_PORT || "7766"),
   10,
@@ -480,12 +507,24 @@ function estimateTokens(promptText: string, maxTokens: number = 2048): number {
   return Math.floor(promptText.length / 4) + maxTokens;
 }
 
+const GEMMA_UNSUPPORTED = new Set([
+  "thinkingConfig",
+  "thinking_config",
+  "presence_penalty",
+  "frequency_penalty",
+  "logit_bias",
+  "user",
+  "seed",
+  "logprobs",
+  "top_logprobs",
+]);
+
 function cleanGemmaPayload(data: any): any {
   if (Array.isArray(data)) return data.map(cleanGemmaPayload);
   if (data !== null && typeof data === "object") {
     const cleaned: any = {};
     for (const [k, v] of Object.entries(data)) {
-      if (k !== "thinkingConfig" && k !== "thinking_config") {
+      if (!GEMMA_UNSUPPORTED.has(k)) {
         cleaned[k] = cleanGemmaPayload(v);
       }
     }
@@ -646,6 +685,7 @@ function createStreamTransformer(collapseReasoning: boolean) {
                   hasEndedThought = true;
                 }
               }
+              extractThoughtSignature(json);
               json.choices = choices;
             }
             controller.enqueue(
@@ -744,6 +784,7 @@ async function executeOpenAICompat(
           "Content-Type": "application/json",
         });
 
+        injectThoughtSignature(reqJson);
         const resp = await fetch(api_url, {
           method: "POST",
           headers,
@@ -766,7 +807,7 @@ async function executeOpenAICompat(
             errText.includes("exhausted quota")
           ) {
             await router.reportError(provider, activeKey, "429", upstream_model);
-            console.log(`[PROVIDER_LIMIT] key=${activeKey.substring(0, 6)}... model=${upstream_model} (${resp.status}) rpm ${currentRpm + 1}/${getModelLimits(modelName, provider).max_rpm} body=${errSnippet}`);
+            console.log(`[PROVIDER_LIMIT] key=${activeKey.substring(0, 6)}... model=${upstream_model} (${resp.status}) rpm ${currentRpm + 1}/${getModelLimits(modelName, provider).max_rpm}`);
           } else {
             await router.reportError(
               provider,
@@ -774,7 +815,7 @@ async function executeOpenAICompat(
               resp.status.toString(),
               upstream_model,
             );
-            console.log(`[PROVIDER_LIMIT] key=${activeKey.substring(0, 6)}... model=${upstream_model} (${resp.status}) rpm ${currentRpm + 1}/${getModelLimits(modelName, provider).max_rpm} body=${errSnippet}`);
+            console.log(`[PROVIDER_LIMIT] key=${activeKey.substring(0, 6)}... model=${upstream_model} (${resp.status}) rpm ${currentRpm + 1}/${getModelLimits(modelName, provider).max_rpm}`);
           }
           continue;
         }
@@ -800,6 +841,7 @@ async function executeOpenAICompat(
           JSON.parse(text),
           LITEROUTER_COLLAPSE_REASONING,
         );
+        extractThoughtSignature(data);
         return new Response(JSON.stringify(data), {
           status: resp.status,
           headers: outHeaders,
@@ -926,7 +968,7 @@ async function executeGoogleNative(
             errText.includes("exhausted quota")
           ) {
             await router.reportError("google", activeKey, "429", upstream_model);
-            console.log(`[PROVIDER_LIMIT] key=${activeKey.substring(0, 6)}... model=${upstream_model} (429) rpm ${currentRpm + 1}/${getModelLimits(modelName, "google").max_rpm} body=${errSnippet}`);
+            console.log(`[PROVIDER_LIMIT] key=${activeKey.substring(0, 6)}... model=${upstream_model} (429) rpm ${currentRpm + 1}/${getModelLimits(modelName, "google").max_rpm}`);
           } else {
             await router.reportError(
               "google",
@@ -934,7 +976,7 @@ async function executeGoogleNative(
               resp.status.toString(),
               upstream_model,
             );
-            console.log(`[PROVIDER_LIMIT] key=${activeKey.substring(0, 6)}... model=${upstream_model} (${resp.status}) rpm ${currentRpm + 1}/${getModelLimits(modelName, "google").max_rpm} body=${errSnippet}`);
+            console.log(`[PROVIDER_LIMIT] key=${activeKey.substring(0, 6)}... model=${upstream_model} (${resp.status}) rpm ${currentRpm + 1}/${getModelLimits(modelName, "google").max_rpm}`);
           }
           await new Promise((r) => setTimeout(r, getProviderDelayMs("google")));
           continue;

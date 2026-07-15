@@ -40,6 +40,17 @@ LiteRouter has been consolidated from three processes (Python `:7766` + TypeScri
 - **Telemetry sanitization** — Removed raw request body dumps from native logging. Logs now only capture metadata.
 - **Port consistency** — `start.sh` now reads port from `.env` `LITEROUTER_PORT` instead of hardcoding.
 
+## [3.1.0] — 2026-07-16
+
+### Added
+- **Thought signature support** — Google's OpenAI-compat endpoint requires `thought_signature` in `tool_calls[0].extra_content.google.thought_signature` for function calling. Proxy extracts it from Google's response (both streaming SSE and non-streaming), stores in-memory keyed by tool_call ID, and re-injects on the next request. Both `/v1beta/` (native) and `/v1/` (OpenAI-compat) routes support tool calls with Google models. Fully transparent — no client-side changes.
+- **Expanded Gemma payload sanitization** — `cleanGemmaPayload` now also strips `presence_penalty`, `frequency_penalty`, `logit_bias`, `user`, `seed`, `logprobs`, `top_logprobs` (prevents Google 500 Internal Error on Gemma 4 models via OpenAI-compat route).
+- **Gemini flash integration tests** — 5 tests covering native pass-through, OpenAI-compat pass-through, tool calls via native route (Pydantic AI Google SDK), and tool calls via OpenAI-compat route (Pydantic AI OpenAI SDK).
+
+### Fixed
+- **Verbose logging cleaned** — Removed `body=${errSnippet}` from `[PROVIDER_LIMIT]` log lines (no more request/response body dumping).
+- **conftest.py** — Stripped broken Python gateway singleton reset fixture (modules no longer exist in Bun-only architecture).
+
 ## [2.9.3] — 2026-07-10
 
 ### Added

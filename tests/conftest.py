@@ -16,49 +16,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 @pytest.fixture(autouse=True)
 def reset_singletons():
-    """Reset all singleton caches before each test."""
-    import sys
-    for module_name in ["src.main", "src.config", "src.router", "src.rate_limiter", "src.metrics"]:
-        if module_name in sys.modules:
-            del sys.modules[module_name]
-
-    import src.metrics as metrics_mod
-    import src.rate_limiter as rl_mod
-    import src.redis_client as redis_mod
-
-    import src.config as config_mod
-    import src.router as router_mod
-
-    # Reset config singleton
-    config_mod._cached_config = None
-
-    # Reset router singleton and in-memory state
-    router_mod._router = None
-    router_mod._mem_counters.clear()
-    router_mod._mem_cooldowns.clear()
-    router_mod._mem_quarantine.clear()
-
-    # Reset rate limiter singleton and in-memory state
-    rl_mod._limiter = None
-    rl_mod._mem_last_calls.clear()
-
-    # Reset metrics singleton and in-memory state
-    metrics_mod._metrics = None
-    metrics_mod._mem_metrics["requests_total"] = 0
-    metrics_mod._mem_metrics["requests_success"] = 0
-    metrics_mod._mem_metrics["requests_error"] = 0
-    metrics_mod._mem_metrics["key_usage"] = {}
-    metrics_mod._mem_metrics["error_by_status"] = {}
-    metrics_mod._mem_metrics["latency_sum"] = 0
-    metrics_mod._mem_metrics["latency_count"] = 0
-    metrics_mod._mem_metrics["ratelimit_waits"] = 0
-    metrics_mod._mem_metrics["ratelimit_wait_total_ms"] = 0
-
-    # Reset Redis clients
-    redis_mod._sync_client = None
-    redis_mod._async_client = None
-
-    yield
+    """Reset all singleton caches before each test (Python gateway only)."""
 
 
 @pytest.fixture
