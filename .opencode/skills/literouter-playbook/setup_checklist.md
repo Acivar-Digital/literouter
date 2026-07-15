@@ -10,7 +10,7 @@ Before starting ANY checklist:
 - [ ] Run `uv run python admin/code_hygiene/agent_guardrail.py checkpoint <filepath>` before editing files
 - [ ] Verify `.env` file exists and has API keys: `ls -la .env && head -5 .env`
 - [ ] Check current providers in `models.json`: `grep -o '"provider":"[^"]*"' models.json | sort -u`
-- [ ] Verify gateway is running: `curl -s http://localhost:7766/v1/models | head -c 100`
+- [ ] Verify gateway is running: `curl -s http://localhost:7766/health`
 
 ---
 
@@ -18,8 +18,7 @@ Before starting ANY checklist:
 
 | Test | Success criteria |
 |------|------------------|
-| Curl (port 7766) | `"id":"chatcmpl-..."`, `"choices":[...]`, no `"error"` field |
-| Curl (port 7767) | Same as above |
+| Curl `:7766` | `"id":"chatcmpl-..."`, `"choices":[...]`, no `"error"` field |
 | Opencode CLI | Single word response, no connection errors |
 | Model removed | `{"detail":"Model 'provider/model-id' is not recognized or whitelisted"}` |
 | Provider removed | All models under that provider return "not recognized" |
@@ -54,15 +53,15 @@ If any step fails:
 - [ ] Sync `~/.config/opencode/opencode.json` to mirror `models.json` changes. Find `provider.literouter.models` section and ensure the new model block exists with correct `name`/`limit` values
 - [ ] Update `CHANGELOG.md` under current version (Added section)
 - [ ] Restart gateway: `cd scripts && ./restart.sh`
-- [ ] Verify connectivity via curl to port `7766`:
+- [ ] Verify the gateway:
   ```bash
   curl -s http://localhost:7766/v1/chat/completions \
     -H "Content-Type: application/json" \
     -H "Authorization: Bearer sk-lr-8f2a9e3b1c4d7e5f" \
     -d '{"model": "provider/model-id", "messages": [{"role": "user", "content": "hello"}]}'
   ```
-- [ ] Verify connectivity via curl to port `7767` (same command)
-- [ ] Verify via OpenCode CLI: `opencode -m literouter/provider/model-id --prompt "hello" --no-color`
+- [ ] Verify via OpenCode CLI with `literouter/` prefix:
+  `opencode -m literouter/provider/model-id --prompt "hello" --no-color`
 
 ---
 
@@ -76,8 +75,14 @@ If any step fails:
 - [ ] Sync `~/.config/opencode/opencode.json` (search for `"openrouter/poolside/laguna-m.1:free"` and remove the entire block)
 - [ ] Update `CHANGELOG.md` under current version (Removed section)
 - [ ] Restart gateway: `cd scripts && ./restart.sh`
-- [ ] Verify model returns "not recognized" error (curl to port `7766`)
-- [ ] Verify model returns "not recognized" error (curl to port `7767`)
+- [ ] Verify model returns "not recognized" error:
+  ```bash
+  curl -s http://localhost:7766/v1/chat/completions \
+    -H "Content-Type: application/json" \
+    -H "Authorization: Bearer sk-lr-8f2a9e3b1c4d7e5f" \
+    -d '{"model": "provider/model-id", "messages": [{"role": "user", "content": "hi"}]}' \
+    | grep -c "not recognized or whitelisted"
+  ```
 
 ---
 
@@ -88,16 +93,14 @@ If any step fails:
   PROVIDER_NAME_API_KEYS=key1,key2,key3...
   PROVIDER_NAME_BASE_URL=https://api.provider.com/v1
   ```
-- [ ] Read `src/config.py` to find `PROVIDER_API_URLS` dictionary and add provider's URL
-- [ ] Read `src/config.py` to find `static_validate_keys` pattern and add:
-  `PROVIDER_API_KEYS = static_validate_keys("PROVIDER", os.getenv("PROVIDER_API_KEYS", ""))`
-- [ ] Read `ts-src/src/index.ts` to find `BASE_URLS` and add provider entry
-- [ ] Read `ts-src/src/index.ts` to find `ModelFirstRouter` constructor and add key parser
+- [ ] Read `ts-src/src/index.ts` to find `PROVIDER_API_URLS` dictionary and add provider's URL entry
+- [ ] Read `ts-src/src/index.ts` to find `API_KEYS` object and add provider's key parser
+- [ ] Read `ts-src/src/index.ts` to find `PROVIDER_LIMITS` and add provider-level rate limits
 - [ ] Add provider's models to `models.json` (use format: `{ "system_id": "...", "provider": "...", "upstream_id": "...", "context": ..., "max_output": ... }`)
 - [ ] Extend `ORG_MAP` in `scripts/gather_model_details.py` (if provider's models are on OpenRouter under different org name)
 - [ ] Run `uv run python scripts/gather_model_details.py`
 - [ ] Restart gateway: `cd scripts && ./restart.sh`
-- [ ] Verify both proxies (7766 and 7767) with curl tests
+- [ ] Verify new provider with curl test (from section 5)
 - [ ] Sync `~/.config/opencode/opencode.json` to mirror `models.json`
 - [ ] Update `CHANGELOG.md` under current version (Added section)
 
@@ -110,21 +113,59 @@ If any step fails:
 - [ ] If approved, search `models.json` for `"provider":"PROVIDER_NAME"` and remove all matching entries
 - [ ] Delete all metadata files: `rm models/PROVIDER_NAME/*.json` (verify first with `ls models/PROVIDER_NAME/`)
 - [ ] Remove provider env vars from `.env` (lines matching `{PROVIDER}_API_KEYS` and `{PROVIDER}_BASE_URL`)
-- [ ] Edit `src/config.py`:
-  - Search `PROVIDER_API_URLS[...]` and remove the provider's entry
-  - Search `static_validate_keys("PROVIDER"` and remove that line
 - [ ] Edit `ts-src/src/index.ts`:
-  - Search `BASE_URLS` and remove provider's URL entry
-  - Search `ModelFirstRouter` constructor and remove the provider's key parser
+  - Search `PROVIDER_API_URLS` and remove provider's URL entry
+  - Search `API_KEYS` and remove provider's key parser
+  - Search `PROVIDER_LIMITS` and remove provider's rate limit entry
 - [ ] Remove ORG_MAP entry in `scripts/gather_model_details.py` (if provider was OpenRouter-based)
 - [ ] Sync `~/.config/opencode/opencode.json` - remove all `PROVIDER_NAME/*` model blocks under `provider.literouter.models`
 - [ ] Update `CHANGELOG.md` under current version (Removed section)
 - [ ] Restart gateway: `cd scripts && ./restart.sh`
-- [ ] Verify ALL provider models return "not recognized" error (curl to both ports)
+- [ ] Verify ALL provider models return "not recognized" error on port 7766 (run the curl test from section 6 for each model)
 
 ---
 
-## 9. Agent Reminders (Anti-Fuckup Guide)
+## 9. Add/Update Fusion Group Checklist
+
+- [ ] Read `fusion.json` to understand existing chain structure
+- [ ] Add or modify group entry in `fusion.json`:
+  ```json
+  "group-name": {
+    "description": "What this chain is for",
+    "chain": ["provider/model-primary", "provider/model-fallback1", "provider/model-fallback2"],
+    "upstream": "http://localhost:7766/v1beta"
+  }
+  ```
+- [ ] Ensure all models in `chain` exist in `models.json` (fusion does NOT register them — it references existing system_ids)
+- [ ] Ensure upstream models are configured in `.env` with API keys for their provider
+- [ ] Restart gateway: `bash scripts/stop.sh && bash scripts/start.sh`
+- [ ] Verify fusion group works:
+  ```bash
+  curl -s http://localhost:7766/v1/chat/completions \
+    -H "Content-Type: application/json" \
+    -H "Authorization: Bearer sk-lr-8f2a9e3b1c4d7e5f" \
+    -d '{"model": "group-name", "messages": [{"role": "user", "content": "hello"}]}'
+  ```
+- [ ] Check response header: `grep -i "x-literouter-model"` to confirm which upstream served
+- [ ] Sync `~/.config/opencode/opencode.json` — add fusion group as a model under `provider.literouter.models` with the fusion group name
+- [ ] Update `CHANGELOG.md` under current version (Added section)
+
+---
+
+## 10. Delete Fusion Group Checklist
+
+- [ ] Read `fusion.json` to confirm group exists
+- [ ] Remove the group entry from `fusion.json`
+- [ ] Remove fusion group from `~/.config/opencode/opencode.json` (search the fusion group name under `provider.literouter.models`)
+- [ ] Restart gateway: `bash scripts/stop.sh && bash scripts/start.sh`
+- [ ] Verify group returns "not recognized" error on `:7766`
+- [ ] Update `CHANGELOG.md` under current version (Removed section)
+
+---
+
+## 11. Agent Reminders (Anti-Fuckup Guide)
+
+0. **Config is at the top**: All env-driven constants in `ts-src/src/index.ts` lines 7-31 — one screen, no digging
 
 1. **CLI Naming Convention**: Use `literouter/` prefix for `opencode` CLI commands
    - ❌ `opencode -m openrouter/model-id`
@@ -134,4 +175,8 @@ If any step fails:
 
 3. **Exact String Matching**: Read config files immediately before editing
 
-4. **Gateway Restart Required**: `models.json` is read at startup only — always restart after changes
+4. **Gateway Restart Required**: `models.json` and `fusion.json` are read at startup only — always restart after changes
+
+5. **Fusion groups are not in models.json**: Fusion reads from `fusion.json`, not `models.json`. A model must exist in `models.json` to be in a fusion chain, but the fusion group name itself is separate. You add the fusion group name to `opencode.json` so OpenCode can target it.
+
+6. **Single port**: All traffic goes through `:7766`. The Python gateway (`:7766`) and fusion sidecar (`:7768`) no longer exist.

@@ -18,8 +18,19 @@ const LITEROUTER_ROTATE_DELAY_MS = parseInt(
   Bun.env.LITEROUTER_ROTATE_DELAY_MS || "10000",
   10,
 );
+const LITEROUTER_MAX_ATTEMPTS = parseInt(
+  Bun.env.LITEROUTER_MAX_ATTEMPTS || "3",
+  10,
+);
 const LITEROUTER_HTTP_TIMEOUT_MS =
   parseInt(Bun.env.LITEROUTER_HTTP_TIMEOUT || "300", 10) * 1000;
+
+// Per-provider key rotation delay override (e.g. GOOGLE_MIN_DELAY_MS=0)
+function getProviderDelayMs(provider: string): number {
+  const envKey = `${provider.toUpperCase()}_MIN_DELAY_MS`;
+  const val = Bun.env[envKey] as string | undefined;
+  return val ? parseInt(val, 10) : LITEROUTER_ROTATE_DELAY_MS;
+}
 
 const REDIS_HOST = Bun.env.REDIS_HOST || "127.0.0.1";
 const REDIS_PORT = parseInt(Bun.env.REDIS_PORT || "6379", 10);
@@ -269,7 +280,7 @@ class ModelFirstRouter {
     provider: string,
     modelName: string,
     estimatedTokens: number,
-  ): Promise<string> {
+  ): Promise<{key: string; currentRpm: number}> {
     const keys = API_KEYS[provider as keyof typeof API_KEYS] || [];
     if (!keys.length)
       throw new Error(`No keys configured for provider: ${provider}`);
@@ -278,7 +289,7 @@ class ModelFirstRouter {
       // Degraded mode: simple round-robin
       const idx = this.nextIndex.get(provider) || 0;
       this.nextIndex.set(provider, (idx + 1) % keys.length);
-      return keys[idx];
+      return {key: keys[idx], currentRpm: 0};
     }
 
     const limits = getModelLimits(modelName, provider);
@@ -341,7 +352,7 @@ class ModelFirstRouter {
 
       this.lastUsed.set(lastUsedKey, now);
       this.nextIndex.set(provider, (idx + 1) % n);
-      return key;
+      return {key, currentRpm: res[1]};
     }
 
     if (lruCandidate) {
@@ -378,7 +389,7 @@ class ModelFirstRouter {
       if (res[0] === 1) {
         this.lastUsed.set(`${provider}:${keyHash}`, now);
         this.nextIndex.set(provider, (idx + 1) % n);
-        return key;
+        return {key, currentRpm: res[1]};
       }
     }
 
@@ -693,6 +704,7 @@ async function executeOpenAICompat(
   reqJson: any,
   reqHeaders: Headers,
   servedModelId?: string,
+  fromFusion?: boolean,
 ): Promise<Response> {
   const meta = MODEL_REGISTRY.get(modelName);
   if (!meta)
@@ -714,17 +726,19 @@ async function executeOpenAICompat(
     reqJson.max_tokens || 2048,
   );
   const numKeys = (API_KEYS[provider as keyof typeof API_KEYS] || []).length;
+  const maxAttempts = LITEROUTER_MAX_ATTEMPTS > 0 ? Math.min(numKeys, LITEROUTER_MAX_ATTEMPTS) : numKeys;
   const BACKOFF_MS = [65000, 90000, 120000];
 
   for (let round = 0; round <= BACKOFF_MS.length; round++) {
-    for (let attempt = 0; attempt <= numKeys; attempt++) {
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
       let activeKey = "";
+      let currentRpm = 0;
       try {
-        activeKey = await router.getAvailableKey(
+        ({key: activeKey, currentRpm} = await router.getAvailableKey(
           provider,
           upstream_model,
           estimatedTokens,
-        );
+        ));
         const headers = new Headers({
           Authorization: `Bearer ${activeKey}`,
           "Content-Type": "application/json",
@@ -751,6 +765,7 @@ async function executeOpenAICompat(
             errText.includes("exhausted quota")
           ) {
             await router.reportError(provider, activeKey, "429", upstream_model);
+            console.log(`[PROVIDER_LIMIT] key=${activeKey.substring(0, 6)}... model=${upstream_model} (${resp.status}) rpm ${currentRpm + 1}/${getModelLimits(modelName, provider).max_rpm}`);
           } else {
             await router.reportError(
               provider,
@@ -758,13 +773,14 @@ async function executeOpenAICompat(
               resp.status.toString(),
               upstream_model,
             );
+            console.log(`[PROVIDER_LIMIT] key=${activeKey.substring(0, 6)}... model=${upstream_model} (${resp.status}) rpm ${currentRpm + 1}/${getModelLimits(modelName, provider).max_rpm}`);
           }
           continue;
         }
 
       const outHeaders = cleanHeaders(resp.headers);
       if (servedModelId) outHeaders.set("X-Literouter-Model", servedModelId);
-      console.log(`[${provider.toUpperCase()}] Served ${modelName} (upstream=${upstream_model}, key=${activeKey.substring(0, 6)}...)`);
+      console.log(`[${provider.toUpperCase()}] Served ${modelName} (upstream=${upstream_model}, key=${activeKey.substring(0, 6)}...) attempt ${attempt + 1}/${maxAttempts} rpm ${currentRpm + 1}/${getModelLimits(modelName, provider).max_rpm}`);
 
       if (isStream) {
         return new Response(
@@ -790,9 +806,14 @@ async function executeOpenAICompat(
       }
     } catch (e: any) {
         if (e.message.includes("All keys")) {
-          if (attempt < numKeys) {
-            await new Promise((r) => setTimeout(r, LITEROUTER_ROTATE_DELAY_MS));
+          if (attempt < maxAttempts) {
+            await new Promise((r) => setTimeout(r, getProviderDelayMs(provider)));
             continue;
+          }
+          if (fromFusion) {
+            return new Response(JSON.stringify({ error: e.message }), {
+              status: 429,
+            });
           }
           if (round < BACKOFF_MS.length) {
             console.warn(
@@ -812,14 +833,18 @@ async function executeOpenAICompat(
             "timeout",
             upstream_model,
           );
-        if (attempt === numKeys && round === BACKOFF_MS.length)
+        if (round === BACKOFF_MS.length)
           return new Response(
             JSON.stringify({ error: "Upstream failed", details: e.message }),
             { status: 502 },
           );
       }
     }
+    if (fromFusion) {
+      return new Response(JSON.stringify({ error: "Max attempts exhausted" }), { status: 429 });
+    }
   }
+  console.log(`[SYSTEM_LIMIT] Max attempts (${LITEROUTER_MAX_ATTEMPTS}) reached for ${modelName}, all keys exhausted.`);
   return new Response(JSON.stringify({ error: "Failover loop exhausted" }), {
     status: 502,
   });
@@ -832,6 +857,7 @@ async function executeGoogleNative(
   reqJson: any,
   reqHeaders: Headers,
   servedModelId?: string,
+  fromFusion?: boolean,
 ): Promise<Response> {
   let meta =
     MODEL_REGISTRY.get(modelName) || MODEL_REGISTRY.get(`google/${modelName}`);
@@ -853,17 +879,19 @@ async function executeGoogleNative(
 
   const estimatedTokens = estimateTokens(JSON.stringify(reqJson), 1024);
   const numKeys = API_KEYS.google.length;
+  const maxAttempts = LITEROUTER_MAX_ATTEMPTS > 0 ? Math.min(numKeys, LITEROUTER_MAX_ATTEMPTS) : numKeys;
   const BACKOFF_MS = [65000, 90000, 120000];
 
   for (let round = 0; round <= BACKOFF_MS.length; round++) {
-    for (let attempt = 0; attempt <= numKeys; attempt++) {
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
       let activeKey = "";
+      let currentRpm = 0;
       try {
-        activeKey = await router.getAvailableKey(
+        ({key: activeKey, currentRpm} = await router.getAvailableKey(
           "google",
           upstream_model,
           estimatedTokens,
-        );
+        ));
 
         const url = new URL(
           `https://generativelanguage.googleapis.com/v1beta/models/${upstream_model}:${action}`,
@@ -895,6 +923,7 @@ async function executeGoogleNative(
             errText.includes("exhausted quota")
           ) {
             await router.reportError("google", activeKey, "429", upstream_model);
+            console.log(`[PROVIDER_LIMIT] key=${activeKey.substring(0, 6)}... model=${upstream_model} (429) rpm ${currentRpm + 1}/${getModelLimits(modelName, "google").max_rpm}`);
           } else {
             await router.reportError(
               "google",
@@ -902,13 +931,15 @@ async function executeGoogleNative(
               resp.status.toString(),
               upstream_model,
             );
+            console.log(`[PROVIDER_LIMIT] key=${activeKey.substring(0, 6)}... model=${upstream_model} (${resp.status}) rpm ${currentRpm + 1}/${getModelLimits(modelName, "google").max_rpm}`);
           }
+          await new Promise((r) => setTimeout(r, getProviderDelayMs("google")));
           continue;
         }
 
         const outHeaders = cleanHeaders(resp.headers);
       if (servedModelId) outHeaders.set("X-Literouter-Model", servedModelId);
-      console.log(`[GOOGLE] Served native ${modelName}:${action} (upstream=${upstream_model})`);
+      console.log(`[GOOGLE] Served native ${modelName}:${action} (upstream=${upstream_model}, attempt ${attempt + 1}/${maxAttempts}, rpm ${currentRpm + 1}/${getModelLimits(modelName, "google").max_rpm})`);
 
         const decoder = new TextDecoder();
         const encoder = new TextEncoder();
@@ -926,9 +957,14 @@ async function executeGoogleNative(
         });
       } catch (e: any) {
         if (e.message.includes("All keys")) {
-          if (attempt < numKeys) {
-            await new Promise((r) => setTimeout(r, LITEROUTER_ROTATE_DELAY_MS));
+          if (attempt < maxAttempts) {
+            await new Promise((r) => setTimeout(r, getProviderDelayMs("google")));
             continue;
+          }
+          if (fromFusion) {
+            return new Response(JSON.stringify({ error: e.message }), {
+              status: 429,
+            });
           }
           if (round < BACKOFF_MS.length) {
             console.warn(
@@ -948,14 +984,18 @@ async function executeGoogleNative(
             "timeout",
             upstream_model,
           );
-        if (attempt === numKeys && round === BACKOFF_MS.length)
+        if (round === BACKOFF_MS.length)
           return new Response(
             JSON.stringify({ error: "Upstream failed", details: e.message }),
             { status: 502 },
           );
       }
     }
+    if (fromFusion) {
+      return new Response(JSON.stringify({ error: "Max attempts exhausted" }), { status: 429 });
+    }
   }
+  console.log(`[SYSTEM_LIMIT] Max attempts (${LITEROUTER_MAX_ATTEMPTS}) reached for ${modelName}, all keys exhausted.`);
   return new Response(JSON.stringify({ error: "Failover loop exhausted" }), {
     status: 502,
   });
@@ -970,7 +1010,7 @@ async function executeFusion(
   isNativeRoute: boolean,
   action: string,
 ): Promise<Response> {
-  const isNativeUpstream = group.upstream?.includes("/v1beta") ?? isNativeRoute;
+  const isNativeUpstream = isNativeRoute || (group.upstream?.includes("/v1beta") ?? false);
   const chain: string[] = group.chain;
   const startIdx = getStickyStart(groupId, chain);
   console.log(`[FUSION] group=${groupId} chain=${chain.join("->")} start=${chain[startIdx]}`);
@@ -988,6 +1028,7 @@ async function executeFusion(
         reqJson,
         headers,
         upstreamId,
+        true,
       );
     } else {
       resp = await executeOpenAICompat(
@@ -995,6 +1036,7 @@ async function executeFusion(
         reqJson,
         headers,
         upstreamId,
+        true,
       );
     }
 

@@ -32,6 +32,9 @@ LiteRouter has been consolidated from three processes (Python `:7766` + TypeScri
 - **status.sh** — No longer relevant (single-process health checked via `/health`).
 
 ### Fixed
+- **Fusion fallthrough fix** — `fromFusion` check added after inner loop (not just catch block). When individual keys return 429 (not "all keys exhausted"), fusion chain falls through immediately without trying more keys across rounds. Stopped extra key burns.
+- **Real RPM counter in logs** — `getAvailableKey` now returns `currentRpm` from the Lua script's ZSET count. Success logs show `rpm X/15` (per-key, starts at 1). `[PROVIDER_LIMIT]` logs show the same.
+- **Verbose logging restored** — `attempt X/Y`, `[PROVIDER_LIMIT]`, `[SYSTEM_LIMIT]` logs all active on both native and OpenAI-compat routes.
 - **Port consistency** — `start.sh` now reads port from `.env` `LITEROUTER_PORT` instead of hardcoding.
 
 ## [2.9.3] — 2026-07-10
