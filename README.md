@@ -1,95 +1,62 @@
 # LiteRouter
 
-**A high-performance Python + Redis proxy and API key load balancer for LLM providers.**
+**A high-performance Bun/TypeScript + Redis proxy and API key load balancer for LLM providers.**
 
-LiteRouter sits between your modern AI applications (like OpenCode, utilizing the Agentic Communication Protocol / ACP) and standard LLM upstream providers (OpenRouter, Nvidia, Anthropic). It acts as an intelligent middleware to:
-1. **Translate Protocols**: Sanitizes and converts complex client-side multi-turn ACP requests (e.g., `input_text`, `function_call` items without roles) into valid ChatCompletions or Anthropic formats.
-2. **Distribute Load**: Distributes requests across multiple API keys using round-robin routing with automatic cooldown, quarantine, and per-provider rate limiting.
-3. **Troubleshoot & Validate**: Serves as the primary debugging surface for Zod schema validation errors, SSE stream dropouts, and upstream 400 Bad Requests.
+LiteRouter sits between your modern AI applications (like OpenCode) and standard LLM upstream providers (Google AI Studio, OpenRouter, Nvidia, Anthropic). It acts as an intelligent middleware to:
+1. **Distribute Load**: Distributes requests across multiple API keys using atomic ZSET+Lua rolling windows with automatic cooldown, quarantine, and per-provider rate limiting.
+2. **Route Requests**: Routes to OpenAI-compat endpoints, Google native REST endpoints, and virtual fusion groups — all in a single Bun process.
+3. **Sanitize Payloads**: Strips Gemma-breakable fields like `thinkingConfig`, normalizes LaTeX symbols, and collapses reasoning content.
 
-*(If you are an AI Agent debugging LiteRouter, **you must read `.agents/skills/literouter-troubleshooting/SKILL.md`** first to understand the ACP event lifecycle and how to troubleshoot 400/JSON parsing errors.)*
+## Routes
 
-## Multi-Provider Routing
+| Route | Protocol | Target | Auth |
+|-------|----------|--------|------|
+| `/v1/chat/completions` | OpenAI-compat | Provider upstream (Google: `/v1beta/openai/chat/completions`) | `Authorization: Bearer {key}` |
+| `/v1beta/...` | Google native REST | `generativelanguage.googleapis.com/v1beta/models/{model}:{action}` | `?key={API_KEY}` query param |
+| Fusion groups | Virtual chain | In-process — iterates model chain calling either route above | Internal |
 
-LiteRouter routes requests to different upstream providers based on the **model prefix** in the request:
+## Fusion Groups (In-Process)
 
-| Model Prefix | Provider | Upstream API |
-|---|---|---|
-| `openrouter/` | OpenRouter | `https://openrouter.ai/api/v1/chat/completions` |
-| `nvidia/` | Nvidia | `https://integrate.api.nvidia.com/v1/chat/completions` |
-| `anthropic/` | Anthropic | `https://api.anthropic.com/messages` |
+Fusion groups define "virtual" models with priority-based fallback chains. If the primary model returns a `429` or `5xx`, Fusion automatically falls back to the next model in the chain.
 
-### Zen Models
-LiteRouter ships with pre-configured support and metadata for "Zen models" (free/experimental tier), including:
-- `big-pickle`
-- `deepseek-v4-flash-free`
-- `mimo-v2.5-free`
-- `qwen3.6-plus-free`
-- `minimax-m3-free`
-- `nemotron-3-ultra-free`
-- `north-mini-code-free`
-
-Model metadata configurations are tracked in `models.json`.
-
-**One endpoint, multiple providers.** Each provider has its own pool of API keys with independent rotation, health tracking, and rate limiting.
+- **Circuit Breaker**: 65s per-model cooldown — skips a model that recently errored.
+- **Sticky Fallback**: 300s (5 min) — once the chain falls back, subsequent requests start there instead of the top.
+- **Identity**: Response header `X-Literouter-Model` identifies which upstream served.
 
 ```bash
-# OpenRouter request (rotates through OpenRouter keys)
-curl -X POST http://localhost:7766/v1/chat/completions \
+curl -X POST http://localhost:$PORT/v1/chat/completions \
   -H "Authorization: Bearer sk-lr-your-auth-key" \
-  -d '{"model": "openrouter/owl-alpha", "messages": [{"role": "user", "content": "Hello"}]}'
-
-# Nvidia request (rotates through Nvidia keys)
-curl -X POST http://localhost:7766/v1/chat/completions \
-  -H "Authorization: Bearer sk-lr-your-auth-key" \
-  -d '{"model": "nvidia/openai/gpt-oss-120b", "messages": [{"role": "user", "content": "Hello"}]}'
+  -d '{"model": "pydantic/google", "messages": [{"role": "user", "content": "Hello"}]}'
 ```
 
-The provider prefix is automatically stripped before forwarding to the upstream API (e.g., `nvidia/openai/gpt-oss-120b` → `openai/gpt-oss-120b`).
-
-## Fusion Sidecar (Port 7768)
-
-LiteRouter includes a **Fusion Sidecar** that fronts the main gateway to provide "virtual" models with automatic priority-based failover.
-
-- **Priority Fallback Chains**: Define a sequence of models (e.g., `gemma-31b` $\rightarrow$ `gemini-flash` $\rightarrow$ `gemma-26b`). If the primary model returns a `429` or `5xx`, Fusion automatically falls back to the next model in the chain.
-- **Sticky Fallback**: To prevent "freezing" the system by repeatedly hitting a rate-limited primary, Fusion "sticks" to the successful fallback model for 5 minutes, skipping higher-priority models until the cooldown expires.
-- **Group-Aware Routing**: Support for different protocols per group (e.g., `local/google` uses Native Google SDK, `pydantic/google` uses OpenAI-compat).
-
-**Example Usage**:
-```bash
-# Target the Fusion sidecar on 7768
-curl -X POST http://localhost:7768/v1/chat/completions \
-  -H "Authorization: Bearer sk-lr-your-auth-key" \
-  -d '{"model": "local/google", "messages": [{"role": "user", "content": "Hello"}]}'
-```
-The response header `X-Literouter-Model` reveals which model in the chain actually served the request.
+Fusion groups are defined in `fusion.json` and reference existing models from `models.json`.
 
 ## Features
 
-- **Multi-provider** — OpenRouter, Nvidia, Anthropic (and more) through a single endpoint
-- **Priority Fallback Chains** — Automatic failover across model tiers via the Fusion sidecar (Port 7768)
-- **Model-based routing** — Provider selected automatically from the model prefix
-- **Redis-backed round-robin** — Atomic key rotation with persistent counter
-- **Automatic cooldown** — Exponential backoff (60s → 120s → … → 1h max) on 429s
-- **Quarantine** — Permanent quarantine for auth failures (401/403)
-- **Rate limiting** — Per-provider pacing with Lua script (Redis) or in-memory fallback
-- **Streaming** — Full SSE support on all pathways, including Anthropic SSE → OpenAI chunk conversion
-- **Model availability** — `GET /v1/models` queries OpenRouter's live model list
-- **Key rotation** — All API keys in `.env`, comma-separated, rotated automatically per-provider
-- **OpenCode integration** — Works as a drop-in replacement for direct provider endpoints
+- **Single process** — Bun/TypeScript, no Python or sidecar dependencies
+- **Multi-provider** — Google AI Studio, OpenRouter, Nvidia, Anthropic through a single endpoint
+- **Three route types** — OpenAI-compat (`/v1/chat/completions`), Google native (`/v1beta/...`), Fusion groups (virtual chains)
+- **Atomic rate limiting** — ZSET+Lua rolling 60s windows via Redis/Valkey (true rolling, no minute-edge bursts)
+- **Per-request backoff** — 65s → 90s → 120s when all keys exhausted for a provider
+- **Automatic cooldown** — Per-key, per-model cooldown states (429: 65s, timeout: 10s, quarantine: 7d)
+- **Reasoning normalization** — Collapses reasoning content into `<thought>` tags
+- **Payload sanitization** — Strips Gemma-breaking `thinkingConfig`, normalizes LaTeX symbols
+- **Streaming** — Full SSE support on all pathways
+- **Key rotation** — Comma-separated API keys in `.env`, rotated automatically per-provider
+- **OpenCode integration** — Drop-in replacement for direct provider endpoints
 
 ## Quick Start
 
 ### Prerequisites
-- Python 3.11+
-- Redis server (optional — falls back to in-memory)
+- [Bun](https://bun.sh) 1.2+
+- Redis / Valkey server (optional — falls back to in-memory)
 - API key(s) for your chosen provider(s)
 
 ### Installation
 ```bash
 git clone https://github.com/Acivar-Digital/literouter.git
 cd literouter
-uv sync
+bun install
 cp .env.example .env
 ```
 
@@ -129,12 +96,11 @@ Add as many providers as you want — just follow the `{PROVIDER}_BASE_URL` + `{
 
 ### Running
 ```bash
-./scripts/start.sh     # Start (daemonizes, writes PID file)
-./scripts/status.sh    # Check if running
-./scripts/restart.sh   # Graceful restart
+./scripts/start.sh     # Start (daemonizes in tmux, writes PID file)
 ./scripts/stop.sh      # Stop
-uv run uvicorn fusion:app --host 0.0.0.0 --port 7768 # Start Fusion Sidecar
+./scripts/restart.sh   # Restart (flushes Valkey, re-reads config)
 
+tmux attach -t literouter   # View runtime logs
 ```
 
 ## Usage
@@ -240,21 +206,18 @@ Both providers point to the same LiteRouter endpoint. Routing is determined by t
 
 ```
 literouter/
-├── src/
-│   ├── main.py              # FastAPI app, routing, streaming
-│   ├── config.py            # .env config loader, provider scanning
-│   ├── router.py            # Round-robin key router (Redis + memory)
-│   ├── rate_limiter.py      # Per-provider rate limiter (Lua + memory)
-│   ├── metrics.py           # Request metrics
-│   ├── anthropic.py         # Anthropic request builder + response transformer
-│   ├── gemini.py            # Gemini request/response adapter
-│   ├── queue.py             # Redis-backed request queue
-│   ├── embed_cache.py       # Embedding + query result cache
-│   ├── redis_client.py      # Redis connection layer
-│   └── doctor.py            # CLI health check utility
-├── tests/                   # 10 test files, ~90 test cases
-├── scripts/                 # start/stop/restart/status.sh
-├── .env                     # Your secrets (gitignored)
+├── ts-src/src/
+│   └── index.ts             # Bun server: routing, ZSET+Lua quota, fusion, streaming
+├── models.json              # Model routing registry (system_id → upstream)
+├── fusion.json              # Fusion group definitions (priority chains)
+├── models/                  # Per-model metadata (from OpenRouter catalog)
+│   ├── google/
+│   ├── openrouter/
+│   ├── nvidia/
+│   └── zen/
+├── scripts/                 # start.sh / stop.sh / restart.sh
+├── tests/                   # Test matrix files
+├── .env                     # Secrets (gitignored)
 ├── .env.example             # Template with all options
 └── CHANGELOG.md
 ```
@@ -263,15 +226,10 @@ literouter/
 
 | Pattern | Description |
 |---|---|
-| `literouter:counter:{provider}` | Atomic round-robin counter |
-| `literouter:cooldown:{provider}:{sha}` | Cooldown expiry (TTL: 1h) |
-| `literouter:quarantine:{provider}` | Quarantined key hashes (SET) |
-| `literouter:ratelimit:{provider}` | Last call timestamp (ms) |
-| `literouter:metrics:*` | Request/error/latency counters |
-| `literouter:queue` | Pending request queue (LIST) |
-| `literouter:processing` | In-progress jobs (ZSET) |
+| `rolling:{provider}:{hash}:{model}` | ZSET — atomic rolling 60s quota window (Lua) |
+| `cooldown:{provider}:{hash}:{model}` | Per-key, per-model cooldown state (rate_limited: 65s, timed_out: 10s, quarantined: 7d) |
 
-Redis is optional. When unavailable, all state falls back to in-memory.
+Redis/Valkey is optional. When unavailable, rate limiting falls back to in-memory.
 
 ## License
 

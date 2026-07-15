@@ -2,6 +2,38 @@
 
 All notable changes to LiteRouter will be documented in this file.
 
+## [3.0.0] — 2026-07-16
+
+### Architecture — Single Bun Process (BREAKING)
+
+LiteRouter has been consolidated from three processes (Python `:7766` + TypeScript `:7767` + Fusion sidecar `:7768`) into a **single Bun/TypeScript process** on port `:7766`. This eliminates the Python gateway, the fusion sidecar, and all inter-process coordination.
+
+### Added
+- **In-process fusion runtime** — Fusion groups now run inside the main Bun process instead of a separate sidecar. Circuit breaker (65s), sticky fallback (300s), and `X-Literouter-Model` response header preserved.
+- **ZSET+Lua atomic quota** — True rolling 60s windows via Redis/Valkey Lua script (no minute-edge bursts). Member format `{timestamp}-{random}:{tokens}` prevents collisions.
+- **Per-request backoff** — When all keys for a provider are exhausted, backs off 65s → 90s → 120s before returning 429.
+- **Google native route** — `/v1beta/models/{model}:{action}` with query-param auth.
+- **Reasoning normalization** — `LITEROUTER_COLLAPSE_REASONING` env flag collapses `reasoning_content`, `reasoningContent`, `thought` into `<thought>` tags.
+- **LaTeX symbol cleaning** — Normalizes `\rightarrow`, `\to`, `\times` → Unicode on all responses.
+- **Gemma payload scrubbing** — Recursively strips `thinkingConfig`/`thinking_config` from Gemma requests.
+- **Verbose request logging** — Every request logs `[REQ]`, `[GOOGLE] Served`, `[FUSION]` with model, provider, key prefix, and upstream details.
+
+### Changed
+- **scripts/start.sh** — Single `bun run ts-src/src/index.ts` instead of 3-process launch. Port reads from `LITEROUTER_PORT` env var (default `7766`).
+- **scripts/stop.sh** — Single-process teardown. No more separate Python/fusion sidecar cleanup.
+- **scripts/restart.sh** — Simplified to stop + flush + start.
+- **Port** — Server now runs on `:7766` by default (was `:7767` for TS proxy).
+- **Logging** — All runtime logs stream to the single `literouter` tmux session.
+
+### Removed
+- **Python gateway** (`src/main.py`, `src/config.py`, `src/router.py`, `src/rate_limiter.py`, `src/metrics.py`, `src/anthropic.py`, `src/gemini.py`, `src/queue.py`, `src/embed_cache.py`, `src/redis_client.py`, `src/doctor.py`) — All Python source files removed.
+- **Fusion sidecar** (`fusion.py`) — Fusion is now in-process.
+- **Python dependencies** (`uv.lock`, `pyproject.toml` deps) — No longer needed.
+- **status.sh** — No longer relevant (single-process health checked via `/health`).
+
+### Fixed
+- **Port consistency** — `start.sh` now reads port from `.env` `LITEROUTER_PORT` instead of hardcoding.
+
 ## [2.9.3] — 2026-07-10
 
 ### Added
