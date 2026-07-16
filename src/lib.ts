@@ -118,12 +118,16 @@ export function translateGoogleThinking(data: any): any {
     level = data.google.thinking_config.thinking_level;
   } else if (data.thinkingConfig?.thinkingLevel) {
     level = data.thinkingConfig.thinkingLevel;
+  } else if (data.reasoning_effort) {
+    level = data.reasoning_effort;
   } else if (typeof data.thinking === "object" && data.thinking?.type === "enabled") {
     level = "minimal";
   }
   const isGemma = String(data.model || "").toLowerCase().includes("gemma");
-  if (level && !isGemma) {
-    data.reasoning_effort = THINKING_TO_REASONING[level] || "low";
+  // LiteRouter sets minimal thinking by default for models that support it,
+  // so clients don't need to send any thinking config at all.
+  if (!isGemma && !data.reasoning_effort) {
+    data.reasoning_effort = level ? THINKING_TO_REASONING[level] || "low" : "low";
   }
   // Every native/thinking key is rejected on the OpenAI-compat path.
   delete data.google;
