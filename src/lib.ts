@@ -73,8 +73,6 @@ export function estimateTokens(promptText: string, maxTokens: number = 2048): nu
 }
 
 const GEMMA_UNSUPPORTED = new Set([
-  "thinkingConfig",
-  "thinking_config",
   "presence_penalty",
   "frequency_penalty",
   "logit_bias",
@@ -98,29 +96,41 @@ export function cleanGemmaPayload(data: any): any {
   return data;
 }
 
-// Google's OpenAI-compat endpoint rejects native-genai extension fields.
-// Strip them on the /v1 (OpenAI-compat) path so any client payload
-// (incl. pydantic-ai extra_body={"google": {...}}) cannot 400/500.
-const GOOGLE_OPENAI_COMPAT_UNSUPPORTED = new Set([
-  "thinking",
-  "thinkingConfig",
-  "thinking_config",
-  "reasoning_effort",
-  "reasoning",
-  "google",
-]);
+// Google's /v1beta/openai/chat/completions accepts `reasoning_effort`
+// (gemini-flash family) but REJECTS the native-genai `google` block,
+// `thinkingConfig`, `thinking`, and `thinkingBudget`. It also rejects ANY
+// thinking control for gemma models ("Thinking level is not supported").
+// Translate the client's extra_body={"google": {"thinking_config": {...}}}
+// into the accepted form: gemini -> reasoning_effort; gemma -> dropped
+// (runs at Google default, which already thinks).
+const THINKING_TO_REASONING: Record<string, string> = {
+  none: "none",
+  minimal: "low",
+  low: "low",
+  medium: "medium",
+  high: "high",
+};
 
-export function cleanGoogleOpenAICompat(data: any): any {
-  if (Array.isArray(data)) return data.map(cleanGoogleOpenAICompat);
-  if (data !== null && typeof data === "object") {
-    const cleaned: any = {};
-    for (const [k, v] of Object.entries(data)) {
-      if (!GOOGLE_OPENAI_COMPAT_UNSUPPORTED.has(k)) {
-        cleaned[k] = cleanGoogleOpenAICompat(v);
-      }
-    }
-    return cleaned;
+export function translateGoogleThinking(data: any): any {
+  if (!data || typeof data !== "object") return data;
+  let level: string | undefined;
+  if (data.google?.thinking_config) {
+    level = data.google.thinking_config.thinking_level;
+  } else if (data.thinkingConfig?.thinkingLevel) {
+    level = data.thinkingConfig.thinkingLevel;
+  } else if (typeof data.thinking === "object" && data.thinking?.type === "enabled") {
+    level = "minimal";
   }
+  const isGemma = String(data.model || "").toLowerCase().includes("gemma");
+  if (level && !isGemma) {
+    data.reasoning_effort = THINKING_TO_REASONING[level] || "low";
+  }
+  // Every native/thinking key is rejected on the OpenAI-compat path.
+  delete data.google;
+  delete data.thinkingConfig;
+  delete data.thinking_config;
+  delete data.thinking;
+  delete data.thinkingBudget;
   return data;
 }
 
