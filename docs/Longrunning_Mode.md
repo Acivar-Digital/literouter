@@ -1,16 +1,19 @@
 # Fusion (In-Process)
 
-Fusion runs **in-process** inside the Bun gateway (`src/index.ts`, `executeFusion`) on port 7766. It is a **dumb forwarder + smart rotator keyed on fusion groups**: each group (e.g. `local/google`, `pydantic/google`) declares its own upstream + protocol and dumb-forwards to a priority fallback chain with multi-key rotation. See **Group-Aware Routing (Upgrade)** below.
+Fusion runs **in-process** inside the Bun gateway (`src/index.ts`, `executeFusion`) on port 7766. It is a **dumb forwarder + smart rotator keyed on fusion groups**: each group (e.g. `pydantic/google`, `pydantic/nvidia`) declares its own upstream + protocol and dumb-forwards to a priority fallback chain with multi-key rotation. See **Group-Aware Routing (Upgrade)** below.
 
 Fusion shares the gateway's payload sanitization (Gemma `thinkingConfig` stripping, LaTeX normalization) — no separate forwarder service.
 
 ## Fallback Chain
 `google/gemma-4-31b-it` → `google/gemini-3.1-flash-lite` → `google/gemma-4-26b-a4b-it`
+(used by `pydantic/google`)
+
+> **Note**: The native `/v1beta` fusion group `local/google` was **removed** (2026-07-17). The native forwarder passes the raw OpenAI body to Google's `generateContent` (which expects Gemini `contents`), so every request failed `400 INVALID_ARGUMENT`. See `docs/GRAVEYARD/FUSION_LOCAL_GOOGLE.md`. Native traffic should use a directly-routed Google model (e.g. `google/gemini-3.1-flash-lite`).
 
 ## Bugs Fixed
 
 ### 1. Double `models/` prefix in native route
-**Symptom**: 400 "model not recognized" — fusion sent `http://7766/v1beta/models/models/local/google:generateContent`
+**Symptom**: 400 "model not recognized" — fusion sent `http://7766/v1beta/models/models/{group}:generateContent`
 **Cause**: FastAPI route captured `models/` prefix in path param, model wasn't found in fusion groups, fell to passthrough which added another `models/`.
 **Fix**: Strip `models/` prefix before model lookup.
 
@@ -40,7 +43,7 @@ The original design always starts from the top of the chain on every request. Th
 
 ## Verified
 - curl through 7766 → Google gemma-4-31b-it: 200 OK
-- opencode CLI `-m google-trio/local/google "say hi in 3 words"`: 200 OK
+- opencode native: use `google/gemini-3.1-flash-lite` directly (the `local/google` fusion group was removed)
 
 ---
 
@@ -60,7 +63,6 @@ halts on 400/401/403. The sticky + circuit-breaker logic is shared across all gr
 
 | group | upstream | protocol | purpose |
 |-------|----------|----------|---------|
-| `local/google` | `http://localhost:7766/v1beta` | native | OpenCode (gateway multi-key rotation) |
 | `pydantic/google` | `http://localhost:7766/v1/chat/completions` | OpenAI-compat | pydantic-ai scripts |
 
 Both use the same fallback chain:
@@ -74,15 +76,15 @@ Google's OpenAI-compat endpoint
 `config.py`). `7766/v1beta` is the *native* Google SDK pass-through
 (`main.py` → `.../v1beta/models/{model}:{action}`) and would reject an OpenAI
 payload. So `pydantic/google` forwards to `7766/v1`, which performs the
-OpenAI→Google step. `local/google` stays on `7766/v1beta` (native, via the
-gateway) exactly as before.
+OpenAI→Google step.
 
 ### Entry path is irrelevant for fusion groups
 
 A fusion-group model can arrive on either `/v1` or `/v1beta`; fusion uses the
 **group's** protocol, not the entry path. pydantic-ai hits `7766/v1`
-(OpenAI-compat) → group protocol = openai → forwarded to `7766/v1`. OpenCode hits
-`7766/v1beta` → `local/google` group protocol = native → forwarded to `7766/v1beta`.
+(OpenAI-compat) → group protocol = openai → forwarded to `7766/v1`. (The
+native `/v1beta` protocol has no configured group after `local/google` was
+removed — see `docs/GRAVEYARD/FUSION_LOCAL_GOOGLE.md`.)
 
 ### Adding a new group (e.g. `pydantic/nvidia`)
 
@@ -121,5 +123,5 @@ No code change required (fusion is in-process in `src/index.ts`). Chain members 
 
 - `pydantic/google` via `7766/v1` → `7766` OpenAI-compat → **200**,
   `X-Literouter-Model: google/gemma-4-31b-it`
-- `local/google` via `7766/v1beta` → `7766` native → **200**
-  (native `candidates` format preserved)
+- `pydantic/nvidia` via `7766/v1` → `7766` OpenAI-compat → **200**,
+  `X-Literouter-Model: nvidia/deepseek-ai/deepseek-v4-pro`

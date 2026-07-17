@@ -43,3 +43,8 @@ This directory contains design documents, architectural plans, and deprecated im
 * **Status**: 🪦 **Replaced by Valkey**
 * **Context**: LiteRouter originally relied on direct Redis integration and configuration (`REDIS_HOST`, `REDIS_PASSWORD`, etc.) for persistence, metrics, and key rotation state.
 * **Why it was discarded**: To maintain strict independence and adhere to open-source software principles, direct dependency on Redis has been deprecated in favor of **Valkey** (the fully open-source key-value database fork). The codebase preserves protocol-level compatibility for seamless migration.
+
+### 9. [FUSION_LOCAL_GOOGLE.md](FUSION_LOCAL_GOOGLE.md) — Native `/v1beta` fusion group `local/google`
+* **Status**: 🪦 **Removed (2026-07-17)**
+* **Context**: A fusion group that dumb-forwarded OpenCode native `/v1beta` requests through a Google chain (`gemma-4-31b-it` → `gemini-3.1-flash-lite` → `gemma-4-26b-a4b-it`) to Google's native `generateContent`.
+* **Why it was discarded**: The native fusion path is a dumb forwarder and passed the raw OpenAI body (`stream`/`messages`) to `generateContent`, which expects Gemini `contents` — every request failed `400 INVALID_ARGUMENT`. The chain never advanced past the first hop, so `local/google` was never functional. Removed from `fusion.json`; native traffic should use a directly-routed Google model.
