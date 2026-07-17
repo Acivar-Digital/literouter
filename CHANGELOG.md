@@ -15,6 +15,7 @@ All notable changes to LiteRouter will be documented in this file.
 ### Safety (provider firewall / Google 15rpm protection)
 - **Hard 2s floor on key-attempt delay** — `getProviderDelayMs` / `getMinDelayMs` now enforce `MIN_ROTATE_DELAY_MS = 2000`; a `GOOGLE_MIN_DELAY_MS=0` (or `LITEROUTER_ROTATE_DELAY_MS=0`) can no longer zero the gap between retries, so we never burst-fire a provider endpoint (firewall ban risk). Default gap remains 10s.
 - **Rate-limit (429) cooldown floored at 65s** — `reportError` now clamps a 429 `ttlOverride` to `max(parsedReset, 65)`. A Google key that hits the 15rpm limit is therefore NEVER re-hit sooner than 65s, so the rolling quota window can decay instead of being re-fed and blocked forever. Longer upstream `Retry-After` values are still honoured.
+- **Flat 65s floor on ANY Google error** — `reportError` now enforces `max(ttl, 65)` whenever `provider === "google"`, covering 5xx/timeout/transient errors too (Google is strict: 15rpm/model, per-key pools, and a 5xx often precedes a rate-limit block). Non-Google providers keep their existing tiered TTLs.
 - **G3 grace-retry scoped to non-429** — the same-key retry-on-`reset<=2s` now explicitly excludes `429` (and only fires when `reset <= 2s`, with a `max(reset,2)s + 1.5s` wait), so a rate-limited key always rotates. (Previously the 5s clamp made G3 a no-op; it is now functional but rate-limit-safe.)
 
 ### Changed

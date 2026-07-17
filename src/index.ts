@@ -585,6 +585,13 @@ class ModelFirstRouter {
       ttl = Math.max(clamp(ttlOverride, 5, 7200), 65);
     }
 
+    // Google is strict (15rpm/model, per-key quota pools) and a 5xx often
+    // precedes a rate-limit block. Enforce a flat 65s floor on ANY Google
+    // error so a key is never re-hit into a block-forever state.
+    if (provider === "google") {
+      ttl = Math.max(ttl, 65);
+    }
+
     await this.redis.set(cooldownKey, state, "EX", ttl);
     console.error(
       `[${provider.toUpperCase()}] Placed key ${keyHash} on ${state} cooldown for ${modelName} (TTL ${ttl}s)`,
