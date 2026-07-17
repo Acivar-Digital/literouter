@@ -34,7 +34,12 @@ This directory contains design documents, architectural plans, and deprecated im
 * **Context**: A user pasted a generic blueprint recommending `jsonrepair`, Zod `safeParse`/`.catch()` healing, a Zod-error reflection retry-loop, `zod-stream` / `partial-json-parser` mid-stream validation, and forced tool-calling.
 * **Why it was discarded**: LiteRouter is a **transparent proxy** with no client schema, no owned prompt, and chunk-by-chunk SSE passthrough (`src/index.ts:555`). Buffering/repairing responses would tax all traffic, break streaming, and violate fail-loud. The reflection loop is architecturally impossible (gateway owns no message history). The one true nugget — native tool-calling reliability — is already supported via transparent tool-call passthrough. Output-contract enforcement is the client app's job.
 
-### 7. Redis Integration & Backend Dependency
+### 7. [REPO_ROTATION_IDEAS.md](REPO_ROTATION_IDEAS.md) — Rotation-repo study (Antigravity-Manager / AntigravityManager / CLIProxyAPI)
+* **Status**: 🪦 **Canned (provider-specific / over-engineered / already-covered)**
+* **Context**: User asked what to adopt from 3 rotation repos (all Google/Gemini-OAuth focused). Portable wins captured in `docs/IMPL_smart_cooldown.md`.
+* **Why it was discarded**: File/`.cds` persistence (Redis already supersedes), egress-IP rotation (different concern), Google OAuth/fingerprinting/credit logic (vendor lock-in, N/A to raw-key pools), parity/shadow rollout machinery (over-engineered), bubbletea TUI/plugin scheduler (noise). Note: reason-specific TTL + 4xx-skip-cooldown are **already implemented** in `reportError` (`src/index.ts:467`) — NOT gaps.
+
+### 8. Redis Integration & Backend Dependency
 * **Status**: 🪦 **Replaced by Valkey**
 * **Context**: LiteRouter originally relied on direct Redis integration and configuration (`REDIS_HOST`, `REDIS_PASSWORD`, etc.) for persistence, metrics, and key rotation state.
 * **Why it was discarded**: To maintain strict independence and adhere to open-source software principles, direct dependency on Redis has been deprecated in favor of **Valkey** (the fully open-source key-value database fork). The codebase preserves protocol-level compatibility for seamless migration.
