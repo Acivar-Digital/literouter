@@ -1351,10 +1351,7 @@ serve({
       } catch (e) {}
     }
 
-    if (
-      url.pathname === "/v1/chat/completions" ||
-      url.pathname === "/v1beta/openai/chat/completions"
-    ) {
+    if (url.pathname === "/v1/chat/completions") {
       const modelName = (reqJson as any).model;
       if (!modelName)
         return new Response(
