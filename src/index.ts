@@ -164,11 +164,14 @@ function upstreamSignal(clientSignal?: AbortSignal): AbortSignal {
   ]);
 }
 
-// Per-provider key rotation delay override (e.g. GOOGLE_MIN_DELAY_MS=0)
+// Per-provider key rotation delay override (e.g. GOOGLE_MIN_DELAY_MS=0).
+// HARD FLOOR of 2s between key attempts — providers firewall-ban bursts, so
+// the "2-sec rule" is never relaxable via env (a 0 override is clamped up).
+const MIN_ROTATE_DELAY_MS = 2000;
 function getProviderDelayMs(provider: string): number {
   const envKey = `${provider.toUpperCase()}_MIN_DELAY_MS`;
   const val = Bun.env[envKey] as string | undefined;
-  return val ? parseInt(val, 10) : LITEROUTER_ROTATE_DELAY_MS;
+  return Math.max(val ? parseInt(val, 10) : LITEROUTER_ROTATE_DELAY_MS, MIN_ROTATE_DELAY_MS);
 }
 
 // Clamp a number into [min, max].
@@ -177,18 +180,18 @@ function clamp(v: number, min: number, max: number): number {
 }
 
 // Parse an upstream-stated reset delay (seconds) from the Retry-After header or
-// a Google error body (quotaResetDelay / retryDelay). Returns null if absent.
-// Clamped to [5, 7200]s so a bogus huge value can't nuke a key for days.
+// a Google error body (quotaResetDelay / retryDelay). Returns the RAW value
+// (no floor) so callers can decide clamping. Returns null if absent.
 function parseResetDelay(headers: Headers, errText: string): number | null {
   const ra = headers.get("retry-after");
   if (ra) {
     const secs = parseInt(ra, 10);
-    if (!isNaN(secs) && secs > 0) return clamp(secs, 5, 7200);
+    if (!isNaN(secs) && secs > 0) return secs;
   }
   const m = errText.match(/(?:quotaResetDelay|retryDelay)\D{0,8}(\d+)/i);
   if (m) {
     const v = parseInt(m[1], 10);
-    if (!isNaN(v) && v > 0) return clamp(v, 5, 7200);
+    if (!isNaN(v) && v > 0) return v;
   }
   return null;
 }
@@ -423,7 +426,7 @@ class ModelFirstRouter {
 
   private getMinDelayMs(provider: string): number {
     const envOverride = Bun.env[`${provider.toUpperCase()}_MIN_DELAY_MS`] as string | undefined;
-    return envOverride ? parseInt(envOverride, 10) : LITEROUTER_ROTATE_DELAY_MS;
+    return Math.max(envOverride ? parseInt(envOverride, 10) : LITEROUTER_ROTATE_DELAY_MS, MIN_ROTATE_DELAY_MS);
   }
 
   async getAvailableKey(
@@ -574,6 +577,12 @@ class ModelFirstRouter {
     // instead of the fixed TTL above. Clamped to avoid absurd values.
     if (ttlOverride && ttlOverride > 0) {
       ttl = clamp(ttlOverride, 5, 7200);
+    }
+    // CRITICAL (Google 15rpm safety): a rate-limited key must NEVER be cooled
+    // for less than the 65s window, or the rolling quota never decays and the
+    // key is blocked forever. Honour longer upstream resets, never shorter.
+    if (["429", "rate_limit"].includes(errorType) && ttlOverride && ttlOverride > 0) {
+      ttl = Math.max(clamp(ttlOverride, 5, 7200), 65);
     }
 
     await this.redis.set(cooldownKey, state, "EX", ttl);
@@ -885,12 +894,14 @@ async function executeOpenAICompat(
           const reset = parseResetDelay(resp.headers, errText);
 
           // G3: upstream says "retry in <=2s" -> re-hit the SAME key once
-          // (after a small buffer) instead of burning a rotation. Distinct
-          // from the client-abort 499 no-op handled in the catch below.
-          if (reset && reset <= 2 && !graceTried) {
+          // (after a 2s+ buffer) instead of burning a rotation. NEVER applies
+          // to rate-limit (429) — a 429 key MUST rotate so its 15rpm window can
+          // decay (see 65s floor in reportError). Distinct from client-abort
+          // 499 no-op handled in the catch below.
+          if (reset && reset <= 2 && !graceTried && resp.status !== 429) {
             graceTried = true;
             reuseKey = activeKey;
-            await new Promise((r) => setTimeout(r, (reset + 1.5) * 1000));
+            await new Promise((r) => setTimeout(r, Math.max(reset, 2) * 1000 + 1500));
             continue;
           }
 
@@ -1095,10 +1106,12 @@ async function executeGoogleNative(
           const reset = parseResetDelay(resp.headers, errText);
 
           // G3: upstream says "retry in <=2s" -> re-hit the SAME key once
-          if (reset && reset <= 2 && !graceTried) {
+          // (after a 2s+ buffer). NEVER applies to rate-limit (429) — a 429
+          // key MUST rotate so its 15rpm window can decay.
+          if (reset && reset <= 2 && !graceTried && resp.status !== 429) {
             graceTried = true;
             reuseKey = activeKey;
-            await new Promise((r) => setTimeout(r, (reset + 1.5) * 1000));
+            await new Promise((r) => setTimeout(r, Math.max(reset, 2) * 1000 + 1500));
             continue;
           }
 

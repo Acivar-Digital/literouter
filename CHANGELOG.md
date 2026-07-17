@@ -12,9 +12,15 @@ All notable changes to LiteRouter will be documented in this file.
   - **G3 — grace retry**: when an upstream says "retry in ≤2s", the **same** key is retried once after a short buffer instead of burning a rotation (distinct from the client-abort 499 no-op).
   - **G4 — 5xx TTL alignment**: `500`/`502` now share the 10s transient cooldown previously reserved for `503`/`504`/`timeout` (was 30s default).
 
+### Safety (provider firewall / Google 15rpm protection)
+- **Hard 2s floor on key-attempt delay** — `getProviderDelayMs` / `getMinDelayMs` now enforce `MIN_ROTATE_DELAY_MS = 2000`; a `GOOGLE_MIN_DELAY_MS=0` (or `LITEROUTER_ROTATE_DELAY_MS=0`) can no longer zero the gap between retries, so we never burst-fire a provider endpoint (firewall ban risk). Default gap remains 10s.
+- **Rate-limit (429) cooldown floored at 65s** — `reportError` now clamps a 429 `ttlOverride` to `max(parsedReset, 65)`. A Google key that hits the 15rpm limit is therefore NEVER re-hit sooner than 65s, so the rolling quota window can decay instead of being re-fed and blocked forever. Longer upstream `Retry-After` values are still honoured.
+- **G3 grace-retry scoped to non-429** — the same-key retry-on-`reset<=2s` now explicitly excludes `429` (and only fires when `reset <= 2s`, with a `max(reset,2)s + 1.5s` wait), so a rate-limited key always rotates. (Previously the 5s clamp made G3 a no-op; it is now functional but rate-limit-safe.)
+
 ### Changed
 - `createStreamTransformer` now accepts an optional `StreamMeta` for observability sinks.
 - `reportError` signature gained an optional `ttlOverride?: number | null` (backward compatible).
+- `parseResetDelay` now returns the RAW reset value (callers clamp); the 5–7200s safety clamp moved into `reportError` and the 2s floor into the grace-retry wait.
 
 ## [3.2.0] — 2026-07-17
 
