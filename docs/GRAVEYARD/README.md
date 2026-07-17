@@ -19,7 +19,12 @@ This directory contains design documents, architectural plans, and deprecated im
 * **Context**: A user asked whether LiteRouter should adopt anyio (a Python asyncio/trio portability layer).
 * **Why it was discarded**: The gateway is Bun/TypeScript, not Python — anyio has no surface there. The remaining Python is thin pytest/administrative glue already covered by `pytest-asyncio` + `httpx`; anyio only arrives transitively via pydantic-ai. No code needs asyncio/trio portability, so promoting it would be speculative (YAGNI).
 
-### 4. Redis Integration & Backend Dependency
+### 4. [SUPERSIZE_BLUEPRINT.md](SUPERSIZE_BLUEPRINT.md) — "Supersize Your Bun Router" framework/plugin blueprint
+* **Status**: 🪦 **Canned (mostly) / Deferred (one item)**
+* **Context**: A user pasted a generic LLM blueprint recommending Bungate/Elysia/Hono, Unkey, rate-limit/idempotency/proxy plugins, and three "architectural upgrades" (streaming, circuit breaker, smart key prioritization).
+* **Why it was discarded**: Most of it is already implemented (native SSE streaming, Redis-backed circuit breaker + cooldowns, Redis quota limits). The framework/plugin recommendations are a pointless rewrite or external vendor lock-in that contradicts the transparent-router / fail-loud / YAGNI principles. Only `x-ratelimit-remaining` parsing is deferred as optional polish.
+
+### 5. Redis Integration & Backend Dependency
 * **Status**: 🪦 **Replaced by Valkey**
 * **Context**: LiteRouter originally relied on direct Redis integration and configuration (`REDIS_HOST`, `REDIS_PASSWORD`, etc.) for persistence, metrics, and key rotation state.
 * **Why it was discarded**: To maintain strict independence and adhere to open-source software principles, direct dependency on Redis has been deprecated in favor of **Valkey** (the fully open-source key-value database fork). The codebase preserves protocol-level compatibility for seamless migration.
