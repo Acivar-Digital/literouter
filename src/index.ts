@@ -27,14 +27,22 @@ const ROOT_DIR = import.meta.dir
 
 // Intuitive per-state emoji prefixes for terminal readability. Text tags are
 // preserved alongside for grep-ability.
+// Terminal timestamp: MM-DD-HH:SS:MS (no year) so logic errors are catchable
+// at a glance. Computed from the single Date source inside each log emitter.
+function logTimestamp(): string {
+  const d = new Date();
+  const p = (n: number, w: number) => String(n).padStart(w, "0");
+  return `${p(d.getMonth() + 1, 2)}-${p(d.getDate(), 2)}-${p(d.getHours(), 2)}:${p(d.getSeconds(), 2)}:${p(d.getMilliseconds(), 3)}`;
+}
+
 function logState(emoji: string, msg: string): void {
-  console.log(`${emoji} ${msg}`);
+  console.log(`${emoji} [${logTimestamp()}] ${msg}`);
 }
 function logWarn(emoji: string, msg: string): void {
-  console.warn(`${emoji} ${msg}`);
+  console.warn(`${emoji} [${logTimestamp()}] ${msg}`);
 }
 function logError(emoji: string, msg: string): void {
-  console.error(`${emoji} ${msg}`);
+  console.error(`${emoji} [${logTimestamp()}] ${msg}`);
 }
 
 const EMOJI = {
