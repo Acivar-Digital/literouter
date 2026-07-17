@@ -29,7 +29,12 @@ This directory contains design documents, architectural plans, and deprecated im
 * **Context**: A user asked whether to adopt patterns from 4 vendor gateways (read from `arthityap/vendor/`, 2026-07-17).
 * **Why it was discarded**: Full matrix in `docs/VENDOR_ANALYSIS.md`. Portkey delegates abort/quota/circuit/cost to its hosted SaaS — we already do all four in-repo (ahead). Bifrost is **Go** (not Bun/TS) — not portable. RelayPlane's cost math is captured separately in `docs/KIV_cost_tracking.md`. AgentGateway (Rust+Go) validates our Plan #1 and is otherwise already-right. Nothing to adopt.
 
-### 6. Redis Integration & Backend Dependency
+### 6. [RESPONSE_HEALING.md](RESPONSE_HEALING.md) — LLM "Response Healing" blueprint (jsonrepair + Zod + reflection)
+* **Status**: 🪦 **Canned — app-layer advice, not gateway-layer**
+* **Context**: A user pasted a generic blueprint recommending `jsonrepair`, Zod `safeParse`/`.catch()` healing, a Zod-error reflection retry-loop, `zod-stream` / `partial-json-parser` mid-stream validation, and forced tool-calling.
+* **Why it was discarded**: LiteRouter is a **transparent proxy** with no client schema, no owned prompt, and chunk-by-chunk SSE passthrough (`src/index.ts:555`). Buffering/repairing responses would tax all traffic, break streaming, and violate fail-loud. The reflection loop is architecturally impossible (gateway owns no message history). The one true nugget — native tool-calling reliability — is already supported via transparent tool-call passthrough. Output-contract enforcement is the client app's job.
+
+### 7. Redis Integration & Backend Dependency
 * **Status**: 🪦 **Replaced by Valkey**
 * **Context**: LiteRouter originally relied on direct Redis integration and configuration (`REDIS_HOST`, `REDIS_PASSWORD`, etc.) for persistence, metrics, and key rotation state.
 * **Why it was discarded**: To maintain strict independence and adhere to open-source software principles, direct dependency on Redis has been deprecated in favor of **Valkey** (the fully open-source key-value database fork). The codebase preserves protocol-level compatibility for seamless migration.
