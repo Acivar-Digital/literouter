@@ -171,6 +171,83 @@ function getProviderDelayMs(provider: string): number {
   return val ? parseInt(val, 10) : LITEROUTER_ROTATE_DELAY_MS;
 }
 
+// Clamp a number into [min, max].
+function clamp(v: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, v));
+}
+
+// Parse an upstream-stated reset delay (seconds) from the Retry-After header or
+// a Google error body (quotaResetDelay / retryDelay). Returns null if absent.
+// Clamped to [5, 7200]s so a bogus huge value can't nuke a key for days.
+function parseResetDelay(headers: Headers, errText: string): number | null {
+  const ra = headers.get("retry-after");
+  if (ra) {
+    const secs = parseInt(ra, 10);
+    if (!isNaN(secs) && secs > 0) return clamp(secs, 5, 7200);
+  }
+  const m = errText.match(/(?:quotaResetDelay|retryDelay)\D{0,8}(\d+)/i);
+  if (m) {
+    const v = parseInt(m[1], 10);
+    if (!isNaN(v) && v > 0) return clamp(v, 5, 7200);
+  }
+  return null;
+}
+
+// Extract token usage from either OpenAI-compat `usage` or Google-native
+// `usageMetadata`. Returns null when this chunk carries no usage.
+function parseUsageFromJson(json: any): {
+  prompt_tokens?: number;
+  completion_tokens?: number;
+  total_tokens?: number;
+} | null {
+  if (json?.usage) {
+    const u = json.usage;
+    return {
+      prompt_tokens: u.prompt_tokens,
+      completion_tokens: u.completion_tokens,
+      total_tokens: u.total_tokens,
+    };
+  }
+  if (json?.usageMetadata) {
+    const um = json.usageMetadata;
+    return {
+      prompt_tokens: um.promptTokenCount,
+      completion_tokens: um.candidatesTokenCount,
+      total_tokens: um.totalTokenCount,
+    };
+  }
+  return null;
+}
+
+// Metadata passed into stream transformers for observability sinks.
+interface StreamMeta {
+  reqId?: string;
+  provider: string;
+  modelName: string;
+  upstream_model: string;
+  activeKey: string;
+  servedModelId?: string;
+  requestStart: number;
+}
+
+// Sink observed usage + TTFT to logs and Redis (observability only — never
+// alters the response bytes or blocks the request).
+function sinkUsage(meta: StreamMeta, usage: any, ttftMs?: number) {
+  if (usage) {
+    logState(
+      EMOJI.served,
+      `[USAGE ${meta.reqId}] provider=${meta.provider} model=${meta.upstream_model} prompt=${usage.prompt_tokens ?? "?"} completion=${usage.completion_tokens ?? "?"} total=${usage.total_tokens ?? "?"}`,
+    );
+    router.recordUsage(meta.provider, meta.activeKey, meta.modelName, usage);
+  }
+  if (ttftMs != null) {
+    logState(
+      EMOJI.served,
+      `[TTFT ${meta.reqId}] provider=${meta.provider} model=${meta.upstream_model} ${ttftMs}ms`,
+    );
+  }
+}
+
 const REDIS_HOST = Bun.env.REDIS_HOST || "127.0.0.1";
 const REDIS_PORT = parseInt(Bun.env.REDIS_PORT || "6379", 10);
 const REDIS_PASSWORD = Bun.env.REDIS_PASSWORD || undefined;
@@ -469,6 +546,7 @@ class ModelFirstRouter {
     key: string,
     errorType: string,
     modelName: string,
+    ttlOverride?: number | null,
   ) {
     if (!this.redis) return;
     const keyHash = this.hashKey(key);
@@ -480,7 +558,9 @@ class ModelFirstRouter {
     if (["429", "rate_limit"].includes(errorType)) {
       ttl = 65;
       state = "rate_limited";
-    } else if (["timeout", "503", "504"].includes(errorType)) {
+    } else if (
+      ["timeout", "500", "502", "503", "504"].includes(errorType)
+    ) {
       ttl = 10;
       state = "timed_out";
     } else if (
@@ -490,10 +570,45 @@ class ModelFirstRouter {
       state = "quarantined";
     }
 
+    // G1: honour an upstream-stated reset delay (Retry-After / quotaResetDelay)
+    // instead of the fixed TTL above. Clamped to avoid absurd values.
+    if (ttlOverride && ttlOverride > 0) {
+      ttl = clamp(ttlOverride, 5, 7200);
+    }
+
     await this.redis.set(cooldownKey, state, "EX", ttl);
     console.error(
       `[${provider.toUpperCase()}] Placed key ${keyHash} on ${state} cooldown for ${modelName} (TTL ${ttl}s)`,
     );
+  }
+
+  // Observability-only: accumulate token usage per provider+model in Redis.
+  // Never throws — a metrics write must never fail a live request.
+  async recordUsage(
+    provider: string,
+    key: string,
+    modelName: string,
+    usage: {
+      prompt_tokens?: number;
+      completion_tokens?: number;
+      total_tokens?: number;
+    },
+  ) {
+    if (!this.redis) return;
+    const keyHash = this.hashKey(key);
+    const hkey = `usage:${provider}:${modelName}`;
+    try {
+      await this.redis.hincrby(hkey, "prompt_tokens", usage.prompt_tokens || 0);
+      await this.redis.hincrby(
+        hkey,
+        "completion_tokens",
+        usage.completion_tokens || 0,
+      );
+      await this.redis.hincrby(hkey, "total_tokens", usage.total_tokens || 0);
+      await this.redis.expire(hkey, 60 * 60 * 24 * 30); // 30d retention
+    } catch (e) {
+      // observability only — swallow
+    }
   }
 }
 
@@ -545,10 +660,12 @@ function clearSticky(groupId: string) {
 //  and transformNonStreaming are imported from ./lib)
 // ============================================================================
 
-function createStreamTransformer(collapseReasoning: boolean) {
+function createStreamTransformer(collapseReasoning: boolean, meta?: StreamMeta) {
   let buffer = "";
   let hasStartedThought = false;
   let hasEndedThought = false;
+  let firstChunk = true;
+  let capturedUsage: any = null;
   const decoder = new TextDecoder();
   const encoder = new TextEncoder();
 
@@ -567,6 +684,14 @@ function createStreamTransformer(collapseReasoning: boolean) {
 
           try {
             const json = JSON.parse(dataStr);
+
+            if (firstChunk) {
+              firstChunk = false;
+              if (meta) sinkUsage(meta, null, Date.now() - meta.requestStart);
+            }
+            const u = parseUsageFromJson(json);
+            if (u) capturedUsage = u;
+
             const choices = json.choices || [];
             if (choices.length > 0) {
               const delta = choices[0].delta || {};
@@ -639,6 +764,7 @@ function createStreamTransformer(collapseReasoning: boolean) {
           encoder.encode(`data: ${JSON.stringify(closing)}\n\n`),
         );
       }
+      if (meta) sinkUsage(meta, capturedUsage);
       controller.enqueue(encoder.encode("data: [DONE]\n\n"));
     },
   });
@@ -698,30 +824,47 @@ async function executeOpenAICompat(
   if (reqId) recordTrace(reqId, "downstream", reqJson, { model: modelName, provider });
 
   const isStream = !!reqJson.stream;
+  const requestStart = Date.now();
   const estimatedTokens = estimateTokens(
     JSON.stringify(reqJson.messages),
     reqJson.max_tokens || 2048,
   );
   const numKeys = (API_KEYS[provider as keyof typeof API_KEYS] || []).length;
   const maxAttempts = LITEROUTER_MAX_ATTEMPTS > 0 ? Math.min(numKeys, LITEROUTER_MAX_ATTEMPTS) : numKeys;
-  const BACKOFF_MS = [65000, 90000, 120000];
+  const QUOTA_BACKOFF_MS = [65000, 90000, 120000];
+  const TRANSIENT_BACKOFF_MS = [8000, 15000, 30000];
+  let backoffLadder = QUOTA_BACKOFF_MS;
+  let lastFailureQuota = false;
+  let reuseKey: string | null = null;
+  let graceTried = false;
 
-  for (let round = 0; round <= BACKOFF_MS.length; round++) {
+  for (let round = 0; round <= backoffLadder.length; round++) {
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
       let activeKey = "";
       let currentRpm = 0;
       try {
-        ({key: activeKey, currentRpm} = await router.getAvailableKey(
-          provider,
-          upstream_model,
-          estimatedTokens,
-        ));
+        ({key: activeKey, currentRpm} = reuseKey
+          ? {key: reuseKey, currentRpm: 0}
+          : await router.getAvailableKey(
+            provider,
+            upstream_model,
+            estimatedTokens,
+          ));
+        reuseKey = null;
         const headers = new Headers({
           Authorization: `Bearer ${activeKey}`,
           "Content-Type": "application/json",
         });
 
         injectThoughtSignature(reqJson);
+        // G1-support: ensure OpenAI-compat upstreams emit a final `usage`
+        // chunk so streaming token counts can be extracted (see design doc).
+        if (isStream) {
+          reqJson.stream_options = {
+            ...(reqJson.stream_options || {}),
+            include_usage: true,
+          };
+        }
         const resp = await fetch(api_url, {
           method: "POST",
           headers,
@@ -739,19 +882,34 @@ async function executeOpenAICompat(
           }
           const errText = await resp.text();
           const errSnippet = errText.substring(0, 300).replace(/\n/g, " ");
+          const reset = parseResetDelay(resp.headers, errText);
+
+          // G3: upstream says "retry in <=2s" -> re-hit the SAME key once
+          // (after a small buffer) instead of burning a rotation. Distinct
+          // from the client-abort 499 no-op handled in the catch below.
+          if (reset && reset <= 2 && !graceTried) {
+            graceTried = true;
+            reuseKey = activeKey;
+            await new Promise((r) => setTimeout(r, (reset + 1.5) * 1000));
+            continue;
+          }
+
           if (
             errText.includes("cooldown") ||
             errText.includes("exhausted quota")
           ) {
-            await router.reportError(provider, activeKey, "429", upstream_model);
-            logState(EMOJI.limit, `[PROVIDER_LIMIT ${reqId}] key=${activeKey.substring(0, 6)}... model=${upstream_model} (${resp.status}) rpm ${currentRpm + 1}/${getModelLimits(modelName, provider).max_rpm}`);
+            lastFailureQuota = true;
+            await router.reportError(provider, activeKey, "429", upstream_model, reset);
+            logState(EMOJI.limit, `[PROVIDER_LIMIT ${reqId}] key=${activeKey.substring(0, 6)}... model=${upstream_model} (429) rpm ${currentRpm + 1}/${getModelLimits(modelName, provider).max_rpm}`);
           } else {
             await router.reportError(
               provider,
               activeKey,
               resp.status.toString(),
               upstream_model,
+              reset,
             );
+            if (resp.status === 429) lastFailureQuota = true;
             logState(EMOJI.limit, `[PROVIDER_LIMIT ${reqId}] key=${activeKey.substring(0, 6)}... model=${upstream_model} (${resp.status}) rpm ${currentRpm + 1}/${getModelLimits(modelName, provider).max_rpm}`);
           }
           if (reqId) recordTrace(reqId, "upstream", { status: resp.status, body: errText }, { model: modelName, provider, status: resp.status });
@@ -763,10 +921,20 @@ async function executeOpenAICompat(
       logState(EMOJI.served, `[${provider.toUpperCase()} ${reqId}] Served ${modelName} (upstream=${upstream_model}, key=${activeKey.substring(0, 6)}...) attempt ${attempt + 1}/${maxAttempts} rpm ${currentRpm + 1}/${getModelLimits(modelName, provider).max_rpm}`);
       if (reqId && isStream) recordTrace(reqId, "upstream", { status: resp.status, body: "(stream)" }, { model: modelName, provider, status: resp.status });
 
+      const streamMeta: StreamMeta = {
+        reqId,
+        provider,
+        modelName,
+        upstream_model,
+        activeKey,
+        servedModelId,
+        requestStart,
+      };
+
       if (isStream) {
         return new Response(
           resp.body!.pipeThrough(
-            createStreamTransformer(LITEROUTER_COLLAPSE_REASONING),
+            createStreamTransformer(LITEROUTER_COLLAPSE_REASONING, streamMeta),
           ),
           {
             status: resp.status,
@@ -781,6 +949,8 @@ async function executeOpenAICompat(
           LITEROUTER_COLLAPSE_REASONING,
         );
         extractThoughtSignature(data);
+        const u = parseUsageFromJson(data);
+        if (u) sinkUsage(streamMeta, u);
         if (reqId) recordTrace(reqId, "upstream", { status: resp.status, body: data }, { model: modelName, provider, status: resp.status });
         return new Response(JSON.stringify(data), {
           status: resp.status,
@@ -804,9 +974,12 @@ async function executeOpenAICompat(
               status: 429,
             });
           }
-          if (round < BACKOFF_MS.length) {
-            logWarn(EMOJI.rotate, `[${provider.toUpperCase()} ${reqId}] All keys exhausted, backing off ${BACKOFF_MS[round] / 1000}s (round ${round + 1}/${BACKOFF_MS.length})`);
-            await new Promise((r) => setTimeout(r, BACKOFF_MS[round]));
+          if (round < backoffLadder.length) {
+            // G2: reason-aware backoff — quota exhaustion waits longer than
+            // transient (5xx/timeout) failures.
+            backoffLadder = lastFailureQuota ? QUOTA_BACKOFF_MS : TRANSIENT_BACKOFF_MS;
+            logWarn(EMOJI.rotate, `[${provider.toUpperCase()} ${reqId}] All keys exhausted, backing off ${backoffLadder[round] / 1000}s (round ${round + 1}/${backoffLadder.length})`);
+            await new Promise((r) => setTimeout(r, backoffLadder[round]));
             break;
           }
           return new Response(JSON.stringify({ error: e.message }), {
@@ -820,7 +993,7 @@ async function executeOpenAICompat(
             "timeout",
             upstream_model,
           );
-        if (round === BACKOFF_MS.length)
+        if (round === backoffLadder.length)
           return new Response(
             JSON.stringify({ error: "Upstream failed", details: e.message }),
             { status: 502 },
@@ -870,18 +1043,27 @@ async function executeGoogleNative(
   const estimatedTokens = estimateTokens(JSON.stringify(reqJson), 1024);
   const numKeys = API_KEYS.google.length;
   const maxAttempts = LITEROUTER_MAX_ATTEMPTS > 0 ? Math.min(numKeys, LITEROUTER_MAX_ATTEMPTS) : numKeys;
-  const BACKOFF_MS = [65000, 90000, 120000];
+  const requestStart = Date.now();
+  const QUOTA_BACKOFF_MS = [65000, 90000, 120000];
+  const TRANSIENT_BACKOFF_MS = [8000, 15000, 30000];
+  let backoffLadder = QUOTA_BACKOFF_MS;
+  let lastFailureQuota = false;
+  let reuseKey: string | null = null;
+  let graceTried = false;
 
-  for (let round = 0; round <= BACKOFF_MS.length; round++) {
+  for (let round = 0; round <= backoffLadder.length; round++) {
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
       let activeKey = "";
       let currentRpm = 0;
       try {
-        ({key: activeKey, currentRpm} = await router.getAvailableKey(
-          "google",
-          upstream_model,
-          estimatedTokens,
-        ));
+        ({key: activeKey, currentRpm} = reuseKey
+          ? {key: reuseKey, currentRpm: 0}
+          : await router.getAvailableKey(
+            "google",
+            upstream_model,
+            estimatedTokens,
+          ));
+        reuseKey = null;
 
         const url = new URL(
           `https://generativelanguage.googleapis.com/v1beta/models/${upstream_model}:${action}`,
@@ -910,11 +1092,22 @@ async function executeGoogleNative(
           }
           const errText = await resp.text();
           const errSnippet = errText.substring(0, 300).replace(/\n/g, " ");
+          const reset = parseResetDelay(resp.headers, errText);
+
+          // G3: upstream says "retry in <=2s" -> re-hit the SAME key once
+          if (reset && reset <= 2 && !graceTried) {
+            graceTried = true;
+            reuseKey = activeKey;
+            await new Promise((r) => setTimeout(r, (reset + 1.5) * 1000));
+            continue;
+          }
+
           if (
             errText.includes("cooldown") ||
             errText.includes("exhausted quota")
           ) {
-            await router.reportError("google", activeKey, "429", upstream_model);
+            lastFailureQuota = true;
+            await router.reportError("google", activeKey, "429", upstream_model, reset);
             logState(EMOJI.limit, `[PROVIDER_LIMIT ${reqId}] key=${activeKey.substring(0, 6)}... model=${upstream_model} (429) rpm ${currentRpm + 1}/${getModelLimits(modelName, "google").max_rpm}`);
           } else {
             await router.reportError(
@@ -922,7 +1115,9 @@ async function executeGoogleNative(
               activeKey,
               resp.status.toString(),
               upstream_model,
+              reset,
             );
+            if (resp.status === 429) lastFailureQuota = true;
             logState(EMOJI.limit, `[PROVIDER_LIMIT ${reqId}] key=${activeKey.substring(0, 6)}... model=${upstream_model} (${resp.status}) rpm ${currentRpm + 1}/${getModelLimits(modelName, "google").max_rpm}`);
           }
           if (reqId) recordTrace(reqId, "upstream", { status: resp.status, body: errText }, { model: modelName, provider: "google", status: resp.status });
@@ -935,20 +1130,53 @@ async function executeGoogleNative(
       logState(EMOJI.served, `[GOOGLE ${reqId}] Served native ${modelName}:${action} (upstream=${upstream_model}, attempt ${attempt + 1}/${maxAttempts}, rpm ${currentRpm + 1}/${getModelLimits(modelName, "google").max_rpm})`);
       if (reqId) recordTrace(reqId, "upstream", { status: resp.status, body: "(stream)" }, { model: modelName, provider: "google", status: resp.status });
 
-        const decoder = new TextDecoder();
-        const encoder = new TextEncoder();
-        const transform = new TransformStream({
-          transform(chunk, controller) {
-            let text = decoder.decode(chunk, { stream: true });
-            text = cleanLatexSymbols(text);
-            controller.enqueue(encoder.encode(text));
-          },
-        });
+      const decoder = new TextDecoder();
+      const encoder = new TextEncoder();
+      const streamMeta: StreamMeta = {
+        reqId,
+        provider: "google",
+        modelName,
+        upstream_model,
+        activeKey,
+        servedModelId,
+        requestStart,
+      };
+      let firstChunk = true;
+      let capturedUsage: any = null;
+      const transform = new TransformStream({
+        transform(chunk, controller) {
+          let text = decoder.decode(chunk, { stream: true });
+          text = cleanLatexSymbols(text);
 
-        return new Response(resp.body!.pipeThrough(transform), {
-          status: resp.status,
-          headers: outHeaders,
-        });
+          if (firstChunk) {
+            firstChunk = false;
+            sinkUsage(streamMeta, null, Date.now() - requestStart);
+          }
+          // Capture token usage from Google-native SSE (`data: ` lines) or a
+          // raw JSON body (non-streaming generateContent).
+          const candidates = text.includes("data: ")
+            ? text.split("\n").filter((l) => l.trim().startsWith("data: ")).map((l) => l.trim().substring(6).trim())
+            : [text.trim()];
+          for (const c of candidates) {
+            if (!c || c === "[DONE]") continue;
+            try {
+              const j = JSON.parse(c);
+              const u = parseUsageFromJson(j);
+              if (u) capturedUsage = u;
+            } catch {}
+          }
+
+          controller.enqueue(encoder.encode(text));
+        },
+        flush(controller) {
+          sinkUsage(streamMeta, capturedUsage);
+        },
+      });
+
+      return new Response(resp.body!.pipeThrough(transform), {
+        status: resp.status,
+        headers: outHeaders,
+      });
     } catch (e: any) {
         // Client disconnected (user hit "Stop" / closed connection): per decision A,
         // this is a no-op. Do NOT penalize the key or trip the circuit breaker
@@ -966,9 +1194,12 @@ async function executeGoogleNative(
               status: 429,
             });
           }
-          if (round < BACKOFF_MS.length) {
-            logWarn(EMOJI.rotate, `[GOOGLE ${reqId}] All keys exhausted, backing off ${BACKOFF_MS[round] / 1000}s (round ${round + 1}/${BACKOFF_MS.length})`);
-            await new Promise((r) => setTimeout(r, BACKOFF_MS[round]));
+          if (round < backoffLadder.length) {
+            // G2: reason-aware backoff — quota exhaustion waits longer than
+            // transient (5xx/timeout) failures.
+            backoffLadder = lastFailureQuota ? QUOTA_BACKOFF_MS : TRANSIENT_BACKOFF_MS;
+            logWarn(EMOJI.rotate, `[GOOGLE ${reqId}] All keys exhausted, backing off ${backoffLadder[round] / 1000}s (round ${round + 1}/${backoffLadder.length})`);
+            await new Promise((r) => setTimeout(r, backoffLadder[round]));
             break;
           }
           return new Response(JSON.stringify({ error: e.message }), {
@@ -982,7 +1213,7 @@ async function executeGoogleNative(
             "timeout",
             upstream_model,
           );
-        if (round === BACKOFF_MS.length)
+        if (round === backoffLadder.length)
           return new Response(
             JSON.stringify({ error: "Upstream failed", details: e.message }),
             { status: 502 },

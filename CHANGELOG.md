@@ -2,6 +2,20 @@
 
 All notable changes to LiteRouter will be documented in this file.
 
+## [3.3.0] — 2026-07-17
+
+### Added
+- **Streaming `usage` + TTFT extraction (observability)** — The streaming `TransformStream` now peeks at each SSE chunk (inline, no buffering) and extracts token `usage` (`usage` for OpenAI-compat, `usageMetadata` for Google-native), plus Time-To-First-Token (request-start → first byte). For OpenAI-compat streaming we now inject `stream_options.include_usage: true` so providers actually emit the final usage chunk. Extracted usage is sunk to logs (`[USAGE]` / `[TTFT]`) and accumulated per provider+model in Redis (`usage:{provider}:{model}`, 30d retention) via `router.recordUsage`. Non-streaming responses are extracted the same way. **No response bytes are altered and no quota-enforcement change occurs** — this is observability only.
+- **Smart cooldown (reason-aware backoff)** — Derived from a cross-repo study of three rotation gateways (design: `docs/IMPL_smart_cooldown.md`):
+  - **G1 — honour upstream reset delay**: `reportError` now accepts a `ttlOverride`; the `>=400` handler parses `Retry-After` and Google `quotaResetDelay`/`retryDelay` to set a precise cooldown (clamped 5–7200s) instead of a fixed constant.
+  - **G2 — reason-aware outer backoff**: the all-keys-exhausted backoff ladder is chosen by failure class — quota (429) uses `[65s, 90s, 120s]`, transient (5xx/timeout) uses a shorter `[8s, 15s, 30s]`.
+  - **G3 — grace retry**: when an upstream says "retry in ≤2s", the **same** key is retried once after a short buffer instead of burning a rotation (distinct from the client-abort 499 no-op).
+  - **G4 — 5xx TTL alignment**: `500`/`502` now share the 10s transient cooldown previously reserved for `503`/`504`/`timeout` (was 30s default).
+
+### Changed
+- `createStreamTransformer` now accepts an optional `StreamMeta` for observability sinks.
+- `reportError` signature gained an optional `ttlOverride?: number | null` (backward compatible).
+
 ## [3.2.0] — 2026-07-17
 
 ### Added
