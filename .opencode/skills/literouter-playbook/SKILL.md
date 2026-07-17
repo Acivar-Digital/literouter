@@ -19,6 +19,21 @@ description: High-density operational guide for the LiteRouter Gateway.
 
 > **Single Process:** Post-Bun consolidation there is ONE process only — Bun on 7766. The legacy TS proxy (7767) and `fusion.py` sidecar (7768) are GONE. `fusion.json` upstreams point at `localhost:7766`. Both OpenCode native `/v1beta` and pydantic-ai OpenAI-compat `/v1` hit 7766 directly. Source: `src/index.ts`.
 
+## Routing Behaviors
+Three request surfaces on 7766, all resolving a model → provider → upstream:
+
+| Incoming path | Handler | Upstream target | Typical client |
+| :--- | :--- | :--- | :--- |
+| `/v1/chat/completions` (non-Google model) | `executeOpenAICompat` | Provider OpenAI-compat `/chat/completions` (OpenRouter/NVIDIA/Zen) | pydantic-ai, generic OpenAI clients |
+| `/v1/chat/completions` (Google model) | `executeOpenAICompat` | **Google OpenAI-compat** `https://generativelanguage.googleapis.com/v1beta/openai/chat/completions` | Google via OpenAI protocol |
+| `/v1beta/openai/chat/completions` | `executeOpenAICompat` | same Google OpenAI-compat endpoint | explicit Google OpenAI path |
+| `/v1beta/models/{model}:{action}` (native) | `executeGoogleNative` | **Google native** `https://generativelanguage.googleapis.com/v1beta/models/{model}:{action}` | OpenCode native `generateContent`/`streamGenerateContent` |
+
+- **Google-via-`/v1` is translated**: the gateway rewrites the OpenAI-format request and forwards to Google's OpenAI-compat endpoint (`/v1beta/openai/...`), NOT the native `generateContent`. Only the `/v1beta/models/...` path hits Google native.
+- **Fusion groups** (`pydantic/google`, `pydantic/nvidia`) arrive on `/v1` and are intercepted by `executeFusion` *before* the OpenAI-compat handler; the group's `upstream` (OpenAI-compat only) decides protocol. The native `/v1beta` group `local/google` was removed — see `docs/GRAVEYARD/FUSION_LOCAL_GOOGLE.md`.
+- **Payload normalization**: `translateGoogleThinking` runs for Google on the OpenAI-compat path; the native path uses Gemini `contents` format.
+
+
 ## Logic & Fallback Strategy
 | Scenario | Logic | Outcome |
 | :--- | :--- | :--- |
