@@ -151,6 +151,19 @@ const LITEROUTER_MAX_ATTEMPTS = parseInt(
 const LITEROUTER_HTTP_TIMEOUT_MS =
   parseInt(Bun.env.LITEROUTER_HTTP_TIMEOUT || "300", 10) * 1000;
 
+// Compose the server-side HTTP timeout with the incoming client's abort signal.
+// When the client disconnects (e.g. hits "Stop"), req.signal aborts and the
+// upstream fetch is cancelled immediately instead of burning tokens until the
+// server timeout fires. This is the correct Bun translation of the implicit
+// Drop/RST_STREAM mechanism mature proxies (Envoy/agentgateway) use in Rust.
+function upstreamSignal(clientSignal?: AbortSignal): AbortSignal {
+  if (!clientSignal) return AbortSignal.timeout(LITEROUTER_HTTP_TIMEOUT_MS);
+  return AbortSignal.any([
+    clientSignal,
+    AbortSignal.timeout(LITEROUTER_HTTP_TIMEOUT_MS),
+  ]);
+}
+
 // Per-provider key rotation delay override (e.g. GOOGLE_MIN_DELAY_MS=0)
 function getProviderDelayMs(provider: string): number {
   const envKey = `${provider.toUpperCase()}_MIN_DELAY_MS`;
@@ -666,6 +679,7 @@ async function executeOpenAICompat(
   servedModelId?: string,
   fromFusion?: boolean,
   reqId?: string,
+  signal?: AbortSignal,
 ): Promise<Response> {
   const meta = MODEL_REGISTRY.get(modelName);
   if (!meta)
@@ -712,7 +726,7 @@ async function executeOpenAICompat(
           method: "POST",
           headers,
           body: JSON.stringify(reqJson),
-          signal: AbortSignal.timeout(LITEROUTER_HTTP_TIMEOUT_MS),
+          signal: upstreamSignal(signal),
         });
 
         if (resp.status >= 400) {
@@ -774,6 +788,12 @@ async function executeOpenAICompat(
         });
       }
     } catch (e: any) {
+        // Client disconnected (user hit "Stop" / closed connection): per decision A,
+        // this is a no-op. Do NOT penalize the key or trip the circuit breaker
+        // on a healthy upstream. (Validated by Envoy/agentgateway Drop/RST_STREAM.)
+        if (signal?.aborted) {
+          return new Response(null, { status: 499 });
+        }
         if (e.message.includes("All keys")) {
           if (attempt < maxAttempts) {
             await new Promise((r) => setTimeout(r, getProviderDelayMs(provider)));
@@ -826,6 +846,7 @@ async function executeGoogleNative(
   servedModelId?: string,
   fromFusion?: boolean,
   reqId?: string,
+  signal?: AbortSignal,
 ): Promise<Response> {
   let meta =
     MODEL_REGISTRY.get(modelName) || MODEL_REGISTRY.get(`google/${modelName}`);
@@ -876,7 +897,7 @@ async function executeGoogleNative(
           method: "POST",
           headers,
           body: Object.keys(reqJson).length ? JSON.stringify(reqJson) : undefined,
-          signal: AbortSignal.timeout(LITEROUTER_HTTP_TIMEOUT_MS),
+          signal: upstreamSignal(signal),
         });
 
         if (resp.status >= 400) {
@@ -928,7 +949,13 @@ async function executeGoogleNative(
           status: resp.status,
           headers: outHeaders,
         });
-      } catch (e: any) {
+    } catch (e: any) {
+        // Client disconnected (user hit "Stop" / closed connection): per decision A,
+        // this is a no-op. Do NOT penalize the key or trip the circuit breaker
+        // on a healthy upstream. (Validated by Envoy/agentgateway Drop/RST_STREAM.)
+        if (signal?.aborted) {
+          return new Response(null, { status: 499 });
+        }
         if (e.message.includes("All keys")) {
           if (attempt < maxAttempts) {
             await new Promise((r) => setTimeout(r, getProviderDelayMs("google")));
@@ -981,6 +1008,7 @@ async function executeFusion(
   isNativeRoute: boolean,
   action: string,
   reqId?: string,
+  signal?: AbortSignal,
 ): Promise<Response> {
   const isNativeUpstream = isNativeRoute || (group.upstream?.includes("/v1beta") ?? false);
   const chain: string[] = group.chain;
@@ -1002,6 +1030,7 @@ async function executeFusion(
         upstreamId,
         true,
         reqId,
+        signal,
       );
     } else {
       resp = await executeOpenAICompat(
@@ -1011,6 +1040,7 @@ async function executeFusion(
         upstreamId,
         true,
         reqId,
+        signal,
       );
     }
 
@@ -1083,9 +1113,10 @@ serve({
           false,
           "",
           reqId,
+          req.signal,
         );
       }
-      return executeOpenAICompat(modelName, reqJson, req.headers, undefined, false, reqId);
+      return executeOpenAICompat(modelName, reqJson, req.headers, undefined, false, reqId, req.signal);
     }
 
     const nativeMatch = url.pathname.match(
@@ -1105,6 +1136,7 @@ serve({
           true,
           action,
           reqId,
+          req.signal,
         );
       }
       return executeGoogleNative(
@@ -1116,6 +1148,7 @@ serve({
         undefined,
         false,
         reqId,
+        req.signal,
       );
     }
 

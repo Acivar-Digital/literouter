@@ -2,6 +2,15 @@
 
 All notable changes to LiteRouter will be documented in this file.
 
+## [3.2.0] — 2026-07-17
+
+### Added
+- **Client-disconnect propagation** — Upstream `fetch` now composes the incoming client `AbortSignal` with the server-side HTTP timeout via `upstreamSignal()` (`src/index.ts`). When a user hits "Stop" or closes the connection, the upstream generation is **cancelled immediately** instead of burning tokens until the timeout fires. Algorithm: `AbortSignal.any([req.signal, AbortSignal.timeout(LITEROUTER_HTTP_TIMEOUT_MS)])`, threaded through `executeFusion` → `executeOpenAICompat` / `executeGoogleNative` → both upstream `fetch` sites.
+- **User-abort = no-op (decision A)** — When `signal?.aborted` is true in the execute `catch` blocks, the error is treated as a non-fatal client disconnect: `router.reportError` / circuit-breaker cooldown is **skipped** and a `499 Client Closed` is returned. A healthy upstream is never penalized for an impatient user. Validated against Envoy/AgentGateway's implicit Rust `Drop` / `RST_STREAM` mechanism (our `AbortSignal` is the correct Bun translation).
+
+### Changed
+- `executeOpenAICompat`, `executeGoogleNative`, and `executeFusion` gained an optional `signal?: AbortSignal` parameter (defaulting to the timeout-only signal when absent, so existing call paths are unchanged).
+
 ## [3.1.0] — 2026-07-16
 
 ### Added

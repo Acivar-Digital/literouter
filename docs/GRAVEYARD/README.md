@@ -24,7 +24,12 @@ This directory contains design documents, architectural plans, and deprecated im
 * **Context**: A user pasted a generic LLM blueprint recommending Bungate/Elysia/Hono, Unkey, rate-limit/idempotency/proxy plugins, and three "architectural upgrades" (streaming, circuit breaker, smart key prioritization).
 * **Why it was discarded**: Most of it is already implemented (native SSE streaming, Redis-backed circuit breaker + cooldowns, Redis quota limits). The framework/plugin recommendations are a pointless rewrite or external vendor lock-in that contradicts the transparent-router / fail-loud / YAGNI principles. Only `x-ratelimit-remaining` parsing is deferred as optional polish.
 
-### 5. Redis Integration & Backend Dependency
+### 5. [VENDOR_IDEAS_DEFERRED.md](VENDOR_IDEAS_DEFERRED.md) — Portkey / Bifrost / RelayPlane / AgentGateway
+* **Status**: 🪦 **Canned (already-right or not-applicable)**
+* **Context**: A user asked whether to adopt patterns from 4 vendor gateways (read from `arthityap/vendor/`, 2026-07-17).
+* **Why it was discarded**: Full matrix in `docs/VENDOR_ANALYSIS.md`. Portkey delegates abort/quota/circuit/cost to its hosted SaaS — we already do all four in-repo (ahead). Bifrost is **Go** (not Bun/TS) — not portable. RelayPlane's cost math is captured separately in `docs/KIV_cost_tracking.md`. AgentGateway (Rust+Go) validates our Plan #1 and is otherwise already-right. Nothing to adopt.
+
+### 6. Redis Integration & Backend Dependency
 * **Status**: 🪦 **Replaced by Valkey**
 * **Context**: LiteRouter originally relied on direct Redis integration and configuration (`REDIS_HOST`, `REDIS_PASSWORD`, etc.) for persistence, metrics, and key rotation state.
 * **Why it was discarded**: To maintain strict independence and adhere to open-source software principles, direct dependency on Redis has been deprecated in favor of **Valkey** (the fully open-source key-value database fork). The codebase preserves protocol-level compatibility for seamless migration.
