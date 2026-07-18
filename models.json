@@ -11,7 +11,7 @@
     "provider": "nvidia",
     "upstream_id": "meta/llama-3.1-8b-instruct",
     "context": 131072,
-    "max_output": 16384
+    "max_output": 131072
   },
   {
     "system_id": "nvidia/meta/llama-3.1-70b-instruct",
@@ -46,14 +46,14 @@
     "provider": "nvidia",
     "upstream_id": "minimaxai/minimax-m3",
     "context": 1048576,
-    "max_output": 131072
+    "max_output": 512000
   },
   {
     "system_id": "nvidia/minimaxai/minimax-m2.7",
     "provider": "nvidia",
     "upstream_id": "minimaxai/minimax-m2.7",
     "context": 204800,
-    "max_output": 196608
+    "max_output": 131072
   },
   {
     "system_id": "nvidia/moonshotai/kimi-k2.6",
@@ -144,27 +144,27 @@
     "provider": "nvidia",
     "upstream_id": "qwen/qwen3-next-80b-a3b-instruct",
     "context": 262144,
-    "max_output": 16384
+    "max_output": 262144
   },
   {
     "system_id": "nvidia/qwen/qwen3.5-122b-a10b",
     "provider": "nvidia",
     "upstream_id": "qwen/qwen3.5-122b-a10b",
     "context": 262144,
-    "max_output": 262144
+    "max_output": 65536
   },
   {
     "system_id": "nvidia/z-ai/glm-5.2",
     "provider": "nvidia",
     "upstream_id": "z-ai/glm-5.2",
     "context": 1048576,
-    "max_output": 101376
+    "max_output": 131072
   },
   {
     "system_id": "nvidia/thinkingmachines/inkling",
     "provider": "nvidia",
     "upstream_id": "thinkingmachines/inkling",
-    "context": 262144,
+    "context": 1048576,
     "max_output": 16384
   },
   {

@@ -1,8 +1,8 @@
 {
-  "id": "openai/gpt-oss-120b:free",
+  "id": "openai/gpt-oss-120b",
   "canonical_slug": "openai/gpt-oss-120b",
   "hugging_face_id": "openai/gpt-oss-120b",
-  "name": "OpenAI: gpt-oss-120b (free)",
+  "name": "OpenAI: gpt-oss-120b",
   "created": 1754414231,
   "description": "gpt-oss-120b is an open-weight, 117B-parameter Mixture-of-Experts (MoE) language model from OpenAI designed for high-reasoning, agentic, and general-purpose production use cases. It activates 5.1B parameters per forward pass and is optimized...",
   "context_length": 131072,
@@ -18,28 +18,36 @@
     "instruct_type": null
   },
   "pricing": {
-    "prompt": "0",
-    "completion": "0"
+    "prompt": "0.000000037",
+    "completion": "0.00000017"
   },
   "top_provider": {
     "context_length": 131072,
     "max_completion_tokens": 131072,
-    "is_moderated": true
+    "is_moderated": false
   },
   "per_request_limits": null,
   "supported_parameters": [
+    "frequency_penalty",
     "include_reasoning",
+    "logit_bias",
+    "logprobs",
     "max_tokens",
     "min_p",
+    "presence_penalty",
     "reasoning",
     "reasoning_effort",
+    "repetition_penalty",
+    "response_format",
     "seed",
     "stop",
+    "structured_outputs",
     "temperature",
     "tool_choice",
     "tools",
     "top_a",
     "top_k",
+    "top_logprobs",
     "top_p"
   ],
   "default_parameters": {
@@ -58,44 +66,44 @@
       {
         "arena": "models",
         "category": "3d",
-        "elo": 976,
+        "elo": 967,
         "win_rate": 29.4,
-        "rank": 92
+        "rank": 95
       },
       {
         "arena": "models",
         "category": "codecategories",
-        "elo": 1007,
+        "elo": 999,
         "win_rate": 33.4,
-        "rank": 98
+        "rank": 102
       },
       {
         "arena": "models",
         "category": "dataviz",
-        "elo": 1041,
+        "elo": 1038,
         "win_rate": 45.1,
-        "rank": 88
+        "rank": 91
       },
       {
         "arena": "models",
         "category": "gamedev",
-        "elo": 1059,
+        "elo": 1052,
         "win_rate": 40.6,
-        "rank": 85
+        "rank": 90
       },
       {
         "arena": "models",
         "category": "uicomponent",
-        "elo": 977,
+        "elo": 970,
         "win_rate": 35.5,
-        "rank": 92
+        "rank": 96
       },
       {
         "arena": "models",
         "category": "website",
-        "elo": 1004,
+        "elo": 998,
         "win_rate": 32.5,
-        "rank": 101
+        "rank": 104
       }
     ],
     "artificial_analysis": {

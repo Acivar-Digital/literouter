@@ -45,7 +45,7 @@
   },
   "supported_voices": null,
   "knowledge_cutoff": null,
-  "expiration_date": null,
+  "expiration_date": "2026-07-28",
   "links": {
     "details": "/api/v1/models/poolside/laguna-m.1-20260312/endpoints"
   },
