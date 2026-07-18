@@ -4,6 +4,9 @@ All notable changes to LiteRouter will be documented in this file.
 
 ## [3.3.1] — 2026-07-17
 
+### Added
+- **Model `nvidia/thinkingmachines/inkling`** — Added Thinking Machines `inkling` to the NVIDIA provider registry (`models.json`) with `upstream_id: thinkingmachines/inkling`. Synced to `opencode.json` under `provider.literouter.models`.
+
 ### Removed
 - **Legacy gateway route `/v1beta/openai/chat/completions`** — redundant alias of `/v1/chat/completions` (both dispatched to `executeOpenAICompat`); no client or integration test targeted it (OpenCode uses the native `/v1beta/models/{model}:{action}` path, pydantic-ai uses `/v1`). `/v1/chat/completions` is now the sole OpenAI-compat entry point. The *upstream* Google OpenAI-compat endpoint (`PROVIDER_API_URLS.google`) is unchanged and remains the forward target for Google-via-`/v1` requests.
 
