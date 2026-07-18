@@ -5,7 +5,8 @@ All notable changes to LiteRouter will be documented in this file.
 ## [3.3.1] — 2026-07-17
 
 ### Added
-- **Model `nvidia/thinkingmachines/inkling`** — Added Thinking Machines `inkling` to the NVIDIA provider registry (`models.json`) with `upstream_id: thinkingmachines/inkling`. Synced to `opencode.json` under `provider.literouter.models`.
+- **Model `nvidia/thinkingmachines/inkling`** — Added Thinking Machines `inkling` to the NVIDIA provider registry (`models.json`) with `upstream_id: thinkingmachines/inkling`. Synced to `opencode.json` under `provider.literouter.models`. `context` (1048576) sourced from OpenRouter catalog via `gather_model_details.py`; `max_output` remains a manual placeholder (OpenRouter returns `max_completion_tokens: None` for this model).
+- **Standardized model-settings extraction** — Deleted redundant `scripts/sync_model_context.py`. `scripts/gather_model_details.py` is now the single extraction pipeline: it fetches the OpenRouter catalog (`/api/v1/models`, keyless), applies the `:free`/`-free` suffix strip + `ORG_MAP` org-remap, matches every non-google provider (incl. nvidia), and writes `context`/`max_output` back into `models.json`. OpenRouter is the canonical source; Hugging Face and NVIDIA-native APIs were evaluated and rejected (they don't expose these fields reliably).
 
 ### Removed
 - **Legacy gateway route `/v1beta/openai/chat/completions`** — redundant alias of `/v1/chat/completions` (both dispatched to `executeOpenAICompat`); no client or integration test targeted it (OpenCode uses the native `/v1beta/models/{model}:{action}` path, pydantic-ai uses `/v1`). `/v1/chat/completions` is now the sole OpenAI-compat entry point. The *upstream* Google OpenAI-compat endpoint (`PROVIDER_API_URLS.google`) is unchanged and remains the forward target for Google-via-`/v1` requests.
