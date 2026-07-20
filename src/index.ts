@@ -158,6 +158,53 @@ const LITEROUTER_MAX_ATTEMPTS = parseInt(
 );
 const LITEROUTER_HTTP_TIMEOUT_MS =
   parseInt(Bun.env.LITEROUTER_HTTP_TIMEOUT || "300", 10) * 1000;
+// First-byte timeout: if the upstream sends NO response headers within this
+// window (the "no signal, no response" ghost — e.g. NVIDIA black-holing the
+// first request), abort and rotate to the next key. Distinct from the 300s
+// total timeout: silence is treated as a retryable ghost, not a real failure.
+const NO_RESPONSE_TIMEOUT_MS =
+  parseInt(Bun.env.LITEROUTER_NO_RESPONSE_TIMEOUT || "5", 10) * 1000;
+const NO_RESPONSE_RETRY_DELAY_MS =
+  parseInt(Bun.env.LITEROUTER_NO_RESPONSE_RETRY_DELAY || "5000", 10);
+
+// Thrown when the upstream returns absolutely nothing (no status, no headers,
+// no body) within NO_RESPONSE_TIMEOUT_MS. Carries no cooldown signal because
+// the provider never told us to back off — it just ghosted.
+class NoResponseError extends Error {
+  constructor(msg = "upstream sent no response") {
+    super(msg);
+    this.name = "NoResponseError";
+  }
+}
+
+// Fetch with a first-byte timeout layered on top of the total timeout. If the
+// upstream opens the connection but sends nothing within NO_RESPONSE_TIMEOUT_MS,
+// we abort and throw NoResponseError so the caller rotates keys instead of
+// hanging for the full LITEROUTER_HTTP_TIMEOUT_MS.
+async function fetchWithFirstByteTimeout(
+  url: string,
+  init: RequestInit,
+  clientSignal?: AbortSignal,
+): Promise<Response> {
+  const ctrl = new AbortController();
+  const totalSignal = upstreamSignal(clientSignal);
+  totalSignal.addEventListener("abort", () => ctrl.abort());
+  if (clientSignal) clientSignal.addEventListener("abort", () => ctrl.abort());
+
+  const firstByte = setTimeout(() => ctrl.abort(), NO_RESPONSE_TIMEOUT_MS);
+
+  try {
+    const resp = await fetch(url, { ...init, signal: ctrl.signal });
+    clearTimeout(firstByte);
+    return resp;
+  } catch (e: any) {
+    clearTimeout(firstByte);
+    if (ctrl.signal.aborted && !totalSignal.aborted && !(clientSignal?.aborted)) {
+      throw new NoResponseError();
+    }
+    throw e;
+  }
+}
 
 // Compose the server-side HTTP timeout with the incoming client's abort signal.
 // When the client disconnects (e.g. hits "Stop"), req.signal aborts and the
@@ -596,7 +643,7 @@ class ModelFirstRouter {
     // Google is strict (15rpm/model, per-key quota pools) and a 5xx often
     // precedes a rate-limit block. Enforce a flat 65s floor on ANY Google
     // error so a key is never re-hit into a block-forever state.
-    if (provider === "google") {
+    if (provider === "google" || provider === "nvidia") {
       ttl = Math.max(ttl, 65);
     }
 
@@ -889,12 +936,15 @@ async function executeOpenAICompat(
             include_usage: true,
           };
         }
-        const resp = await fetch(api_url, {
-          method: "POST",
-          headers,
-          body: JSON.stringify(reqJson),
-          signal: upstreamSignal(signal),
-        });
+        const resp = await fetchWithFirstByteTimeout(
+          api_url,
+          {
+            method: "POST",
+            headers,
+            body: JSON.stringify(reqJson),
+          },
+          signal,
+        );
 
         if (resp.status >= 400) {
           if (resp.status === 400) {
@@ -989,6 +1039,18 @@ async function executeOpenAICompat(
         // on a healthy upstream. (Validated by Envoy/agentgateway Drop/RST_STREAM.)
         if (signal?.aborted) {
           return new Response(null, { status: 499 });
+        }
+        // No-response ghost (e.g. NVIDIA black-holing the first request): the
+        // upstream sent NOTHING — no status, no signal, no backoff. The provider
+        // never told us to cool down, so we DON'T penalize the key. Just wait
+        // NO_RESPONSE_RETRY_DELAY_MS and rotate to the next key to retry. If we
+        // exhaust all keys without a response, the loop falls through to the
+        // 300s generic timeout below.
+        if (e instanceof NoResponseError) {
+          logWarn(EMOJI.rotate, `[NO_RESPONSE ${reqId}] key=${activeKey.substring(0, 6)}... model=${upstream_model} sent nothing within ${NO_RESPONSE_TIMEOUT_MS}ms, rotating key (no cooldown)`);
+          if (reqId) recordTrace(reqId, "upstream", { status: "no-response", body: "upstream sent no bytes" }, { model: modelName, provider, status: 0 });
+          await new Promise((r) => setTimeout(r, NO_RESPONSE_RETRY_DELAY_MS));
+          continue;
         }
         if (e.message.includes("All keys")) {
           if (attempt < maxAttempts) {
