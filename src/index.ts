@@ -166,7 +166,7 @@ const LITEROUTER_HTTP_TIMEOUT_MS =
 // first request), abort and rotate to the next key. Distinct from the 300s
 // total timeout: silence is treated as a retryable ghost, not a real failure.
 const NO_RESPONSE_TIMEOUT_MS =
-  parseInt(Bun.env.LITEROUTER_NO_RESPONSE_TIMEOUT || "5", 10) * 1000;
+  parseInt(Bun.env.LITEROUTER_NO_RESPONSE_TIMEOUT || "10", 10) * 1000;
 const NO_RESPONSE_RETRY_DELAY_MS =
   parseInt(Bun.env.LITEROUTER_NO_RESPONSE_RETRY_DELAY || "5000", 10);
 
@@ -872,6 +872,7 @@ async function executeOpenAICompat(
   let lastFailureQuota = false;
   let reuseKey: string | null = null;
   let graceTried = false;
+  let noResponseAttempts = 0;
 
   for (let round = 0; round <= backoffLadder.length; round++) {
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
@@ -1015,8 +1016,15 @@ async function executeOpenAICompat(
         // exhaust all keys without a response, the loop falls through to the
         // 300s generic timeout below.
         if (e instanceof NoResponseError) {
-          logWarn(EMOJI.amber, `[NO_RESPONSE ${reqId}] key=${activeKey.substring(0, 6)}... model=${upstream_model} sent nothing within ${NO_RESPONSE_TIMEOUT_MS}ms, rotating key (no cooldown)`);
+          noResponseAttempts++;
+          logWarn(EMOJI.amber, `[NO_RESPONSE ${reqId}] key=${activeKey.substring(0, 6)}... model=${upstream_model} sent nothing within ${NO_RESPONSE_TIMEOUT_MS}ms, rotating key (no cooldown) [${noResponseAttempts}/${maxAttempts}]`);
           if (reqId) recordTrace(reqId, "upstream", { status: "no-response", body: "upstream sent no bytes" }, { model: modelName, provider, status: 0 });
+          // Try each key exactly once. After all keys have ghosted, STOP —
+          // fall through to the 300s generic timeout below (no round-loop retry).
+          if (noResponseAttempts >= maxAttempts) {
+            logState(EMOJI.exhausted, `[NO_RESPONSE ${reqId}] all ${maxAttempts} keys ghosted, stopping (no cooldown)`);
+            break;
+          }
           await new Promise((r) => setTimeout(r, NO_RESPONSE_RETRY_DELAY_MS));
           continue;
         }
