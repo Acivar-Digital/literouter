@@ -15,6 +15,8 @@ import {
   cleanLatexSymbols,
   mergeConsecutiveMessages,
   transformNonStreaming,
+  NoResponseError,
+  fetchWithFirstByteTimeout,
 } from "./lib";
 
 // ============================================================================
@@ -166,45 +168,6 @@ const NO_RESPONSE_TIMEOUT_MS =
   parseInt(Bun.env.LITEROUTER_NO_RESPONSE_TIMEOUT || "5", 10) * 1000;
 const NO_RESPONSE_RETRY_DELAY_MS =
   parseInt(Bun.env.LITEROUTER_NO_RESPONSE_RETRY_DELAY || "5000", 10);
-
-// Thrown when the upstream returns absolutely nothing (no status, no headers,
-// no body) within NO_RESPONSE_TIMEOUT_MS. Carries no cooldown signal because
-// the provider never told us to back off — it just ghosted.
-class NoResponseError extends Error {
-  constructor(msg = "upstream sent no response") {
-    super(msg);
-    this.name = "NoResponseError";
-  }
-}
-
-// Fetch with a first-byte timeout layered on top of the total timeout. If the
-// upstream opens the connection but sends nothing within NO_RESPONSE_TIMEOUT_MS,
-// we abort and throw NoResponseError so the caller rotates keys instead of
-// hanging for the full LITEROUTER_HTTP_TIMEOUT_MS.
-async function fetchWithFirstByteTimeout(
-  url: string,
-  init: RequestInit,
-  clientSignal?: AbortSignal,
-): Promise<Response> {
-  const ctrl = new AbortController();
-  const totalSignal = upstreamSignal(clientSignal);
-  totalSignal.addEventListener("abort", () => ctrl.abort());
-  if (clientSignal) clientSignal.addEventListener("abort", () => ctrl.abort());
-
-  const firstByte = setTimeout(() => ctrl.abort(), NO_RESPONSE_TIMEOUT_MS);
-
-  try {
-    const resp = await fetch(url, { ...init, signal: ctrl.signal });
-    clearTimeout(firstByte);
-    return resp;
-  } catch (e: any) {
-    clearTimeout(firstByte);
-    if (ctrl.signal.aborted && !totalSignal.aborted && !(clientSignal?.aborted)) {
-      throw new NoResponseError();
-    }
-    throw e;
-  }
-}
 
 // Compose the server-side HTTP timeout with the incoming client's abort signal.
 // When the client disconnects (e.g. hits "Stop"), req.signal aborts and the
@@ -943,7 +906,11 @@ async function executeOpenAICompat(
             headers,
             body: JSON.stringify(reqJson),
           },
-          signal,
+          {
+            noResponseTimeoutMs: NO_RESPONSE_TIMEOUT_MS,
+            totalTimeoutMs: LITEROUTER_HTTP_TIMEOUT_MS,
+            clientSignal: signal,
+          },
         );
 
         if (resp.status >= 400) {
