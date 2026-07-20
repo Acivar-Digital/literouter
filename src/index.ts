@@ -50,6 +50,7 @@ function logError(emoji: string, msg: string): void {
 const EMOJI = {
   inbound: "🔵",
   rotate: "🔄",
+  amber: "🟡",
   limit: "⚠️",
   exhausted: "🔴",
   served: "🟢",
@@ -1014,7 +1015,7 @@ async function executeOpenAICompat(
         // exhaust all keys without a response, the loop falls through to the
         // 300s generic timeout below.
         if (e instanceof NoResponseError) {
-          logWarn(EMOJI.rotate, `[NO_RESPONSE ${reqId}] key=${activeKey.substring(0, 6)}... model=${upstream_model} sent nothing within ${NO_RESPONSE_TIMEOUT_MS}ms, rotating key (no cooldown)`);
+          logWarn(EMOJI.amber, `[NO_RESPONSE ${reqId}] key=${activeKey.substring(0, 6)}... model=${upstream_model} sent nothing within ${NO_RESPONSE_TIMEOUT_MS}ms, rotating key (no cooldown)`);
           if (reqId) recordTrace(reqId, "upstream", { status: "no-response", body: "upstream sent no bytes" }, { model: modelName, provider, status: 0 });
           await new Promise((r) => setTimeout(r, NO_RESPONSE_RETRY_DELAY_MS));
           continue;
