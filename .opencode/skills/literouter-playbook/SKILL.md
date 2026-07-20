@@ -1,7 +1,5 @@
----
-name: literouter-playbook
-description: High-density operational guide for the LiteRouter Gateway.
----
+<skill_content name="literouter-playbook">
+# Skill: literouter-playbook
 
 # LiteRouter API Gateway (High-Density)
 
@@ -42,6 +40,7 @@ Three request surfaces on 7766, all resolving a model → provider → upstream:
 | **Circuit Breaker** | Cooldown window active. | Model/key skipped until cooldown clears. |
 | **Sticky Fallback** | 300s window. | Requests start at fallback position. |
 | **Rotate Floor** | Hard minimum gap between key attempts. | **2s** (`MIN_ROTATE_DELAY_MS=2000`); longer if upstream `Retry-After`/`quotaResetDelay` exceeds it |
+| **Silent Upstream (no-response ghost)** | Upstream sends ZERO bytes/headers within `LITEROUTER_NO_RESPONSE_TIMEOUT` (def 5s). No status, no signal, no backoff. | Non-Google OpenAI-compat only (`executeOpenAICompat`). Abort, wait `LITEROUTER_NO_RESPONSE_RETRY_DELAY` (def 5s), rotate to next key. **NO cooldown** (provider gave no backoff signal). If all keys ghost → falls through to 300s timeout → 502. Covers NVIDIA first-shot blackhole. Google-native intentionally excluded. |
 
 ## Operational Rules
 - **Truth:** `models.json` is the source-of-truth registry.
@@ -52,6 +51,7 @@ Three request surfaces on 7766, all resolving a model → provider → upstream:
 - **Log Timestamps:** Every gateway log line is prefixed `[MM-DD-HH:SS:MS]` (no year) so gaps between request/serve/TTFT are eyeball-visible for debugging logic errors.
 - **Observability (v3.3.0):** Streaming responses emit `[TTFT]` (time-to-first-token, ms) and `[USAGE]` (prompt/completion/total tokens) lines. Usage is captured from OpenAI `usage` and Google `usageMetadata`, and accumulated in Valkey `usage:{provider}:{model}` (HINCRBY, 30d TTL). `stream_options.include_usage: true` is auto-injected for OpenAI-compat.
 - **Client Disconnect (v3.2.0):** Client abort (Stop/close) = **NO-OP**. Detected via `signal?.aborted` (true only on CLIENT abort, NOT our server timeout). On client abort we do NOT call `router.reportError` and do NOT cooldown the key — upstream fetch uses `AbortSignal.any([req.signal, LITEROUTER_HTTP_TIMEOUT_MS])`. Returns **499 Client Closed** silently. A server-side timeout still counts as a real failure and cools the key. See CHANGELOG `[3.2.0]`.
+- **Silent Upstream / No-Response Ghost (v3.3.2):** When the upstream sends **nothing** — no status, no headers, no body, no backoff signal — within `LITEROUTER_NO_RESPONSE_TIMEOUT` (def 5s), it is a `NoResponseError`, NOT a generic timeout. We do NOT cooldown the key (the provider never told us to back off); we wait `LITEROUTER_NO_RESPONSE_RETRY_DELAY` (def 5s) and rotate to the next key. Non-Google OpenAI-compat only (`executeOpenAICompat`). If every key ghosts, the loop falls through to the 300s total timeout → 502. Google-native intentionally excluded. See CHANGELOG `[3.3.2]`.
 - **Cost Tracking:** NOT implemented. LiteRouter tracks RPM/TPM quota only — no $ cost. Math parked in `docs/KIV_cost_tracking.md` for future. Do not add `@relayplane/*` deps; any future cost work uses our Redis.
 - **Vendor Hardening Reviews:** `docs/VENDOR_ANALYSIS.md` (adopt/follow matrix) + `docs/GRAVEYARD/VENDOR_IDEAS_DEFERRED.md` (rejected ideas: bifrost=Go/not portable, portkey OSS delegates to SaaS, relayplane→KIV, agentgateway validates #1).
 
@@ -60,7 +60,20 @@ Three request surfaces on 7766, all resolving a model → provider → upstream:
 - **Env Vars:**
   - `{PROV}_MIN_DELAY_MS`: Override key rotation delay (hard-floored at 2s).
   - `LITEROUTER_MAX_ATTEMPTS`: (Default: 3) Keys tried per upstream.
+  - `LITEROUTER_NO_RESPONSE_TIMEOUT`: (Default: 5) Seconds to wait for the upstream's FIRST response byte before treating it as a silent ghost and rotating keys (non-Google OpenAI-compat only).
+  - `LITEROUTER_NO_RESPONSE_RETRY_DELAY`: (Default: 5000) ms to wait after a silent ghost before rotating to the next key.
 - **Procedures:**
   - Add Model/Provider: Follow `setup_checklist.md` (Steps 5-8).
   - Sync CLI: Update `~/.config/opencode/opencode.json` after `models.json` changes.
   - Troubleshooting: Check `troubleshoot.md` for error codes and debug logs.
+
+Base directory for this skill: /home/yapilwsl/arthityap/literouter/.opencode/skills/literouter-playbook
+Relative paths in this skill (e.g., scripts/, reference/) are relative to this base directory.
+Note: file list is sampled.
+
+<skill_files>
+<file>/home/yapilwsl/arthityap/literouter/.opencode/skills/literouter-playbook/setup_checklist.md</file>
+<file>/home/yapilwsl/arthityap/literouter/.opencode/skills/literouter-playbook/setup.md</file>
+<file>/home/yapilwsl/arthityap/literouter/.opencode/skills/literouter-playbook/troubleshoot.md</file>
+</skill_files>
+</skill_content>

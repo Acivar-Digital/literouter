@@ -2,6 +2,14 @@
 
 All notable changes to LiteRouter will be documented in this file.
 
+## [3.3.2] — 2026-07-20
+
+### Added
+- **Silent-upstream (no-response ghost) detection** — New `fetchWithFirstByteTimeout` + `NoResponseError` in `executeOpenAICompat` (all non-Google OpenAI-compat providers: OpenRouter/NVIDIA/Zen). If an upstream sends **zero bytes/headers within 5s** (`LITEROUTER_NO_RESPONSE_TIMEOUT`, default 5s), the request is aborted and the key rotates to the next one after a `LITEROUTER_NO_RESPONSE_RETRY_DELAY` (default 5000ms) wait. Crucially this is **NOT a cooldown** — the provider gave no backoff signal (no status, no Retry-After), so the key is not penalized. Covers the NVIDIA edge case where the first request is black-holed but an immediate retry on another key succeeds. If all keys ghost, the loop falls through to the existing 300s generic timeout → 502. Google-native (`executeGoogleNative`) is intentionally excluded.
+
+### Changed
+- `executeOpenAICompat` upstream `fetch` now routes through `fetchWithFirstByteTimeout` instead of a bare `fetch`.
+
 ## [3.3.1] — 2026-07-17
 
 ### Added
