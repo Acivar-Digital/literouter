@@ -6,6 +6,7 @@ All notable changes to LiteRouter will be documented in this file.
 
 ### Added
 - **Model `nvidia/thinkingmachines/inkling`** — Added Thinking Machines `inkling` to the NVIDIA provider registry (`models.json`) with `upstream_id: thinkingmachines/inkling`. Synced to `opencode.json` under `provider.literouter.models`. `context` (1048576) sourced from OpenRouter catalog via `gather_model_details.py`; `max_output` remains a manual placeholder (OpenRouter returns `max_completion_tokens: None` for this model).
+- **Model `openrouter/nvidia/nemotron-3-ultra-550b-a55b:free`** — Added NVIDIA `nemotron-3-ultra-550b-a55b:free` to the **OpenRouter** provider registry (`models.json`, `provider: openrouter`) — OpenRouter-hosted, NOT NVIDIA-direct. Synced to `opencode.json` under `provider.literouter.models` (`context: 256000`, `max_output: 65536`).
 - **Standardized model-settings extraction** — Deleted redundant `scripts/sync_model_context.py`. `scripts/gather_model_details.py` is now the single extraction pipeline: it fetches the OpenRouter catalog (`/api/v1/models`, keyless), applies the `:free`/`-free` suffix strip + `ORG_MAP` org-remap, matches every non-google provider (incl. nvidia), and writes `context`/`max_output` back into `models.json`. OpenRouter is the canonical source; Hugging Face and NVIDIA-native APIs were evaluated and rejected (they don't expose these fields reliably).
 
 ### Removed
