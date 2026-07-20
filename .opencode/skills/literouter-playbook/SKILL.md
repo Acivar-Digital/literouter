@@ -1,4 +1,8 @@
-<skill_content name="literouter-playbook">
+---
+name: literouter-playbook
+description: LiteRouter API Gateway operational guide for Bun/TypeScript proxy on port 7766.
+---
+
 # Skill: literouter-playbook
 
 # LiteRouter API Gateway (High-Density)
@@ -8,6 +12,7 @@
 - **Health Check:** `curl -H "Authorization: Bearer <KEY>" localhost:7766/health`
 - **Lifecycle:** `bash scripts/start.sh` (start), `bash scripts/restart.sh` (flush+start), `bash scripts/stop.sh` (clean)
 - **Health Probe:** `bun run scripts/doctor.ts` (FYI-only key validation, does NOT gate boot)
+- **Logs:** Gateway stdout streams to tmux session `literouter`. For persistent logs, run `bun run src/index.ts 2>&1 | tee -a logs/gateway.log`. Per-request traces are in `logs/traces/` (auto-cleared at boot).
 
 ## Architecture Matrix
 | Component | Port | Primary Responsibility |
@@ -40,6 +45,7 @@ Three request surfaces on 7766, all resolving a model → provider → upstream:
 | **Circuit Breaker** | Cooldown window active. | Model/key skipped until cooldown clears. |
 | **Sticky Fallback** | 300s window. | Requests start at fallback position. |
 | **Rotate Floor** | Hard minimum gap between key attempts. | **2s** (`MIN_ROTATE_DELAY_MS=2000`); longer if upstream `Retry-After`/`quotaResetDelay` exceeds it |
+| **502 Transient Retry** | Upstream returns HTTP 502 (proxy/load-balancer hiccup — the model never saw the request). | Retry **same key** once after 1.5s, **no cooldown**. Rotating keys is pointless — they all hit the same edge. If the retry also 502s, falls through to normal error handling. Added in v3.3.3. |
 | **Silent Upstream (no-response ghost)** | Upstream sends ZERO bytes/headers within `LITEROUTER_NO_RESPONSE_TIMEOUT` (def 5s). No status, no signal, no backoff. | Non-Google OpenAI-compat only (`executeOpenAICompat`). Abort, wait `LITEROUTER_NO_RESPONSE_RETRY_DELAY` (def 5s), rotate to next key. **NO cooldown** (provider gave no backoff signal). If all keys ghost → falls through to 300s timeout → 502. Covers NVIDIA first-shot blackhole. Google-native intentionally excluded. |
 
 ## Operational Rules
@@ -54,6 +60,13 @@ Three request surfaces on 7766, all resolving a model → provider → upstream:
 - **Silent Upstream / No-Response Ghost (v3.3.2):** When the upstream sends **nothing** — no status, no headers, no body, no backoff signal — within `LITEROUTER_NO_RESPONSE_TIMEOUT` (def 5s), it is a `NoResponseError`, NOT a generic timeout. We do NOT cooldown the key (the provider never told us to back off); we wait `LITEROUTER_NO_RESPONSE_RETRY_DELAY` (def 5s) and rotate to the next key. Non-Google OpenAI-compat only (`executeOpenAICompat`). If every key ghosts, the loop falls through to the 300s total timeout → 502. Google-native intentionally excluded. See CHANGELOG `[3.3.2]`.
 - **Cost Tracking:** NOT implemented. LiteRouter tracks RPM/TPM quota only — no $ cost. Math parked in `docs/KIV_cost_tracking.md` for future. Do not add `@relayplane/*` deps; any future cost work uses our Redis.
 - **Vendor Hardening Reviews:** `docs/VENDOR_ANALYSIS.md` (adopt/follow matrix) + `docs/GRAVEYARD/VENDOR_IDEAS_DEFERRED.md` (rejected ideas: bifrost=Go/not portable, portkey OSS delegates to SaaS, relayplane→KIV, agentgateway validates #1).
+- **Logging Locations:**
+  - **Primary:** tmux session `literouter` — attach via `tmux attach -t literouter`
+  - **Persisted traces:** `logs/traces/` — per-request JSON (auto-cleared at boot)
+  - **Persistent stdout:** NOT enabled by default. Run manually or modify start.sh:
+    ```bash
+    bun run src/index.ts 2>&1 | tee -a logs/gateway.log
+    ```
 
 ## Deep Dive References
 - **Limits:** Google=15 RPM/model; NVIDIA=40 RPM/prov; OpenRouter=20 RPM/prov. Rolling 60s windows.
@@ -66,14 +79,3 @@ Three request surfaces on 7766, all resolving a model → provider → upstream:
   - Add Model/Provider: Follow `setup_checklist.md` (Steps 5-8).
   - Sync CLI: Update `~/.config/opencode/opencode.json` after `models.json` changes.
   - Troubleshooting: Check `troubleshoot.md` for error codes and debug logs.
-
-Base directory for this skill: /home/yapilwsl/arthityap/literouter/.opencode/skills/literouter-playbook
-Relative paths in this skill (e.g., scripts/, reference/) are relative to this base directory.
-Note: file list is sampled.
-
-<skill_files>
-<file>/home/yapilwsl/arthityap/literouter/.opencode/skills/literouter-playbook/setup_checklist.md</file>
-<file>/home/yapilwsl/arthityap/literouter/.opencode/skills/literouter-playbook/setup.md</file>
-<file>/home/yapilwsl/arthityap/literouter/.opencode/skills/literouter-playbook/troubleshoot.md</file>
-</skill_files>
-</skill_content>

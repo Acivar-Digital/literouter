@@ -29,12 +29,12 @@ const ROOT_DIR = import.meta.dir
 
 // Intuitive per-state emoji prefixes for terminal readability. Text tags are
 // preserved alongside for grep-ability.
-// Terminal timestamp: MM-DD-HH:SS:MS (no year) so logic errors are catchable
+// Terminal timestamp: MM-DD-HH:MM:SS:MS (no year) so logic errors are catchable
 // at a glance. Computed from the single Date source inside each log emitter.
 function logTimestamp(): string {
   const d = new Date();
   const p = (n: number, w: number) => String(n).padStart(w, "0");
-  return `${p(d.getMonth() + 1, 2)}-${p(d.getDate(), 2)}-${p(d.getHours(), 2)}:${p(d.getSeconds(), 2)}:${p(d.getMilliseconds(), 3)}`;
+  return `${p(d.getMonth() + 1, 2)}-${p(d.getDate(), 2)}-${p(d.getHours(), 2)}:${p(d.getMinutes(), 2)}:${p(d.getSeconds(), 2)}:${p(d.getMilliseconds(), 3)}`;
 }
 
 function logState(emoji: string, msg: string): void {
@@ -936,6 +936,17 @@ async function executeOpenAICompat(
             graceTried = true;
             reuseKey = activeKey;
             await new Promise((r) => setTimeout(r, Math.max(reset, 2) * 1000 + 1500));
+            continue;
+          }
+
+          // 502 transient retry: bad gateway means the proxy/load-balancer
+          // layer rejected the request before the model ever saw it. Retry
+          // the same key once with no cooldown — rotating keys for a proxy
+          // hiccup doesn't help (they all hit the same edge).
+          if (resp.status === 502 && !graceTried) {
+            graceTried = true;
+            reuseKey = activeKey;
+            await new Promise((r) => setTimeout(r, 1500));
             continue;
           }
 

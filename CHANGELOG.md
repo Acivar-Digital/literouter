@@ -2,6 +2,11 @@
 
 All notable changes to LiteRouter will be documented in this file.
 
+## [3.3.3] — 2026-07-21
+
+### Added
+- **502 transient retry** — When an upstream returns HTTP 502 (bad gateway / proxy-layer hiccup), the same key is retried once with a 1.5s delay and no cooldown, following the G3 grace-retry pattern. A 502 means the proxy/load-balancer rejected the request before the model saw it — rotating keys doesn't help (they all hit the same edge). If the retry also 502s, it falls through to normal error handling (cooldown + rotation). See `src/index.ts` line 942.
+
 ## [3.3.2] — 2026-07-20
 
 ### Added
