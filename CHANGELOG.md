@@ -2,9 +2,17 @@
 
 All notable changes to LiteRouter will be documented in this file.
 
+## [3.3.4] — 2026-07-22
+
+### Fixed
+- **Gateway Retry Logic (Max Attempts & Round Backoff)** — Fixed a critical infinite loop and busy-wait bug during rate limit failovers (issue literouter-p1h):
+  - Removed an incorrect `attempt < maxAttempts` condition inside the "All keys exhausted" handler that was swallowing the error and causing a ~24s busy-wait instead of executing the intended round backoff ladder (e.g. 65s wait for quota limits).
+  - Added an `allKeysExhausted` state tracker to the round loop. If a request hits `LITEROUTER_MAX_ATTEMPTS` but doesn't actually exhaust all available keys, the gateway now correctly breaks the round loop and fails the request instantly with HTTP 429 ("Max attempts exhausted"), preventing infinite downstream request spam.
+
 ## [3.3.3] — 2026-07-21
 
 ### Added
+- **Model `openrouter/poolside/laguna-s-2.1:free`** — Added Poolside `laguna-s-2.1:free` to the OpenRouter provider registry with `context: 200000`, `max_output: 65535`. Synced to `opencode.json` under `provider.literouter.models`.
 - **502 transient retry** — When an upstream returns HTTP 502 (bad gateway / proxy-layer hiccup), the same key is retried once with a 1.5s delay and no cooldown, following the G3 grace-retry pattern. A 502 means the proxy/load-balancer rejected the request before the model saw it — rotating keys doesn't help (they all hit the same edge). If the retry also 502s, it falls through to normal error handling (cooldown + rotation). See `src/index.ts` line 942.
 
 ## [3.3.2] — 2026-07-20
