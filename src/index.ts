@@ -970,6 +970,9 @@ async function executeOpenAICompat(
             logState(EMOJI.limit, `[PROVIDER_LIMIT ${reqId}] key=${activeKey.substring(0, 6)}... model=${upstream_model} (${resp.status}) rpm ${currentRpm + 1}/${getModelLimits(modelName, provider).max_rpm}`);
           }
           if (reqId) recordTrace(reqId, "upstream", { status: resp.status, body: errText }, { model: modelName, provider, status: resp.status });
+          if (attempt < maxAttempts - 1) {
+            await new Promise((r) => setTimeout(r, getProviderDelayMs(provider)));
+          }
           continue;
         }
 
@@ -1071,6 +1074,9 @@ async function executeOpenAICompat(
             JSON.stringify({ error: "Upstream failed", details: e.message }),
             { status: 502 },
           );
+        if (attempt < maxAttempts - 1) {
+          await new Promise((r) => setTimeout(r, getProviderDelayMs(provider)));
+        }
       }
     }
     if (fromFusion) {
@@ -1200,7 +1206,9 @@ async function executeGoogleNative(
             logState(EMOJI.limit, `[PROVIDER_LIMIT ${reqId}] key=${activeKey.substring(0, 6)}... model=${upstream_model} (${resp.status}) rpm ${currentRpm + 1}/${getModelLimits(modelName, "google").max_rpm}`);
           }
           if (reqId) recordTrace(reqId, "upstream", { status: resp.status, body: errText }, { model: modelName, provider: "google", status: resp.status });
-          await new Promise((r) => setTimeout(r, getProviderDelayMs("google")));
+          if (attempt < maxAttempts - 1) {
+            await new Promise((r) => setTimeout(r, getProviderDelayMs("google")));
+          }
           continue;
         }
 
@@ -1294,6 +1302,9 @@ async function executeGoogleNative(
             JSON.stringify({ error: "Upstream failed", details: e.message }),
             { status: 502 },
           );
+        if (attempt < maxAttempts - 1) {
+          await new Promise((r) => setTimeout(r, getProviderDelayMs("google")));
+        }
       }
     }
     if (fromFusion) {
