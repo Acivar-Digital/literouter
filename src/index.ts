@@ -875,6 +875,7 @@ async function executeOpenAICompat(
   let noResponseAttempts = 0;
 
   for (let round = 0; round <= backoffLadder.length; round++) {
+    let allKeysExhausted = false;
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
       let activeKey = "";
       let currentRpm = 0;
@@ -1040,10 +1041,7 @@ async function executeOpenAICompat(
           continue;
         }
         if (e.message.includes("All keys")) {
-          if (attempt < maxAttempts) {
-            await new Promise((r) => setTimeout(r, getProviderDelayMs(provider)));
-            continue;
-          }
+          allKeysExhausted = true;
           if (fromFusion) {
             return new Response(JSON.stringify({ error: e.message }), {
               status: 429,
@@ -1077,6 +1075,9 @@ async function executeOpenAICompat(
     }
     if (fromFusion) {
       return new Response(JSON.stringify({ error: "Max attempts exhausted" }), { status: 429 });
+    }
+    if (!allKeysExhausted) {
+      break;
     }
   }
   logState(EMOJI.exhausted, `[SYSTEM_LIMIT ${reqId}] Max attempts (${LITEROUTER_MAX_ATTEMPTS}) reached for ${modelName}, all keys exhausted.`);
@@ -1127,6 +1128,7 @@ async function executeGoogleNative(
   let graceTried = false;
 
   for (let round = 0; round <= backoffLadder.length; round++) {
+    let allKeysExhausted = false;
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
       let activeKey = "";
       let currentRpm = 0;
@@ -1262,10 +1264,7 @@ async function executeGoogleNative(
           return new Response(null, { status: 499 });
         }
         if (e.message.includes("All keys")) {
-          if (attempt < maxAttempts) {
-            await new Promise((r) => setTimeout(r, getProviderDelayMs("google")));
-            continue;
-          }
+          allKeysExhausted = true;
           if (fromFusion) {
             return new Response(JSON.stringify({ error: e.message }), {
               status: 429,
@@ -1299,6 +1298,9 @@ async function executeGoogleNative(
     }
     if (fromFusion) {
       return new Response(JSON.stringify({ error: "Max attempts exhausted" }), { status: 429 });
+    }
+    if (!allKeysExhausted) {
+      break;
     }
   }
   logState(EMOJI.exhausted, `[SYSTEM_LIMIT ${reqId}] Max attempts (${LITEROUTER_MAX_ATTEMPTS}) reached for ${modelName}, all keys exhausted.`);
