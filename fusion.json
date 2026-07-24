@@ -10,10 +10,21 @@
   },
   "pydantic/nvidia": {
     "description": "NVIDIA-hosted fusion via Bun Gateway (OpenAI-compat /v1), for pydantic-ai",
+  "chain": [
+    "nvidia/deepseek-ai/deepseek-v4-pro",
+    "nvidia/minimaxai/minimax-m3",
+    "nvidia/z-ai/glm-5.2",
+    "nvidia/moonshotai/kimi-k2.6"
+  ],
+    "upstream": "http://localhost:7766/v1/chat/completions"
+  },
+  "pydantic/flash": {
+    "description": "Fast NVIDIA-hosted fusion via Bun Gateway (OpenAI-compat /v1), for pydantic-ai",
     "chain": [
-      "nvidia/deepseek-ai/deepseek-v4-pro",
-      "nvidia/z-ai/glm-5.2",
-      "nvidia/minimaxai/minimax-m2.7",
+      "nvidia/deepseek-ai/deepseek-v4-flash",
+      "nvidia/stepfun-ai/step-3.7-flash",
+      "nvidia/thinkingmachines/inkling",
+      "nvidia/mistralai/mistral-medium-3.5-128b",
       "nvidia/qwen/qwen3.5-122b-a10b"
     ],
     "upstream": "http://localhost:7766/v1/chat/completions"

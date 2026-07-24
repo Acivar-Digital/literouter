@@ -2,7 +2,10 @@
 
 All notable changes to LiteRouter will be documented in this file.
 
-## [3.3.4] — 2026-07-22
+## [3.3.4] — 2026-07-24
+
+### Added
+- **Model `openrouter/inclusionai/ling-3.0-flash:free`** — Added Inclusion AI `ling-3.0-flash:free` to the OpenRouter provider registry (`models.json`) with `context: 200000`, `max_output: 65536`. Synced to `opencode.json` under `provider.literouter.models`.
 
 ### Fixed
 - **Gateway Retry Logic (Max Attempts & Round Backoff)** — Fixed a critical infinite loop and busy-wait bug during rate limit failovers (issue literouter-p1h):

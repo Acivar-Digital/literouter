@@ -4,7 +4,7 @@
     "provider": "openrouter",
     "upstream_id": "tencent/hy3:free",
     "context": 262144,
-    "max_output": 262144
+    "max_output": 128000
   },
   {
     "system_id": "nvidia/meta/llama-3.1-8b-instruct",
@@ -66,7 +66,7 @@
     "system_id": "nvidia/stepfun-ai/step-3.7-flash",
     "provider": "nvidia",
     "upstream_id": "stepfun-ai/step-3.7-flash",
-    "context": 256000,
+    "context": 262144,
     "max_output": 256000
   },
   {
@@ -98,6 +98,13 @@
     "max_output": 228000
   },
   {
+    "system_id": "openrouter/inclusionai/ling-3.0-flash:free",
+    "provider": "openrouter",
+    "upstream_id": "inclusionai/ling-3.0-flash:free",
+    "context": 200000,
+    "max_output": 65536
+  },
+  {
     "system_id": "openrouter/cohere/north-mini-code:free",
     "provider": "openrouter",
     "upstream_id": "cohere/north-mini-code:free",
@@ -119,6 +126,13 @@
     "max_output": 228000
   },
   {
+    "system_id": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+    "provider": "openrouter",
+    "upstream_id": "nvidia/nemotron-3-ultra-550b-a55b:free",
+    "context": 1000000,
+    "max_output": 65536
+  },
+  {
     "system_id": "openrouter/poolside/laguna-xs-2.1:free",
     "provider": "openrouter",
     "upstream_id": "poolside/laguna-xs-2.1:free",
@@ -129,6 +143,13 @@
     "system_id": "openrouter/poolside/laguna-m.1:free",
     "provider": "openrouter",
     "upstream_id": "poolside/laguna-m.1:free",
+    "context": 262144,
+    "max_output": 32768
+  },
+  {
+    "system_id": "openrouter/poolside/laguna-s-2.1:free",
+    "provider": "openrouter",
+    "upstream_id": "poolside/laguna-s-2.1:free",
     "context": 262144,
     "max_output": 32768
   },

@@ -5,7 +5,7 @@
   "name": "StepFun: Step 3.7 Flash",
   "created": 1779985069,
   "description": "Step 3.7 Flash is StepFun's latest high-efficiency multimodal Mixture-of-Experts model. It pairs a 196B-parameter language backbone with a vision encoder for native image and video understanding, activating roughly 11B parameters...",
-  "context_length": 256000,
+  "context_length": 262144,
   "architecture": {
     "modality": "text+image+video->text",
     "input_modalities": [
@@ -71,30 +71,30 @@
       {
         "arena": "models",
         "category": "3d",
-        "elo": 1187,
-        "win_rate": 42.5,
-        "rank": 52
+        "elo": 1179,
+        "win_rate": 42.1,
+        "rank": 55
       },
       {
         "arena": "models",
         "category": "asciiart",
-        "elo": 1222,
-        "win_rate": 51.2,
-        "rank": 14
+        "elo": 1198,
+        "win_rate": 47,
+        "rank": 21
       },
       {
         "arena": "models",
         "category": "codecategories",
-        "elo": 1203,
-        "win_rate": 44.8,
-        "rank": 51
+        "elo": 1200,
+        "win_rate": 44.5,
+        "rank": 53
       },
       {
         "arena": "models",
         "category": "dataviz",
         "elo": 1197,
         "win_rate": 44.9,
-        "rank": 53
+        "rank": 52
       },
       {
         "arena": "models",
@@ -106,23 +106,23 @@
       {
         "arena": "models",
         "category": "svg",
-        "elo": 1124,
-        "win_rate": 39.9,
+        "elo": 1121,
+        "win_rate": 39.5,
         "rank": 50
       },
       {
         "arena": "models",
         "category": "uicomponent",
-        "elo": 1206,
-        "win_rate": 43.7,
-        "rank": 49
+        "elo": 1197,
+        "win_rate": 43,
+        "rank": 52
       },
       {
         "arena": "models",
         "category": "website",
-        "elo": 1212,
-        "win_rate": 46.3,
-        "rank": 48
+        "elo": 1209,
+        "win_rate": 46,
+        "rank": 51
       }
     ],
     "artificial_analysis": {

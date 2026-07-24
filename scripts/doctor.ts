@@ -4,8 +4,36 @@
 // This script is FYI-ONLY: it reports key health and exits. It MUST NOT gate
 // boot, MUST NOT be invoked by start.sh/restart.sh, and has NO --force flag.
 
+import * as path from "path";
+
+const PROJECT_ROOT = path.resolve(import.meta.dir, "..");
+const DOTENV_PATH = path.join(PROJECT_ROOT, ".env");
+
+function loadEnvFile(path: string): Record<string, string> {
+  const env: Record<string, string> = {};
+  try {
+    const content = Bun.file(path).toString();
+    for (const rawLine of content.split("\n")) {
+      const line = rawLine.trim();
+      if (!line || line.startsWith("#")) continue;
+      const eq = line.indexOf("=");
+      if (eq === -1) continue;
+      const key = line.slice(0, eq).trim();
+      const val = line.slice(eq + 1).trim().replace(/^["']|["']$/g, "");
+      if (key) env[key] = val;
+    }
+  } catch {}
+  return env;
+}
+
+const fileEnv = loadEnvFile(DOTENV_PATH);
+
+function getEnv(key: string): string | undefined {
+  return (Bun.env as Record<string, string | undefined>)[key] ?? fileEnv[key];
+}
+
 function readKeys(envVar: string): string[] {
-  const raw = Bun.env[envVar] || "";
+  const raw = getEnv(envVar) || "";
   return raw
     .split(",")
     .map((k) => k.trim())
@@ -212,14 +240,21 @@ async function runDiagnostics(): Promise<void> {
 
   const flatResults = [...google, ...nvidia, ...openrouter, ...zen];
   const failures = flatResults.filter((r) => r === false).length;
+  const totalProbed = flatResults.length;
 
-  if (failures > 0) {
+  if (totalProbed === 0) {
     console.error(
-      `⚠️ Diagnostics complete. ${failures} key(s) returned fatal authentication failures. (FYI only — boot is NOT gated.)`,
+      "⚠️ Diagnostics complete. No keys found in .env (searched at " +
+        DOTENV_PATH +
+        "). All providers skipped. (FYI only — boot is NOT gated.)",
+    );
+  } else if (failures > 0) {
+    console.error(
+      `⚠️ Diagnostics complete. ${failures} of ${totalProbed} key(s) returned fatal authentication failures. (FYI only — boot is NOT gated.)`,
     );
   } else {
     console.log(
-      "✅ Diagnostics complete. All probed keys validated successfully. (FYI only.)",
+      `✅ Diagnostics complete. All ${totalProbed} probed keys validated successfully. (FYI only.)`,
     );
   }
 }

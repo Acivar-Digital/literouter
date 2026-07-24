@@ -1,6 +1,13 @@
 # LiteRouter Setup Guide
 
-For step-by-step workflows, see **`setup_checklist.md`** — it contains executable checklists for Add Model, Delete Model, Add Provider, Delete Provider. This document covers technical details and scripts.
+## Add Model Workflow
+
+1. **Edit `models.json`** — Add an entry with `system_id`, `provider`, `upstream_id`, `context`, `max_output`.
+2. **Run `gather_model_details.py`** (optional) — Fetches real `context`/`max_output` from OpenRouter catalog and creates detail file in `models/<provider>/`.
+3. **Sync `opencode.json`** — Add the model under `provider.literouter.models` in `~/.config/opencode/opencode.json`.
+4. **Update `CHANGELOG.md`** — Add entry under current version.
+5. **Restart gateway** — `bash scripts/restart.sh`.
+6. **Test** — `curl` the model.
 
 ---
 
