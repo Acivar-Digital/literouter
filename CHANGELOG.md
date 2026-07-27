@@ -10,14 +10,18 @@ All notable changes to LiteRouter will be documented in this file.
   - `google/gemini-2.5-flash-lite` (`upstream_id: gemini-2.5-flash-lite`)
   - `google/gemini-3-flash` (`upstream_id: gemini-3-flash-preview`)
   - `google/gemini-3-flash-preview` (`upstream_id: gemini-3-flash-preview`)
+  - `google/gemini-3.5-flash` (`upstream_id: gemini-3.5-flash`)
+  - `google/gemini-3.5-flash-lite` (`upstream_id: gemini-3.5-flash-lite`)
+  - `google/gemini-3.6-flash` (`upstream_id: gemini-3.6-flash`)
 ### Changed
-- **`pydantic/google` Fusion Chain Updated** — Removed Gemma models and updated `fusion.json` to chain 6 Gemini models in descending version order starting with `google/gemini-3.1-flash-lite`:
+- **`pydantic/google` Fusion Chain Updated** — Removed Gemma models and updated `fusion.json` to chain 7 Gemini models in descending version order starting with `google/gemini-3.1-flash-lite`:
   1. `google/gemini-3.1-flash-lite`
   2. `google/gemini-3.6-flash`
   3. `google/gemini-3.5-flash`
-  4. `google/gemini-3-flash-preview`
-  5. `google/gemini-2.5-flash`
-  6. `google/gemini-2.5-flash-lite`
+  4. `google/gemini-3.5-flash-lite`
+  5. `google/gemini-3-flash-preview`
+  6. `google/gemini-2.5-flash`
+  7. `google/gemini-2.5-flash-lite`
 
 ## [3.3.4] — 2026-07-24
 
