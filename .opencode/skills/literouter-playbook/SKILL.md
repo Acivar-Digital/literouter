@@ -32,7 +32,7 @@ Three request surfaces on 7766, all resolving a model → provider → upstream:
 | `/v1beta/models/{model}:{action}` (native) | `executeGoogleNative` | **Google native** `https://generativelanguage.googleapis.com/v1beta/models/{model}:{action}` | OpenCode native `generateContent`/`streamGenerateContent` |
 
 - **Google-via-`/v1` is translated**: the gateway rewrites the OpenAI-format request and forwards to Google's OpenAI-compat endpoint (`/v1beta/openai/...`), NOT the native `generateContent`. Only the `/v1beta/models/...` path hits Google native. (The legacy `/v1beta/openai/chat/completions` gateway alias was removed — `/v1/chat/completions` is the sole OpenAI-compat entry point.)
-- **Fusion groups** (`pydantic/google`, `pydantic/nvidia`) arrive on `/v1` and are intercepted by `executeFusion` *before* the OpenAI-compat handler; the group's `upstream` (OpenAI-compat only) decides protocol. The native `/v1beta` group `local/google` was removed — see `docs/GRAVEYARD/FUSION_LOCAL_GOOGLE.md`.
+- **Fusion groups** (`pydantic/google`, `pydantic/nvidia`) arrive on `/v1` and are intercepted by `executeFusion` *before* the OpenAI-compat handler; the group's `upstream` (OpenAI-compat only) decides protocol. `pydantic/google` chains 7 Gemini Flash models starting with `google/gemini-3.5-flash-lite` and `google/gemini-3.1-flash-lite` as top workhorses (Gemma models removed). The native `/v1beta` group `local/google` was removed — see `docs/GRAVEYARD/FUSION_LOCAL_GOOGLE.md`.
 - **Payload normalization**: `translateGoogleThinking` runs for Google on the OpenAI-compat path; the native path uses Gemini `contents` format.
 
 
@@ -73,7 +73,7 @@ Three request surfaces on 7766, all resolving a model → provider → upstream:
 - **Limits:** Google=15 RPM/model; NVIDIA=40 RPM/prov; OpenRouter=20 RPM/prov. Rolling 60s windows.
 - **Env Vars:**
   - `{PROV}_MIN_DELAY_MS`: Override key rotation delay (hard-floored at 2s).
-  - `LITEROUTER_MAX_ATTEMPTS`: (Default: 3) Keys tried per upstream.
+  - `LITEROUTER_MAX_ATTEMPTS`: (Default: 5, set to match key pool size) Keys tried per upstream in failover loop.
   - `LITEROUTER_NO_RESPONSE_TIMEOUT`: (Default: 5) Seconds to wait for the upstream's FIRST response byte before treating it as a silent ghost and rotating keys (non-Google OpenAI-compat only).
   - `LITEROUTER_NO_RESPONSE_RETRY_DELAY`: (Default: 5000) ms to wait after a silent ghost before rotating to the next key.
 - **Procedures:**

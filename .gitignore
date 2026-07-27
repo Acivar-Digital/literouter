@@ -31,6 +31,7 @@ data/
 
 # Opencode internal
 .opencode/
+!.opencode/skills/
 .agents/
 .ruff_cache/
 
