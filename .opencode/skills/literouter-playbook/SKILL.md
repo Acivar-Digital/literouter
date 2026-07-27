@@ -81,3 +81,4 @@ Three request surfaces on 7766, all resolving a model → provider → upstream:
   - Add Model/Provider: Follow `setup_checklist.md` (Steps 5-8).
   - Sync CLI: Update `~/.config/opencode/opencode.json` after `models.json` changes.
   - Troubleshooting: Check `troubleshoot.md` for error codes and debug logs.
+  - Antigravity Agent: Check `antigravity.md` for Google Interactions API (`/v1beta/interactions`), sandbox execution, guardrails, deep research, and multi-turn patterns.

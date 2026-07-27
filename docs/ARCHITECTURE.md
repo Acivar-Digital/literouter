@@ -61,6 +61,7 @@ To prevent upstream engine crashes, all requests targeting Gemma models must be 
 Then read the relevant appendix:
 - **[`setup.md`](.opencode/skills/literouter-playbook/setup.md)** — Ops, routing, adding models/keys/providers
 - **[`troubleshoot.md`](.opencode/skills/literouter-playbook/troubleshoot.md)** — `ZodValidationError`, JSON Parse errors, and rotating proxy debugging
+- **[`antigravity.md`](.opencode/skills/literouter-playbook/antigravity.md)** — Antigravity Agent Interactions API (`/v1beta/interactions`), sandbox execution, guardrails, and deep research patterns
 
 ### ⚠️ THE MANDATORY SDK REQUIREMENT: `@ai-sdk/openai-compatible` ⚠️
 
