@@ -1,10 +1,16 @@
-# DEEP RESEARCH PROMPT TEMPLATE
+Please write a comprehensive financial whitepaper analyzing the AI infrastructure market as of mid-2026. 
 
-## Research Topic
-When is the AI bubble going to burst? What are the impending signs I should be looking out for? Can I start buying long-dated put options?
+RESEARCH METHODOLOGY & DIRECTIVES:
+You are strictly forbidden from relying on a single source or doing a superficial search. You must act as a thorough, skeptical researcher:
+1. RECURSIVE SEARCHING: For every major claim or data point, you must execute at least 2-3 distinct web searches using different keywords to cross-reference the numbers.
+2. VERIFICATION: If sources conflict on metrics (like CAPEX or GPU utilization), you must search again specifically to resolve the discrepancy. 
+3. DEPTH: I expect to see evidence of extensive, multi-layered searching in your final output. Check multiple analyst reports, financial news, and industry data.
 
-## Task Directives for Antigravity Agent
-1. **Search & Evaluate Big 4 CAPEX vs Revenue:** Research current hyperscaler AI infrastructure spending vs monetized AI revenues, GPU utilization rates, and energy/datacenter infrastructure constraints.
-2. **Identify Impending Bubble Indicators:** Compile a structured list of macro and micro warning signs (e.g. debt-fueled hardware recycling, circular startup revenue deals, cloud margin compression, corporate ROI stagnation).
-3. **Derivatives & Hedging Evaluation:** Analyze the trade mechanics of long-dated put options (LEAPs / 12-24 month options), implied volatility (IV crush risks), time decay (theta), and sector ETF hedging strategies (e.g. SMH, QQQ, NVDA puts vs broad index puts).
-4. **Final Deliverable:** Synthesize all findings into a clean, comprehensive Markdown report detailing market signals, timeline projections, risk factors, and actionable hedging considerations.
+DATA REQUIREMENTS:
+Before writing, please search the web extensively for the most recent data on the following topics and include them in the whitepaper:
+1. The 2025/2026 CAPEX projections for Microsoft, Amazon, Google, and Meta compared to their AI-attributable revenues. Include a markdown table comparing these figures.
+2. Current data center power constraints, nuclear PPAs, and GPU utilization rates.
+3. The systemic risk of "circular revenue loops" (where tech giants invest in AI startups that buy their compute).
+4. A purely educational explanation of how tech-heavy indices (QQQ, SMH) differ in implied volatility, and how LEAP options function theoretically in high-volatility environments. (Strictly educational, no actionable financial advice).
+
+Output ONLY the final whitepaper in Markdown format. End the whitepaper with a list of the sources and URLs you referenced.
