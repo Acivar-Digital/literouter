@@ -230,3 +230,27 @@ To avoid Base64 decoding, add this constraint to `research_prompt.md`:
 export GEMINI_API_KEY="your_api_key"
 uv run run_research.py
 ```
+
+---
+
+## 8. Persona Council & Risk Committee Deep Research Pattern
+
+To perform institutional-grade research without relying on single-pass or superficial summaries, structure your Antigravity research interaction into a **5-Persona Research Council & Risk Committee Protocol**:
+
+### Architecture Components
+1. **5 Expert Persona Lenses:**
+   - **Infrastructure Specialist:** Hardware topology, power grid constraints, liquid cooling, chip architectures.
+   - **Macroeconomist & Historian:** Hyperscaler CAPEX vs revenues, FCF erosion, historical infrastructure overbuild cycles.
+   - **Quantitative Strategist:** Implied Volatility (IV) regimes across indices (QQQ vs SMH), LEAP options dynamics.
+   - **Risk & Compliance Committee:** Vendor financing, circular revenue loops, regulatory/PPA licensing barriers.
+   - **Bear Case / Devil's Advocate:** Stress-testing assumptions, uncovering unviable unit economics, identifying data gaps.
+2. **Rubric Cube Evaluation (6 Quality Dimensions):**
+   - Source Diversity (min 4 categories)
+   - Claim Support & Citation Provenance
+   - Recency (2024–2026 data)
+   - Multi-Perspective Balance (Consensus & Bear Dissent)
+   - Quantitative Data Density
+   - Risk & Gap Transparency
+3. **JSON Response Transformer:**
+   - Parses `raw_response.json` steps (`model_output`, `thought`, `google_search_call`, `google_search_result`).
+   - Extracts the complete 20,000+ token research report alongside execution metadata, token usage metrics, search queries, deduplicated grounding references, and expandable agent thought logs.
