@@ -80,6 +80,9 @@ const GEMMA_UNSUPPORTED = new Set([
   "seed",
   "logprobs",
   "top_logprobs",
+  "thinkingConfig",
+  "thinking",
+  "thinkingBudget",
 ]);
 
 export function cleanGemmaPayload(data: any): any {

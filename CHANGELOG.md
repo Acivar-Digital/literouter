@@ -2,6 +2,17 @@
 
 All notable changes to LiteRouter will be documented in this file.
 
+## [3.3.5] — 2026-07-27
+
+### Added
+- **Google Models Added & Updated** — Tested Google API keys against candidate Gemini 2.5 and 3.x Flash models. Added/updated supported models in `models.json`:
+  - `google/gemini-2.5-flash` (`upstream_id: gemini-2.5-flash`)
+  - `google/gemini-2.5-flash-lite` (`upstream_id: gemini-2.5-flash-lite`)
+  - `google/gemini-3-flash` (`upstream_id: gemini-3-flash-preview`)
+  - `google/gemini-3-flash-preview` (`upstream_id: gemini-3-flash-preview`)
+  - `google/gemini-3.5-flash` (`upstream_id: gemini-3.5-flash`)
+  - `google/gemini-3.6-flash` (`upstream_id: gemini-3.6-flash`)
+
 ## [3.3.4] — 2026-07-24
 
 ### Added

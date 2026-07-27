@@ -9,7 +9,6 @@ Full run:  uv run pytest tests/integration/smoke/
 """
 
 import os
-import sys
 
 import httpx
 import pytest
