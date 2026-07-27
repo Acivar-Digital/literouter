@@ -264,5 +264,12 @@
     "upstream_id": "gemini-2.5-flash",
     "context": 1048576,
     "max_output": 65535
+  },
+  {
+    "system_id": "google/antigravity-preview-05-2026",
+    "provider": "google",
+    "upstream_id": "antigravity-preview-05-2026",
+    "context": 1048576,
+    "max_output": 65535
   }
 ]

@@ -1393,6 +1393,73 @@ async function executeFusion(
   );
 }
 
+async function executeGoogleInteractions(
+  reqJson: any,
+  reqHeaders: Headers,
+  reqId?: string,
+  signal?: AbortSignal,
+): Promise<Response> {
+  const agentName = reqJson.agent || reqJson.model || "antigravity-preview-05-2026";
+  const upstream_model = "antigravity-preview-05-2026";
+  const modelName = "google/antigravity-preview-05-2026";
+
+  logState(EMOJI.inbound, `[REQ-INTERACTIONS ${reqId}] agent=${agentName} provider=google`);
+  if (reqId) recordTrace(reqId, "downstream", reqJson, { model: modelName, provider: "google" });
+
+  const estimatedTokens = estimateTokens(JSON.stringify(reqJson), 4096);
+  const numKeys = API_KEYS.google.length;
+  const maxAttempts = LITEROUTER_MAX_ATTEMPTS > 0 ? Math.min(numKeys, LITEROUTER_MAX_ATTEMPTS) : numKeys;
+
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    try {
+      const { key: activeKey, currentRpm } = await router.getAvailableKey(
+        "google",
+        upstream_model,
+        estimatedTokens,
+      );
+
+      const url = "https://generativelanguage.googleapis.com/v1beta/interactions";
+      const headers = cleanHeaders(reqHeaders);
+      headers.set("x-goog-api-key", activeKey);
+      headers.set("Content-Type", "application/json");
+      headers.delete("authorization");
+
+      console.log(`[GOOGLE-INTERACTIONS] url=${url} key=${activeKey.substring(0, 6)}...`);
+      const resp = await fetch(url, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(reqJson),
+        signal: upstreamSignal(signal),
+      });
+
+      if (resp.status >= 400) {
+        const errText = await resp.text();
+        await router.reportError("google", activeKey, resp.status.toString(), upstream_model);
+        logState(EMOJI.limit, `[PROVIDER_LIMIT ${reqId}] key=${activeKey.substring(0, 6)}... model=${upstream_model} (${resp.status})`);
+        if (attempt < maxAttempts - 1) {
+          await new Promise((r) => setTimeout(r, getProviderDelayMs("google")));
+          continue;
+        }
+        return new Response(errText, { status: resp.status, headers: cleanHeaders(resp.headers) });
+      }
+
+      const outHeaders = cleanHeaders(resp.headers);
+      outHeaders.set("X-Literouter-Model", modelName);
+      logState(EMOJI.served, `[GOOGLE ${reqId}] Served interactions agent=${agentName} (attempt ${attempt + 1}/${maxAttempts})`);
+
+      const respText = await resp.text();
+      return new Response(respText, { status: resp.status, headers: outHeaders });
+    } catch (e: any) {
+      if (e?.name === "AbortError" || signal?.aborted) {
+        return new Response("Client Aborted", { status: 499 });
+      }
+      logWarn(EMOJI.limit, `[INTERACTIONS-ERROR ${reqId}] attempt=${attempt + 1}: ${e?.message || e}`);
+    }
+  }
+
+  return new Response(JSON.stringify({ error: "All Google API keys exhausted for interactions" }), { status: 502 });
+}
+
 // ============================================================================
 // 7. Server Entry Point
 // ============================================================================
@@ -1435,6 +1502,10 @@ serve({
         );
       }
       return executeOpenAICompat(modelName, reqJson, req.headers, undefined, false, reqId, req.signal);
+    }
+
+    if (url.pathname === "/v1beta/interactions" || url.pathname === "/v1/interactions") {
+      return executeGoogleInteractions(reqJson, req.headers, reqId, req.signal);
     }
 
     const nativeMatch = url.pathname.match(

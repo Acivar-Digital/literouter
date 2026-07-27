@@ -123,3 +123,110 @@ To perform large tasks without hitting turn limits or execution timeouts, use a 
 }
 ```
 Re-using `environment_id` keeps all installed dependencies, edited files, and workspace state intact across interaction calls.
+
+---
+
+## 7. Deterministic Orchestration & Artifact Extraction (PEP 723)
+
+### A. Modular Research Prompt (`research_prompt.md`)
+Separate prompt logic (Markdown instruction file) from execution logic (Python script):
+
+```markdown
+# Deep Research Task: [Insert Topic Here]
+
+## Objective
+Conduct a deep dive research into [Specific Topic, e.g., solid-state EV batteries]. 
+
+## Scope & Steps
+1. **Search & Scrape:** Find recent credible industry reports or technical articles.
+2. **Synthesize:** Extract key players, technical bottlenecks, and commercialization timelines.
+3. **Data Processing:** Run a Python script to format quantitative metrics into a structured markdown table.
+4. **Output Generation:** Compile all findings into a comprehensive research report.
+
+## Constraints
+- Focus on data from 2024 to 2026.
+- Ensure all factual claims are backed by source URLs.
+```
+
+### B. Python Orchestration Script (`run_research.py`)
+Deterministic runner with PEP 723 metadata for `uv`:
+
+```python
+# /// script
+# requires-python = ">=3.10"
+# dependencies = [
+#     "google-genai",
+# ]
+# ///
+
+import base64
+import os
+import sys
+from pathlib import Path
+from google import genai
+from google.genai.errors import APIError
+
+PROMPT_FILE = "research_prompt.md"
+OUTPUT_FILE = "research_report.md"
+AGENT_ID = "antigravity-preview-05-2026"
+
+def run_deep_research():
+    if "GEMINI_API_KEY" not in os.environ and "LITEROUTER_AUTH_KEY" not in os.environ:
+        print("Error: API Key environment variable is not set.", file=sys.stderr)
+        sys.exit(1)
+
+    prompt_path = Path(PROMPT_FILE)
+    if not prompt_path.exists():
+        print(f"Error: Prompt file '{PROMPT_FILE}' not found.", file=sys.stderr)
+        sys.exit(1)
+
+    research_instructions = prompt_path.read_text(encoding="utf-8")
+    print(f"[*] Loaded instructions from {PROMPT_FILE}")
+    print(f"[*] Dispatching task to {AGENT_ID} (remote sandbox execution)...")
+
+    client = genai.Client()
+
+    try:
+        interaction = client.interactions.create(
+            agent=AGENT_ID,
+            input=research_instructions,
+            environment="remote",
+        )
+
+        # 1. Save main text output locally
+        final_output = interaction.output_text or ""
+        output_path = Path(OUTPUT_FILE)
+        output_path.write_text(final_output, encoding="utf-8")
+        print(f"[+] Text report saved to {OUTPUT_FILE}")
+
+        # 2. Extract generated files/artifacts (CSVs, charts, images) from remote sandbox
+        for i, output in enumerate(getattr(interaction, "outputs", [])):
+            out_type = getattr(output, "type", "")
+            if out_type in ["image", "file"]:
+                file_name = getattr(output, "name", f"agent_artifact_{i}")
+                data_b64 = getattr(output, "data", "")
+                if data_b64:
+                    with open(file_name, "wb") as f:
+                        f.write(base64.b64decode(data_b64))
+                    print(f"[+] Downloaded artifact from remote sandbox: {file_name}")
+
+    except APIError as e:
+        print(f"[!] API Error occurred: {e}", file=sys.stderr)
+        sys.exit(1)
+    except Exception as e:
+        print(f"[!] Unexpected error occurred: {e}", file=sys.stderr)
+        sys.exit(1)
+
+if __name__ == "__main__":
+    run_deep_research()
+```
+
+### C. Prompt Engineering Constraint Alternative
+To avoid Base64 decoding, add this constraint to `research_prompt.md`:
+> *"If you generate any data tables, CSVs, or code scripts, do NOT save them as separate files. Instead, print their raw contents directly inside markdown code blocks in your final text response."*
+
+### D. Execution via `uv`
+```bash
+export GEMINI_API_KEY="your_api_key"
+uv run run_research.py
+```

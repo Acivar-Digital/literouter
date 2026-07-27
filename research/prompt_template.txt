@@ -1,0 +1,10 @@
+# DEEP RESEARCH PROMPT TEMPLATE
+
+## Research Topic
+When is the AI bubble going to burst? What are the impending signs I should be looking out for? Can I start buying long-dated put options?
+
+## Task Directives for Antigravity Agent
+1. **Search & Evaluate Big 4 CAPEX vs Revenue:** Research current hyperscaler AI infrastructure spending vs monetized AI revenues, GPU utilization rates, and energy/datacenter infrastructure constraints.
+2. **Identify Impending Bubble Indicators:** Compile a structured list of macro and micro warning signs (e.g. debt-fueled hardware recycling, circular startup revenue deals, cloud margin compression, corporate ROI stagnation).
+3. **Derivatives & Hedging Evaluation:** Analyze the trade mechanics of long-dated put options (LEAPs / 12-24 month options), implied volatility (IV crush risks), time decay (theta), and sector ETF hedging strategies (e.g. SMH, QQQ, NVDA puts vs broad index puts).
+4. **Final Deliverable:** Synthesize all findings into a clean, comprehensive Markdown report detailing market signals, timeline projections, risk factors, and actionable hedging considerations.
