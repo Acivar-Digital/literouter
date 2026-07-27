@@ -82,6 +82,8 @@ Fusion models are "virtual" models with priority-based fallback chains. If prima
 
 Key insight: Google's OpenAI-compatibility endpoint lives at `/v1beta/openai/` on Google's side. So OpenAI-compat requests for Google models still flow through Google's `/v1beta/` namespace — just a different path within it.
 
+> **Antigravity Note**: `antigravity-preview-05-2026` is an Agent execution engine (sandboxed Linux environment), NOT a text model. Standard text endpoints (`:generateContent` or `/v1/chat/completions`) return HTTP 400. Programmatic usage requires Google's Interactions API (`/v1beta/interactions` with body `{"agent": "antigravity-preview-05-2026", "input": "...", "environment": "remote"}`). Standard models like `gemini-3.5-flash` or `gemini-3.6-flash` should be used for text generation.
+
 ---
 
 ## 6. Key Rotation Mechanics (Single Implementation)

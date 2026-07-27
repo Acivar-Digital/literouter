@@ -74,6 +74,56 @@ I understand you want: [one sentence restatement in your own words]
 
 ---
 
+## PROVIDER/MODEL MANAGEMENT PROTOCOLS
+
+Before adding, modifying, or removing providers or models, you MUST:
+
+### 1. Load Literouter-Playbook Skill
+> **MANDATORY**: Always load the `literouter-playbook` skill before any provider/model changes:
+> ```bash
+> skill load "literouter-playbook"
+> ```
+
+### 2. Validation Workflow
+> Execute this sequence for ALL provider/model changes:
+> 
+> 1. **Pre-Edit Checkpoint**: Run `uv run python admin/code_hygiene/agent_guardrail.py checkpoint <path>` on modified files
+> 2. **Load Playbook**: `skill load "literouter-playbook"`
+> 3. **Backup Verification**: Verify gateway health with `bun run scripts/doctor.ts`
+> 4. **Test Suite**: Run `bun test && uv run pytest tests/integration/`
+> 5. **Post-Edit Validation**: Run `uv run python admin/code_hygiene/agent_guardrail.py validate <path>`
+
+### 3. Required Changes Tracking
+> Every provider/model modification MUST be documented in a bead issue:
+> ```bash
+> bd create "Update providers/models: [specific changes]" -t task -p 2 \
+>   --description="Adding/changing/removing providers/models [details]" \
+>   --deps discovered-from:<previous-bead-id>
+> ```
+
+### 4. Change Categories
+> - **Provider Addition**: Requires new gateway routing rules in `src/index.ts`
+> - **Model Addition**: Requires OpenAI-compat endpoint configuration in `fusion.json`
+> - **Provider Removal**: Requires gateway configuration cleanup in `src/index.ts`
+> - **Model Removal**: Requires upstream reference cleanup in `fusion.json`
+> - **Key Rotation**: Requires Valkey quota/cooldown state updates
+
+### 5. Integration Testing
+> After any provider/model change:
+> - ✅ `bun test` passes (TypeScript unit tests)
+> - ✅ `uv run pytest tests/integration/` passes (smoke tests against running gateway)
+> - ✅ `uv run ruff check .` passes (Python linting)
+> - ✅ Manual verification: `curl -H "Authorization: Bearer <KEY>" localhost:7766/health`
+
+### 6. Failure Handling
+> If ANY step fails:
+> - HALT immediately
+> - Link discovered failures as dependency from the change bead
+> - Run `./bd ready` to pick up next unblocked work
+> - DO NOT proceed to next step until previous issues are resolved
+
+---
+
 ## APPROVAL GATE - NON-BLOCKING BEHAVIOUR
 
 When halted at an Approval Gate (major change >50 lines, new deps, schema changes):

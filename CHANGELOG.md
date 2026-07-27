@@ -22,7 +22,7 @@ All notable changes to LiteRouter will be documented in this file.
   5. `google/gemini-3-flash-preview`
   6. `google/gemini-2.5-flash`
   7. `google/gemini-2.5-flash-lite`
-- **Updated Skill Playbook** — Updated `.opencode/skills/literouter-playbook/SKILL.md` to document the 7 Gemini Flash fusion models and `LITEROUTER_MAX_ATTEMPTS=5` key rotation.
+- **Updated Skill Playbook & Docs** — Documented Antigravity Agent (`antigravity-preview-05-2026`) distinction vs standard completion models (Antigravity is an Agent execution harness requiring Google's `/v1beta/interactions` API rather than text `:generateContent` endpoints). Updated `.opencode/skills/literouter-playbook/SKILL.md`, `troubleshoot.md`, and `setup.md`.
 
 ## [3.3.4] — 2026-07-24
 
