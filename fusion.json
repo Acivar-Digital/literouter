@@ -2,9 +2,12 @@
   "pydantic/google": {
     "description": "Google fusion via Bun Gateway (OpenAI-compat /v1), for pydantic-ai",
     "chain": [
-      "google/gemma-4-31b-it",
       "google/gemini-3.1-flash-lite",
-      "google/gemma-4-26b-a4b-it"
+      "google/gemini-3.6-flash",
+      "google/gemini-3.5-flash",
+      "google/gemini-3-flash-preview",
+      "google/gemini-2.5-flash",
+      "google/gemini-2.5-flash-lite"
     ],
     "upstream": "http://localhost:7766/v1/chat/completions"
   },
