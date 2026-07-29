@@ -428,7 +428,7 @@ class ModelFirstRouter {
   async connect() {
     try {
       await this.redis!.connect();
-      await this.redis!.flushAll();
+      await this.redis!.flushall();
       this.scriptSha = await this.redis!.script("LOAD", QUOTA_CHECK_SCRIPT);
       console.log("Connected to Redis/Valkey. Flushed state & loaded Lua script.");
     } catch (e) {
