@@ -1,20 +1,26 @@
+import argparse
 import json
 import os
 import sys
 import time
 import urllib.error
 import urllib.request
+from datetime import datetime
 from pathlib import Path
 
 from dotenv import load_dotenv
 
 # Resolve repository root
-REPO_ROOT = Path(__file__).resolve().parent.parent
+RESEARCH_DIR = Path(__file__).resolve().parent
+REPO_ROOT = RESEARCH_DIR.parent
 load_dotenv(dotenv_path=REPO_ROOT / ".env")
 
-PROMPT_FILE = REPO_ROOT / "research" / "prompt_template.txt"
-OUTPUT_FILE = REPO_ROOT / "research" / "report.md"
-RAW_JSON_FILE = REPO_ROOT / "research" / "raw_response.json"
+PROMPTS_DIR = RESEARCH_DIR / "prompts"
+REPORTS_DIR = RESEARCH_DIR / "reports"
+
+# Ensure directories exist
+PROMPTS_DIR.mkdir(parents=True, exist_ok=True)
+REPORTS_DIR.mkdir(parents=True, exist_ok=True)
 
 LITEROUTER_PORT = os.getenv("LITEROUTER_PORT", "7766")
 LITEROUTER_KEY = os.getenv("LITEROUTER_AUTH_KEY", "sk-lr-8f2a9e3b1c4d7e5f")
@@ -161,28 +167,52 @@ def transform_json_to_report(res_json: dict, elapsed: float | None = None) -> st
     return "".join(report_lines)
 
 
-def run_deep_research(transform_only: bool = False):
-    if transform_only or "--transform" in sys.argv or "--offline" in sys.argv:
-        if not RAW_JSON_FILE.exists():
-            print(f"❌ Error: Raw JSON file not found at {RAW_JSON_FILE}")
-            sys.exit(1)
-        print(f"🔄 Transforming existing {RAW_JSON_FILE} -> {OUTPUT_FILE}...")
-        res_json = json.loads(RAW_JSON_FILE.read_text(encoding="utf-8"))
-        final_report = transform_json_to_report(res_json)
-        OUTPUT_FILE.write_text(final_report, encoding="utf-8")
-        print(f"🎉 Successfully transformed JSON report to: {OUTPUT_FILE}")
-        return
+def run_deep_research():
+    parser = argparse.ArgumentParser(description="Deep Research Agent Tool")
+    parser.add_argument("target", help="The name of the prompt (e.g. Direction_of_JPY) or path to JSON if --transform")
+    parser.add_argument("--transform", action="store_true", help="Transform an existing raw JSON response into a markdown report without making an API call")
+    args = parser.parse_args()
 
-    if not PROMPT_FILE.exists():
-        print(f"❌ Error: Prompt template not found at {PROMPT_FILE}")
+    if args.transform:
+        # User passed a path to a JSON file
+        raw_json_file = Path(args.target)
+        if not raw_json_file.exists():
+            print(f"❌ Error: Raw JSON file not found at {raw_json_file}")
+            sys.exit(1)
+        
+        # Derive output markdown path (replace _raw.json with .md or just .json with .md)
+        if raw_json_file.name.endswith("_raw.json"):
+            output_file = raw_json_file.with_name(raw_json_file.name.replace("_raw.json", ".md"))
+        else:
+            output_file = raw_json_file.with_suffix(".md")
+
+        print(f"🔄 Transforming existing {raw_json_file} -> {output_file}...")
+        res_json = json.loads(raw_json_file.read_text(encoding="utf-8"))
+        final_report = transform_json_to_report(res_json)
+        output_file.write_text(final_report, encoding="utf-8")
+        print(f"🎉 Successfully transformed JSON report to: {output_file}")
+        sys.exit(0)
+
+    # Normal execution mode
+    prompt_stem = Path(args.target).stem
+    prompt_file = PROMPTS_DIR / f"{prompt_stem}.md"
+
+    if not prompt_file.exists():
+        print(f"❌ Error: Prompt template not found at {prompt_file}")
         sys.exit(1)
 
-    prompt_content = PROMPT_FILE.read_text(encoding="utf-8").strip()
+    # Setup output files
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+    output_md = REPORTS_DIR / f"{prompt_stem}_{timestamp}.md"
+    output_json = REPORTS_DIR / f"{prompt_stem}_{timestamp}_raw.json"
+
+    prompt_content = prompt_file.read_text(encoding="utf-8").strip()
     print("==================================================================")
     print("🔬 DEEP RESEARCH AGENT (via LiteRouter + Antigravity)")
     print("==================================================================")
     print(f"📍 Target Gateway: {GATEWAY_URL}")
-    print(f"📄 Reading Prompt: {PROMPT_FILE}")
+    print(f"📄 Reading Prompt: {prompt_file}")
+    print(f"📁 Output Dir:     {REPORTS_DIR}")
     print("------------------------------------------------------------------")
     print(prompt_content[:300] + ("..." if len(prompt_content) > 300 else ""))
     print("==================================================================\n")
@@ -218,22 +248,25 @@ def run_deep_research(transform_only: bool = False):
             res_json = json.loads(res_body)
 
             # --- 1. SAVE RAW JSON FOR DEBUGGING ---
-            RAW_JSON_FILE.write_text(json.dumps(res_json, indent=2), encoding="utf-8")
-            print(f"💾 Saved raw API response to: {RAW_JSON_FILE}")
+            output_json.write_text(json.dumps(res_json, indent=2), encoding="utf-8")
+            print(f"💾 Saved raw API response to: {output_json}")
 
             # --- 2. TRANSFORM JSON INTO READABLE REPORT ---
             final_report_str = transform_json_to_report(res_json, elapsed=elapsed)
-            OUTPUT_FILE.write_text(final_report_str, encoding="utf-8")
+            output_md.write_text(final_report_str, encoding="utf-8")
 
             print("\n🎉 Deep Research Complete!")
-            print(f"📄 Report written to: {OUTPUT_FILE}")
+            print(f"📄 Report written to: {output_md}")
             print(f"📊 Usage stats: {json.dumps(res_json.get('usage', {}), indent=2)}")
+            sys.exit(0)
 
     except urllib.error.HTTPError as e:
         err_body = e.read().decode("utf-8", errors="ignore")
         print(f"❌ HTTP Error {e.code}: {err_body[:500]}")
+        sys.exit(1)
     except Exception as e:
         print(f"❌ Execution Error: {e}")
+        sys.exit(1)
 
 
 if __name__ == "__main__":
