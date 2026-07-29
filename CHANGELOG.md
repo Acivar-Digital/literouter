@@ -2,6 +2,11 @@
 
 All notable changes to LiteRouter will be documented in this file.
 
+## [3.3.6] — 2026-07-29
+
+### Fixed
+- **Automatic Valkey/Redis State Flush on Gateway Boot** — Updated `router.connect()` in `src/index.ts` to automatically execute `await this.redis.flushAll()` during startup. This ensures that starting or restarting the gateway via `bun run src/index.ts`, `scripts/start.sh`, or `scripts/restart.sh` always flushes residual key rate-limits, cooldown ZSETs, and 7-day 403 quarantine states, resetting all provider API keys for fresh execution.
+
 ## [3.3.5] — 2026-07-27
 
 ### Added
