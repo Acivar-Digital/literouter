@@ -428,8 +428,9 @@ class ModelFirstRouter {
   async connect() {
     try {
       await this.redis!.connect();
+      await this.redis!.flushAll();
       this.scriptSha = await this.redis!.script("LOAD", QUOTA_CHECK_SCRIPT);
-      console.log("Connected to Redis/Valkey. Lua script loaded.");
+      console.log("Connected to Redis/Valkey. Flushed state & loaded Lua script.");
     } catch (e) {
       logError(EMOJI.error, `Failed to connect to Redis. Exiting (no fallback): ${e}`);
       process.exit(1);
