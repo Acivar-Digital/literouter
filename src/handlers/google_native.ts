@@ -145,6 +145,7 @@ async function processGoogleNativeSuccess(
   let firstChunk = true;
   let capturedUsage: any = null;
   let idleTimer: any = null;
+  let keepAliveTimer: any = null;
 
   const resetIdleTimer = (controller: TransformStreamDefaultController) => {
     if (idleTimer) clearTimeout(idleTimer);
@@ -162,9 +163,26 @@ async function processGoogleNativeSuccess(
     }
   };
 
+  const startKeepAlive = (controller: TransformStreamDefaultController) => {
+    if (keepAliveTimer) clearInterval(keepAliveTimer);
+    keepAliveTimer = setInterval(() => {
+      try {
+        controller.enqueue(encoder.encode(":\n\n"));
+      } catch {}
+    }, 15000);
+  };
+
+  const stopKeepAlive = () => {
+    if (keepAliveTimer) {
+      clearInterval(keepAliveTimer);
+      keepAliveTimer = null;
+    }
+  };
+
   const transform = new TransformStream({
     start(controller) {
       resetIdleTimer(controller);
+      startKeepAlive(controller);
     },
     transform(chunk, controller) {
       resetIdleTimer(controller);
@@ -196,6 +214,7 @@ async function processGoogleNativeSuccess(
     },
     flush() {
       if (idleTimer) clearTimeout(idleTimer);
+      stopKeepAlive();
       sinkUsage(streamMeta, capturedUsage);
     },
   });

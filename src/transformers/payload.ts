@@ -187,6 +187,7 @@ export function createStreamTransformer(
   const encoder = new TextEncoder();
 
   let idleTimer: any = null;
+  let keepAliveTimer: any = null;
 
   const resetIdleTimer = (controller: TransformStreamDefaultController) => {
     if (idleTimer) clearTimeout(idleTimer);
@@ -204,9 +205,26 @@ export function createStreamTransformer(
     }
   };
 
+  const startKeepAlive = (controller: TransformStreamDefaultController) => {
+    if (keepAliveTimer) clearInterval(keepAliveTimer);
+    keepAliveTimer = setInterval(() => {
+      try {
+        controller.enqueue(encoder.encode(":\n\n"));
+      } catch {}
+    }, 15000);
+  };
+
+  const stopKeepAlive = () => {
+    if (keepAliveTimer) {
+      clearInterval(keepAliveTimer);
+      keepAliveTimer = null;
+    }
+  };
+
   return new TransformStream({
     start(controller) {
       resetIdleTimer(controller);
+      startKeepAlive(controller);
     },
     transform(chunk, controller) {
       resetIdleTimer(controller);
@@ -298,6 +316,7 @@ export function createStreamTransformer(
     },
     flush(controller) {
       if (idleTimer) clearTimeout(idleTimer);
+      stopKeepAlive();
       if (collapseReasoning && hasStartedThought && !hasEndedThought) {
         const closing = {
           choices: [{ index: 0, delta: { content: "\n</thought>\n" } }],
