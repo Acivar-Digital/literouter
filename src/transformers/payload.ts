@@ -135,6 +135,7 @@ export function transformNonStreaming(
   const rawReasoning =
     message.reasoning_content ||
     message.reasoningContent ||
+    message.reasoning ||
     message.thought ||
     message.thought_summary;
 
@@ -146,6 +147,8 @@ export function transformNonStreaming(
   }
 
   delete message.reasoningContent;
+  delete message.reasoning;
+  delete message.reasoning_details;
   delete message.thought;
   delete message.thought_summary;
 
@@ -236,6 +239,7 @@ export function createStreamTransformer(
               const rawReasoning =
                 delta.reasoning_content ||
                 delta.reasoningContent ||
+                delta.reasoning ||
                 delta.thought ||
                 delta.thought_summary;
               let reasoning = "";
@@ -250,6 +254,8 @@ export function createStreamTransformer(
               }
 
               delete delta.reasoningContent;
+              delete delta.reasoning;
+              delete delta.reasoning_details;
               delete delta.thought;
               delete delta.thought_summary;
 

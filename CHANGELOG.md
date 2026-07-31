@@ -2,6 +2,12 @@
 
 All notable changes to LiteRouter will be documented in this file.
 
+## [3.3.9] — 2026-08-01
+
+### Fixed
+- **OpenRouter `delta.reasoning` Stream Handling** — Fixed an issue where OpenRouter models (e.g. `inclusionai/ling-3.0-flash:free`) that stream thinking tokens inside the non-standard `delta.reasoning` field caused Opencode to hang and throw `Upstream idle timeout exceeded`. `createStreamTransformer` now intercepts `delta.reasoning` and maps it to `delta.content` (wrapped in `<thought>` tags when `LITEROUTER_COLLAPSE_REASONING=true`), ensuring downstream clients like Opencode receive visible content tokens and never idle out.
+- **`LITEROUTER_COLLAPSE_REASONING` Default** — Set `LITEROUTER_COLLAPSE_REASONING=true` in `.env` by default to ensure reasoning tokens are always surfaced in `content` for maximum downstream compatibility.
+
 ## [3.3.8] — 2026-08-01
 
 ### Added / Fixed
