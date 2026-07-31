@@ -1,11 +1,4 @@
-export const MODEL_LIMITS: Record<string, any> = {
-  "google/gemini-3.1-flash-lite": {
-    max_tpm: 250000,
-    max_rpm: 15,
-    context_window: 250000,
-  },
-  "google/gemma": { max_tpm: 100000000, max_rpm: 15, context_window: 250000 },
-};
+export const MODEL_LIMITS: Record<string, any> = {};
 
 export const PROVIDER_LIMITS: Record<string, any> = {
   nvidia: { max_tpm: 1000000, max_rpm: 40, context_window: 1000000 },

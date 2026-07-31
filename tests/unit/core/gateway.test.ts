@@ -82,9 +82,9 @@ test("cleanLatexSymbols converts \\times and \\rightarrow", () => {
   expect(cleanLatexSymbols("a $\\to$ b")).toBe("a → b");
 });
 
-test("getModelLimits returns google model limits for google provider", () => {
+test("getModelLimits returns default limits when MODEL_LIMITS is empty", () => {
   const limits = getModelLimits("google/gemini-3.1-flash-lite", "google");
-  expect(limits.max_tpm).toBe(250000);
+  expect(limits.max_tpm).toBe(1000000);
   expect(limits.max_rpm).toBe(15);
 });
 
