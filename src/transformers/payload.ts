@@ -2,7 +2,6 @@ import {
   EMOJI,
   logWarn,
   parseUsageFromJson,
-  LITEROUTER_STREAM_IDLE_TIMEOUT_MS,
 } from "../config/env";
 
 const thoughtSignatureStore = new Map<string, string>();
@@ -176,7 +175,6 @@ export function createStreamTransformer(
   collapseReasoning: boolean,
   meta?: StreamMeta,
   sinkUsageFn?: (meta: StreamMeta, usage: any, ttftMs?: number) => void,
-  idleTimeoutMs: number = LITEROUTER_STREAM_IDLE_TIMEOUT_MS,
 ) {
   let buffer = "";
   let hasStartedThought = false;
@@ -186,24 +184,7 @@ export function createStreamTransformer(
   const decoder = new TextDecoder();
   const encoder = new TextEncoder();
 
-  let idleTimer: any = null;
   let keepAliveTimer: any = null;
-
-  const resetIdleTimer = (controller: TransformStreamDefaultController) => {
-    if (idleTimer) clearTimeout(idleTimer);
-    if (idleTimeoutMs > 0) {
-       idleTimer = setTimeout(() => {
-         logWarn(
-           EMOJI.amber,
-           `[STREAM_IDLE_TIMEOUT ${meta?.reqId || ""}] provider=${meta?.provider || ""} model=${meta?.upstream_model || ""} no chunk received for ${idleTimeoutMs}ms, closing stream`,
-         );
-         try {
-           controller.enqueue(encoder.encode("data: [DONE]\n\n"));
-           controller.terminate();
-         } catch {}
-       }, idleTimeoutMs);
-    }
-  };
 
   const startKeepAlive = (controller: TransformStreamDefaultController) => {
     if (keepAliveTimer) clearInterval(keepAliveTimer);
@@ -223,11 +204,9 @@ export function createStreamTransformer(
 
   return new TransformStream({
     start(controller) {
-      resetIdleTimer(controller);
       startKeepAlive(controller);
     },
     transform(chunk, controller) {
-      resetIdleTimer(controller);
       buffer += cleanLatexSymbols(decoder.decode(chunk, { stream: true }));
       let lines = buffer.split("\n");
       buffer = lines.pop() || "";
@@ -315,7 +294,6 @@ export function createStreamTransformer(
       }
     },
     flush(controller) {
-      if (idleTimer) clearTimeout(idleTimer);
       stopKeepAlive();
       if (collapseReasoning && hasStartedThought && !hasEndedThought) {
         const closing = {

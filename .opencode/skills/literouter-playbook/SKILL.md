@@ -44,11 +44,11 @@ src/
 | File | Responsibilities |
 | :--- | :--- |
 | **`src/config/env.ts`** | Centralizes configuration and environment variables (`LITEROUTER_PORT`, `LITEROUTER_AUTH_KEY`, `LITEROUTER_COLLAPSE_REASONING`, `LITEROUTER_ROTATE_DELAY_MS`, `LITEROUTER_MAX_ATTEMPTS`, `LITEROUTER_HTTP_TIMEOUT_MS`, `LITEROUTER_NO_RESPONSE_TIMEOUT_MS`, `LITEROUTER_NO_RESPONSE_RETRY_DELAY_MS`, `LITEROUTER_STREAM_IDLE_TIMEOUT_MS`, `MIN_ROTATE_DELAY_MS=2000`). Defines provider/model limits (`MODEL_LIMITS` now empty `{}`, `PROVIDER_LIMITS`, `DEFAULT_LIMITS`), static key validation (`staticValidateKeys`), provider delay calculations (`getProviderDelayMs`), reset delay parsers (`parseResetDelay`), token usage extraction (`parseUsageFromJson`), API URL mappings (`PROVIDER_API_URLS`), emoji constants (`EMOJI`), and logging utilities (`logWarn`). |
-| **`src/network/fetcher.ts`** | Exposes `fetchWithFirstByteTimeout` and `NoResponseError`. Monitors upstream requests to detect silent backends. Holds HTTP 200 OK headers from downstream while inspecting initial SSE chunks for actual content tokens (`delta.content`, `delta.reasoning_content`, `delta.thought`, `delta.tool_calls`, or Gemini `parts[].text`). If an upstream sends 0 content tokens (or metadata-only chunks `{"role":"assistant","content":""}`) within `LITEROUTER_NO_RESPONSE_TIMEOUT_MS` (5s), throws `NoResponseError`, aborting the fetch before headers reach downstream so handlers can immediately resend to Key #2. |
+| **`src/network/fetcher.ts`** | Exposes `fetchWithFirstByteTimeout` and `NoResponseError`. Monitors upstream requests to detect silent backends and stalled streams. Holds HTTP 200 OK headers from downstream while inspecting initial SSE chunks for actual content tokens (`delta.content`, `delta.reasoning_content`, `delta.thought`, `delta.tool_calls`, or Gemini `parts[].text`). If an upstream sends 0 content tokens (or metadata-only chunks `{"role":"assistant","content":""}`) within `LITEROUTER_NO_RESPONSE_TIMEOUT_MS` (5s), throws `NoResponseError`, aborting the fetch before headers reach downstream so handlers can immediately resend to Key #2. After the first byte arrives, continues monitoring the stream for idle timeouts (`LITEROUTER_STREAM_IDLE_TIMEOUT_MS`, default 30s). If no chunk arrives within the idle window, throws `NoResponseError` — same retry path as 0-token ghosting (immediate key rotation, 0ms delay, no cooldown). |
 | **`src/transformers/thinking.ts`** | Translates provider-specific reasoning/thinking options into standard OpenAI-style `reasoning_effort` fields (`extractThinkingLevel`, `applyReasoningEffort`, `translateGoogleThinking`). |
-| **`src/transformers/payload.ts`** | Manages thought signatures (`injectThoughtSignature`, `extractThoughtSignature`), token estimation (`estimateTokens`), Gemma unsupported field stripping (`cleanGemmaPayload`), LaTeX formatting (`cleanLatexSymbols`), message merging (`mergeConsecutiveMessages`), non-streaming reasoning transformations (`transformNonStreaming`), and streaming SSE stream transformations (`createStreamTransformer`). Exports `StreamMeta` interface. The `createStreamTransformer` function accepts an optional `idleTimeoutMs` parameter (default `LITEROUTER_STREAM_IDLE_TIMEOUT_MS`, 30s). If no chunk is received from upstream within the idle window, the transformer terminates the stream cleanly with `data: [DONE]\n\n`. Additionally, a keep-alive timer injects SSE comment lines (`:\n\n`) every 15 seconds to prevent downstream SSE clients from idling out during slow upstream streams. |
+| **`src/transformers/payload.ts`** | Manages thought signatures (`injectThoughtSignature`, `extractThoughtSignature`), token estimation (`estimateTokens`), Gemma unsupported field stripping (`cleanGemmaPayload`), LaTeX formatting (`cleanLatexSymbols`), message merging (`mergeConsecutiveMessages`), non-streaming reasoning transformations (`transformNonStreaming`), and streaming SSE stream transformations (`createStreamTransformer`). Exports `StreamMeta` interface. The `createStreamTransformer` function transforms upstream SSE chunks for OpenAI-compatible providers, handling thought signature injection, reasoning normalization, LaTeX cleaning, and usage extraction. A keep-alive timer injects SSE comment lines (`:\n\n`) every 15 seconds to prevent downstream SSE clients from idling out during slow upstream streams. |
 | **`src/handlers/openai_compat.ts`** | Implements `executeOpenAICompat`, `processOpenAIError`, and `processOpenAISuccess`. Manages key rotation loops for OpenAI-compatible providers (OpenRouter, NVIDIA, Zen, Google OpenAI-compat), error handling, 502 grace retries, and first-byte ghosting retry handling (no cooldown penalty on ghosted keys). |
-| **`src/handlers/google_native.ts`** | Implements `executeGoogleNative` (for Google `:generateContent` / `:streamGenerateContent` native endpoints) and `executeGoogleInteractions` (for Google agent API `antigravity-preview-05-2026`). Manages query parameter signing, error handling, first-byte ghosting retry via `fetchWithFirstByteTimeout`, streaming output with inter-chunk idle timeout protection, and SSE keep-alive comment injection. |
+| **`src/handlers/google_native.ts`** | Implements `executeGoogleNative` (for Google `:generateContent` / `:streamGenerateContent` native endpoints) and `executeGoogleInteractions` (for Google agent API `antigravity-preview-05-2026`). Manages query parameter signing, error handling, first-byte ghosting retry via `fetchWithFirstByteTimeout`, and SSE keep-alive comment injection. |
 | **`src/lib.ts`** | **Barrel re-export file**. Exports all public types, constants, and utilities from `config/env`, `network/fetcher`, `transformers/thinking`, and `transformers/payload` for clean modular imports across handlers and 100% backward compatibility with `tests/unit/core/`. |
 | **`src/index.ts`** | Application entry point running `serve` on port 7766. Contains trace logging (`recordTrace`), emoji logging (`logState`, `logWarn`, `logError`), static key verification, model/fusion registry loading (`models.json`, `fusion.json`), Valkey/Redis `ModelFirstRouter` (ZSET rolling quota Lua script, `reportError` cooldowns, usage recording), Fusion state (in-memory circuit breaker and sticky position), auth checking (`verifyAuthKey`), and HTTP route dispatchers. |
 
@@ -67,7 +67,7 @@ LiteRouter exposes 4 main HTTP endpoints on port 7766:
 
 ---
 
-## First-Byte & 0-Token Ghosting Retry Logic
+## First-Byte & Idle Timeout Ghosting Retry Logic
 
 When an upstream provider accepts a connection but stalls silently or sends metadata-only chunks with zero content tokens:
 
@@ -75,34 +75,27 @@ When an upstream provider accepts a connection but stalls silently or sends meta
    `fetchWithFirstByteTimeout` sets a timer for `LITEROUTER_NO_RESPONSE_TIMEOUT_MS` (configured via `LITEROUTER_NO_RESPONSE_TIMEOUT`, default `5` seconds). It holds HTTP 200 OK headers from being flushed to downstream while inspecting incoming body chunks for actual content tokens (`delta.content`, `delta.reasoning_content`, `delta.thought`, `delta.tool_calls`, or Gemini `parts[].text`).
    If 0 content tokens arrive within 5s (or if upstream sends metadata-only chunks like `{"role":"assistant","content":""}`), `fetchWithFirstByteTimeout` aborts the upstream fetch **before** headers reach downstream and throws `NoResponseError("upstream sent 0 content tokens")`.
 
-2. **Immediate Key Rotation without Cooldown (`src/handlers/openai_compat.ts` & `src/handlers/google_native.ts`):**
-   When `e instanceof NoResponseError` is caught:
+2. **Idle Timeout Monitoring (`src/network/fetcher.ts`):**
+   After the first content token arrives, `fetchWithFirstByteTimeout` continues monitoring the upstream stream for idle timeouts (`LITEROUTER_STREAM_IDLE_TIMEOUT_MS`, default `30` seconds). If no chunk arrives within the idle window, `fetchWithFirstByteTimeout` aborts the upstream fetch and throws `NoResponseError("upstream sent 0 content tokens within timeout")`.
+
+3. **Immediate Key Rotation without Cooldown (`src/handlers/openai_compat.ts` & `src/handlers/google_native.ts`):**
+   When `e instanceof NoResponseError` is caught (whether from 0-token ghosting or idle timeout):
    - A warning log is emitted (`EMOJI.amber`) with disambiguated key suffix logging (`key=...${activeKey.slice(-6)}`).
    - The request immediately retries on Key #2 with **0ms delay** (`continue`).
    - Key #1 remains **unlocked in Valkey (no cooldown imposed)** because the upstream timed out/ghosted transiently rather than returning an explicit rate limit or auth error payload.
 
-3. **Exhaustion Guard:**
-   If all `maxAttempts` keys ghost without sending content tokens, the gateway logs exhaustion (`EMOJI.exhausted`) and exits the loop, preventing infinite hangs or unbounded retries.
+4. **Exhaustion Guard:**
+   If all `maxAttempts` keys ghost without sending content tokens or go idle, the gateway logs exhaustion (`EMOJI.exhausted`) and exits the loop, preventing infinite hangs or unbounded retries.
 
 ---
 
-## Stream Inter-Chunk Idle Timeout
+## Stream Inter-Chunk Idle Timeout (Moved to Fetcher)
 
-When an upstream provider returns a streaming response but stalls mid-stream (e.g., stops emitting SSE chunks without sending `[DONE]`), LiteRouter enforces an inter-chunk idle timeout:
+The inter-chunk idle timeout is now handled at the `fetchWithFirstByteTimeout` level in `src/network/fetcher.ts`, not at the transformer level. When an upstream stream stalls mid-generation (no chunk received within `LITEROUTER_STREAM_IDLE_TIMEOUT_MS`, default `30` seconds), the fetcher throws `NoResponseError`, triggering the same immediate key rotation and resend logic as 0-token ghost streams.
 
-1. **Configuration (`src/config/env.ts`):**
-   `LITEROUTER_STREAM_IDLE_TIMEOUT_MS` (configurable via `LITEROUTER_STREAM_IDLE_TIMEOUT` or `LITEROUTER_STREAM_IDLE_TIMEOUT_MS`, default `30` seconds).
+The stream transformers (`createStreamTransformer` for OpenAI-compatible providers, inline transform for Google Native) no longer handle idle timeouts. They focus solely on SSE parsing, thought signature injection, reasoning normalization, LaTeX cleaning, and usage extraction.
 
-2. **Transformer-Level Detection (`src/transformers/payload.ts` & `src/handlers/google_native.ts`):**
-   Each stream transformer (`createStreamTransformer` for OpenAI-compatible providers, inline transform for Google Native) starts an idle timer on every incoming chunk. If no chunk arrives within `LITEROUTER_STREAM_IDLE_TIMEOUT_MS`, the transformer:
-   - Emits `data: [DONE]\n\n` to signal clean stream termination.
-   - Terminates the `TransformStream` cleanly.
-
-3. **SSE Keep-Alive Comments:**
-   Both stream transformers inject SSE comment lines (`:\n\n`) every 15 seconds while the stream is active. These comments are ignored by SSE clients but prevent downstream clients (e.g., `opencode`) from triggering their own idle timeouts during slow upstream responses where tokens arrive infrequently.
-
-4. **Client Impact:**
-   Downstream clients receive a clean stream termination with whatever partial content was streamed. The `data: [DONE]` signal allows clients to process partial responses gracefully instead of hanging indefinitely.
+Both stream transformers still inject SSE comment lines (`:\n\n`) every 15 seconds via keep-alive timers to prevent downstream SSE clients from triggering their own idle timeouts during slow upstream responses where tokens arrive infrequently.
 
 ---
 

@@ -1,3 +1,5 @@
+import { LITEROUTER_STREAM_IDLE_TIMEOUT_MS } from "../config/env";
+
 export class NoResponseError extends Error {
   constructor(msg = "upstream sent no response") {
     super(msg);
@@ -53,10 +55,11 @@ export async function fetchWithFirstByteTimeout(
   opts: {
     noResponseTimeoutMs: number;
     totalTimeoutMs: number;
+    idleTimeoutMs?: number;
     clientSignal?: AbortSignal;
   },
 ): Promise<Response> {
-  const { noResponseTimeoutMs, totalTimeoutMs, clientSignal } = opts;
+  const { noResponseTimeoutMs, totalTimeoutMs, idleTimeoutMs = LITEROUTER_STREAM_IDLE_TIMEOUT_MS, clientSignal } = opts;
   const ctrl = new AbortController();
   const totalSignal = clientSignal
     ? AbortSignal.any([clientSignal, AbortSignal.timeout(totalTimeoutMs)])
@@ -115,9 +118,21 @@ export async function fetchWithFirstByteTimeout(
             controller.enqueue(chunk);
           }
           try {
+            let lastChunkTime = Date.now();
             while (true) {
-              const { done, value } = await reader.read();
+              const readPromise = reader.read();
+              const timeoutPromise = new Promise<never>((_, reject) => {
+                const timer = setTimeout(() => {
+                  clearTimeout(timer);
+                  reject(new NoResponseError("upstream sent 0 content tokens within timeout"));
+                }, idleTimeoutMs);
+              });
+              const { done, value } = await Promise.race([
+                readPromise,
+                timeoutPromise,
+              ]);
               if (done) break;
+              lastChunkTime = Date.now();
               controller.enqueue(value);
             }
             controller.close();

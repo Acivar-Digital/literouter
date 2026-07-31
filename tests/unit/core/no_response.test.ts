@@ -2,7 +2,6 @@ import { test, expect } from "bun:test";
 import {
   fetchWithFirstByteTimeout,
   NoResponseError,
-  createStreamTransformer,
 } from "../../../src/lib";
 
 // A server that accepts the connection but NEVER sends a response — the
@@ -67,31 +66,6 @@ test("fetchWithFirstByteTimeout throws NoResponseError when 200 OK headers retur
   } finally {
     server.stop(true);
   }
-});
-
-test("createStreamTransformer handles mid-stream idle timeout cleanly", async () => {
-  const transformer = createStreamTransformer(false, undefined, undefined, 500);
-  const stream = new ReadableStream<Uint8Array>({
-    start(controller) {
-      const encoder = new TextEncoder();
-      controller.enqueue(encoder.encode('data: {"choices":[{"delta":{"content":"hi"}}]}\n\n'));
-      // Stalls here - no more chunks sent
-    },
-  }).pipeThrough(transformer);
-
-  const reader = stream.getReader();
-  const chunks: string[] = [];
-  const decoder = new TextDecoder();
-
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    chunks.push(decoder.decode(value));
-  }
-
-  const fullText = chunks.join("");
-  expect(fullText).toContain("[DONE]");
-  expect(fullText).not.toContain("upstream_idle_timeout");
 });
 
 test("fetchWithFirstByteTimeout returns a normal response when upstream answers", async () => {

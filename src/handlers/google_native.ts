@@ -3,7 +3,6 @@ import {
   LITEROUTER_MAX_ATTEMPTS,
   LITEROUTER_NO_RESPONSE_RETRY_DELAY_MS,
   LITEROUTER_NO_RESPONSE_TIMEOUT_MS,
-  LITEROUTER_STREAM_IDLE_TIMEOUT_MS,
   cleanHeaders,
   getModelLimits,
   getProviderDelayMs,
@@ -144,24 +143,7 @@ async function processGoogleNativeSuccess(
 
   let firstChunk = true;
   let capturedUsage: any = null;
-  let idleTimer: any = null;
   let keepAliveTimer: any = null;
-
-  const resetIdleTimer = (controller: TransformStreamDefaultController) => {
-    if (idleTimer) clearTimeout(idleTimer);
-    if (LITEROUTER_STREAM_IDLE_TIMEOUT_MS > 0) {
-      idleTimer = setTimeout(() => {
-        logWarn(
-          EMOJI.amber,
-          `[STREAM_IDLE_TIMEOUT ${meta?.reqId || ""}] provider=${meta?.provider || ""} model=${meta?.upstream_model || ""} no chunk received for ${LITEROUTER_STREAM_IDLE_TIMEOUT_MS}ms, closing stream`,
-        );
-        try {
-          controller.enqueue(encoder.encode("data: [DONE]\n\n"));
-          controller.terminate();
-        } catch {}
-      }, LITEROUTER_STREAM_IDLE_TIMEOUT_MS);
-    }
-  };
 
   const startKeepAlive = (controller: TransformStreamDefaultController) => {
     if (keepAliveTimer) clearInterval(keepAliveTimer);
@@ -181,11 +163,9 @@ async function processGoogleNativeSuccess(
 
   const transform = new TransformStream({
     start(controller) {
-      resetIdleTimer(controller);
       startKeepAlive(controller);
     },
     transform(chunk, controller) {
-      resetIdleTimer(controller);
       let text = decoder.decode(chunk, { stream: true });
       text = cleanLatexSymbols(text);
 
@@ -213,7 +193,6 @@ async function processGoogleNativeSuccess(
       controller.enqueue(encoder.encode(text));
     },
     flush() {
-      if (idleTimer) clearTimeout(idleTimer);
       stopKeepAlive();
       sinkUsage(streamMeta, capturedUsage);
     },

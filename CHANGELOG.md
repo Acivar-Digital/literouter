@@ -6,8 +6,10 @@ All notable changes to LiteRouter will be documented in this file.
 
 ### Added / Fixed
 - **0-Token Content Token Inspection & Immediate Resend** — Updated `fetchWithFirstByteTimeout` in `src/network/fetcher.ts` to hold HTTP 200 OK headers and inspect incoming SSE chunks for actual content tokens (`delta.content`, `delta.reasoning_content`, `delta.thought`, `delta.tool_calls`, or Gemini `parts[].text`). If an upstream stream returns 0 content tokens (e.g. metadata-only chunks `{"role":"assistant","content":""}`) within `LITEROUTER_NO_RESPONSE_TIMEOUT` (5s), it throws `NoResponseError("upstream sent 0 content tokens")` **before** flushing HTTP headers to downstream.
+- **Idle Stream Detection & Immediate Resend** — Extended `fetchWithFirstByteTimeout` to monitor the upstream stream for idle timeouts after the first content token arrives. If no chunk is received within `LITEROUTER_STREAM_IDLE_TIMEOUT_MS` (default 30s), throws `NoResponseError` — same retry path as 0-token ghosting (immediate key rotation, 0ms delay, no cooldown).
 - **Immediate 0ms Key Resend on Ghosting** — Caught `NoResponseError` in `src/handlers/openai_compat.ts` and `src/handlers/google_native.ts` now triggers an immediate `continue` in the retry loop with **0ms delay**, instantly resending the request to Key #2 without locking or placing Key #1 in Valkey cooldown.
 - **Disambiguated Key Logging** — Updated key logging format across all handlers from `activeKey.substring(0, 6)...` to `...${activeKey.slice(-6)}`, ensuring rotated keys in the pool are immediately distinguishable in terminal logs.
+- **Removed Transformer-Level Idle Timeout** — Removed idle timeout handling from `createStreamTransformer` in `src/transformers/payload.ts` and the inline idle timer in `src/handlers/google_native.ts`. Idle timeout is now handled entirely at the `fetchWithFirstByteTimeout` level in `src/network/fetcher.ts`.
 
 ## [3.3.7] — 2026-07-31
 
