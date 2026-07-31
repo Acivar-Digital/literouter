@@ -1,4 +1,4 @@
-import { LITEROUTER_STREAM_IDLE_TIMEOUT_MS } from "../config/env";
+import { EMOJI, LITEROUTER_STREAM_IDLE_TIMEOUT_MS, logWarn } from "../config/env";
 
 export class NoResponseError extends Error {
   constructor(msg = "upstream sent no response") {
@@ -59,7 +59,7 @@ export async function fetchWithFirstByteTimeout(
     clientSignal?: AbortSignal;
   },
 ): Promise<Response> {
-  const { noResponseTimeoutMs, totalTimeoutMs, idleTimeoutMs = LITEROUTER_STREAM_IDLE_TIMEOUT_MS, clientSignal } = opts;
+  const { noResponseTimeoutMs, totalTimeoutMs, idleTimeoutMs = noResponseTimeoutMs, clientSignal } = opts;
   const ctrl = new AbortController();
   const totalSignal = clientSignal
     ? AbortSignal.any([clientSignal, AbortSignal.timeout(totalTimeoutMs)])
@@ -112,28 +112,71 @@ export async function fetchWithFirstByteTimeout(
         throw new NoResponseError("upstream sent 0 content tokens");
       }
 
+      const MAX_IDLE_RESENDS = 3;
+
       const combinedStream = new ReadableStream<Uint8Array>({
         async start(controller) {
           for (const chunk of bufferedChunks) {
             controller.enqueue(chunk);
           }
+
+          let currentReader = reader;
+          let idleResends = 0;
+
           try {
-            let lastChunkTime = Date.now();
             while (true) {
-              const readPromise = reader.read();
+              const readPromise = currentReader.read();
+              let timer: ReturnType<typeof setTimeout> | null = null;
+
               const timeoutPromise = new Promise<never>((_, reject) => {
-                const timer = setTimeout(() => {
-                  clearTimeout(timer);
-                  reject(new NoResponseError("upstream sent 0 content tokens within timeout"));
+                timer = setTimeout(() => {
+                  reject(new NoResponseError("stream idle timeout"));
                 }, idleTimeoutMs);
               });
-              const { done, value } = await Promise.race([
-                readPromise,
-                timeoutPromise,
-              ]);
-              if (done) break;
-              lastChunkTime = Date.now();
-              controller.enqueue(value);
+
+              let result: ReadableStreamReadResult<Uint8Array>;
+              try {
+                result = await Promise.race([readPromise, timeoutPromise]);
+                clearTimeout(timer!);
+              } catch (err: any) {
+                clearTimeout(timer!);
+                // suppress the orphaned readPromise rejection
+                readPromise.catch(() => {});
+
+                if (err instanceof NoResponseError && idleResends < MAX_IDLE_RESENDS) {
+                  idleResends++;
+                  logWarn(
+                    EMOJI.retry,
+                    `[STREAM_STALL] provider went silent for ${idleTimeoutMs}ms, resending same key (attempt ${idleResends}/${MAX_IDLE_RESENDS})`,
+                  );
+                  try {
+                    currentReader.cancel().catch(() => {});
+                  } catch {}
+                  const freshResp = await fetch(url, init);
+                  if (!freshResp.ok || !freshResp.body) {
+                    controller.close();
+                    return;
+                  }
+                  currentReader = freshResp.body.getReader();
+                  continue;
+                }
+
+                // exhausted resends or non-idle error — close cleanly
+                if (idleResends >= MAX_IDLE_RESENDS) {
+                  logWarn(
+                    EMOJI.exhausted,
+                    `[STREAM_STALL] provider kept stalling after ${MAX_IDLE_RESENDS} resends, closing stream`,
+                  );
+                }
+                const doneMarker = new TextEncoder().encode("data: [DONE]\n\n");
+                controller.enqueue(doneMarker);
+                controller.close();
+                return;
+              }
+
+              if (result.done) break;
+              idleResends = 0; // reset on successful chunk
+              controller.enqueue(result.value);
             }
             controller.close();
           } catch (err) {
