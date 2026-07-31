@@ -2,6 +2,13 @@
 
 All notable changes to LiteRouter will be documented in this file.
 
+## [3.3.8] — 2026-08-01
+
+### Added / Fixed
+- **0-Token Content Token Inspection & Immediate Resend** — Updated `fetchWithFirstByteTimeout` in `src/network/fetcher.ts` to hold HTTP 200 OK headers and inspect incoming SSE chunks for actual content tokens (`delta.content`, `delta.reasoning_content`, `delta.thought`, `delta.tool_calls`, or Gemini `parts[].text`). If an upstream stream returns 0 content tokens (e.g. metadata-only chunks `{"role":"assistant","content":""}`) within `LITEROUTER_NO_RESPONSE_TIMEOUT` (5s), it throws `NoResponseError("upstream sent 0 content tokens")` **before** flushing HTTP headers to downstream.
+- **Immediate 0ms Key Resend on Ghosting** — Caught `NoResponseError` in `src/handlers/openai_compat.ts` and `src/handlers/google_native.ts` now triggers an immediate `continue` in the retry loop with **0ms delay**, instantly resending the request to Key #2 without locking or placing Key #1 in Valkey cooldown.
+- **Disambiguated Key Logging** — Updated key logging format across all handlers from `activeKey.substring(0, 6)...` to `...${activeKey.slice(-6)}`, ensuring rotated keys in the pool are immediately distinguishable in terminal logs.
+
 ## [3.3.7] — 2026-07-31
 
 ### Fixed

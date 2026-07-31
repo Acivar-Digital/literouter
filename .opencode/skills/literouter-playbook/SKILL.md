@@ -44,7 +44,7 @@ src/
 | File | Responsibilities |
 | :--- | :--- |
 | **`src/config/env.ts`** | Centralizes configuration and environment variables (`LITEROUTER_PORT`, `LITEROUTER_AUTH_KEY`, `LITEROUTER_COLLAPSE_REASONING`, `LITEROUTER_ROTATE_DELAY_MS`, `LITEROUTER_MAX_ATTEMPTS`, `LITEROUTER_HTTP_TIMEOUT_MS`, `LITEROUTER_NO_RESPONSE_TIMEOUT_MS`, `LITEROUTER_NO_RESPONSE_RETRY_DELAY_MS`, `LITEROUTER_STREAM_IDLE_TIMEOUT_MS`, `MIN_ROTATE_DELAY_MS=2000`). Defines provider/model limits (`MODEL_LIMITS` now empty `{}`, `PROVIDER_LIMITS`, `DEFAULT_LIMITS`), static key validation (`staticValidateKeys`), provider delay calculations (`getProviderDelayMs`), reset delay parsers (`parseResetDelay`), token usage extraction (`parseUsageFromJson`), API URL mappings (`PROVIDER_API_URLS`), emoji constants (`EMOJI`), and logging utilities (`logWarn`). |
-| **`src/network/fetcher.ts`** | Exposes `fetchWithFirstByteTimeout` and `NoResponseError`. Monitors upstream requests to detect silent backends that accept TCP connections but send 0 response bytes within `LITEROUTER_NO_RESPONSE_TIMEOUT_MS`. Also verifies the first body chunk arrives after HTTP 200 OK headers are received — if the upstream sends headers but never transmits body bytes, throws `NoResponseError` to trigger key rotation before headers are forwarded to downstream clients. |
+| **`src/network/fetcher.ts`** | Exposes `fetchWithFirstByteTimeout` and `NoResponseError`. Monitors upstream requests to detect silent backends. Holds HTTP 200 OK headers from downstream while inspecting initial SSE chunks for actual content tokens (`delta.content`, `delta.reasoning_content`, `delta.thought`, `delta.tool_calls`, or Gemini `parts[].text`). If an upstream sends 0 content tokens (or metadata-only chunks `{"role":"assistant","content":""}`) within `LITEROUTER_NO_RESPONSE_TIMEOUT_MS` (5s), throws `NoResponseError`, aborting the fetch before headers reach downstream so handlers can immediately resend to Key #2. |
 | **`src/transformers/thinking.ts`** | Translates provider-specific reasoning/thinking options into standard OpenAI-style `reasoning_effort` fields (`extractThinkingLevel`, `applyReasoningEffort`, `translateGoogleThinking`). |
 | **`src/transformers/payload.ts`** | Manages thought signatures (`injectThoughtSignature`, `extractThoughtSignature`), token estimation (`estimateTokens`), Gemma unsupported field stripping (`cleanGemmaPayload`), LaTeX formatting (`cleanLatexSymbols`), message merging (`mergeConsecutiveMessages`), non-streaming reasoning transformations (`transformNonStreaming`), and streaming SSE stream transformations (`createStreamTransformer`). Exports `StreamMeta` interface. The `createStreamTransformer` function accepts an optional `idleTimeoutMs` parameter (default `LITEROUTER_STREAM_IDLE_TIMEOUT_MS`, 30s). If no chunk is received from upstream within the idle window, the transformer terminates the stream cleanly with `data: [DONE]\n\n`. Additionally, a keep-alive timer injects SSE comment lines (`:\n\n`) every 15 seconds to prevent downstream SSE clients from idling out during slow upstream streams. |
 | **`src/handlers/openai_compat.ts`** | Implements `executeOpenAICompat`, `processOpenAIError`, and `processOpenAISuccess`. Manages key rotation loops for OpenAI-compatible providers (OpenRouter, NVIDIA, Zen, Google OpenAI-compat), error handling, 502 grace retries, and first-byte ghosting retry handling (no cooldown penalty on ghosted keys). |
@@ -67,28 +67,22 @@ LiteRouter exposes 4 main HTTP endpoints on port 7766:
 
 ---
 
-## First-Byte Ghosting Retry Logic
+## First-Byte & 0-Token Ghosting Retry Logic
 
-When an upstream provider accepts a TCP connection but stalls silently without returning HTTP headers or bytes (known as a "ghost" connection):
+When an upstream provider accepts a connection but stalls silently or sends metadata-only chunks with zero content tokens:
 
-1. **Timeout Detection (`src/network/fetcher.ts`):**
-   `fetchWithFirstByteTimeout` sets a timer for `LITEROUTER_NO_RESPONSE_TIMEOUT_MS` (configured via `LITEROUTER_NO_RESPONSE_TIMEOUT`, default `5` seconds). If 0 bytes are received before the timer fires, the request aborts and throws `NoResponseError`.
+1. **Header Holding & Content Token Inspection (`src/network/fetcher.ts`):**
+   `fetchWithFirstByteTimeout` sets a timer for `LITEROUTER_NO_RESPONSE_TIMEOUT_MS` (configured via `LITEROUTER_NO_RESPONSE_TIMEOUT`, default `5` seconds). It holds HTTP 200 OK headers from being flushed to downstream while inspecting incoming body chunks for actual content tokens (`delta.content`, `delta.reasoning_content`, `delta.thought`, `delta.tool_calls`, or Gemini `parts[].text`).
+   If 0 content tokens arrive within 5s (or if upstream sends metadata-only chunks like `{"role":"assistant","content":""}`), `fetchWithFirstByteTimeout` aborts the upstream fetch **before** headers reach downstream and throws `NoResponseError("upstream sent 0 content tokens")`.
 
-   **Two-Phase Ghost Detection:**
-   - **Phase 1 (Headers):** The initial fetch must complete (TCP connect + receive HTTP headers) within `LITEROUTER_NO_RESPONSE_TIMEOUT_MS`. If the TCP connection is accepted but no HTTP response arrives within 5s, `NoResponseError` is thrown.
-   - **Phase 2 (First Body Chunk):** After HTTP 200 OK headers are received, `fetchWithFirstByteTimeout` waits for the first body chunk to arrive. If upstream returns 200 OK headers but sends zero body bytes within 5s, a second `NoResponseError` is thrown. This prevents the "200 OK ghost" scenario where OpenRouter free-tier models return headers but never transmit SSE chunks.
+2. **Immediate Key Rotation without Cooldown (`src/handlers/openai_compat.ts` & `src/handlers/google_native.ts`):**
+   When `e instanceof NoResponseError` is caught:
+   - A warning log is emitted (`EMOJI.amber`) with disambiguated key suffix logging (`key=...${activeKey.slice(-6)}`).
+   - The request immediately retries on Key #2 with **0ms delay** (`continue`).
+   - Key #1 remains **unlocked in Valkey (no cooldown imposed)** because the upstream timed out/ghosted transiently rather than returning an explicit rate limit or auth error payload.
 
-2. **Non-Google Key Rotation without Cooldown (`src/handlers/openai_compat.ts`):**
-   In `executeOpenAICompat`, when `e instanceof NoResponseError` is caught:
-   - A warning log is emitted (`EMOJI.amber`).
-   - The gateway delays for `LITEROUTER_NO_RESPONSE_RETRY_DELAY_MS` (configured via `LITEROUTER_NO_RESPONSE_RETRY_DELAY_MS` or `LITEROUTER_NO_RESPONSE_RETRY_DELAY`, default `1000` ms).
-   - The key is rotated to the next available key **WITHOUT calling `router.reportError`**. No cooldown is imposed on the key because the provider did not return a rate limit or error payload.
-
-3. **Google Provider Ghosting:**
-   Google provider also applies first-byte ghosting via `fetchWithFirstByteTimeout` in `src/handlers/google_native.ts` (replaced direct `fetch` call). The same 5s timeout and 1s retry delay apply.
-
-4. **Exhaustion Guard:**
-   If all `maxAttempts` keys ghost without sending data, the gateway logs exhaustion (`EMOJI.exhausted`) and exits the loop, preventing infinite hangs or unbounded retries.
+3. **Exhaustion Guard:**
+   If all `maxAttempts` keys ghost without sending content tokens, the gateway logs exhaustion (`EMOJI.exhausted`) and exits the loop, preventing infinite hangs or unbounded retries.
 
 ---
 
