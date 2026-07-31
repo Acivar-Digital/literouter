@@ -138,6 +138,10 @@ export async function fetchWithFirstByteTimeout(
               try {
                 result = await Promise.race([readPromise, timeoutPromise]);
                 clearTimeout(timer!);
+                if (!result.done && result.value) {
+                  const text = new TextDecoder().decode(result.value);
+                  console.log(`[STREAM_CHUNK] ${text.substring(0, 300)}`);
+                }
               } catch (err: any) {
                 clearTimeout(timer!);
                 // suppress the orphaned readPromise rejection
