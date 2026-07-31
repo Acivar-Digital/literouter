@@ -338,8 +338,8 @@ export async function executeOpenAICompat(
       if (e instanceof NoResponseError) {
         noResponseAttempts++;
         logWarn(
-          EMOJI.amber,
-          `[NO_RESPONSE ${reqId}] key=...${activeKey.slice(-6)} model=${upstream_model} sent 0 content tokens within ${LITEROUTER_NO_RESPONSE_TIMEOUT_MS}ms, rotating key (no cooldown) [${noResponseAttempts}/${maxAttempts}]`,
+          EMOJI.retry,
+          `[NO_RESPONSE ${reqId}] key=...${activeKey.slice(-6)} model=${upstream_model} upstream idle/ghost detected within ${LITEROUTER_NO_RESPONSE_TIMEOUT_MS}ms, rotating key (no cooldown) [${noResponseAttempts}/${maxAttempts}]`,
         );
         if (reqId) {
           recordTrace(

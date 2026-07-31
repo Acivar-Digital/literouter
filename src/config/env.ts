@@ -98,6 +98,7 @@ export const EMOJI = {
   inbound: "🔵",
   rotate: "🔄",
   amber: "🟡",
+  retry: "🟠",
   limit: "⚠️",
   exhausted: "🔴",
   served: "🟢",
