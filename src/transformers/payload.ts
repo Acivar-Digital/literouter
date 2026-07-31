@@ -4,6 +4,7 @@ import {
   parseUsageFromJson,
   LITEROUTER_STREAM_IDLE_TIMEOUT_MS,
 } from "../config/env";
+import { router } from "../index";
 
 const thoughtSignatureStore = new Map<string, string>();
 
@@ -197,6 +198,14 @@ export function createStreamTransformer(
            EMOJI.amber,
            `[STREAM_IDLE_TIMEOUT ${meta?.reqId || ""}] provider=${meta?.provider || ""} model=${meta?.upstream_model || ""} no chunk received for ${idleTimeoutMs}ms, closing stream`,
          );
+         if (meta?.provider && meta?.activeKey) {
+           router.reportError(
+             meta.provider,
+             meta.activeKey,
+             "timeout",
+             meta.upstream_model,
+           ).catch(() => {});
+         }
          try {
            controller.enqueue(encoder.encode("data: [DONE]\n\n"));
            controller.terminate();

@@ -614,102 +614,104 @@ function verifyAuthKey(req: Request, url: URL): boolean {
 // 4. Server Entry Point
 // ============================================================================
 
-serve({
-  port: LITEROUTER_PORT,
-  idleTimeout: Math.min(LITEROUTER_HTTP_TIMEOUT_MS / 1000, 255),
-  async fetch(req: Request) {
-    const url = new URL(req.url);
-    if (!verifyAuthKey(req, url)) {
-      return new Response("Unauthorized", { status: 401 });
-    }
-    const reqId = crypto.randomUUID();
-    const bodyText = await req.text();
-    let reqJson: any = {};
-    if (bodyText) {
-      try {
-        reqJson = JSON.parse(bodyText);
-      } catch (e) {}
-    }
-
-    if (url.pathname === "/v1/chat/completions") {
-      const modelName = reqJson.model;
-      if (!modelName) {
-        return new Response(
-          JSON.stringify({ error: "Missing 'model' in request" }),
-          { status: 400 },
-        );
+if (import.meta.main) {
+  serve({
+    port: LITEROUTER_PORT,
+    idleTimeout: Math.min(LITEROUTER_HTTP_TIMEOUT_MS / 1000, 255),
+    async fetch(req: Request) {
+      const url = new URL(req.url);
+      if (!verifyAuthKey(req, url)) {
+        return new Response("Unauthorized", { status: 401 });
+      }
+      const reqId = crypto.randomUUID();
+      const bodyText = await req.text();
+      let reqJson: any = {};
+      if (bodyText) {
+        try {
+          reqJson = JSON.parse(bodyText);
+        } catch (e) {}
       }
 
-      if (FUSION_GROUPS.has(modelName)) {
-        return executeFusion(
+      if (url.pathname === "/v1/chat/completions") {
+        const modelName = reqJson.model;
+        if (!modelName) {
+          return new Response(
+            JSON.stringify({ error: "Missing 'model' in request" }),
+            { status: 400 },
+          );
+        }
+
+        if (FUSION_GROUPS.has(modelName)) {
+          return executeFusion(
+            modelName,
+            FUSION_GROUPS.get(modelName)!,
+            reqJson,
+            req.headers,
+            url.searchParams,
+            false,
+            "",
+            reqId,
+            req.signal,
+          );
+        }
+        return executeOpenAICompat(
           modelName,
-          FUSION_GROUPS.get(modelName)!,
           reqJson,
           req.headers,
-          url.searchParams,
+          undefined,
           false,
-          "",
           reqId,
           req.signal,
         );
       }
-      return executeOpenAICompat(
-        modelName,
-        reqJson,
-        req.headers,
-        undefined,
-        false,
-        reqId,
-        req.signal,
+
+      if (
+        url.pathname === "/v1beta/interactions" ||
+        url.pathname === "/v1/interactions"
+      ) {
+        return executeGoogleInteractions(reqJson, req.headers, reqId, req.signal);
+      }
+
+      const nativeMatch = url.pathname.match(
+        /^\/v1beta\/(?:models\/)?([^:]+)(?::(.*))?$/,
       );
-    }
+      if (nativeMatch) {
+        const modelName = nativeMatch[1];
+        const action = nativeMatch[2] || "generateContent";
 
-    if (
-      url.pathname === "/v1beta/interactions" ||
-      url.pathname === "/v1/interactions"
-    ) {
-      return executeGoogleInteractions(reqJson, req.headers, reqId, req.signal);
-    }
-
-    const nativeMatch = url.pathname.match(
-      /^\/v1beta\/(?:models\/)?([^:]+)(?::(.*))?$/,
-    );
-    if (nativeMatch) {
-      const modelName = nativeMatch[1];
-      const action = nativeMatch[2] || "generateContent";
-
-      if (FUSION_GROUPS.has(modelName)) {
-        return executeFusion(
+        if (FUSION_GROUPS.has(modelName)) {
+          return executeFusion(
+            modelName,
+            FUSION_GROUPS.get(modelName)!,
+            reqJson,
+            req.headers,
+            url.searchParams,
+            true,
+            action,
+            reqId,
+            req.signal,
+          );
+        }
+        return executeGoogleNative(
           modelName,
-          FUSION_GROUPS.get(modelName)!,
+          action,
+          url.searchParams,
           reqJson,
           req.headers,
-          url.searchParams,
-          true,
-          action,
+          undefined,
+          false,
           reqId,
           req.signal,
         );
       }
-      return executeGoogleNative(
-        modelName,
-        action,
-        url.searchParams,
-        reqJson,
-        req.headers,
-        undefined,
-        false,
-        reqId,
-        req.signal,
-      );
-    }
 
-    if (url.pathname === "/health") {
-      return new Response(JSON.stringify({ status: "ok" }), { status: 200 });
-    }
+      if (url.pathname === "/health") {
+        return new Response(JSON.stringify({ status: "ok" }), { status: 200 });
+      }
 
-    return new Response("Not found", { status: 404 });
-  },
-});
+      return new Response("Not found", { status: 404 });
+    },
+  });
 
-logState(EMOJI.boot, `LiteRouter (Bun) running on port ${LITEROUTER_PORT}`);
+  logState(EMOJI.boot, `LiteRouter (Bun) running on port ${LITEROUTER_PORT}`);
+}
