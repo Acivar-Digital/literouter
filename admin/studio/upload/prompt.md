@@ -6,21 +6,28 @@ This is **LiteRouter**, a high-density TypeScript API Gateway running on **Bun**
 ---
 
 # 2. THE PROBLEM & OBJECTIVE
-Our cyclomatic complexity analysis (`bun run complexity`) revealed several high-complexity monolithic functions that reduce maintainability and increase bug risk during gateway execution:
+Our cyclomatic complexity analysis (`bun run complexity`) and runtime trace audit revealed two major issues in `src/index.ts` and `src/lib.ts`:
 
+### A. High Cyclomatic Complexity (Refactoring Goal):
 1. **`executeOpenAICompat`** in `src/index.ts`: Cyclomatic Complexity = **47** (🚨 HIGH)
-   - *Root cause*: Single monolithic function handling authentication, headers, fusion group resolution, key rotation loop, header transformation, streaming, and error handling.
 2. **`executeGoogleNative`** in `src/index.ts`: Cyclomatic Complexity = **36** (🚨 HIGH)
-   - *Root cause*: Single monolithic function handling Google native endpoint URL construction, key validation, streaming contents body transformation, and retry loops.
 3. **`translateGoogleThinking`** in `src/lib.ts`: Cyclomatic Complexity = **16** (🚨 HIGH)
-   - *Root cause*: Multiple nested conditionals inspecting legacy & native thinking properties (`google.thinking_config`, `thinkingConfig`, `reasoning_effort`, `thinking`).
 4. **`mergeConsecutiveMessages`** in `src/lib.ts`: Cyclomatic Complexity = **16** (🚨 HIGH)
-   - *Root cause*: Complex nested branch matrix for string vs array content concatenation.
+
+### B. 429 Request-Holding Stall Bug (Feature Addition):
+Currently, when a provider like OpenRouter returns a `429 Too Many Requests` or `rate_limit`:
+- The active key is correctly placed into 65s Valkey cooldown.
+- **BUT if all keys for that model hit 429 or are in cooldown, the inner loop throws, causing the incoming HTTP request to enter a 65-second outer sleep loop (`await new Promise(r => setTimeout(r, 65000))`).** This holds the client's HTTP request hostage in a 65s stall before attempting round 2.
 
 ### Definition of Done:
-- Refactor `executeOpenAICompat` and `executeGoogleNative` in `src/index.ts` into smaller, pure/focused helper functions (e.g. `prepareOpenAIHeaders`, `handleOpenAIStreamingResponse`, `buildGoogleNativeUrl`, etc.) so that no function exceeds Cyclomatic Complexity **15**.
-- Refactor `translateGoogleThinking` and `mergeConsecutiveMessages` in `src/lib.ts` into clean, linear branch helper routines.
-- Maintain **100% feature parity**, zero breaking changes, exact response headers, and pass all 13 unit tests in `bun test`.
+1. **2-Second 429 Rotation Feature**:
+   - When a 429 rate limit response is received from OpenRouter or any provider, place the key in Valkey cooldown (`65s`), wait **2 seconds** (`2,000ms`), and immediately rotate to the next available key.
+   - If **all keys for the provider/model are exhausted or in cooldown**, DO NOT force the client's request to wait 65 seconds in outer backoff loop. Immediately return/failover so Fusion chain can try the next fallback model without holding the client request hostage.
+2. **Cyclomatic Complexity Reduction**:
+   - Modularize `executeOpenAICompat` and `executeGoogleNative` into focused helper functions so no single function exceeds CC **15**.
+   - Refactor `translateGoogleThinking` and `mergeConsecutiveMessages` in `src/lib.ts`.
+3. **100% Test Parity**:
+   - Pass all unit tests in `bun test` with zero breaking changes to headers, streaming transformers, or thought signatures.
 
 ---
 
@@ -57,24 +64,25 @@ export interface FusionConfig {
 
 # 4. SURGICAL INSTRUCTIONS
 - **`src/lib.ts`**:
-  - Refactor `translateGoogleThinking(data: any): any` into `extractThinkingLevel(data: any)` and `applyReasoningEffort(data: any, level?: string)` to eliminate deep nesting.
-  - Refactor `mergeConsecutiveMessages(messages: any[]): any[]` into a clean message content merger helper (`concatMessageContent(prev: any, current: any)`).
+  - Refactor `translateGoogleThinking(data: any): any` into `extractThinkingLevel(data: any)` and `applyReasoningEffort(data: any, level?: string)`.
+  - Refactor `mergeConsecutiveMessages(messages: any[]): any[]` into a clean helper (`concatMessageContent(prev: any, current: any)`).
 - **`src/index.ts`**:
-  - Extract header preparation into `prepareProxyHeaders(req: Request, targetHost: string): Headers`.
-  - Extract streaming vs non-streaming response processing for `executeOpenAICompat` into helper functions.
-  - Extract URL and payload builder for `executeGoogleNative` into `buildGoogleNativeRequest(model: string, action: string, req: Request)`.
+  - Replace the 65-second outer request stall on 429 rate limits with a **2-second key rotation delay**. If all keys for that model are exhausted/cooled down, fail fast so Fusion fallback advances instantly.
+  - Extract `prepareProxyHeaders(req: Request, targetHost: string): Headers`.
+  - Extract streaming vs non-streaming response handling for `executeOpenAICompat` into helper routines.
+  - Extract `buildGoogleNativeRequest(model: string, action: string, req: Request)`.
 
 ---
 
 # 5. STRICT PROJECT CONVENTIONS (STATIC)
 1. **Bun Native TypeScript:** Use native Bun APIs (`Bun.serve`, `fetch`, `AbortSignal`). Do NOT introduce node-specific dependencies or legacy wrappers.
-2. **Zero Behavior Shift:** Gate 1 static key validation, Valkey cooldown (65s floor for Google, 1wk for 401/403), stream transformation (`createStreamTransformer`), and thought signature injection MUST remain completely identical.
-3. **Fail Fast & Surface Errors:** Do not swallow exceptions or hide HTTP status codes.
+2. **Zero Behavior Shift:** Gate 1 static key validation, Valkey cooldown state, stream transformation (`createStreamTransformer`), and thought signature injection MUST remain completely intact.
+3. **2-Second 429 Rotation Guarantee:** Ensure 429 retries wait exactly 2,000ms between key rotations and never freeze user requests in outer 65s delays.
 
 ---
 
 # 6. PROVIDED FILES
-The full source code of `src/lib.ts` (Lines 1-267) and `src/index.ts` have been copied to `admin/studio/upload/lib.ts` and `admin/studio/upload/index.ts`.
+The full source code of `src/lib.ts` and `src/index.ts` are located at `admin/studio/upload/lib.ts` and `admin/studio/upload/index.ts`.
 
 ---
 
@@ -83,7 +91,7 @@ The full source code of `src/lib.ts` (Lines 1-267) and `src/index.ts` have been 
 ### Part 1: The Active Demonstration Checklist
 You MUST explicitly answer these 4 questions before writing any code:
 - **Q1 (TypeScript/Bun):** State: "I understand I must use strict TypeScript definitions without breaking existing Bun native types."
-- **Q2 (No Behavior Change):** State: "I confirm all status codes, header forwarding, streaming behavior, and Valkey cooldown logic remain unchanged."
+- **Q2 (2s 429 Rotation & No Stall):** State: "I confirm 429 rate limits will trigger a 2-second key rotation and eliminate 65-second request stalls."
 - **Q3 (Zero-Dicts/Strict Dot Notation):** State: "I will use clear object properties and typed parameters."
 - **Q4 (No Elision):** State: "I understand I must output the complete file without truncation or `// ... rest of code`."
 
