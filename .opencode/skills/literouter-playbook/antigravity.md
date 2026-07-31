@@ -56,7 +56,34 @@ print(interaction.output_text)
 
 ---
 
-## 3. Key Differences at a Glance
+## 3. LiteRouter Proxying for Antigravity
+
+LiteRouter proxies Antigravity requests through the Google Interactions endpoint (`/v1beta/interactions` or `/v1/interactions`).
+
+### Routing in LiteRouter
+- **Route:** `POST /v1beta/interactions` or `POST /v1/interactions`
+- **Handler:** `executeGoogleInteractions` in `src/handlers/google_native.ts`
+- **Key Rotation:** LiteRouter rotates Google API keys from `GOOGLE_API_KEYS` using `ModelFirstRouter.getAvailableKey("google", ...)`.
+- **Upstream Target:** `https://generativelanguage.googleapis.com/v1beta/interactions`
+- **Auth Header:** Sets `x-goog-api-key` with the active rotated key; removes `Authorization` header.
+- **First-Byte Ghosting:** Applies to Google provider — if the upstream accepts TCP but sends 0 bytes within `LITEROUTER_NO_RESPONSE_TIMEOUT_MS` (default 5s), LiteRouter rotates to the next key **without cooldown penalty** after a 1s delay (`LITEROUTER_NO_RESPONSE_RETRY_DELAY_MS`).
+- **429 Handling:** On rate limit, the key is placed on 65s cooldown and the request is retried with the next available key. If all keys are exhausted, LiteRouter returns HTTP 429 immediately without stalling.
+
+### Via LiteRouter (Recommended)
+```bash
+curl -X POST "http://localhost:7766/v1beta/interactions" \
+  -H "Authorization: Bearer ${LITEROUTER_AUTH_KEY}" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "agent": "antigravity-preview-05-2026",
+    "input": "Clone https://github.com/example/repo.git, run pytest, fix any failing tests, and report results.",
+    "environment": "remote"
+  }'
+```
+
+---
+
+## 4. Key Differences at a Glance
 
 | Feature | Standard Models (`gemini-3.5-flash` / `3.6-flash`) | Antigravity Agent (`antigravity-preview-05-2026`) |
 | :--- | :--- | :--- |
@@ -68,7 +95,7 @@ print(interaction.output_text)
 
 ---
 
-## 4. Primary Use Cases
+## 5. Primary Use Cases
 
 1. **Deep Research & Repository Investigation:** Give Antigravity a Git URL or research task. It clones repos, browses documentation, runs python data processing scripts, and returns a verified Markdown report.
 2. **Autonomous Project Scaffolding:** Scaffolds full multi-file applications (`package.json`, source files, test suites), runs dependency installs (`npm install`, `pip install`), and verifies builds.
@@ -77,7 +104,7 @@ print(interaction.output_text)
 
 ---
 
-## 5. Execution Guardrails & Hard Limits
+## 6. Execution Guardrails & Hard Limits
 
 While 1 API request triggers an autonomous loop, Google builds physical circuit breakers into the environment to stop runaways:
 
@@ -97,7 +124,7 @@ The execution environment is a **sandboxed container in Google Cloud**, NOT your
 
 ---
 
-## 6. Multi-Turn Architecture & State Persistence
+## 7. Multi-Turn Architecture & State Persistence
 
 To perform large tasks without hitting turn limits or execution timeouts, use a **sliced multi-turn loop** with `environment_id`:
 
@@ -111,7 +138,7 @@ To perform large tasks without hitting turn limits or execution timeouts, use a 
        │            └─► Edits files & runs tests inside sandbox
        │
        └─► Turn 3: (pass environment_id: "env_abc123") "Execute phase 2: Update callers & verify build."
-                    └─► Edits files & confirms clean build
+                     └─► Edits files & confirms clean build
 ```
 
 ### Passing `environment_id`
@@ -126,7 +153,7 @@ Re-using `environment_id` keeps all installed dependencies, edited files, and wo
 
 ---
 
-## 7. Deterministic Orchestration & Artifact Extraction (PEP 723)
+## 8. Deterministic Orchestration & Artifact Extraction (PEP 723)
 
 ### A. Modular Research Prompt (`research_prompt.md`)
 Separate prompt logic (Markdown instruction file) from execution logic (Python script):
@@ -233,7 +260,7 @@ uv run run_research.py
 
 ---
 
-## 8. Persona Council & Risk Committee Deep Research Pattern
+## 9. Persona Council & Risk Committee Deep Research Pattern
 
 To perform institutional-grade research without relying on single-pass or superficial summaries, structure your Antigravity research interaction into a **5-Persona Research Council & Risk Committee Protocol**:
 

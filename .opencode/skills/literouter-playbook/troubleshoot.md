@@ -5,10 +5,9 @@ This operational playbook provides detailed diagnostic procedures, error pattern
 ---
 
 ## Table of Contents
-
 1. [Gateway Health & Live Probes](#1-gateway-health--live-probes)
-2. [Diagnosing Redis/Valkey Connectivity](#2-diagnosing-redisvalkey-connectivity)
-3. [429 Rate Limit Cooldowns & Key Exhaustion](#3-429-rate-limit-cooldowns--key-exhaustion)
+2. [Diagnosing Redis/Valkey Connectivity & Lua Script Errors](#2-diagnosing-redisvalkey-connectivity--lua-script-errors)
+3. [429 Rate Limit Cooldowns & Key Exhaustion Debugging](#3-429-rate-limit-cooldowns--key-exhaustion-debugging)
 4. [First-Byte Ghosting Retries (`NoResponseError`)](#4-first-byte-ghosting-retries-noresponseerror)
 5. [Auth Quarantine Debugging (7-Day TTL)](#5-auth-quarantine-debugging-7-day-ttl)
 6. [Inspecting Request Traces in `logs/traces/<reqId>.json`](#6-inspecting-request-traces-in-logstracesreqidjson)
@@ -59,7 +58,7 @@ bun run scripts/doctor.ts
 
 ---
 
-## 2. Diagnosing Redis/Valkey Connectivity
+## 2. Diagnosing Redis/Valkey Connectivity & Lua Script Errors
 
 LiteRouter requires Redis / Valkey for sliding-window token/request tracking and multi-key cooldown management. **Redis is a mandatory dependency; no in-memory fallback exists.**
 
@@ -86,7 +85,7 @@ When `router.connect()` runs at boot:
 The sliding-window quota is computed atomically in Redis via Lua:
 - **ZSET Key Format:** `rolling:{provider}:{keyHash}:{modelName}`
 - **ZSET Eviction:** Purges records older than 60s (`ZREMRANGEBYSCORE key -inf now-60`).
-- **Member Format:** `<timestamp>-<randomStr>:<estimatedTokens>`
+- **Member Format:** `<timestamp>-<randomStr>:<estimatedTokens>` (e.g. `1711900000123-ab4f9z:1542`).
 - **Quota Calculation:**
   - `current_rpm`: Count of ZSET members in `[now - 60, now]`.
   - `current_tpm`: Sum of token counts extracted from member string suffix.
@@ -113,7 +112,7 @@ redis-cli DEL rolling:google:a1b2c3d4e5f67890:gemini-3.1-flash-lite
 
 ---
 
-## 3. 429 Rate Limit Cooldowns & Key Exhaustion
+## 3. 429 Rate Limit Cooldowns & Key Exhaustion Debugging
 
 When an upstream provider returns HTTP 429 or quota error text, the active API key is placed into Redis cooldown.
 
@@ -177,7 +176,7 @@ First-byte timeouts are handled via `fetchWithFirstByteTimeout()`:
 ### Ghosting Rotation Policy (No Cooldown Penalty)
 - **Crucial Rule:** First-byte ghosting is treated as a transient network connection stall, **NOT** an API key failure.
 - When `NoResponseError` is caught in `executeOpenAICompat`:
-  1. **No Redis cooldown is placed on the key.**
+  1. **No Redis Cooldown is placed on the key.**
   2. Gateway logs: `🟡 [NO_RESPONSE <reqId>] key=... sent nothing within 5000ms, rotating key (no cooldown)`.
   3. Gateway records trace: `{ status: "no-response", body: "upstream sent no bytes" }`.
   4. Gateway waits `LITEROUTER_NO_RESPONSE_RETRY_DELAY_MS` (1000ms) and rotates to the next available key.
@@ -319,12 +318,12 @@ bun run complexity
 ### Antigravity Engine (`antigravity-preview-05-2026`) / HTTP 400
 - **Symptom:** HTTP 400 error `Cannot text generation` or `Invalid action`.
 - **Cause:** `antigravity-preview-05-2026` is an **Agent Execution Engine**, not a standard completion model. Calling it via `:generateContent` or `/v1/chat/completions` fails.
-- **Fix:** Route via Google Interactions API (`POST /v1beta/interactions` or `/v1/interactions`), handled by `executeGoogleInteractions` in `src/handlers/google_native.ts`.
+- **Fix:** Route via Google Interactions API (`POST /v1beta/interactions` or `/v1/interactions`). Via LiteRouter, use `http://localhost:7766/v1beta/interactions`.
 
 ### Gemma Engine Crash / HTTP 400
 - **Symptom:** Google upstream returns 400 error for Gemma model calls.
 - **Cause:** Upstream Gemma endpoint rejects unsupported parameters (`presence_penalty`, `frequency_penalty`, `logit_bias`, `thinkingConfig`, `thinking`).
-- **Fix:** LiteRouter automatically strips these fields via `cleanGemmaPayload()` in `src/transformers/payload.ts`. The Google native endpoint is handled by `executeGoogleNative` in `src/handlers/google_native.ts`. Verify model name in `models.json` includes `"gemma"`.
+- **Fix:** LiteRouter automatically strips these fields via `cleanGemmaPayload()`. Verify model name in `models.json` includes `"gemma"`.
 
 ### Fusion Chain & Sticky Fallback Summary
 - **Circuit Breaker TTL:** 65 seconds (`CIRCUIT_TTL`). Opens upstream circuit on 429 or 5xx errors.

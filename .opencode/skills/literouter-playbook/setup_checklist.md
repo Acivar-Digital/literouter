@@ -423,74 +423,58 @@ Every addition, removal, or modification of models, providers, API key configura
 
 ## 9. 8-File Modular Architecture Overview
 
-LiteRouter is structured into 8 modular TypeScript source files located in `src/`:
+LiteRouter's source code is organized into 8 modular files under `src/`:
 
 ```
 src/
 ├── config/
-│   └── env.ts            # Environment, model/provider limits, static key validation & helper utils
+│   └── env.ts            # Environment vars, limits, key validation, helpers
 ├── network/
-│   └── fetcher.ts        # First-byte timeout fetcher & NoResponseError definition
+│   └── fetcher.ts        # First-byte timeout fetcher & NoResponseError
 ├── transformers/
-│   ├── thinking.ts       # Reasoning effort & thinking configuration translation
-│   └── payload.ts        # Payload cleaning, thought signature injection, latex normalization & streaming SSE
+│   ├── thinking.ts       # Reasoning effort & thinking translation
+│   └── payload.ts        # Payload cleaning, thought signatures, SSE streaming
 ├── handlers/
-│   ├── openai_compat.ts  # OpenAI-compatible API execution & first-byte retry loop
-│   └── google_native.ts  # Google Native API execution & Google Interactions handler
-├── lib.ts                # Barrel re-export file exporting config, network, thinking & payload modules
-└── index.ts              # Server entry point (Bun port 7766), Redis/Valkey router, Fusion state & routes
+│   ├── openai_compat.ts  # OpenAI-compatible handler (key rotation, ghosting, 429)
+│   └── google_native.ts  # Google native & interactions handler
+├── lib.ts                # Barrel re-export for test compatibility
+└── index.ts              # Server bootstrap, Redis router, Fusion state, routes
 ```
 
-### File Responsibilities Matrix
-
-| File | Responsibilities |
-| :--- | :--- |
-| **`src/config/env.ts`** | Centralizes configuration and environment variables (`LITEROUTER_PORT`, `LITEROUTER_AUTH_KEY`, `LITEROUTER_COLLAPSE_REASONING`, `LITEROUTER_ROTATE_DELAY_MS`, `LITEROUTER_MAX_ATTEMPTS`, `LITEROUTER_HTTP_TIMEOUT_MS`, `LITEROUTER_NO_RESPONSE_TIMEOUT_MS`, `LITEROUTER_NO_RESPONSE_RETRY_DELAY_MS`, `MIN_ROTATE_DELAY_MS=2000`). Defines provider/model limits, static key validation (`staticValidateKeys`), provider delay calculations (`getProviderDelayMs`), reset delay parsers (`parseResetDelay`), token usage extraction (`parseUsageFromJson`), and API URL mappings (`PROVIDER_API_URLS`). |
-| **`src/network/fetcher.ts`** | Exposes `fetchWithFirstByteTimeout` and `NoResponseError`. Monitors upstream requests to detect silent backends that accept TCP connections but send 0 response bytes within `LITEROUTER_NO_RESPONSE_TIMEOUT_MS`. |
-| **`src/transformers/thinking.ts`** | Translates provider-specific reasoning/thinking options into standard OpenAI-style `reasoning_effort` fields (`extractThinkingLevel`, `applyReasoningEffort`, `translateGoogleThinking`). |
-| **`src/transformers/payload.ts`** | Manages thought signatures (`injectThoughtSignature`, `extractThoughtSignature`), token estimation (`estimateTokens`), Gemma unsupported field stripping (`cleanGemmaPayload`), LaTeX formatting (`cleanLatexSymbols`), message merging (`mergeConsecutiveMessages`), non-streaming reasoning transformations (`transformNonStreaming`), and streaming SSE stream transformations (`createStreamTransformer`). |
-| **`src/handlers/openai_compat.ts`** | Implements `executeOpenAICompat`, `processOpenAIError`, and `processOpenAISuccess`. Manages key rotation loops for OpenAI-compatible providers (OpenRouter, NVIDIA, Zen, Google OpenAI-compat), error handling, 502 grace retries, and first-byte ghosting retry handling. |
-| **`src/handlers/google_native.ts`** | Implements `executeGoogleNative` (for Google `:generateContent` / `:streamGenerateContent` native endpoints) and `executeGoogleInteractions` (for Google agent API `antigravity-preview-05-2026`). Manages query parameter signing, error handling, and streaming output. |
-| **`src/lib.ts`** | **Barrel re-export file**. Exports all public types, constants, and utilities from `config/env`, `network/fetcher`, `transformers/thinking`, and `transformers/payload` for clean modular imports across handlers. Serves as a re-export barrel specifically for test compatibility, allowing test files to import from `src/lib.ts` instead of deep-importing individual modules. |
-| **`src/index.ts`** | Application entry point running `serve` on port 7766. Contains trace logging (`recordTrace`), emoji logging (`logState`, `logWarn`, `logError`), static key verification, model/fusion registry loading (`models.json`, `fusion.json`), Valkey/Redis `ModelFirstRouter` (ZSET rolling quota Lua script, `reportError` cooldowns, usage recording), Fusion state (in-memory circuit breaker and sticky position), auth checking (`verifyAuthKey`), and HTTP route dispatchers. |
+### Key Architectural Points
+- **`src/lib.ts`** acts as a pure re-export barrel file to maintain 100% backward compatibility for all existing unit tests in `tests/unit/core/`.
+- **`src/config/env.ts`** centralizes all configuration. `MODEL_LIMITS` is now empty `{}` — rate limits are enforced purely by upstream HTTP 429 responses and Redis cooldowns.
+- **`src/network/fetcher.ts`** provides `fetchWithFirstByteTimeout` and `NoResponseError` for ghosting detection.
+- **`src/handlers/openai_compat.ts`** implements first-byte ghosting retries (no cooldown penalty) and 429 rotation with 2s minimum delay.
+- **`src/handlers/google_native.ts`** implements Google native endpoints and the Interactions API for Antigravity.
 
 ---
 
 ## 10. First-Byte Ghosting & 429 Zero-Stall Rotation
 
-### 10.1 First-Byte Ghosting Retry Logic
+### First-Byte Ghosting (5s Timeout, 1s Retry, No Cooldown)
 
-When an upstream provider accepts a TCP connection but stalls silently without returning HTTP headers or bytes (known as a "ghost" connection):
+When an upstream provider accepts a TCP connection but sends 0 response bytes:
 
-1. **Timeout Detection (`src/network/fetcher.ts`):**
-   `fetchWithFirstByteTimeout` sets a timer for `LITEROUTER_NO_RESPONSE_TIMEOUT_MS` (configured via `LITEROUTER_NO_RESPONSE_TIMEOUT`, default `5` seconds). If 0 bytes are received before the timer fires, the request aborts and throws `NoResponseError`.
+1. `fetchWithFirstByteTimeout` in `src/network/fetcher.ts` detects the stall after `LITEROUTER_NO_RESPONSE_TIMEOUT_MS` (default 5s).
+2. `NoResponseError` is thrown and caught in `executeOpenAICompat`.
+3. The gateway waits `LITEROUTER_NO_RESPONSE_RETRY_DELAY_MS` (default 1s) and rotates to the next key.
+4. **No Redis cooldown is placed on the key** — ghosting is treated as a transient network stall, not a key failure.
+5. If all `maxAttempts` keys ghost, the gateway logs exhaustion and stops.
 
-2. **Non-Google Key Rotation without Cooldown (`src/handlers/openai_compat.ts`):**
-   In `executeOpenAICompat`, when `e instanceof NoResponseError` is caught:
-   - A warning log is emitted (`EMOJI.amber`).
-   - The gateway delays for `LITEROUTER_NO_RESPONSE_RETRY_DELAY_MS` (configured via `LITEROUTER_NO_RESPONSE_RETRY_DELAY_MS` or `LITEROUTER_NO_RESPONSE_RETRY_DELAY`, default `1000` ms / 1 second).
-   - The key is rotated to the next available key **WITHOUT calling `router.reportError`**. No cooldown is imposed on the key because the provider did not return a rate limit or error payload.
+### 429 Rate Limit Rotation (2s Delay, Immediate Exhaustion)
 
-3. **Exhaustion Guard:**
-   If all `maxAttempts` keys ghost without sending data, the gateway logs exhaustion (`EMOJI.exhausted`) and stops the loop, preventing infinite hangs or unbounded retries.
+1. On HTTP 429, `router.reportError` places the active key on a **65s cooldown** in Valkey/Redis.
+2. The gateway rotates to the next available key with a minimum 2s delay (`MIN_ROTATE_DELAY_MS`).
+3. If all keys are in cooldown or quota-exhausted, `router.getAvailableKey` throws.
+4. The handler catches this and **immediately returns HTTP 429** to the downstream client — no 65s stall.
 
-### 10.2 429 Rotation with 2s Minimum Delay & Immediate Exhaustion
+### Environment Variables
 
-1. **Rotation Delay Floor (`MIN_ROTATE_DELAY_MS = 2000`):**
-   Key rotation delay between attempts is controlled by `getProviderDelayMs(provider)`. It resolves the environment variable `${PROVIDER}_MIN_DELAY_MS` or `LITEROUTER_ROTATE_DELAY_MS` (default 10s), but enforces a **hard minimum floor of 2000ms (2s)** (`MIN_ROTATE_DELAY_MS`).
-
-2. **Immediate Exhaustion Output (No 65s Stalls):**
-   When upstream returns 429 rate limit or quota errors, `router.reportError` places the active key on a 65s cooldown in Valkey/Redis.
-   If all available keys in the pool are in cooldown or quota-exhausted, `router.getAvailableKey` throws:
-   `All keys for {provider} are in cooldown or have exhausted quota for model {modelName}.`
-   The handler catches this error and **immediately returns HTTP 429** to the downstream client without stalling or waiting out long 65s cooldown windows.
-
-### 10.3 Ghosting vs 429 Rotation Comparison
-
-| Behavior | Ghosting (NoResponseError) | 429 Rate Limit |
-|----------|---------------------------|----------------|
-| **Detection** | 0 bytes received within `LITEROUTER_NO_RESPONSE_TIMEOUT_MS` (default 5s) | Upstream returns HTTP 429 status |
-| **Retry Delay** | `LITEROUTER_NO_RESPONSE_RETRY_DELAY_MS` (default 1000ms / 1s) | `getProviderDelayMs(provider)` (min 2000ms / 2s) |
-| **Cooldown on Key** | **None** — key is NOT placed on cooldown | **65s** — key is placed on `rate_limited` cooldown in Redis |
-| **Exhaustion Behavior** | Logs exhaustion and breaks loop after `maxAttempts` ghosts | Throws "All keys exhausted" → handler returns HTTP 429 immediately to client |
-| **Reason** | Provider accepted connection but sent no data; key is not at fault | Provider explicitly rate-limiting; key must cool down |
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `LITEROUTER_NO_RESPONSE_TIMEOUT` | `5` (seconds) | First-byte ghosting timeout |
+| `LITEROUTER_NO_RESPONSE_RETRY_DELAY_MS` | `1000` (ms) | Delay before retrying after ghosting |
+| `LITEROUTER_ROTATE_DELAY_MS` | `10000` (ms) | Base delay between key rotations on error |
+| `MIN_ROTATE_DELAY_MS` | `2000` (ms) | Hard minimum floor for rotation delay |
+| `LITEROUTER_MAX_ATTEMPTS` | `3` | Max key failover attempts per request |

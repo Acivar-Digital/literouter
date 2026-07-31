@@ -14,13 +14,12 @@ LiteRouter is configured via environment variables. Below is the comprehensive b
 |----------|---------------|-----------|----------------------------------|
 | `LITEROUTER_PORT` | `7766` | `number` | `parseInt(Bun.env.LITEROUTER_PORT \|\| "7766", 10)`<br>HTTP listening port for the Bun gateway server. |
 | `LITEROUTER_AUTH_KEY` | `""` (disabled) | `string` | `Bun.env.LITEROUTER_AUTH_KEY \|\| ""` <br>Bearer authentication secret. When non-empty, requests must provide matching token via `Authorization: Bearer <key>`, `x-goog-api-key: <key>`, or `?key=<key>` query parameter. |
-| `LITEROUTER_COLLAPSE_REASONING` | `false` | `boolean` | `(Bun.env.LITEROUTER_COLLAPSE_REASONING \|\| "false").toLowerCase() === "true"`<br>When enabled (`true`), transforms upstream thinking/reasoning outputs (`reasoning_content`, `thought`, `thought_summary`) into inline `<thought>...</thought>` blocks within standard text content. |
 | `LITEROUTER_ROTATE_DELAY_MS` | `10000` | `number` | `parseInt(Bun.env.LITEROUTER_ROTATE_DELAY_MS \|\| "10000", 10)`<br>Base delay in milliseconds between key rotations upon error or rate limit. Enforces minimum floor `MIN_ROTATE_DELAY_MS` (2000ms). Can be overridden per provider via `{PROVIDER}_MIN_DELAY_MS` (e.g. `GOOGLE_MIN_DELAY_MS`). |
-| `LITEROUTER_MAX_ATTEMPTS` | `3` | `number` | `parseInt(Bun.env.LITEROUTER_MAX_ATTEMPTS \|\| "3", 10)`<br>Maximum number of key failover attempts per request per model. Clamped to `min(num_configured_keys, LITEROUTER_MAX_ATTEMPTS)`. |
 | `LITEROUTER_HTTP_TIMEOUT` | `300` | `number` | `parseInt(Bun.env.LITEROUTER_HTTP_TIMEOUT \|\| "300", 10) * 1000`<br>Upstream total HTTP request timeout in **seconds** (converted to milliseconds: `300,000ms`). |
 | `LITEROUTER_NO_RESPONSE_TIMEOUT` | `5` | `number` | `parseInt(Bun.env.LITEROUTER_NO_RESPONSE_TIMEOUT \|\| "5", 10) * 1000`<br>First-byte / initial response header timeout in **seconds** (converted to milliseconds: `5,000ms`). If upstream sends zero bytes within this window, `fetchWithFirstByteTimeout` throws `NoResponseError` for fast key rotation without placing the key on cooldown. |
-| `LITEROUTER_NO_RESPONSE_RETRY_DELAY_MS` | `1000` | `number` | `parseInt(Bun.env.LITEROUTER_NO_RESPONSE_RETRY_DELAY_MS \|\| Bun.env.LITEROUTER_NO_RESPONSE_RETRY_DELAY \|\| "1000", 10)`<br>Delay in milliseconds before retrying with a rotated key after a `NoResponseError` (ghosted request). Also accepts the legacy `LITEROUTER_NO_RESPONSE_RETRY_DELAY` env var. |
-| `MIN_ROTATE_DELAY_MS` | `2000` | `number` | Hardcoded constant `2000`<br>Absolute minimum delay floor (2s) enforced on all key rotation delays. Cannot be overridden via environment variable. |
+| `LITEROUTER_NO_RESPONSE_RETRY_DELAY_MS` | `1000` | `number` | `parseInt(Bun.env.LITEROUTER_NO_RESPONSE_RETRY_DELAY_MS \|\| Bun.env.LITEROUTER_NO_RESPONSE_RETRY_DELAY \|\| "1000", 10)`<br>Delay in milliseconds before retrying with a rotated key after a `NoResponseError` (ghosted request). |
+| `LITEROUTER_COLLAPSE_REASONING` | `false` | `boolean` | `(Bun.env.LITEROUTER_COLLAPSE_REASONING \|\| "false").toLowerCase() === "true"`<br>When enabled (`true`), transforms upstream thinking/reasoning outputs (`reasoning_content`, `thought`, `thought_summary`) into inline `<thought>...</thought>` blocks within standard text content. |
+| `LITEROUTER_MAX_ATTEMPTS` | `3` | `number` | `parseInt(Bun.env.LITEROUTER_MAX_ATTEMPTS \|\| "3", 10)`<br>Maximum number of key failover attempts per request per model. Clamped to `min(num_configured_keys, LITEROUTER_MAX_ATTEMPTS)`. |
 
 ### Redis / Valkey State Backend
 
@@ -40,10 +39,6 @@ LiteRouter is configured via environment variables. Below is the comprehensive b
 | `OPENROUTER_API_KEYS` | `""` | Comma-separated list of OpenRouter API keys. Processed by `staticValidateKeys`. |
 | `ZEN_API_KEYS` | `""` | Comma-separated list of Zen API keys. Processed by `staticValidateKeys`. |
 | `{PROVIDER}_MIN_DELAY_MS` | `LITEROUTER_ROTATE_DELAY_MS` | Per-provider override for key rotation delay (e.g. `GOOGLE_MIN_DELAY_MS=0`, `NVIDIA_MIN_DELAY_MS=5000`). Enforces minimum `MIN_ROTATE_DELAY_MS` (2000ms). |
-| `GOOGLE_BASE_URL` | *(none)* | Custom base URL for Google API. Auto-normalized: appends `/openai` if base does not end with `/openai` or `/v1beta`, appends `/chat/completions` if missing. Default resolved URL is `https://generativelanguage.googleapis.com/v1beta/openai/chat/completions`. |
-| `NVIDIA_BASE_URL` | `https://integrate.api.nvidia.com/v1` | Custom base URL for NVIDIA API. Appended with `/chat/completions`. |
-| `OPENROUTER_BASE_URL` | `https://openrouter.ai/api/v1` | Custom base URL for OpenRouter API. Appended with `/chat/completions`. |
-| `ZEN_BASE_URL` | `https://opencode.ai/zen/v1` | Custom base URL for Zen API. Appended with `/chat/completions`. |
 
 ---
 
@@ -123,16 +118,6 @@ export const PROVIDER_API_URLS: Record<string, string> = {
 | `google` | `GOOGLE_BASE_URL` | Auto-normalized `GOOGLE_BASE_URL` or default `https://generativelanguage.googleapis.com/v1beta/openai/chat/completions` |
 | `zen` | `ZEN_BASE_URL` | `${ZEN_BASE_URL \|\| "https://opencode.ai/zen/v1"}/chat/completions` |
 
-### Google Auto-Normalization Logic
-
-When `GOOGLE_BASE_URL` is set, the following normalization is applied in order:
-1. If the URL ends with `/openai`, use it as-is.
-2. Else if the URL ends with `/v1beta`, append `/openai`.
-3. Else use the URL unchanged.
-4. If the result does not end with `/chat/completions`, append it.
-
-When `GOOGLE_BASE_URL` is not set, the default endpoint `https://generativelanguage.googleapis.com/v1beta/openai/chat/completions` is used.
-
 ---
 
 ## 4. Redis Lua Quota Evaluation (`QUOTA_CHECK_SCRIPT`) & Sliding Window
@@ -186,7 +171,7 @@ end
    - `current_rpm` is computed as `#members`.
    - `current_tpm` is computed by parsing the token suffix (`:tokens`) of each member string.
 5. **Quota Check Logic**:
-   - Rejects if `current_rpm >= max_rpm` OR `(current_tpm + estimated_tokens) > max_tpm`, returning `{0, current_rpm, current_tpm}`.
+   - Rejects if `current_rpm >= max_rpm` OR `(current_tpm + estimatedTokens) > max_tpm`, returning `{0, current_rpm, current_tpm}`.
    - If quota is available, adds member via `ZADD`, sets key TTL to 120 seconds (`EXPIRE`), and returns `{1, current_rpm, current_tpm}`.
 
 ---
