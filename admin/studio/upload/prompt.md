@@ -6,7 +6,7 @@ This is **LiteRouter**, a high-density TypeScript API Gateway running on **Bun**
 ---
 
 # 2. THE PROBLEM & OBJECTIVE
-Our cyclomatic complexity analysis (`bun run complexity`) and runtime trace audit revealed two major issues in `src/index.ts` and `src/lib.ts`:
+Our cyclomatic complexity analysis (`bun run complexity`) and runtime trace audit revealed three major issues in `src/index.ts` and `src/lib.ts`:
 
 ### A. High Cyclomatic Complexity (Refactoring Goal):
 1. **`executeOpenAICompat`** in `src/index.ts`: Cyclomatic Complexity = **47** (🚨 HIGH)
@@ -14,19 +14,29 @@ Our cyclomatic complexity analysis (`bun run complexity`) and runtime trace audi
 3. **`translateGoogleThinking`** in `src/lib.ts`: Cyclomatic Complexity = **16** (🚨 HIGH)
 4. **`mergeConsecutiveMessages`** in `src/lib.ts`: Cyclomatic Complexity = **16** (🚨 HIGH)
 
-### B. 429 Request-Holding Stall Bug (Feature Addition):
+### B. 429 Request-Holding Stall Bug (Feature Addition #1):
 Currently, when a provider like OpenRouter returns a `429 Too Many Requests` or `rate_limit`:
 - The active key is correctly placed into 65s Valkey cooldown.
 - **BUT if all keys for that model hit 429 or are in cooldown, the inner loop throws, causing the incoming HTTP request to enter a 65-second outer sleep loop (`await new Promise(r => setTimeout(r, 65000))`).** This holds the client's HTTP request hostage in a 65s stall before attempting round 2.
 
+### C. Upstream Ghosting Across All Non-Google Providers (Feature Addition #2):
+When an upstream provider (such as OpenRouter, NVIDIA, or Zen) "ghosts" (opens the TCP connection but sends no HTTP response bytes within a first-byte window), the client (e.g. OpenCode) experiences an upstream timeout.
+- We need first-byte ghosting detection to apply across **ALL non-Google providers** (`executeOpenAICompat`).
+- The ghosting timeout MUST be configurable via `.env`:
+  `LITEROUTER_NO_RESPONSE_TIMEOUT=5` (default: 5 seconds).
+- If Key 1 receives zero response bytes within `LITEROUTER_NO_RESPONSE_TIMEOUT` seconds (e.g., 5s), LiteRouter MUST immediately abort the fetch without penalizing Key 1 (no cooldown), log the ghost event, and re-send the exact same request to Key 2.
+
 ### Definition of Done:
-1. **2-Second 429 Rotation Feature**:
-   - When a 429 rate limit response is received from OpenRouter or any provider, place the key in Valkey cooldown (`65s`), wait **2 seconds** (`2,000ms`), and immediately rotate to the next available key.
-   - If **all keys for the provider/model are exhausted or in cooldown**, DO NOT force the client's request to wait 65 seconds in outer backoff loop. Immediately return/failover so Fusion chain can try the next fallback model without holding the client request hostage.
-2. **Cyclomatic Complexity Reduction**:
+1. **2-Second 429 Rotation & Anti-Stall**:
+   - On 429 rate limit from any provider, place the key in 65s cooldown, wait **2 seconds** (`2,000ms`), and rotate to the next key.
+   - If all keys are exhausted/cooled down, DO NOT force the client to sleep 65s; fail fast or advance Fusion chain immediately.
+2. **.env-Configurable 5s Ghosting Rotation for All Non-Google Providers**:
+   - Read `LITEROUTER_NO_RESPONSE_TIMEOUT` from `Bun.env` (default to `5` seconds).
+   - If an upstream request sends no first byte within `LITEROUTER_NO_RESPONSE_TIMEOUT` seconds, catch `NoResponseError`, log warning, and immediately retry the same request on the next key (Key 2) without placing Key 1 in cooldown.
+3. **Cyclomatic Complexity Reduction**:
    - Modularize `executeOpenAICompat` and `executeGoogleNative` into focused helper functions so no single function exceeds CC **15**.
    - Refactor `translateGoogleThinking` and `mergeConsecutiveMessages` in `src/lib.ts`.
-3. **100% Test Parity**:
+4. **100% Test Parity**:
    - Pass all unit tests in `bun test` with zero breaking changes to headers, streaming transformers, or thought signatures.
 
 ---
@@ -64,12 +74,14 @@ export interface FusionConfig {
 
 # 4. SURGICAL INSTRUCTIONS
 - **`src/lib.ts`**:
-  - Refactor `translateGoogleThinking(data: any): any` into `extractThinkingLevel(data: any)` and `applyReasoningEffort(data: any, level?: string)`.
-  - Refactor `mergeConsecutiveMessages(messages: any[]): any[]` into a clean helper (`concatMessageContent(prev: any, current: any)`).
+  - `fetchWithFirstByteTimeout(url, init, opts)` must enforce `noResponseTimeoutMs` (parsed from `Bun.env.LITEROUTER_NO_RESPONSE_TIMEOUT` || "5" * 1000).
+  - Refactor `translateGoogleThinking(data: any): any` into `extractThinkingLevel` and `applyReasoningEffort`.
+  - Refactor `mergeConsecutiveMessages(messages: any[]): any[]` into a clean content merger helper.
 - **`src/index.ts`**:
-  - Replace the 65-second outer request stall on 429 rate limits with a **2-second key rotation delay**. If all keys for that model are exhausted/cooled down, fail fast so Fusion fallback advances instantly.
+  - In `executeOpenAICompat`, handle `NoResponseError` for all non-Google providers: log warning, retain key health (no cooldown), wait `NO_RESPONSE_RETRY_DELAY_MS` (or 0ms), and rotate to Key 2.
+  - Remove 65-second outer request stall on 429 rate limits. Rotate after 2 seconds (`2,000ms`).
   - Extract `prepareProxyHeaders(req: Request, targetHost: string): Headers`.
-  - Extract streaming vs non-streaming response handling for `executeOpenAICompat` into helper routines.
+  - Extract streaming vs non-streaming response handling.
   - Extract `buildGoogleNativeRequest(model: string, action: string, req: Request)`.
 
 ---
@@ -77,7 +89,7 @@ export interface FusionConfig {
 # 5. STRICT PROJECT CONVENTIONS (STATIC)
 1. **Bun Native TypeScript:** Use native Bun APIs (`Bun.serve`, `fetch`, `AbortSignal`). Do NOT introduce node-specific dependencies or legacy wrappers.
 2. **Zero Behavior Shift:** Gate 1 static key validation, Valkey cooldown state, stream transformation (`createStreamTransformer`), and thought signature injection MUST remain completely intact.
-3. **2-Second 429 Rotation Guarantee:** Ensure 429 retries wait exactly 2,000ms between key rotations and never freeze user requests in outer 65s delays.
+3. **2-Second 429 & 5-Second Ghosting Guarantees:** Ensure 429 retries wait 2,000ms between keys without 65s stalls, and ghosting requests time out after `LITEROUTER_NO_RESPONSE_TIMEOUT` seconds (default 5s) to retry Key 2.
 
 ---
 
@@ -91,7 +103,7 @@ The full source code of `src/lib.ts` and `src/index.ts` are located at `admin/st
 ### Part 1: The Active Demonstration Checklist
 You MUST explicitly answer these 4 questions before writing any code:
 - **Q1 (TypeScript/Bun):** State: "I understand I must use strict TypeScript definitions without breaking existing Bun native types."
-- **Q2 (2s 429 Rotation & No Stall):** State: "I confirm 429 rate limits will trigger a 2-second key rotation and eliminate 65-second request stalls."
+- **Q2 (2s 429 & .env 5s Ghosting Rotation):** State: "I confirm 429 retries will wait 2s without 65s stalls, and all non-Google providers will rotate to Key 2 after LITEROUTER_NO_RESPONSE_TIMEOUT seconds (default 5s) on ghosting."
 - **Q3 (Zero-Dicts/Strict Dot Notation):** State: "I will use clear object properties and typed parameters."
 - **Q4 (No Elision):** State: "I understand I must output the complete file without truncation or `// ... rest of code`."
 
