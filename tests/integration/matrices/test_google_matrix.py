@@ -35,7 +35,7 @@ openai_tools = [{
     }
 }]
 
-async def test_google_rest(model: str, stream: bool, use_tools: bool) -> bool:
+async def execute_google_rest(model: str, stream: bool, use_tools: bool) -> bool:
     action = "streamGenerateContent" if stream else "generateContent"
     url = f"{GATEWAY_URL}/v1beta/models/{model}:{action}?key={AUTH_TOKEN}"
     
@@ -83,7 +83,7 @@ async def test_google_rest(model: str, stream: bool, use_tools: bool) -> bool:
     except Exception:
         return False
 
-async def test_openai(model: str, stream: bool, use_tools: bool) -> bool:
+async def execute_openai(model: str, stream: bool, use_tools: bool) -> bool:
     url = f"{GATEWAY_URL}/v1/chat/completions"
     headers = {
         "Authorization": f"Bearer {AUTH_TOKEN}",
@@ -165,9 +165,9 @@ async def main():
                     
                     print(f"Running: {key}...")
                     if template == "Google-REST":
-                        passed = await test_google_rest(model, stream, use_tools)
+                        passed = await execute_google_rest(model, stream, use_tools)
                     else:
-                        passed = await test_openai(model, stream, use_tools)
+                        passed = await execute_openai(model, stream, use_tools)
                         
                     results[key] = passed
                     print(f"Result: {'PASS' if passed else 'FAIL'}\n")

@@ -1,84 +1,145 @@
 ---
 name: literouter-playbook
-description: LiteRouter API Gateway operational guide for Bun/TypeScript proxy on port 7766.
+description: LiteRouter API Gateway master operational guide for Bun/TypeScript proxy on port 7766.
 ---
 
 # Skill: literouter-playbook
 
-# LiteRouter API Gateway (High-Density)
+# LiteRouter API Gateway (Master Playbook)
 
-## Quick Start & Health
-- **Primary Gateway:** Bun (Port 7766)
-- **Health Check:** `curl -H "Authorization: Bearer <KEY>" localhost:7766/health`
-- **Lifecycle:** `bash scripts/start.sh` (start), `bash scripts/restart.sh` (flush+start), `bash scripts/stop.sh` (clean)
-- **Health Probe:** `bun run scripts/doctor.ts` (FYI-only key validation, does NOT gate boot)
-- **Logs:** Gateway stdout streams to tmux session `literouter`. For persistent logs, run `bun run src/index.ts 2>&1 | tee -a logs/gateway.log`. Per-request traces are in `logs/traces/` (auto-cleared at boot).
+## Quick Start & Commands
+- **Run Gateway (Foreground):** `bun run src/index.ts`
+- **Start Gateway (Tmux/Background):** `bash scripts/start.sh`
+- **Restart Gateway (Flush Valkey + Start):** `bash scripts/restart.sh`
+- **Unit Test Suite (TypeScript):** `bun test`
+- **Integration Test Suite (Python/Pytest):** `uv run pytest tests/integration/`
+- **Code Complexity Analysis:** `bun run complexity`
+- **Health Check Probe:** `curl -H "Authorization: Bearer <KEY>" localhost:7766/health`
+- **Doctor Diagnostic Script:** `bun run scripts/doctor.ts` (FYI key static validation, non-blocking)
 
-## Architecture Matrix
-| Component | Port | Primary Responsibility |
-| :--- | :--- | :--- |
-| **Bun Gateway** | 7766 | Core Proxy, Fusion logic, Reasoning, Payload cleanup |
-| **Valkey** | 6379 | State (Key rotation, Quota buckets, Cooldown ZSETs) |
+---
 
-> **Single Process:** Post-Bun consolidation there is ONE process only — Bun on 7766. The legacy TS proxy (7767) and `fusion.py` sidecar (7768) are GONE. `fusion.json` upstreams point at `localhost:7766`. Both OpenCode native `/v1beta` and pydantic-ai OpenAI-compat `/v1` hit 7766 directly. Source: `src/index.ts`.
+## 8-File Modular Architecture & Responsibilities
 
-## Routing Behaviors
-Three request surfaces on 7766, all resolving a model → provider → upstream:
+LiteRouter is structured into 8 modular TypeScript source files located in `src/`:
 
-| Incoming path | Handler | Upstream target | Typical client |
+```
+src/
+├── config/
+│   └── env.ts            # Environment, model/provider limits, static key validation & helper utils
+├── network/
+│   └── fetcher.ts        # First-byte timeout fetcher & NoResponseError definition
+├── transformers/
+│   ├── thinking.ts       # Reasoning effort & thinking configuration translation
+│   └── payload.ts        # Payload cleaning, thought signature injection, latex normalization & streaming SSE
+├── handlers/
+│   ├── openai_compat.ts  # OpenAI-compatible API execution & first-byte retry loop
+│   └── google_native.ts  # Google Native API execution & Google Interactions handler
+├── lib.ts                # Barrel re-export file exporting config, network, thinking & payload modules
+└── index.ts              # Server entry point (Bun port 7766), Redis/Valkey router, Fusion state & routes
+```
+
+### File Responsibilities Matrix
+
+| File | Responsibilities |
+| :--- | :--- |
+| **`src/config/env.ts`** | Centralizes configuration and environment variables (`LITEROUTER_PORT`, `LITEROUTER_AUTH_KEY`, `LITEROUTER_COLLAPSE_REASONING`, `LITEROUTER_ROTATE_DELAY_MS`, `LITEROUTER_MAX_ATTEMPTS`, `LITEROUTER_HTTP_TIMEOUT_MS`, `LITEROUTER_NO_RESPONSE_TIMEOUT_MS`, `LITEROUTER_NO_RESPONSE_RETRY_DELAY_MS`, `MIN_ROTATE_DELAY_MS=2000`). Defines provider/model limits, static key validation (`staticValidateKeys`), provider delay calculations (`getProviderDelayMs`), reset delay parsers (`parseResetDelay`), token usage extraction (`parseUsageFromJson`), and API URL mappings (`PROVIDER_API_URLS`). |
+| **`src/network/fetcher.ts`** | Exposes `fetchWithFirstByteTimeout` and `NoResponseError`. Monitors upstream requests to detect silent backends that accept TCP connections but send 0 response bytes within `LITEROUTER_NO_RESPONSE_TIMEOUT_MS`. |
+| **`src/transformers/thinking.ts`** | Translates provider-specific reasoning/thinking options into standard OpenAI-style `reasoning_effort` fields (`extractThinkingLevel`, `applyReasoningEffort`, `translateGoogleThinking`). |
+| **`src/transformers/payload.ts`** | Manages thought signatures (`injectThoughtSignature`, `extractThoughtSignature`), token estimation (`estimateTokens`), Gemma unsupported field stripping (`cleanGemmaPayload`), LaTeX formatting (`cleanLatexSymbols`), message merging (`mergeConsecutiveMessages`), non-streaming reasoning transformations (`transformNonStreaming`), and streaming SSE stream transformations (`createStreamTransformer`). |
+| **`src/handlers/openai_compat.ts`** | Implements `executeOpenAICompat`, `processOpenAIError`, and `processOpenAISuccess`. Manages key rotation loops for OpenAI-compatible providers (OpenRouter, NVIDIA, Zen, Google OpenAI-compat), error handling, 502 grace retries, and first-byte ghosting retry handling. |
+| **`src/handlers/google_native.ts`** | Implements `executeGoogleNative` (for Google `:generateContent` / `:streamGenerateContent` native endpoints) and `executeGoogleInteractions` (for Google agent API `antigravity-preview-05-2026`). Manages query parameter signing, error handling, and streaming output. |
+| **`src/lib.ts`** | **Barrel re-export file**. Exports all public types, constants, and utilities from `config/env`, `network/fetcher`, `transformers/thinking`, and `transformers/payload` for clean modular imports across handlers. |
+| **`src/index.ts`** | Application entry point running `serve` on port 7766. Contains trace logging (`recordTrace`), emoji logging (`logState`, `logWarn`, `logError`), static key verification, model/fusion registry loading (`models.json`, `fusion.json`), Valkey/Redis `ModelFirstRouter` (ZSET rolling quota Lua script, `reportError` cooldowns, usage recording), Fusion state (in-memory circuit breaker and sticky position), auth checking (`verifyAuthKey`), and HTTP route dispatchers. |
+
+---
+
+## Endpoints & Handlers
+
+LiteRouter exposes 4 main HTTP endpoints on port 7766:
+
+| Endpoint Path | Handler Function | Target Upstream | Target Clients |
 | :--- | :--- | :--- | :--- |
-| `/v1/chat/completions` (non-Google model) | `executeOpenAICompat` | Provider OpenAI-compat `/chat/completions` (OpenRouter/NVIDIA/Zen) | pydantic-ai, generic OpenAI clients |
-| `/v1/chat/completions` (Google model) | `executeOpenAICompat` | **Google OpenAI-compat** `https://generativelanguage.googleapis.com/v1beta/openai/chat/completions` | Google via OpenAI protocol |
-| `/v1beta/models/{model}:{action}` (native) | `executeGoogleNative` | **Google native** `https://generativelanguage.googleapis.com/v1beta/models/{model}:{action}` | OpenCode native `generateContent`/`streamGenerateContent` |
+| **`/v1/chat/completions`** | `executeOpenAICompat`<br>*(or `executeFusion` if in `fusion.json`)* | OpenAI-compatible endpoints (`/chat/completions`) for NVIDIA, OpenRouter, Zen, or Google OpenAI-compat (`/v1beta/openai/chat/completions`). | pydantic-ai, OpenAI SDKs, LiteLLM, OpenCode |
+| **`/v1beta/interactions`**<br>*(or `/v1/interactions`)* | `executeGoogleInteractions` | Google Interactions API (`https://generativelanguage.googleapis.com/v1beta/interactions`) for `antigravity-preview-05-2026`. | Google Agent clients, Antigravity runners |
+| **`/v1beta/models/*`**<br>*(e.g., `/v1beta/models/{model}:{action}`)* | `executeGoogleNative`<br>*(or `executeFusion` if in `fusion.json`)* | Google Native API (`https://generativelanguage.googleapis.com/v1beta/models/{upstream_model}:{action}`). | OpenCode native Gemini integration |
+| **`/health`** | Inline handler | Returns `{"status": "ok"}` (200 OK). | Load balancers, health checks, monitoring |
 
-- **Google-via-`/v1` is translated**: the gateway rewrites the OpenAI-format request and forwards to Google's OpenAI-compat endpoint (`/v1beta/openai/...`), NOT the native `generateContent`. Only the `/v1beta/models/...` path hits Google native. (The legacy `/v1beta/openai/chat/completions` gateway alias was removed — `/v1/chat/completions` is the sole OpenAI-compat entry point.)
-- **Fusion groups** (`pydantic/google`, `pydantic/nvidia`) arrive on `/v1` and are intercepted by `executeFusion` *before* the OpenAI-compat handler; the group's `upstream` (OpenAI-compat only) decides protocol. `pydantic/google` chains 7 Gemini Flash models starting with `google/gemini-3.5-flash-lite` and `google/gemini-3.1-flash-lite` as top workhorses (Gemma models removed). The native `/v1beta` group `local/google` was removed — see `docs/GRAVEYARD/FUSION_LOCAL_GOOGLE.md`.
-- **Payload normalization**: `translateGoogleThinking` runs for Google on the OpenAI-compat path; the native path uses Gemini `contents` format.
+---
 
+## First-Byte Ghosting Retry Logic
 
-## Logic & Fallback Strategy
-| Scenario | Logic | Outcome |
-| :--- | :--- | :--- |
-| **Fusion Chain** | Try N keys (`LITEROUTER_MAX_ATTEMPTS`, def 3), then advance. | **429 / 5xx / 502 / timeout** → Fallback model |
-| **Direct Route (quota)** | Per-key consecutive 429/quota errors. | Retry backoff: **65s → 90s → 120s**; grace-retry same key if upstream `reset ≤ 2s` |
-| **Cooldown (by error type)** | `reportError` picks TTL; Google floors ANY error at 65s. | 429→65s, timeout/5xx→10s, 401/403→1wk, default→30s; **Google ANY error → 65s** |
-| **Circuit Breaker** | Cooldown window active. | Model/key skipped until cooldown clears. |
-| **Sticky Fallback** | 300s window. | Requests start at fallback position. |
-| **Rotate Floor** | Gap between key attempts on sequential errors (e.g., 429/500). | Controlled by `LITEROUTER_ROTATE_DELAY_MS` (def 10s) or `{PROV}_MIN_DELAY_MS`. Hard minimum floor of **2s** (`MIN_ROTATE_DELAY_MS=2000`); longer if upstream `Retry-After`/`quotaResetDelay` exceeds it |
-| **Max Attempts Reached** | When a request fails `LITEROUTER_MAX_ATTEMPTS` times without exhausting all available keys. | Request fails instantly with HTTP 429 ("Max attempts exhausted"), aborting the outer round backoff to prevent infinite downstream spam. |
-| **502 Transient Retry** | Upstream returns HTTP 502 (proxy/load-balancer hiccup — the model never saw the request). | Retry **same key** once after 1.5s, **no cooldown**. Rotating keys is pointless — they all hit the same edge. If the retry also 502s, falls through to normal error handling. Added in v3.3.3. |
-| **Silent Upstream (no-response ghost)** | Upstream sends ZERO bytes/headers within `LITEROUTER_NO_RESPONSE_TIMEOUT` (def 5s). No status, no signal, no backoff. | Non-Google OpenAI-compat only (`executeOpenAICompat`). Abort, wait `LITEROUTER_NO_RESPONSE_RETRY_DELAY` (def 5s), rotate to next key. **NO cooldown** (provider gave no backoff signal). If all keys ghost → falls through to 300s timeout → 502. Covers NVIDIA first-shot blackhole. Google-native intentionally excluded. |
+When an upstream provider accepts a TCP connection but stalls silently without returning HTTP headers or bytes (known as a "ghost" connection):
 
-## Operational Rules
-- **Truth:** `models.json` is the source-of-truth registry.
-- **Cleaning (OpenAI-compat only):** Strip `presence_penalty`, `frequency_penalty`, `logit_bias`, `user`, `seed`, `logprobs`, `top_logprobs` from Gemma 4 payloads (prevents Google 400/500). LaTeX normalization on all routes. NOTE: `thinkingConfig` is NOT currently stripped (known gap, see bead `literouter-lsq`) — do not assume thinking params are sanitized.
-- **Thought Signature (Google tool calls):** Google's OpenAI-compat endpoint requires `thought_signature` in `tool_calls[0].extra_content.google.thought_signature` for function calling. Proxy extracts it from Google's response stream (or non-streaming body) and re-injects it on the next request via in-memory store keyed by tool_call ID. Both `/v1beta/` (native) and `/v1/` (OpenAI-compat) routes support tool calls with Google models — no client-side changes needed.
-- **Rotation:** Atomic Lua-based rolling 60s windows (Redis).
-- **Identity:** Header `X-Literouter-Model` confirms upstream source.
-- **Log Timestamps:** Every gateway log line is prefixed `[MM-DD-HH:SS:MS]` (no year) so gaps between request/serve/TTFT are eyeball-visible for debugging logic errors.
-- **Observability (v3.3.0):** Streaming responses emit `[TTFT]` (time-to-first-token, ms) and `[USAGE]` (prompt/completion/total tokens) lines. Usage is captured from OpenAI `usage` and Google `usageMetadata`, and accumulated in Valkey `usage:{provider}:{model}` (HINCRBY, 30d TTL). `stream_options.include_usage: true` is auto-injected for OpenAI-compat.
-- **Client Disconnect (v3.2.0):** Client abort (Stop/close) = **NO-OP**. Detected via `signal?.aborted` (true only on CLIENT abort, NOT our server timeout). On client abort we do NOT call `router.reportError` and do NOT cooldown the key — upstream fetch uses `AbortSignal.any([req.signal, LITEROUTER_HTTP_TIMEOUT_MS])`. Returns **499 Client Closed** silently. A server-side timeout still counts as a real failure and cools the key. See CHANGELOG `[3.2.0]`.
-- **Silent Upstream / No-Response Ghost (v3.3.2):** When the upstream sends **nothing** — no status, no headers, no body, no backoff signal — within `LITEROUTER_NO_RESPONSE_TIMEOUT` (def 5s), it is a `NoResponseError`, NOT a generic timeout. We do NOT cooldown the key (the provider never told us to back off); we wait `LITEROUTER_NO_RESPONSE_RETRY_DELAY` (def 5s) and rotate to the next key. Non-Google OpenAI-compat only (`executeOpenAICompat`). If every key ghosts, the loop falls through to the 300s total timeout → 502. Google-native intentionally excluded. See CHANGELOG `[3.3.2]`.
-- **Antigravity Agent vs Standard Models:** `antigravity-preview-05-2026` is an Agent execution engine (sandboxed Linux environment with terminal & tools), NOT a standard text-completion model. Standard text endpoints (`:generateContent` / `/v1/chat/completions`) fail with HTTP 400. Programmatic usage requires Google's Interactions API (`/v1beta/interactions` with `"agent": "antigravity-preview-05-2026"` and `"environment": "remote"`). Standard completion tasks must use `gemini-3.5-flash` or `gemini-3.6-flash`.
-- **Cost Tracking:** NOT implemented. LiteRouter tracks RPM/TPM quota only — no $ cost. Math parked in `docs/KIV_cost_tracking.md` for future. Do not add `@relayplane/*` deps; any future cost work uses our Redis.
-- **Vendor Hardening Reviews:** `docs/VENDOR_ANALYSIS.md` (adopt/follow matrix) + `docs/GRAVEYARD/VENDOR_IDEAS_DEFERRED.md` (rejected ideas: bifrost=Go/not portable, portkey OSS delegates to SaaS, relayplane→KIV, agentgateway validates #1).
-- **Logging Locations:**
-  - **Primary:** tmux session `literouter` — attach via `tmux attach -t literouter`
-  - **Persisted traces:** `logs/traces/` — per-request JSON (auto-cleared at boot)
-  - **Persistent stdout:** NOT enabled by default. Run manually or modify start.sh:
-    ```bash
-    bun run src/index.ts 2>&1 | tee -a logs/gateway.log
-    ```
+1. **Timeout Detection (`src/network/fetcher.ts`):**
+   `fetchWithFirstByteTimeout` sets a timer for `LITEROUTER_NO_RESPONSE_TIMEOUT_MS` (configured via `LITEROUTER_NO_RESPONSE_TIMEOUT`, default `5` seconds). If 0 bytes are received before the timer fires, the request aborts and throws `NoResponseError`.
+2. **Non-Google Key Rotation without Cooldown (`src/handlers/openai_compat.ts`):**
+   In `executeOpenAICompat`, when `e instanceof NoResponseError` is caught:
+   - A warning log is emitted (`EMOJI.amber`).
+   - The gateway delays for `LITEROUTER_NO_RESPONSE_RETRY_DELAY_MS` (configured via `LITEROUTER_NO_RESPONSE_RETRY_DELAY_MS` or `LITEROUTER_NO_RESPONSE_RETRY_DELAY`, default `1000` ms).
+   - The key is rotated to the next available key **WITHOUT calling `router.reportError`**. No cooldown is imposed on the key because the provider did not return a rate limit or error payload.
+3. **Exhaustion Guard:**
+   If all `maxAttempts` keys ghost without sending data, the gateway logs exhaustion (`EMOJI.exhausted`) and stops the loop, preventing infinite hangs or unbounded retries.
 
-## Deep Dive References
-- **Limits:** Google=15 RPM/model; NVIDIA=40 RPM/prov; OpenRouter=20 RPM/prov. Rolling 60s windows.
-- **Env Vars:**
-  - `{PROV}_MIN_DELAY_MS`: Override key rotation delay (hard-floored at 2s).
-  - `LITEROUTER_MAX_ATTEMPTS`: (Default: 5, set to match key pool size) Keys tried per upstream in failover loop.
-  - `LITEROUTER_NO_RESPONSE_TIMEOUT`: (Default: 5) Seconds to wait for the upstream's FIRST response byte before treating it as a silent ghost and rotating keys (non-Google OpenAI-compat only).
-  - `LITEROUTER_NO_RESPONSE_RETRY_DELAY`: (Default: 5000) ms to wait after a silent ghost before rotating to the next key.
-- **Procedures:**
-  - Add Model/Provider: Follow `setup_checklist.md` (Steps 5-8).
-  - Sync CLI: Update `~/.config/opencode/opencode.json` after `models.json` changes.
-  - Troubleshooting: Check `troubleshoot.md` for error codes and debug logs.
-  - Antigravity Agent: Check `antigravity.md` for Google Interactions API (`/v1beta/interactions`), sandbox execution, guardrails, deep research, and multi-turn patterns.
+---
+
+## 429 Rotation & 2s Minimum Rotation Delay Logic
+
+1. **Rotation Delay Floor (`MIN_ROTATE_DELAY_MS = 2000`):**
+   Key rotation delay between attempts is controlled by `getProviderDelayMs(provider)`. It resolves the environment variable `${PROVIDER}_MIN_DELAY_MS` or `LITEROUTER_ROTATE_DELAY_MS` (default 10s), but enforces a **hard minimum floor of 2000ms (2s)** (`MIN_ROTATE_DELAY_MS`).
+2. **Immediate Exhaustion Output (No 65s Stalls):**
+   When upstream returns 429 rate limit or quota errors, `router.reportError` places the active key on a 65s cooldown in Valkey/Redis.
+   If all available keys in the pool are in cooldown or quota-exhausted, `router.getAvailableKey` throws:
+   `All keys for {provider} are in cooldown or have exhausted quota for model {modelName}.`
+   The handler catches this error and **immediately returns HTTP 429** to the downstream client without stalling or waiting out long 65s cooldown windows.
+
+---
+
+## Redis Key Cooldown TTLs (`ModelFirstRouter.reportError`)
+
+Cooldown states are stored in Valkey/Redis under `cooldown:{provider}:{keyHash}:{modelName}`:
+
+| Error Type / Status | Default TTL | Cooldown State | Notes & Overrides |
+| :--- | :--- | :--- | :--- |
+| **`429` / `rate_limit`** | **65s** | `rate_limited` | Reset delays parsed via `parseResetDelay` from `Retry-After` headers or body regex (`quotaResetDelay`) can override TTL (clamped 5s–7200s). |
+| **Google & Nvidia Provider Errors** | **Min 65s** | `rate_limited` | Any error on `google` or `nvidia` providers is floored at a **minimum TTL of 65s** (`ttl = Math.max(ttl, 65)`). |
+| **Timeouts / `500`, `502`, `503`, `504`** | **10s** | `timed_out` | Short cooldown for transient upstream server or proxy errors. |
+| **Auth / Permission (`401`, `403`, `auth`, `permission_denied`)** | **7 days** (604,800s) | `quarantined` | Long-term quarantine for revoked or invalid keys. |
+| **General / Default Errors** | **30s** | `error_{errorType}` | Fallback cooldown duration for unclassified errors. |
+
+---
+
+## Fusion Sticky Fallback Mechanism
+
+Fusion groups defined in `fusion.json` (e.g. `pydantic/google`, `pydantic/nvidia`) execute resilient multi-model fallback chains:
+
+1. **Circuit Breaker (`CIRCUIT_TTL = 65000` ms / 65s):**
+   When an upstream model in a fusion chain returns HTTP 429 or >= 500 status, `openCircuit(upstreamId)` marks the backend circuit as open for 65 seconds (`CIRCUIT_TTL`). Subsequent fusion requests skip open-circuit backends.
+2. **Sticky Position (`STICKY_TTL = 300000` ms / 300s / 5min):**
+   When a primary backend fails and a fallback upstream succeeds, `setSticky(groupId, upstreamId)` records the fallback position for 5 minutes (`STICKY_TTL`).
+   Subsequent requests for that fusion group begin directly at the sticky fallback position, avoiding unnecessary attempts against the failing primary.
+   When the primary model recovers and succeeds, `clearSticky(groupId)` resets the group to start at the primary backend.
+
+---
+
+## Command Reference Summary
+
+```bash
+# Start gateway directly in foreground
+bun run src/index.ts
+
+# Start gateway in background (tmux session: literouter)
+bash scripts/start.sh
+
+# Restart gateway (flushes Valkey/Redis state + restarts daemon)
+bash scripts/restart.sh
+
+# Run TypeScript unit tests
+bun test
+
+# Run Python integration smoke tests against live gateway
+uv run pytest tests/integration/
+
+# Run code complexity report
+bun run complexity
+```

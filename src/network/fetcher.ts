@@ -29,6 +29,55 @@ export async function fetchWithFirstByteTimeout(
 
   try {
     const resp = await fetch(url, { ...init, signal: ctrl.signal });
+
+    if (resp.ok && resp.body) {
+      const reader = resp.body.getReader();
+      const firstReadPromise = reader.read();
+
+      const firstRead = await Promise.race([
+        firstReadPromise,
+        new Promise<never>((_, reject) => {
+          ctrl.signal.addEventListener(
+            "abort",
+            () => reject(ctrl.signal.reason || new Error("aborted")),
+            { once: true },
+          );
+        }),
+      ]);
+
+      clearTimeout(firstByte);
+
+      if (firstRead.done) {
+        throw new NoResponseError("upstream returned empty body");
+      }
+
+      const firstChunk = firstRead.value;
+      const combinedStream = new ReadableStream<Uint8Array>({
+        async start(controller) {
+          controller.enqueue(firstChunk);
+          try {
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) break;
+              controller.enqueue(value);
+            }
+            controller.close();
+          } catch (err) {
+            controller.error(err);
+          }
+        },
+        cancel(reason) {
+          reader.cancel(reason);
+        },
+      });
+
+      return new Response(combinedStream, {
+        status: resp.status,
+        statusText: resp.statusText,
+        headers: resp.headers,
+      });
+    }
+
     clearTimeout(firstByte);
     return resp;
   } catch (e: any) {

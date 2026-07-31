@@ -1,5 +1,9 @@
 import { test, expect } from "bun:test";
-import { fetchWithFirstByteTimeout, NoResponseError } from "../../../src/lib";
+import {
+  fetchWithFirstByteTimeout,
+  NoResponseError,
+  createStreamTransformer,
+} from "../../../src/lib";
 
 // A server that accepts the connection but NEVER sends a response — the
 // "no signal, no response" ghost (e.g. NVIDIA black-holing the first request).
@@ -31,6 +35,63 @@ test("fetchWithFirstByteTimeout throws NoResponseError on silent upstream (no 30
   } finally {
     server.stop(true);
   }
+});
+
+test("fetchWithFirstByteTimeout throws NoResponseError when 200 OK headers return but zero body chunks arrive", async () => {
+  const server = Bun.serve({
+    port: 0,
+    fetch() {
+      // Send 200 OK headers immediately, but never enqueue any body chunk
+      return new Response(
+        new ReadableStream({
+          start() {
+            // Never enqueue or close
+          },
+        }),
+        { status: 200, headers: { "Content-Type": "text/event-stream" } },
+      );
+    },
+  });
+  const url = `http://localhost:${server.port}/`;
+  const start = Date.now();
+  try {
+    await fetchWithFirstByteTimeout(
+      url,
+      { method: "POST", body: "{}" },
+      { noResponseTimeoutMs: 1000, totalTimeoutMs: 300_000 },
+    );
+    throw new Error("expected NoResponseError on 200 OK ghosting body");
+  } catch (e: any) {
+    expect(e).toBeInstanceOf(NoResponseError);
+    expect(Date.now() - start).toBeLessThan(5000);
+  } finally {
+    server.stop(true);
+  }
+});
+
+test("createStreamTransformer handles mid-stream idle timeout cleanly", async () => {
+  const transformer = createStreamTransformer(false, undefined, undefined, 500);
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      const encoder = new TextEncoder();
+      controller.enqueue(encoder.encode('data: {"choices":[{"delta":{"content":"hi"}}]}\n\n'));
+      // Stalls here - no more chunks sent
+    },
+  }).pipeThrough(transformer);
+
+  const reader = stream.getReader();
+  const chunks: string[] = [];
+  const decoder = new TextDecoder();
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(decoder.decode(value));
+  }
+
+  const fullText = chunks.join("");
+  expect(fullText).toContain("upstream_idle_timeout");
+  expect(fullText).toContain("[DONE]");
 });
 
 test("fetchWithFirstByteTimeout returns a normal response when upstream answers", async () => {

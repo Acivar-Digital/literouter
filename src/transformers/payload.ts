@@ -1,4 +1,9 @@
-import { parseUsageFromJson } from "../config/env";
+import {
+  EMOJI,
+  logWarn,
+  parseUsageFromJson,
+  LITEROUTER_STREAM_IDLE_TIMEOUT_MS,
+} from "../config/env";
 
 const thoughtSignatureStore = new Map<string, string>();
 
@@ -171,6 +176,7 @@ export function createStreamTransformer(
   collapseReasoning: boolean,
   meta?: StreamMeta,
   sinkUsageFn?: (meta: StreamMeta, usage: any, ttftMs?: number) => void,
+  idleTimeoutMs: number = LITEROUTER_STREAM_IDLE_TIMEOUT_MS,
 ) {
   let buffer = "";
   let hasStartedThought = false;
@@ -180,8 +186,39 @@ export function createStreamTransformer(
   const decoder = new TextDecoder();
   const encoder = new TextEncoder();
 
+  let idleTimer: any = null;
+
+  const resetIdleTimer = (controller: TransformStreamDefaultController) => {
+    if (idleTimer) clearTimeout(idleTimer);
+    if (idleTimeoutMs > 0) {
+      idleTimer = setTimeout(() => {
+        logWarn(
+          EMOJI.amber,
+          `[STREAM_IDLE_TIMEOUT ${meta?.reqId || ""}] provider=${meta?.provider || ""} model=${meta?.upstream_model || ""} no chunk received for ${idleTimeoutMs}ms`,
+        );
+        const errObj = {
+          error: {
+            message: `Upstream stream idle timeout exceeded (${idleTimeoutMs / 1000}s)`,
+            code: "upstream_idle_timeout",
+            type: "timeout_error",
+          },
+        };
+        try {
+          controller.enqueue(
+            encoder.encode(`data: ${JSON.stringify(errObj)}\n\ndata: [DONE]\n\n`),
+          );
+          controller.terminate();
+        } catch {}
+      }, idleTimeoutMs);
+    }
+  };
+
   return new TransformStream({
+    start(controller) {
+      resetIdleTimer(controller);
+    },
     transform(chunk, controller) {
+      resetIdleTimer(controller);
       buffer += cleanLatexSymbols(decoder.decode(chunk, { stream: true }));
       let lines = buffer.split("\n");
       buffer = lines.pop() || "";
@@ -269,6 +306,7 @@ export function createStreamTransformer(
       }
     },
     flush(controller) {
+      if (idleTimer) clearTimeout(idleTimer);
       if (collapseReasoning && hasStartedThought && !hasEndedThought) {
         const closing = {
           choices: [{ index: 0, delta: { content: "\n</thought>\n" } }],

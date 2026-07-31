@@ -77,6 +77,13 @@ export const LITEROUTER_HTTP_TIMEOUT_MS =
 
 export const LITEROUTER_NO_RESPONSE_TIMEOUT_MS =
   parseInt(Bun.env.LITEROUTER_NO_RESPONSE_TIMEOUT || "5", 10) * 1000;
+export const LITEROUTER_STREAM_IDLE_TIMEOUT_MS =
+  parseInt(
+    Bun.env.LITEROUTER_STREAM_IDLE_TIMEOUT ||
+      Bun.env.LITEROUTER_STREAM_IDLE_TIMEOUT_MS ||
+      "15",
+    10,
+  ) * 1000;
 export const LITEROUTER_NO_RESPONSE_RETRY_DELAY_MS =
   parseInt(
     Bun.env.LITEROUTER_NO_RESPONSE_RETRY_DELAY_MS ||
@@ -86,6 +93,26 @@ export const LITEROUTER_NO_RESPONSE_RETRY_DELAY_MS =
   );
 
 export const MIN_ROTATE_DELAY_MS = 2000;
+
+export const EMOJI = {
+  inbound: "🔵",
+  rotate: "🔄",
+  amber: "🟡",
+  limit: "⚠️",
+  exhausted: "🔴",
+  served: "🟢",
+  boot: "🚀",
+  error: "💥",
+  fusion: "🔗",
+  trace: "📝",
+};
+
+export function logWarn(emoji: string, msg: string): void {
+  const d = new Date();
+  const p = (n: number, w: number) => String(n).padStart(w, "0");
+  const ts = `${p(d.getMonth() + 1, 2)}-${p(d.getDate(), 2)}-${p(d.getHours(), 2)}:${p(d.getMinutes(), 2)}:${p(d.getSeconds(), 2)}:${p(d.getMilliseconds(), 3)}`;
+  console.warn(`${emoji} [${ts}] ${msg}`);
+}
 
 export function getProviderDelayMs(provider: string): number {
   const envKey = `${provider.toUpperCase()}_MIN_DELAY_MS`;

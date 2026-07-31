@@ -2,6 +2,12 @@
 
 All notable changes to LiteRouter will be documented in this file.
 
+## [3.3.7] — 2026-07-31
+
+### Fixed
+- **First-Chunk Verification for Streaming Responses** — Fixed an issue where upstream providers (such as OpenRouter free tier models) return 200 OK HTTP headers but fail to send any body chunks within the timeout window. `fetchWithFirstByteTimeout` in `src/network/fetcher.ts` now waits for the first actual body chunk before resolving 200 OK. If upstream returns 200 OK headers but zero body bytes within `LITEROUTER_NO_RESPONSE_TIMEOUT` (5s), it throws `NoResponseError`, triggering key rotation and failover before headers are sent to downstream clients.
+- **Mid-Stream Inter-Chunk Idle Timeout** — Added `LITEROUTER_STREAM_IDLE_TIMEOUT_MS` (default 15s) in `src/config/env.ts` and updated stream transformers (`src/transformers/payload.ts` & `src/handlers/google_native.ts`). If an upstream stream stalls mid-generation without emitting a chunk for 15s, LiteRouter enqueues an SSE `upstream_idle_timeout` error object and terminates the stream cleanly instead of hanging client sockets indefinitely.
+
 ## [3.3.6] — 2026-07-29
 
 ### Fixed

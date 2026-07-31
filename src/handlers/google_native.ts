@@ -1,5 +1,9 @@
 import {
+  LITEROUTER_HTTP_TIMEOUT_MS,
   LITEROUTER_MAX_ATTEMPTS,
+  LITEROUTER_NO_RESPONSE_RETRY_DELAY_MS,
+  LITEROUTER_NO_RESPONSE_TIMEOUT_MS,
+  LITEROUTER_STREAM_IDLE_TIMEOUT_MS,
   cleanHeaders,
   getModelLimits,
   getProviderDelayMs,
@@ -7,6 +11,7 @@ import {
   parseUsageFromJson,
   upstreamSignal,
 } from "../config/env";
+import { NoResponseError, fetchWithFirstByteTimeout } from "../network/fetcher";
 import { StreamMeta, cleanGemmaPayload, cleanLatexSymbols, estimateTokens } from "../transformers/payload";
 import {
   API_KEYS,
@@ -139,9 +144,39 @@ async function processGoogleNativeSuccess(
 
   let firstChunk = true;
   let capturedUsage: any = null;
+  let idleTimer: any = null;
+
+  const resetIdleTimer = (controller: TransformStreamDefaultController) => {
+    if (idleTimer) clearTimeout(idleTimer);
+    if (LITEROUTER_STREAM_IDLE_TIMEOUT_MS > 0) {
+      idleTimer = setTimeout(() => {
+        logWarn(
+          EMOJI.amber,
+          `[STREAM_IDLE_TIMEOUT ${meta?.reqId || ""}] provider=${meta?.provider || ""} model=${meta?.upstream_model || ""} no chunk received for ${LITEROUTER_STREAM_IDLE_TIMEOUT_MS}ms`,
+        );
+        const errObj = {
+          error: {
+            message: `Upstream stream idle timeout exceeded (${LITEROUTER_STREAM_IDLE_TIMEOUT_MS / 1000}s)`,
+            code: "upstream_idle_timeout",
+            type: "timeout_error",
+          },
+        };
+        try {
+          controller.enqueue(
+            encoder.encode(`data: ${JSON.stringify(errObj)}\n\ndata: [DONE]\n\n`),
+          );
+          controller.terminate();
+        } catch {}
+      }, LITEROUTER_STREAM_IDLE_TIMEOUT_MS);
+    }
+  };
 
   const transform = new TransformStream({
+    start(controller) {
+      resetIdleTimer(controller);
+    },
     transform(chunk, controller) {
+      resetIdleTimer(controller);
       let text = decoder.decode(chunk, { stream: true });
       text = cleanLatexSymbols(text);
 
@@ -169,6 +204,7 @@ async function processGoogleNativeSuccess(
       controller.enqueue(encoder.encode(text));
     },
     flush() {
+      if (idleTimer) clearTimeout(idleTimer);
       sinkUsage(streamMeta, capturedUsage);
     },
   });
@@ -258,12 +294,19 @@ export async function executeGoogleNative(
       console.log(
         `[GOOGLE-UPSTREAM] url=${url.toString().replace(activeKey, "REDACTED")}`,
       );
-      const resp = await fetch(url.toString(), {
-        method: "POST",
-        headers,
-        body: Object.keys(reqJson).length ? JSON.stringify(reqJson) : undefined,
-        signal: upstreamSignal(signal),
-      });
+      const resp = await fetchWithFirstByteTimeout(
+        url.toString(),
+        {
+          method: "POST",
+          headers,
+          body: Object.keys(reqJson).length ? JSON.stringify(reqJson) : undefined,
+        },
+        {
+          noResponseTimeoutMs: LITEROUTER_NO_RESPONSE_TIMEOUT_MS,
+          totalTimeoutMs: LITEROUTER_HTTP_TIMEOUT_MS,
+          clientSignal: signal,
+        },
+      );
 
       if (resp.status >= 400) {
         const errorResult = await processGoogleNativeError(
@@ -308,6 +351,25 @@ export async function executeGoogleNative(
     } catch (e: any) {
       if (signal?.aborted) {
         return new Response(null, { status: 499 });
+      }
+
+      if (e instanceof NoResponseError) {
+        logWarn(
+          EMOJI.amber,
+          `[NO_RESPONSE ${reqId}] key=${activeKey.substring(0, 6)}... model=${upstream_model} sent nothing within ${LITEROUTER_NO_RESPONSE_TIMEOUT_MS}ms, rotating key (no cooldown)`,
+        );
+        if (reqId) {
+          recordTrace(
+            reqId,
+            "upstream",
+            { status: "no-response", body: "upstream sent no bytes" },
+            { model: modelName, provider: "google", status: 0 },
+          );
+        }
+        await new Promise((r) =>
+          setTimeout(r, LITEROUTER_NO_RESPONSE_RETRY_DELAY_MS),
+        );
+        continue;
       }
 
       if (e.message?.includes("All keys")) {
