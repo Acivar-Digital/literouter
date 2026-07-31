@@ -6,7 +6,7 @@ This is **LiteRouter**, a high-density TypeScript API Gateway running on **Bun**
 ---
 
 # 2. THE PROBLEM & OBJECTIVE
-Our cyclomatic complexity analysis (`bun run complexity`) and runtime trace audit revealed three major issues requiring a complete architectural rebuild of `src/index.ts` and `src/lib.ts` into a multi-file modular domain tree:
+Our cyclomatic complexity analysis (`bun run complexity`) and runtime trace audit revealed three major issues requiring a complete architectural rebuild of `src/index.ts` and `src/lib.ts` into an 8-file modular domain tree:
 
 ### A. High Cyclomatic Complexity (Refactoring Goal):
 1. **`executeOpenAICompat`** in `src/index.ts`: Cyclomatic Complexity = **47** (🚨 HIGH)
@@ -22,9 +22,11 @@ Currently, when a provider like OpenRouter returns a `429 Too Many Requests` or 
 ### C. Upstream Ghosting Across All Non-Google Providers (Feature Addition #2):
 When an upstream provider (such as OpenRouter, NVIDIA, or Zen) "ghosts" (opens the TCP connection but sends no HTTP response bytes within a first-byte window), the client (e.g. OpenCode) experiences an upstream timeout.
 - First-byte ghosting detection MUST apply across **ALL non-Google providers** (`executeOpenAICompat`).
-- The ghosting timeout MUST be configurable via `.env`:
+- Configurable via `.env`:
   `LITEROUTER_NO_RESPONSE_TIMEOUT=5` (default: 5 seconds).
-- If Key 1 receives zero response bytes within `LITEROUTER_NO_RESPONSE_TIMEOUT` seconds (e.g., 5s), LiteRouter MUST immediately abort the fetch without penalizing Key 1 (no cooldown), log the ghost event, and re-send the exact same request to Key 2.
+  `LITEROUTER_NO_RESPONSE_RETRY_DELAY_MS=1000` (default: 1000 ms).
+  Total elapsed wait per ghosted attempt = 6 seconds.
+- If Key 1 receives zero response bytes within `LITEROUTER_NO_RESPONSE_TIMEOUT` seconds (5s), LiteRouter MUST immediately abort the fetch without penalizing Key 1 (no cooldown), wait 1000ms, log the ghost event, and re-send the exact same request to Key 2.
 
 ---
 
@@ -35,7 +37,7 @@ Break down the current monolithic codebase into this exact 8-file directory stru
 ```
 src/
 ├── index.ts                      # Server bootstrap & Bun.serve entrypoint
-├── lib.ts                        # Re-exports & pure helpers for bun test compatibility
+├── lib.ts                        # Pure re-export barrel file for 100% test compatibility
 ├── config/
 │   └── env.ts                    # Environment settings (timeouts & delays)
 ├── transformers/
@@ -53,8 +55,9 @@ src/
 # 4. SURGICAL INSTRUCTIONS PER FILE
 
 1. **`src/config/env.ts`**:
-   - Parse `LITEROUTER_NO_RESPONSE_TIMEOUT` (default: `5` seconds).
-   - Parse `LITEROUTER_ROTATE_DELAY_MS` (default: `2000` ms).
+   - `LITEROUTER_NO_RESPONSE_TIMEOUT`: default `5` seconds.
+   - `LITEROUTER_NO_RESPONSE_RETRY_DELAY_MS`: default `1000` ms.
+   - `MIN_ROTATE_DELAY_MS`: default `2000` ms.
 2. **`src/network/fetcher.ts`**:
    - Implement `fetchWithFirstByteTimeout(url, init, opts)` and `NoResponseError`.
 3. **`src/transformers/thinking.ts`**:
@@ -62,11 +65,12 @@ src/
 4. **`src/transformers/payload.ts`**:
    - Implement `cleanGemmaPayload`, `injectThoughtSignature`, and `extractThoughtSignature`.
 5. **`src/handlers/openai_compat.ts`**:
-   - Implement `executeOpenAICompat` with 2-second key rotation on 429, no 65s outer stalls, and ghosting retry on Key 2.
+   - Handle 429 rate limit with 2-second key rotation. If all keys for that model are exhausted/in cooldown, report 429 exhaustion immediately (so Fusion advances to next model or direct route returns 429 without 65s outer stalls).
+   - On ghosting timeout (5s), log warning, keep key health (no cooldown penalty), wait 1000ms, and retry Key 2.
 6. **`src/handlers/google_native.ts`**:
    - Implement `executeGoogleNative` modularized into helper sub-functions.
 7. **`src/lib.ts`**:
-   - Pure helpers & re-exports to ensure zero breakage for existing unit tests (`bun test`).
+   - Pure re-export barrel file forwarding all exported functions and classes (`mergeConsecutiveMessages`, `cleanGemmaPayload`, `cleanLatexSymbols`, `getModelLimits`, `staticValidateKeys`, `fetchWithFirstByteTimeout`, `NoResponseError`) so all existing unit tests in `tests/unit/` pass without modification.
 8. **`src/index.ts`**:
    - Clean, lightweight server entry point hosting `Bun.serve` on port 7766.
 
@@ -88,8 +92,8 @@ The full source code of `src/lib.ts` and `src/index.ts` are located at `admin/st
 
 ### Part 1: The Active Demonstration Checklist
 You MUST explicitly answer these 4 questions before writing any code:
-- **Q1 (TypeScript/Bun):** State: "I understand I must use strict TypeScript definitions matching LiteRouter's 8-file modular tree."
-- **Q2 (2s 429 & .env 5s Ghosting Rotation):** State: "I confirm 429 retries will wait 2s without 65s stalls, and all non-Google providers will rotate to Key 2 after LITEROUTER_NO_RESPONSE_TIMEOUT seconds (default 5s) on ghosting."
+- **Q1 (TypeScript/Bun & Barrel File):** State: "I understand src/lib.ts must act as a re-export barrel file so existing unit tests pass, while the code is structured into an 8-file modular tree."
+- **Q2 (2s 429 & .env 5s/1s Ghosting Rotation):** State: "I confirm 429 retries will wait 2s without 65s stalls, and all non-Google providers will rotate to Key 2 after 5s first-byte wait + 1s delay on ghosting without burning key health."
 - **Q3 (Zero-Dicts/Strict Dot Notation):** State: "I will use clear object properties and typed parameters across all modules."
 - **Q4 (No Elision):** State: "I understand I must output all 8 files completely without truncation or `// ... rest of code`."
 
