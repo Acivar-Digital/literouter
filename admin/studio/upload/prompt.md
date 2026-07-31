@@ -6,7 +6,7 @@ This is **LiteRouter**, a high-density TypeScript API Gateway running on **Bun**
 ---
 
 # 2. THE PROBLEM & OBJECTIVE
-Our cyclomatic complexity analysis (`bun run complexity`) and runtime trace audit revealed three major issues requiring a complete architectural rebuild of `src/index.ts` and `src/lib.ts`:
+Our cyclomatic complexity analysis (`bun run complexity`) and runtime trace audit revealed three major issues requiring a complete architectural rebuild of `src/index.ts` and `src/lib.ts` into a multi-file modular domain tree:
 
 ### A. High Cyclomatic Complexity (Refactoring Goal):
 1. **`executeOpenAICompat`** in `src/index.ts`: Cyclomatic Complexity = **47** (🚨 HIGH)
@@ -26,77 +26,56 @@ When an upstream provider (such as OpenRouter, NVIDIA, or Zen) "ghosts" (opens t
   `LITEROUTER_NO_RESPONSE_TIMEOUT=5` (default: 5 seconds).
 - If Key 1 receives zero response bytes within `LITEROUTER_NO_RESPONSE_TIMEOUT` seconds (e.g., 5s), LiteRouter MUST immediately abort the fetch without penalizing Key 1 (no cooldown), log the ghost event, and re-send the exact same request to Key 2.
 
-### Definition of Done:
-1. **2-Second 429 Rotation & Anti-Stall**:
-   - On 429 rate limit from any provider, place the key in 65s cooldown, wait **2 seconds** (`2,000ms`), and rotate to the next key.
-   - If all keys are exhausted/cooled down, DO NOT force the client to sleep 65s; fail fast or advance Fusion chain immediately.
-2. **.env-Configurable 5s Ghosting Rotation for All Non-Google Providers**:
-   - Read `LITEROUTER_NO_RESPONSE_TIMEOUT` from `Bun.env` (default to `5` seconds).
-   - If an upstream request sends no first byte within `LITEROUTER_NO_RESPONSE_TIMEOUT` seconds, catch `NoResponseError`, log warning, and immediately retry the same request on the next key (Key 2) without placing Key 1 in cooldown.
-3. **Modular Architecture Rebuild**:
-   - Structure the codebase into decoupled modular pipelines (Ingress/Auth, Payload Transformers, Router/Circuit Breaker, Network Dispatcher).
-   - Modularize `executeOpenAICompat` and `executeGoogleNative` into focused helper functions so no single function exceeds CC **15**.
-   - Refactor `translateGoogleThinking` and `mergeConsecutiveMessages` in `src/lib.ts`.
-4. **100% Test Parity**:
-   - Pass all unit tests in `bun test` with zero breaking changes to headers, streaming transformers, or thought signatures.
-
 ---
 
-# 3. DATA CONTRACTS & SCHEMAS (CRITICAL)
+# 3. TARGET MULTI-FILE ARCHITECTURE TREE
 
-```typescript
-export interface ModelsConfig {
-  models: Record<string, ModelEntry>;
-  providers: Record<string, ProviderConfig>;
-  fusions?: Record<string, FusionConfig>;
-}
+Break down the current monolithic codebase into this exact 8-file directory structure:
 
-export interface ModelEntry {
-  provider: string;
-  upstream_id: string;
-  context_window?: number;
-  max_output_tokens?: number;
-}
-
-export interface ProviderConfig {
-  keys: string[];
-  base_url?: string;
-  model_prefix?: string;
-}
-
-export interface FusionConfig {
-  models: string[];
-  fallback_timeout_ms?: number;
-  sticky_window_ms?: number;
-}
+```
+src/
+├── index.ts                      # Server bootstrap & Bun.serve entrypoint
+├── lib.ts                        # Re-exports & pure helpers for bun test compatibility
+├── config/
+│   └── env.ts                    # Environment settings (timeouts & delays)
+├── transformers/
+│   ├── thinking.ts               # Google thinking & reasoning_effort translation
+│   └── payload.ts                # Gemma payload cleaning & thought signatures
+├── network/
+│   └── fetcher.ts                # First-byte timeout (ghosting) & client signal aborts
+└── handlers/
+    ├── openai_compat.ts          # /v1/chat/completions router & 2s 429 retry loop
+    └── google_native.ts          # /v1beta/models/* native REST router
 ```
 
 ---
 
-# 4. TARGET ARCHITECTURE & SURGICAL INSTRUCTIONS
+# 4. SURGICAL INSTRUCTIONS PER FILE
 
-Following our technical blueprint (`docs/ARCHITECTURE.md`), rebuild `src/lib.ts` and `src/index.ts` into modular, high-density pipelines:
-
-### Layer Breakdown:
-- **`src/lib.ts`**:
-  - `fetchWithFirstByteTimeout(url, init, opts)`: Enforce `.env`-configured first-byte timeout (`LITEROUTER_NO_RESPONSE_TIMEOUT` || "5" * 1000).
-  - `translateGoogleThinking(data: any)`: Refactored into linear helper sub-functions (`extractThinkingLevel` and `applyReasoningEffort`).
-  - `mergeConsecutiveMessages(messages: any[])`: Refactored into a clean content merger (`concatMessageContent`).
-- **`src/index.ts`**:
-  - **Network Dispatcher**: In `executeOpenAICompat`, handle `NoResponseError` for all non-Google providers: log warning, retain key health (no cooldown), wait `NO_RESPONSE_RETRY_DELAY_MS` (or 0ms), and rotate to Key 2.
-  - **Router & Circuit Breaker**: Remove 65-second outer request stall on 429 rate limits. Rotate after 2 seconds (`2,000ms`).
-  - **Transformers & Helpers**:
-    - `prepareProxyHeaders(req: Request, targetHost: string): Headers`
-    - `handleOpenAIStreamResponse(...)`
-    - `handleOpenAINonStreamResponse(...)`
-    - `buildGoogleNativeRequest(model: string, action: string, req: Request)`
+1. **`src/config/env.ts`**:
+   - Parse `LITEROUTER_NO_RESPONSE_TIMEOUT` (default: `5` seconds).
+   - Parse `LITEROUTER_ROTATE_DELAY_MS` (default: `2000` ms).
+2. **`src/network/fetcher.ts`**:
+   - Implement `fetchWithFirstByteTimeout(url, init, opts)` and `NoResponseError`.
+3. **`src/transformers/thinking.ts`**:
+   - Refactor `translateGoogleThinking(data)` into modular helpers `extractThinkingLevel` and `applyReasoningEffort`.
+4. **`src/transformers/payload.ts`**:
+   - Implement `cleanGemmaPayload`, `injectThoughtSignature`, and `extractThoughtSignature`.
+5. **`src/handlers/openai_compat.ts`**:
+   - Implement `executeOpenAICompat` with 2-second key rotation on 429, no 65s outer stalls, and ghosting retry on Key 2.
+6. **`src/handlers/google_native.ts`**:
+   - Implement `executeGoogleNative` modularized into helper sub-functions.
+7. **`src/lib.ts`**:
+   - Pure helpers & re-exports to ensure zero breakage for existing unit tests (`bun test`).
+8. **`src/index.ts`**:
+   - Clean, lightweight server entry point hosting `Bun.serve` on port 7766.
 
 ---
 
 # 5. STRICT PROJECT CONVENTIONS (STATIC)
 1. **Bun Native TypeScript:** Use native Bun APIs (`Bun.serve`, `fetch`, `AbortSignal`). Do NOT introduce node-specific dependencies or legacy wrappers.
 2. **Zero Behavior Shift:** Gate 1 static key validation, Valkey cooldown state, stream transformation (`createStreamTransformer`), and thought signature injection MUST remain completely intact.
-3. **Resilience Guarantees:** 429 retries wait 2,000ms between keys without 65s stalls; ghosting requests time out after `LITEROUTER_NO_RESPONSE_TIMEOUT` seconds (default 5s) to retry Key 2.
+3. **100% Test Compatibility:** `bun test` MUST pass with zero errors.
 
 ---
 
@@ -109,18 +88,42 @@ The full source code of `src/lib.ts` and `src/index.ts` are located at `admin/st
 
 ### Part 1: The Active Demonstration Checklist
 You MUST explicitly answer these 4 questions before writing any code:
-- **Q1 (TypeScript/Bun):** State: "I understand I must use strict TypeScript definitions matching LiteRouter's architecture."
+- **Q1 (TypeScript/Bun):** State: "I understand I must use strict TypeScript definitions matching LiteRouter's 8-file modular tree."
 - **Q2 (2s 429 & .env 5s Ghosting Rotation):** State: "I confirm 429 retries will wait 2s without 65s stalls, and all non-Google providers will rotate to Key 2 after LITEROUTER_NO_RESPONSE_TIMEOUT seconds (default 5s) on ghosting."
-- **Q3 (Zero-Dicts/Strict Dot Notation):** State: "I will use clear object properties and typed parameters."
-- **Q4 (No Elision):** State: "I understand I must output the complete file without truncation or `// ... rest of code`."
+- **Q3 (Zero-Dicts/Strict Dot Notation):** State: "I will use clear object properties and typed parameters across all modules."
+- **Q4 (No Elision):** State: "I understand I must output all 8 files completely without truncation or `// ... rest of code`."
 
-### Part 2: The Code (Full File Replacement)
-Output the ENTIRE modified file for `src/lib.ts` and `src/index.ts` in raw code blocks:
+### Part 2: The Code (Multi-File Output)
+Output the complete code for all 8 files in separate raw markdown code blocks:
+
+```typescript filepath="src/config/env.ts"
+// File content here
+```
+
+```typescript filepath="src/network/fetcher.ts"
+// File content here
+```
+
+```typescript filepath="src/transformers/thinking.ts"
+// File content here
+```
+
+```typescript filepath="src/transformers/payload.ts"
+// File content here
+```
+
+```typescript filepath="src/handlers/openai_compat.ts"
+// File content here
+```
+
+```typescript filepath="src/handlers/google_native.ts"
+// File content here
+```
 
 ```typescript filepath="src/lib.ts"
-// Complete file content here
+// File content here
 ```
 
 ```typescript filepath="src/index.ts"
-// Complete file content here
+// File content here
 ```
