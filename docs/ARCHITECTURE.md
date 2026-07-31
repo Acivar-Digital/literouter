@@ -114,6 +114,68 @@ To remove a model: delete from `opencode.json` and `models.json`.
 - **Environment Variables**: We use standard Redis-compatible environment variable keys (`REDIS_HOST`, `REDIS_PASSWORD`, etc.) to configure connection endpoints to Valkey.
 - **Scanner Warnings**: Any code hygiene alerts flagging environment drift or missing packages for "Redis" are false positives. Valkey and Redis are used interchangeably here.
 
+## Target Modular Architecture Blueprint
+
+LiteRouter is designed as a high-density, layered proxy pipeline prioritizing maintainability, non-blocking resilience, and strict type safety across all generative AI providers.
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│                      Client Request (Port 7766)                  │
+└──────────────────────────────────────────────────────────────────┘
+                                 │
+                                 ▼
+┌──────────────────────────────────────────────────────────────────┐
+│ 1. Gateway Ingress & Auth (`src/ingress/`)                       │
+│    - API Key Auth & CORS                                         │
+│    - Endpoint Routing (/v1/chat/completions vs /v1beta/models)   │
+└──────────────────────────────────────────────────────────────────┘
+                                 │
+                                 ▼
+┌──────────────────────────────────────────────────────────────────┐
+│ 2. Pipeline & Transformation Layer (`src/transformers/`)         │
+│    - Payload Cleaning (Gemma filter, thought signatures)         │
+│    - Thinking Translation (google.thinking_config ➔ reasoning)  │
+│    - Message Merging (`mergeConsecutiveMessages`)                │
+└──────────────────────────────────────────────────────────────────┘
+                                 │
+                                 ▼
+┌──────────────────────────────────────────────────────────────────┐
+│ 3. Key Manager & Circuit Breaker (`src/router/`)                 │
+│    - Valkey ZSET Atomic Quota Check (RPM/TPM Lua Script)         │
+│    - Cooldown & Circuit Breaker State (65s floor, 1wk 401/403)   │
+│    - Fusion Chain Fallback & Sticky Window Manager               │
+└──────────────────────────────────────────────────────────────────┘
+                                 │
+                                 ▼
+┌──────────────────────────────────────────────────────────────────┐
+│ 4. Resilient Network Dispatcher (`src/network/`)                  │
+│    - First-Byte Ghosting Protection (`LITEROUTER_NO_RESPONSE...`)│
+│    - 2-Second Key Rotation Loop (No 65-second client stalls)     │
+│    - Stream Pipe Transformer (`createStreamTransformer`)         │
+└──────────────────────────────────────────────────────────────────┘
+                                 │
+                                 ▼
+┌──────────────────────────────────────────────────────────────────┐
+│ 5. Upstream Providers (OpenRouter, NVIDIA, Google Native, Zen)    │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+### Core Resilience & Performance Guarantees
+
+1. **2-Second 429 Key Rotation**:
+   - Rate limit (`429`) responses trigger a 65s Valkey cooldown on the offending key.
+   - The loop waits **2,000ms** before cleanly rotating the request to Key #2.
+
+2. **Anti-Stall Guarantee (No 65s Client Delays)**:
+   - When all API keys for a given model hit rate limits or cooldown, LiteRouter **never** forces the client's HTTP request to sleep in outer 65-second backoff loops.
+   - It fails fast or immediately advances down the **Fusion Fallback Chain** to the next available model.
+
+3. **.env-Driven First-Byte Ghosting Protection**:
+   - Applies to **all non-Google providers** (OpenRouter, NVIDIA, Zen, etc.).
+   - Driven by `.env`: `LITEROUTER_NO_RESPONSE_TIMEOUT=5` (default: 5 seconds).
+   - If an upstream opens the TCP connection but sends 0 bytes within the configured window, `fetchWithFirstByteTimeout` aborts.
+   - The key's health is preserved (no cooldown penalty), and the exact request is immediately re-sent to Key #2, preventing client/upstream timeouts in OpenCode.
+
 ## Critical Patterns
 - Auto mode collects only: alias, gender, dob, location -> engine computes all pillars/strength
 - Never ask for computed fields: year_pillar, month_pillar, day_pillar, hour_pillar, da_yun_pillar, etc.
