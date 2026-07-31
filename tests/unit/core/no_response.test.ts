@@ -69,18 +69,8 @@ test("fetchWithFirstByteTimeout throws NoResponseError when 200 OK headers retur
   }
 });
 
-test("createStreamTransformer handles mid-stream idle timeout cleanly and reports key error to router", async () => {
-  let reported = false;
-  const mockMeta = {
-    reqId: "test-req-id",
-    provider: "openrouter",
-    modelName: "openrouter/inclusionai/ling-3.0-flash:free",
-    upstream_model: "inclusionai/ling-3.0-flash:free",
-    activeKey: "sk-or-v1-testkey",
-    requestStart: Date.now(),
-  };
-
-  const transformer = createStreamTransformer(false, mockMeta, undefined, 200);
+test("createStreamTransformer handles mid-stream idle timeout cleanly", async () => {
+  const transformer = createStreamTransformer(false, undefined, undefined, 500);
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
       const encoder = new TextEncoder();

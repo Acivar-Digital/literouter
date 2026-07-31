@@ -153,16 +153,8 @@ async function processGoogleNativeSuccess(
       idleTimer = setTimeout(() => {
         logWarn(
           EMOJI.amber,
-          `[STREAM_IDLE_TIMEOUT ${streamMeta?.reqId || ""}] provider=${streamMeta?.provider || ""} model=${streamMeta?.upstream_model || ""} no chunk received for ${LITEROUTER_STREAM_IDLE_TIMEOUT_MS}ms, closing stream`,
+          `[STREAM_IDLE_TIMEOUT ${meta?.reqId || ""}] provider=${meta?.provider || ""} model=${meta?.upstream_model || ""} no chunk received for ${LITEROUTER_STREAM_IDLE_TIMEOUT_MS}ms, closing stream`,
         );
-        if (streamMeta?.provider && streamMeta?.activeKey) {
-          router.reportError(
-            streamMeta.provider,
-            streamMeta.activeKey,
-            "timeout",
-            streamMeta.upstream_model,
-          ).catch(() => {});
-        }
         try {
           controller.enqueue(encoder.encode("data: [DONE]\n\n"));
           controller.terminate();
