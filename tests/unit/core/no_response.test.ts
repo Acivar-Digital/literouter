@@ -90,8 +90,8 @@ test("createStreamTransformer handles mid-stream idle timeout cleanly", async ()
   }
 
   const fullText = chunks.join("");
-  expect(fullText).toContain("upstream_idle_timeout");
   expect(fullText).toContain("[DONE]");
+  expect(fullText).not.toContain("upstream_idle_timeout");
 });
 
 test("fetchWithFirstByteTimeout returns a normal response when upstream answers", async () => {

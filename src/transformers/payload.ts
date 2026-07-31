@@ -191,25 +191,16 @@ export function createStreamTransformer(
   const resetIdleTimer = (controller: TransformStreamDefaultController) => {
     if (idleTimer) clearTimeout(idleTimer);
     if (idleTimeoutMs > 0) {
-      idleTimer = setTimeout(() => {
-        logWarn(
-          EMOJI.amber,
-          `[STREAM_IDLE_TIMEOUT ${meta?.reqId || ""}] provider=${meta?.provider || ""} model=${meta?.upstream_model || ""} no chunk received for ${idleTimeoutMs}ms`,
-        );
-        const errObj = {
-          error: {
-            message: `Upstream stream idle timeout exceeded (${idleTimeoutMs / 1000}s)`,
-            code: "upstream_idle_timeout",
-            type: "timeout_error",
-          },
-        };
-        try {
-          controller.enqueue(
-            encoder.encode(`data: ${JSON.stringify(errObj)}\n\ndata: [DONE]\n\n`),
-          );
-          controller.terminate();
-        } catch {}
-      }, idleTimeoutMs);
+       idleTimer = setTimeout(() => {
+         logWarn(
+           EMOJI.amber,
+           `[STREAM_IDLE_TIMEOUT ${meta?.reqId || ""}] provider=${meta?.provider || ""} model=${meta?.upstream_model || ""} no chunk received for ${idleTimeoutMs}ms, closing stream`,
+         );
+         try {
+           controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+           controller.terminate();
+         } catch {}
+       }, idleTimeoutMs);
     }
   };
 

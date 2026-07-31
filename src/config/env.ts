@@ -81,7 +81,7 @@ export const LITEROUTER_STREAM_IDLE_TIMEOUT_MS =
   parseInt(
     Bun.env.LITEROUTER_STREAM_IDLE_TIMEOUT ||
       Bun.env.LITEROUTER_STREAM_IDLE_TIMEOUT_MS ||
-      "15",
+      "30",
     10,
   ) * 1000;
 export const LITEROUTER_NO_RESPONSE_RETRY_DELAY_MS =

@@ -152,19 +152,10 @@ async function processGoogleNativeSuccess(
       idleTimer = setTimeout(() => {
         logWarn(
           EMOJI.amber,
-          `[STREAM_IDLE_TIMEOUT ${meta?.reqId || ""}] provider=${meta?.provider || ""} model=${meta?.upstream_model || ""} no chunk received for ${LITEROUTER_STREAM_IDLE_TIMEOUT_MS}ms`,
+          `[STREAM_IDLE_TIMEOUT ${meta?.reqId || ""}] provider=${meta?.provider || ""} model=${meta?.upstream_model || ""} no chunk received for ${LITEROUTER_STREAM_IDLE_TIMEOUT_MS}ms, closing stream`,
         );
-        const errObj = {
-          error: {
-            message: `Upstream stream idle timeout exceeded (${LITEROUTER_STREAM_IDLE_TIMEOUT_MS / 1000}s)`,
-            code: "upstream_idle_timeout",
-            type: "timeout_error",
-          },
-        };
         try {
-          controller.enqueue(
-            encoder.encode(`data: ${JSON.stringify(errObj)}\n\ndata: [DONE]\n\n`),
-          );
+          controller.enqueue(encoder.encode("data: [DONE]\n\n"));
           controller.terminate();
         } catch {}
       }, LITEROUTER_STREAM_IDLE_TIMEOUT_MS);
