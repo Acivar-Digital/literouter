@@ -151,7 +151,7 @@ async function processGoogleNativeSuccess(
       try {
         controller.enqueue(encoder.encode(":\n\n"));
       } catch {}
-    }, 15000);
+    }, 2000);
   };
 
   const stopKeepAlive = () => {
