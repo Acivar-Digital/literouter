@@ -366,19 +366,16 @@ export async function executeGoogleNative(
       if (e instanceof NoResponseError) {
         logWarn(
           EMOJI.amber,
-          `[NO_RESPONSE ${reqId}] key=${activeKey.substring(0, 6)}... model=${upstream_model} sent nothing within ${LITEROUTER_NO_RESPONSE_TIMEOUT_MS}ms, rotating key (no cooldown)`,
+          `[NO_RESPONSE ${reqId}] key=...${activeKey.slice(-6)} model=${upstream_model} sent 0 content tokens within ${LITEROUTER_NO_RESPONSE_TIMEOUT_MS}ms, rotating key (no cooldown)`,
         );
         if (reqId) {
           recordTrace(
             reqId,
             "upstream",
-            { status: "no-response", body: "upstream sent no bytes" },
+            { status: "no-response", body: "upstream sent 0 content tokens" },
             { model: modelName, provider: "google", status: 0 },
           );
         }
-        await new Promise((r) =>
-          setTimeout(r, LITEROUTER_NO_RESPONSE_RETRY_DELAY_MS),
-        );
         continue;
       }
 

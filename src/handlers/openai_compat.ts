@@ -88,7 +88,7 @@ async function processOpenAIError(
 
   logState(
     EMOJI.limit,
-    `[PROVIDER_LIMIT ${reqId}] key=${activeKey.substring(0, 6)}... model=${upstream_model} (${resp.status}) rpm ${currentRpm + 1}/${getModelLimits(modelName, provider).max_rpm}`,
+    `[PROVIDER_LIMIT ${reqId}] key=...${activeKey.slice(-6)} model=${upstream_model} (${resp.status}) rpm ${currentRpm + 1}/${getModelLimits(modelName, provider).max_rpm}`,
   );
 
   if (reqId) {
@@ -138,7 +138,7 @@ async function processOpenAISuccess(
 
   logState(
     EMOJI.served,
-    `[${provider.toUpperCase()} ${reqId}] Served ${modelName} (upstream=${upstream_model}, key=${activeKey.substring(0, 6)}...) attempt ${attempt + 1}/${maxAttempts} rpm ${currentRpm + 1}/${getModelLimits(modelName, provider).max_rpm}`,
+    `[${provider.toUpperCase()} ${reqId}] Served ${modelName} (upstream=${upstream_model}, key=...${activeKey.slice(-6)}) attempt ${attempt + 1}/${maxAttempts} rpm ${currentRpm + 1}/${getModelLimits(modelName, provider).max_rpm}`,
   );
 
   if (reqId && isStream) {
@@ -339,13 +339,13 @@ export async function executeOpenAICompat(
         noResponseAttempts++;
         logWarn(
           EMOJI.amber,
-          `[NO_RESPONSE ${reqId}] key=${activeKey.substring(0, 6)}... model=${upstream_model} sent nothing within ${LITEROUTER_NO_RESPONSE_TIMEOUT_MS}ms, rotating key (no cooldown) [${noResponseAttempts}/${maxAttempts}]`,
+          `[NO_RESPONSE ${reqId}] key=...${activeKey.slice(-6)} model=${upstream_model} sent 0 content tokens within ${LITEROUTER_NO_RESPONSE_TIMEOUT_MS}ms, rotating key (no cooldown) [${noResponseAttempts}/${maxAttempts}]`,
         );
         if (reqId) {
           recordTrace(
             reqId,
             "upstream",
-            { status: "no-response", body: "upstream sent no bytes" },
+            { status: "no-response", body: "upstream sent 0 content tokens" },
             { model: modelName, provider, status: 0 },
           );
         }
@@ -356,9 +356,6 @@ export async function executeOpenAICompat(
           );
           break;
         }
-        await new Promise((r) =>
-          setTimeout(r, LITEROUTER_NO_RESPONSE_RETRY_DELAY_MS),
-        );
         continue;
       }
 

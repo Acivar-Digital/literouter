@@ -118,3 +118,37 @@ test("fetchWithFirstByteTimeout returns a normal response when upstream answers"
     server.stop(true);
   }
 });
+
+test("fetchWithFirstByteTimeout throws NoResponseError when upstream sends metadata-only chunks (0 content tokens)", async () => {
+  const server = Bun.serve({
+    port: 0,
+    fetch() {
+      // Send 200 OK with metadata-only chunk, then stall
+      return new Response(
+        new ReadableStream({
+          start(controller) {
+            const encoder = new TextEncoder();
+            controller.enqueue(encoder.encode('data: {"choices":[{"delta":{"role":"assistant"}}]}\n\n'));
+            // Stalls - zero content tokens sent
+          },
+        }),
+        { status: 200, headers: { "Content-Type": "text/event-stream" } },
+      );
+    },
+  });
+  const url = `http://localhost:${server.port}/`;
+  const start = Date.now();
+  try {
+    await fetchWithFirstByteTimeout(
+      url,
+      { method: "POST", body: "{}" },
+      { noResponseTimeoutMs: 1000, totalTimeoutMs: 300_000 },
+    );
+    throw new Error("expected NoResponseError on 0 content tokens");
+  } catch (e: any) {
+    expect(e).toBeInstanceOf(NoResponseError);
+    expect(Date.now() - start).toBeLessThan(5000);
+  } finally {
+    server.stop(true);
+  }
+});
