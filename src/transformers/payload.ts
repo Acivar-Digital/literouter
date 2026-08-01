@@ -274,27 +274,31 @@ export function createStreamTransformer(
 
               if (reasoning) {
                 if (collapseReasoning) {
+                  let contentDelta = "";
                   if (!hasStartedThought) {
                     hasStartedThought = true;
-                    delta.content = "Thinking... \n\n";
-                    delta.reasoning_content = null;
-                  } else {
-                    // Suppress subsequent raw reasoning chunks
-                    delete delta.content;
-                    delete delta.reasoning_content;
-                    if (!delta.role && !delta.tool_calls && !delta.function_call) {
-                      continue;
-                    }
+                    contentDelta += "<thought>\n";
                   }
+                  contentDelta += reasoning;
+                  delta.content = contentDelta;
+                  delta.reasoning_content = null;
                 } else {
                   delta.reasoning_content = reasoning;
                 }
               } else if (
-                delta.content ||
-                delta.tool_calls ||
-                delta.function_call
+                collapseReasoning &&
+                hasStartedThought &&
+                !hasEndedThought
               ) {
-                hasAnswerContent = true;
+                const standardContent = delta.content;
+                if (
+                  standardContent ||
+                  delta.tool_calls ||
+                  delta.function_call
+                ) {
+                  delta.content = "\n</thought>\n" + (standardContent || "");
+                  hasEndedThought = true;
+                }
               }
 
               extractThoughtSignature(json);
@@ -311,13 +315,13 @@ export function createStreamTransformer(
     },
     flush(controller) {
       stopKeepAlive();
-      if (collapseReasoning && hasStartedThought && !hasAnswerContent) {
+      if (collapseReasoning && hasStartedThought && !hasEndedThought) {
         const closing = {
           choices: [
             {
               index: 0,
               delta: {
-                content: "\n\n*(Thinking complete — no code generated)*",
+                content: "\n</thought>\n",
               },
             },
           ],

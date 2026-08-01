@@ -123,7 +123,7 @@ test("sanitizeHistoricalMessages strips thought blocks and Thinking placeholders
   expect(messages[2].content).toBe("Here is the answer.");
 });
 
-test("createStreamTransformer emits Thinking placeholder on byte 1 of reasoning", async () => {
+test("createStreamTransformer wraps reasoning in <thought> tags when collapseReasoning=true", async () => {
   const transformer = createStreamTransformer(true);
   const writer = transformer.writable.getWriter();
   const reader = transformer.readable.getReader();
@@ -146,6 +146,7 @@ test("createStreamTransformer emits Thinking placeholder on byte 1 of reasoning"
     if (output.includes("[DONE]")) break;
   }
 
-  expect(output).toContain("Thinking... ");
-  expect(output).toContain("Here is the answer");
+  expect(output).toContain("<thought>\\nlet me think");
+  expect(output).toContain(" more thinking");
+  expect(output).toContain("\\n</thought>\\nHere is the answer");
 });

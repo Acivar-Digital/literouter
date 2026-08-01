@@ -9,7 +9,7 @@ All notable changes to LiteRouter will be documented in this file.
 - **Removed `openrouter/free`** — Removed the `openrouter/free` aggregator model from `models.json`.
 
 ### Fixed
-- **Reasoning Placeholder Streaming & Clean History** — Updated `createStreamTransformer` in `src/transformers/payload.ts` to emit `Thinking... \n\n` as `delta.content` on Byte 1 of reasoning, while suppressing raw 32,000-token internal monologues. Keeps OpenCode TUI streaming instantly without socket bloat or freezing. Updated `sanitizeHistoricalMessages` to strip `Thinking... \n\n` and `<thought>` tags from multi-turn assistant prompt history.
+- **Collapsible Reasoning Streaming & Clean History** — Updated `createStreamTransformer` in `src/transformers/payload.ts` to stream real-time reasoning tokens inside `<thought>\n` ... `\n</thought>\n` tags directly into `delta.content` when `collapseReasoning=true`. Replaced token-suppression logic and static dummy placeholders (`Thinking... \n\n` / `(Thinking complete)`) with true streaming delivery, preventing 0-content stalls and manual "continue" prompt loops in OpenCode TUI. Updated `sanitizeHistoricalMessages` to strip `<thought>` blocks from multi-turn assistant history.
 - **OpenRouter `delta.reasoning` & `delta.reasoning_content` Mapping** — Updated `fetchWithFirstByteTimeout` in `src/network/fetcher.ts` to recognize `delta.reasoning` chunks as valid content tokens during first-byte and stream idle monitoring.
 
 ## [3.3.8] — 2026-08-01
