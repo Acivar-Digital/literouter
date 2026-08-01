@@ -10,7 +10,7 @@ All notable changes to LiteRouter will be documented in this file.
 
 ### Fixed
 - **OpenRouter `delta.reasoning` & `delta.reasoning_content` Mapping** — Updated `fetchWithFirstByteTimeout` in `src/network/fetcher.ts` to recognize `delta.reasoning` chunks as valid content tokens during first-byte and stream idle monitoring.
-- **TUI Conversation History Churning Prevention** — Set `LITEROUTER_COLLAPSE_REASONING=false` in `.env` so reasoning tokens stream as standard `delta.reasoning_content` instead of being forcibly collapsed into `delta.content`. This keeps Opencode SSE stream monitors active while keeping prompt history clean, preventing infinite TUI loops on multi-turn requests.
+- **Opencode TUI Streaming & Reasoning Collapse** — Enforced `LITEROUTER_COLLAPSE_REASONING=true` as the default in `.env` and `src/config/env.ts`. This ensures reasoning monologue tokens (e.g. from `inclusionai/ling-3.0-flash:free` or DeepSeek R1) are wrapped in `<thought>...</thought>` blocks and emitted in `delta.content`. Downstream CLI clients like OpenCode immediately receive and stream reasoning output to the TUI screen, preventing UI freezes while models execute long reasoning chains.
 
 ## [3.3.8] — 2026-08-01
 
