@@ -2,16 +2,6 @@
 
 All notable changes to LiteRouter will be documented in this file.
 
-## [3.3.9] — 2026-08-01
-
-### Added
-- **`openrouter/free:nitro` Model** — Added `openrouter/free:nitro` to `models.json` (provider: `openrouter`, upstream: `openrouter/free:nitro`, context: 200000, max_output: 128000). Also updated `scripts/doctor.ts` to use `openrouter/free:nitro` as the OpenRouter probe model for highest-throughput key validation.
-- **Removed `openrouter/free`** — Removed the `openrouter/free` aggregator model from `models.json`.
-
-### Fixed
-- **OpenRouter `delta.reasoning` & `delta.reasoning_content` Mapping** — Updated `fetchWithFirstByteTimeout` in `src/network/fetcher.ts` to recognize `delta.reasoning` chunks as valid content tokens during first-byte and stream idle monitoring.
-- **Opencode TUI Streaming & Reasoning Collapse** — Enforced `LITEROUTER_COLLAPSE_REASONING=true` as the default in `.env` and `src/config/env.ts`. This ensures reasoning monologue tokens (e.g. from `inclusionai/ling-3.0-flash:free` or DeepSeek R1) are wrapped in `<thought>...</thought>` blocks and emitted in `delta.content`. Downstream CLI clients like OpenCode immediately receive and stream reasoning output to the TUI screen, preventing UI freezes while models execute long reasoning chains.
-
 ## [3.3.8] — 2026-08-01
 
 ### Added / Fixed

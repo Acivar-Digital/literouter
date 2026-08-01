@@ -6,15 +6,6 @@ import {
 
 const thoughtSignatureStore = new Map<string, string>();
 
-export function sanitizeHistoricalMessages(messages: any[]): void {
-  if (!messages || !Array.isArray(messages)) return;
-  for (const msg of messages) {
-    if (msg && msg.role === "assistant" && typeof msg.content === "string") {
-      msg.content = msg.content.replace(/<thought>[\s\S]*?<\/thought>/gi, "").trim();
-    }
-  }
-}
-
 export function injectThoughtSignature(body: any): void {
   if (!body || !body.messages) return;
   for (const msg of body.messages) {
@@ -144,7 +135,6 @@ export function transformNonStreaming(
   const rawReasoning =
     message.reasoning_content ||
     message.reasoningContent ||
-    message.reasoning ||
     message.thought ||
     message.thought_summary;
 
@@ -156,8 +146,6 @@ export function transformNonStreaming(
   }
 
   delete message.reasoningContent;
-  delete message.reasoning;
-  delete message.reasoning_details;
   delete message.thought;
   delete message.thought_summary;
 
@@ -248,7 +236,6 @@ export function createStreamTransformer(
               const rawReasoning =
                 delta.reasoning_content ||
                 delta.reasoningContent ||
-                delta.reasoning ||
                 delta.thought ||
                 delta.thought_summary;
               let reasoning = "";
@@ -263,8 +250,6 @@ export function createStreamTransformer(
               }
 
               delete delta.reasoningContent;
-              delete delta.reasoning;
-              delete delta.reasoning_details;
               delete delta.thought;
               delete delta.thought_summary;
 

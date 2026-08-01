@@ -26,5 +26,4 @@ export {
   createStreamTransformer,
   injectThoughtSignature,
   extractThoughtSignature,
-  sanitizeHistoricalMessages,
 } from "./transformers/payload";

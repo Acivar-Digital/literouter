@@ -22,7 +22,6 @@ function hasContentToken(chunkBytes: Uint8Array): boolean {
         if (
           (typeof delta?.content === "string" && delta.content.length > 0) ||
           (typeof delta?.reasoning_content === "string" && delta.reasoning_content.length > 0) ||
-          (typeof delta?.reasoning === "string" && delta.reasoning.length > 0) ||
           (typeof delta?.thought === "string" && delta.thought.length > 0) ||
           (Array.isArray(delta?.tool_calls) && delta.tool_calls.length > 0) ||
           (Array.isArray(json?.choices?.[0]?.message?.tool_calls) && json.choices[0].message.tool_calls.length > 0)
