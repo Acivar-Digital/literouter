@@ -290,8 +290,19 @@ export function createStreamTransformer(
                 hasStartedThought &&
                 !hasEndedThought
               ) {
-                delta.content = "\n</thought>\n" + (delta.content || "");
                 hasEndedThought = true;
+                const closingChunk = {
+                  ...json,
+                  choices: [
+                    {
+                      index: (choices[0] && typeof choices[0].index === "number") ? choices[0].index : 0,
+                      delta: { content: "\n</thought>\n" },
+                    },
+                  ],
+                };
+                controller.enqueue(
+                  encoder.encode(`data: ${JSON.stringify(closingChunk)}\n\n`),
+                );
               }
 
               extractThoughtSignature(json);
@@ -308,6 +319,22 @@ export function createStreamTransformer(
     },
     flush(controller) {
       stopKeepAlive();
+      if (buffer.trim()) {
+        const line = buffer.trim();
+        if (line.startsWith("data: ")) {
+          const dataStr = line.substring(6).trim();
+          if (dataStr !== "[DONE]") {
+            try {
+              const json = JSON.parse(dataStr);
+              controller.enqueue(
+                encoder.encode(`data: ${JSON.stringify(json)}\n\n`),
+              );
+            } catch (e) {
+              controller.enqueue(encoder.encode(`data: ${dataStr}\n\n`));
+            }
+          }
+        }
+      }
       if (collapseReasoning && hasStartedThought && !hasEndedThought) {
         const closing = {
           choices: [

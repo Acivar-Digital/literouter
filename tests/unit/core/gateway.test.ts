@@ -148,5 +148,40 @@ test("createStreamTransformer wraps reasoning in <thought> tags when collapseRea
 
   expect(output).toContain("<thought>\\nlet me think");
   expect(output).toContain(" more thinking");
-  expect(output).toContain("\\n</thought>\\nHere is the answer");
+  expect(output).toContain("\\n</thought>");
+  expect(output).toContain("Here is the answer");
+});
+
+test("createStreamTransformer emits closing <thought> in a separate chunk before tool_calls", async () => {
+  const transformer = createStreamTransformer(true);
+  const writer = transformer.writable.getWriter();
+  const reader = transformer.readable.getReader();
+
+  const chunk1 = 'data: {"choices":[{"index":0,"delta":{"reasoning":"I will call bash"}}]}\n\n';
+  const chunk2 = 'data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"bash","arguments":""}}]}}]}\n\n';
+
+  writer.write(new TextEncoder().encode(chunk1));
+  writer.write(new TextEncoder().encode(chunk2));
+  writer.close();
+
+  let output = "";
+  const decoder = new TextDecoder();
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    output += decoder.decode(value);
+    if (output.includes("[DONE]")) break;
+  }
+
+  const lines = output.split("\n\n").filter(l => l.startsWith("data: "));
+  const parsed = lines.map(l => {
+    try { return JSON.parse(l.substring(6)); } catch { return null; }
+  }).filter(Boolean);
+
+  const thoughtClosingChunk = parsed.find((p: any) => p.choices?.[0]?.delta?.content === "\n</thought>\n");
+  expect(thoughtClosingChunk).toBeDefined();
+
+  const toolCallChunk = parsed.find((p: any) => p.choices?.[0]?.delta?.tool_calls);
+  expect(toolCallChunk).toBeDefined();
+  expect(toolCallChunk.choices[0].delta.content).toBeUndefined();
 });
