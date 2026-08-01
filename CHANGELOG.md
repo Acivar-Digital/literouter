@@ -4,9 +4,13 @@ All notable changes to LiteRouter will be documented in this file.
 
 ## [3.3.9] — 2026-08-01
 
+### Added
+- **`openrouter/free:nitro` Model** — Added `openrouter/free:nitro` to `models.json` (provider: `openrouter`, upstream: `openrouter/free:nitro`, context: 200000, max_output: 128000). Also updated `scripts/doctor.ts` to use `openrouter/free:nitro` as the OpenRouter probe model for highest-throughput key validation.
+- **Removed `openrouter/free`** — Removed the `openrouter/free` aggregator model from `models.json`.
+
 ### Fixed
-- **OpenRouter `delta.reasoning` Stream Handling** — Fixed an issue where OpenRouter models (e.g. `inclusionai/ling-3.0-flash:free`) that stream thinking tokens inside the non-standard `delta.reasoning` field caused Opencode to hang and throw `Upstream idle timeout exceeded`. `createStreamTransformer` now intercepts `delta.reasoning` and maps it to `delta.content` (wrapped in `<thought>` tags when `LITEROUTER_COLLAPSE_REASONING=true`), ensuring downstream clients like Opencode receive visible content tokens and never idle out.
-- **`LITEROUTER_COLLAPSE_REASONING` Default** — Set `LITEROUTER_COLLAPSE_REASONING=true` in `.env` by default to ensure reasoning tokens are always surfaced in `content` for maximum downstream compatibility.
+- **OpenRouter `delta.reasoning` & `delta.reasoning_content` Mapping** — Updated `fetchWithFirstByteTimeout` in `src/network/fetcher.ts` to recognize `delta.reasoning` chunks as valid content tokens during first-byte and stream idle monitoring.
+- **TUI Conversation History Churning Prevention** — Set `LITEROUTER_COLLAPSE_REASONING=false` in `.env` so reasoning tokens stream as standard `delta.reasoning_content` instead of being forcibly collapsed into `delta.content`. This keeps Opencode SSE stream monitors active while keeping prompt history clean, preventing infinite TUI loops on multi-turn requests.
 
 ## [3.3.8] — 2026-08-01
 
