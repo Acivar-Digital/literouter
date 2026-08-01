@@ -10,10 +10,7 @@ export function sanitizeHistoricalMessages(messages: any[]): void {
   if (!messages || !Array.isArray(messages)) return;
   for (const msg of messages) {
     if (msg && msg.role === "assistant" && typeof msg.content === "string") {
-      msg.content = msg.content
-        .replace(/<thought>[\s\S]*?<\/thought>/gi, "")
-        .replace(/^Thinking\.\.\.\s*/gi, "")
-        .trim();
+      msg.content = msg.content.replace(/<thought>[\s\S]*?<\/thought>/gi, "").trim();
     }
   }
 }
@@ -194,7 +191,6 @@ export function createStreamTransformer(
   let buffer = "";
   let hasStartedThought = false;
   let hasEndedThought = false;
-  let hasAnswerContent = false;
   let firstChunk = true;
   let capturedUsage: any = null;
   const decoder = new TextDecoder();
@@ -275,10 +271,9 @@ export function createStreamTransformer(
               if (reasoning) {
                 if (collapseReasoning) {
                   let contentDelta = "";
-                  if (!hasStartedThought || hasEndedThought) {
-                    hasStartedThought = true;
-                    hasEndedThought = false;
+                  if (!hasStartedThought) {
                     contentDelta += "<thought>\n";
+                    hasStartedThought = true;
                   }
                   contentDelta += reasoning;
                   delta.content = contentDelta;
@@ -291,21 +286,16 @@ export function createStreamTransformer(
                 hasStartedThought &&
                 !hasEndedThought
               ) {
-                hasEndedThought = true;
-                const closingChunk = {
-                  ...json,
-                  choices: [
-                    {
-                      index: (choices[0] && typeof choices[0].index === "number") ? choices[0].index : 0,
-                      delta: { content: "\n</thought>\n" },
-                    },
-                  ],
-                };
-                controller.enqueue(
-                  encoder.encode(`data: ${JSON.stringify(closingChunk)}\n\n`),
-                );
+                const standardContent = delta.content;
+                if (
+                  standardContent ||
+                  delta.tool_calls ||
+                  delta.function_call
+                ) {
+                  delta.content = "\n</thought>\n" + (standardContent || "");
+                  hasEndedThought = true;
+                }
               }
-
               extractThoughtSignature(json);
               json.choices = choices;
             }
@@ -320,32 +310,9 @@ export function createStreamTransformer(
     },
     flush(controller) {
       stopKeepAlive();
-      if (buffer.trim()) {
-        const line = buffer.trim();
-        if (line.startsWith("data: ")) {
-          const dataStr = line.substring(6).trim();
-          if (dataStr !== "[DONE]") {
-            try {
-              const json = JSON.parse(dataStr);
-              controller.enqueue(
-                encoder.encode(`data: ${JSON.stringify(json)}\n\n`),
-              );
-            } catch (e) {
-              controller.enqueue(encoder.encode(`data: ${dataStr}\n\n`));
-            }
-          }
-        }
-      }
       if (collapseReasoning && hasStartedThought && !hasEndedThought) {
         const closing = {
-          choices: [
-            {
-              index: 0,
-              delta: {
-                content: "\n</thought>\n",
-              },
-            },
-          ],
+          choices: [{ index: 0, delta: { content: "\n</thought>\n" } }],
         };
         controller.enqueue(
           encoder.encode(`data: ${JSON.stringify(closing)}\n\n`),

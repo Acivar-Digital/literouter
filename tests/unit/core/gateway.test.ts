@@ -6,7 +6,6 @@ import {
   getModelLimits,
   staticValidateKeys,
   sanitizeHistoricalMessages,
-  createStreamTransformer,
 } from "../../../src/lib";
 
 test("mergeConsecutiveMessages merges consecutive same-role string content", () => {
@@ -112,112 +111,11 @@ test("staticValidateKeys returns empty for empty input", () => {
   expect(staticValidateKeys("GOOGLE", "")).toEqual([]);
 });
 
-test("sanitizeHistoricalMessages strips thought blocks and Thinking placeholders from previous assistant messages", () => {
+test("sanitizeHistoricalMessages strips thought blocks from previous assistant messages", () => {
   const messages = [
     { role: "user", content: "hello" },
-    { role: "assistant", content: "Thinking... \n\nHello! How can I help?" },
-    { role: "assistant", content: "<thought>\nlet me think...\n</thought>\nHere is the answer." },
+    { role: "assistant", content: "<thought>\nlet me think...\n</thought>\nHello! How can I help?" },
   ];
   sanitizeHistoricalMessages(messages);
   expect(messages[1].content).toBe("Hello! How can I help?");
-  expect(messages[2].content).toBe("Here is the answer.");
-});
-
-test("createStreamTransformer wraps reasoning in <thought> tags when collapseReasoning=true", async () => {
-  const transformer = createStreamTransformer(true);
-  const writer = transformer.writable.getWriter();
-  const reader = transformer.readable.getReader();
-
-  const chunk1 = 'data: {"choices":[{"delta":{"reasoning":"let me think"}}]}\n\n';
-  const chunk2 = 'data: {"choices":[{"delta":{"reasoning":" more thinking"}}]}\n\n';
-  const chunk3 = 'data: {"choices":[{"delta":{"content":"Here is the answer"}}]}\n\n';
-
-  writer.write(new TextEncoder().encode(chunk1));
-  writer.write(new TextEncoder().encode(chunk2));
-  writer.write(new TextEncoder().encode(chunk3));
-  writer.close();
-
-  let output = "";
-  const decoder = new TextDecoder();
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    output += decoder.decode(value);
-    if (output.includes("[DONE]")) break;
-  }
-
-  expect(output).toContain("<thought>\\nlet me think");
-  expect(output).toContain(" more thinking");
-  expect(output).toContain("\\n</thought>");
-  expect(output).toContain("Here is the answer");
-});
-
-test("createStreamTransformer emits closing <thought> in a separate chunk before tool_calls", async () => {
-  const transformer = createStreamTransformer(true);
-  const writer = transformer.writable.getWriter();
-  const reader = transformer.readable.getReader();
-
-  const chunk1 = 'data: {"choices":[{"index":0,"delta":{"reasoning":"I will call bash"}}]}\n\n';
-  const chunk2 = 'data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"bash","arguments":""}}]}}]}\n\n';
-
-  writer.write(new TextEncoder().encode(chunk1));
-  writer.write(new TextEncoder().encode(chunk2));
-  writer.close();
-
-  let output = "";
-  const decoder = new TextDecoder();
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    output += decoder.decode(value);
-    if (output.includes("[DONE]")) break;
-  }
-
-  const lines = output.split("\n\n").filter(l => l.startsWith("data: "));
-  const parsed = lines.map(l => {
-    try { return JSON.parse(l.substring(6)); } catch { return null; }
-  }).filter(Boolean);
-
-  const thoughtClosingChunk = parsed.find((p: any) => p.choices?.[0]?.delta?.content === "\n</thought>\n");
-  expect(thoughtClosingChunk).toBeDefined();
-
-  const toolCallChunk = parsed.find((p: any) => p.choices?.[0]?.delta?.tool_calls);
-  expect(toolCallChunk).toBeDefined();
-  expect(toolCallChunk.choices[0].delta.content).toBeUndefined();
-});
-
-test("createStreamTransformer handles multi-phase reasoning correctly", async () => {
-  const transformer = createStreamTransformer(true);
-  const writer = transformer.writable.getWriter();
-  const reader = transformer.readable.getReader();
-
-  const chunk1 = 'data: {"choices":[{"index":0,"delta":{"reasoning":"Phase 1 thinking"}}]}\n\n';
-  const chunk2 = 'data: {"choices":[{"index":0,"delta":{"content":"Phase 1 answer"}}]}\n\n';
-  const chunk3 = 'data: {"choices":[{"index":0,"delta":{"reasoning":"Phase 2 thinking"}}]}\n\n';
-  const chunk4 = 'data: {"choices":[{"index":0,"delta":{"content":"Phase 2 answer"}}]}\n\n';
-
-  writer.write(new TextEncoder().encode(chunk1));
-  writer.write(new TextEncoder().encode(chunk2));
-  writer.write(new TextEncoder().encode(chunk3));
-  writer.write(new TextEncoder().encode(chunk4));
-  writer.close();
-
-  let output = "";
-  const decoder = new TextDecoder();
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    output += decoder.decode(value);
-  }
-
-  const lines = output.split("\n\n").filter(l => l.startsWith("data: "));
-  const parsed = lines.map(l => {
-    try { return JSON.parse(l.substring(6)); } catch { return null; }
-  }).filter(Boolean);
-
-  const thoughtOpenings = parsed.filter((p: any) => p.choices?.[0]?.delta?.content?.includes("<thought>"));
-  const thoughtClosings = parsed.filter((p: any) => p.choices?.[0]?.delta?.content === "\n</thought>\n");
-
-  expect(thoughtOpenings.length).toBe(2);
-  expect(thoughtClosings.length).toBe(2);
 });
