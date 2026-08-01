@@ -6,6 +6,7 @@ import {
   getModelLimits,
   staticValidateKeys,
   sanitizeHistoricalMessages,
+  createStreamTransformer,
 } from "../../../src/lib";
 
 test("mergeConsecutiveMessages merges consecutive same-role string content", () => {
@@ -111,11 +112,40 @@ test("staticValidateKeys returns empty for empty input", () => {
   expect(staticValidateKeys("GOOGLE", "")).toEqual([]);
 });
 
-test("sanitizeHistoricalMessages strips thought blocks from previous assistant messages", () => {
+test("sanitizeHistoricalMessages strips thought blocks and Thinking placeholders from previous assistant messages", () => {
   const messages = [
     { role: "user", content: "hello" },
-    { role: "assistant", content: "<thought>\nlet me think...\n</thought>\nHello! How can I help?" },
+    { role: "assistant", content: "Thinking... \n\nHello! How can I help?" },
+    { role: "assistant", content: "<thought>\nlet me think...\n</thought>\nHere is the answer." },
   ];
   sanitizeHistoricalMessages(messages);
   expect(messages[1].content).toBe("Hello! How can I help?");
+  expect(messages[2].content).toBe("Here is the answer.");
+});
+
+test("createStreamTransformer emits Thinking placeholder on byte 1 of reasoning", async () => {
+  const transformer = createStreamTransformer(true);
+  const writer = transformer.writable.getWriter();
+  const reader = transformer.readable.getReader();
+
+  const chunk1 = 'data: {"choices":[{"delta":{"reasoning":"let me think"}}]}\n\n';
+  const chunk2 = 'data: {"choices":[{"delta":{"reasoning":" more thinking"}}]}\n\n';
+  const chunk3 = 'data: {"choices":[{"delta":{"content":"Here is the answer"}}]}\n\n';
+
+  writer.write(new TextEncoder().encode(chunk1));
+  writer.write(new TextEncoder().encode(chunk2));
+  writer.write(new TextEncoder().encode(chunk3));
+  writer.close();
+
+  let output = "";
+  const decoder = new TextDecoder();
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    output += decoder.decode(value);
+    if (output.includes("[DONE]")) break;
+  }
+
+  expect(output).toContain("Thinking... ");
+  expect(output).toContain("Here is the answer");
 });
