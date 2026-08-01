@@ -185,3 +185,39 @@ test("createStreamTransformer emits closing <thought> in a separate chunk before
   expect(toolCallChunk).toBeDefined();
   expect(toolCallChunk.choices[0].delta.content).toBeUndefined();
 });
+
+test("createStreamTransformer handles multi-phase reasoning correctly", async () => {
+  const transformer = createStreamTransformer(true);
+  const writer = transformer.writable.getWriter();
+  const reader = transformer.readable.getReader();
+
+  const chunk1 = 'data: {"choices":[{"index":0,"delta":{"reasoning":"Phase 1 thinking"}}]}\n\n';
+  const chunk2 = 'data: {"choices":[{"index":0,"delta":{"content":"Phase 1 answer"}}]}\n\n';
+  const chunk3 = 'data: {"choices":[{"index":0,"delta":{"reasoning":"Phase 2 thinking"}}]}\n\n';
+  const chunk4 = 'data: {"choices":[{"index":0,"delta":{"content":"Phase 2 answer"}}]}\n\n';
+
+  writer.write(new TextEncoder().encode(chunk1));
+  writer.write(new TextEncoder().encode(chunk2));
+  writer.write(new TextEncoder().encode(chunk3));
+  writer.write(new TextEncoder().encode(chunk4));
+  writer.close();
+
+  let output = "";
+  const decoder = new TextDecoder();
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    output += decoder.decode(value);
+  }
+
+  const lines = output.split("\n\n").filter(l => l.startsWith("data: "));
+  const parsed = lines.map(l => {
+    try { return JSON.parse(l.substring(6)); } catch { return null; }
+  }).filter(Boolean);
+
+  const thoughtOpenings = parsed.filter((p: any) => p.choices?.[0]?.delta?.content?.includes("<thought>"));
+  const thoughtClosings = parsed.filter((p: any) => p.choices?.[0]?.delta?.content === "\n</thought>\n");
+
+  expect(thoughtOpenings.length).toBe(2);
+  expect(thoughtClosings.length).toBe(2);
+});

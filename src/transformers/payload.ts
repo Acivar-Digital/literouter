@@ -275,8 +275,9 @@ export function createStreamTransformer(
               if (reasoning) {
                 if (collapseReasoning) {
                   let contentDelta = "";
-                  if (!hasStartedThought) {
+                  if (!hasStartedThought || hasEndedThought) {
                     hasStartedThought = true;
+                    hasEndedThought = false;
                     contentDelta += "<thought>\n";
                   }
                   contentDelta += reasoning;
