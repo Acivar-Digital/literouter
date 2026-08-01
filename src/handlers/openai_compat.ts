@@ -19,6 +19,7 @@ import {
   estimateTokens,
   extractThoughtSignature,
   injectThoughtSignature,
+  sanitizeHistoricalMessages,
   mergeConsecutiveMessages,
   transformNonStreaming,
 } from "../transformers/payload";
@@ -266,6 +267,7 @@ export async function executeOpenAICompat(
         "Content-Type": "application/json",
       });
 
+      sanitizeHistoricalMessages(reqJson.messages);
       injectThoughtSignature(reqJson);
       if (isStream) {
         reqJson.stream_options = {

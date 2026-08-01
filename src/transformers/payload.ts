@@ -6,6 +6,15 @@ import {
 
 const thoughtSignatureStore = new Map<string, string>();
 
+export function sanitizeHistoricalMessages(messages: any[]): void {
+  if (!messages || !Array.isArray(messages)) return;
+  for (const msg of messages) {
+    if (msg && msg.role === "assistant" && typeof msg.content === "string") {
+      msg.content = msg.content.replace(/<thought>[\s\S]*?<\/thought>/gi, "").trim();
+    }
+  }
+}
+
 export function injectThoughtSignature(body: any): void {
   if (!body || !body.messages) return;
   for (const msg of body.messages) {

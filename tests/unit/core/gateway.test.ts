@@ -5,6 +5,7 @@ import {
   cleanLatexSymbols,
   getModelLimits,
   staticValidateKeys,
+  sanitizeHistoricalMessages,
 } from "../../../src/lib";
 
 test("mergeConsecutiveMessages merges consecutive same-role string content", () => {
@@ -108,4 +109,13 @@ test("staticValidateKeys rejects placeholder and short keys", () => {
 
 test("staticValidateKeys returns empty for empty input", () => {
   expect(staticValidateKeys("GOOGLE", "")).toEqual([]);
+});
+
+test("sanitizeHistoricalMessages strips thought blocks from previous assistant messages", () => {
+  const messages = [
+    { role: "user", content: "hello" },
+    { role: "assistant", content: "<thought>\nlet me think...\n</thought>\nHello! How can I help?" },
+  ];
+  sanitizeHistoricalMessages(messages);
+  expect(messages[1].content).toBe("Hello! How can I help?");
 });
