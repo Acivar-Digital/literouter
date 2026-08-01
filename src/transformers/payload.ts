@@ -290,15 +290,8 @@ export function createStreamTransformer(
                 hasStartedThought &&
                 !hasEndedThought
               ) {
-                const standardContent = delta.content;
-                if (
-                  standardContent ||
-                  delta.tool_calls ||
-                  delta.function_call
-                ) {
-                  delta.content = "\n</thought>\n" + (standardContent || "");
-                  hasEndedThought = true;
-                }
+                delta.content = "\n</thought>\n" + (delta.content || "");
+                hasEndedThought = true;
               }
 
               extractThoughtSignature(json);
