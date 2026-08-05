@@ -25,6 +25,8 @@ Usage:
 
 import difflib
 import logging
+import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -37,6 +39,35 @@ logging.basicConfig(
     handlers=[logging.StreamHandler(sys.stdout)],
 )
 logger = logging.getLogger("AgentGuardrail")
+
+# ---------------------------------------------------------------------------
+# Path sanitization
+# ---------------------------------------------------------------------------
+_SAFE_METACHAR_RE = re.compile(r'[;&|`$(){}[\]<>\'"\n\r\t\\]')
+
+def _sanitize_path(file_path: str) -> Path:
+    """Resolve and validate a user-provided file path.
+
+    Raises ValueError if the path contains shell metacharacters or escapes
+    the project root directory.
+    """
+    # Reject paths with shell metacharacters before resolving
+    if _SAFE_METACHAR_RE.search(file_path):
+        raise ValueError(
+            f"File path contains invalid characters: {file_path!r}"
+        )
+
+    path = Path(file_path).resolve()
+
+    # Ensure the resolved path stays within the project root (prevent traversal)
+    try:
+        path.relative_to(PROJECT_ROOT)
+    except ValueError:
+        raise ValueError(
+            f"File path escapes project root: {file_path!r}"
+        )
+
+    return path
 
 # ---------------------------------------------------------------------------
 # Paths
@@ -53,7 +84,7 @@ SANITIZER = SCRIPT_DIR / "agent_sanitizer.py"
 def checkpoint(file_path: str) -> str | None:
     """Create a timestamped snapshot of the file before LLM edits."""
     try:
-        path = Path(file_path).resolve()
+        path = _sanitize_path(file_path)
         if not path.exists():
             logger.error(f"File not found: {path}")
             return None
@@ -78,7 +109,7 @@ def checkpoint(file_path: str) -> str | None:
 def lint_file(file_path: str) -> dict:
     """Run ruff check on the file. Returns structured result."""
     try:
-        path = Path(file_path).resolve()
+        path = _sanitize_path(file_path)
         if not path.exists():
             return {"success": False, "message": f"File not found: {path}"}
 
@@ -142,7 +173,7 @@ def lint_file(file_path: str) -> dict:
 def diff_against_checkpoint(file_path: str) -> str:
     """Diff current file vs most recent checkpoint. Returns unified diff."""
     try:
-        path = Path(file_path).resolve()
+        path = _sanitize_path(file_path)
         if not path.exists():
             return f"Error: File not found: {path}"
 
@@ -188,7 +219,7 @@ def diff_against_checkpoint(file_path: str) -> str:
 def sanitize(file_path: str) -> dict:
     """Run agent_sanitizer on the file. Returns result dict."""
     try:
-        path = Path(file_path).resolve()
+        path = _sanitize_path(file_path)
         if not path.exists():
             return {"success": False, "message": f"File not found: {path}"}
 
@@ -228,7 +259,7 @@ def full_pipeline(file_path: str) -> dict:
         return {"success": False, "stage": "checkpoint", "message": "Failed to create checkpoint"}
 
     logger.info("⏸️  Checkpoint saved. Make your edits now, then run:")
-    logger.info(f'   uv run python TEST/agent_guardrail.py validate "{path}"')
+    logger.info(f'   uv run python TEST/agent_guardrail.py validate {shlex.quote(str(path))}')
 
     return {
         "success": True,
