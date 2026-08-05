@@ -10,7 +10,7 @@
 
 # Use no-db mode: JSONL-only, no Dolt database
 # When true, bd will use .beads/issues.jsonl as the source of truth
-no-db: true
+# no-db: false
 
 # Enable JSON output by default
 # json: false
@@ -53,3 +53,9 @@ no-db: true
 # Secret keys (stored in this file but prefer env vars to avoid git exposure):
 # - linear.api_key  → use LINEAR_API_KEY env var instead
 # - github.token    → use GITHUB_TOKEN env var instead
+
+# sync.remote: "git+https://github.com/Acivar-Digital/literouter.git"
+validation:
+    on-create: warn
+sync:
+    remote: "git+ssh://git@github.com/Acivar-Digital/literouter.git"

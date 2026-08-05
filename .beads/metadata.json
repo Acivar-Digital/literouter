@@ -1,7 +1,9 @@
 {
   "database": "dolt",
   "backend": "dolt",
-  "dolt_mode": "server",
+  "dolt_mode": "embedded",
+  "dolt_server_host": "127.0.0.1",
+  "dolt_server_user": "root",
   "dolt_database": "literouter",
   "project_id": "2ffb859f-ab1c-4d56-bd67-e37c345d869c"
 }
