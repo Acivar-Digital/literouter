@@ -6,7 +6,7 @@ from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.openai import OpenAIProvider
 
 GATEWAY = "http://localhost:7766/v1"
-AUTH = os.environ.get("LITEROUTER_AUTH_KEY", "sk-lr-8f2a9e3b1c4d7e5f")
+AUTH = os.environ.get("LITEROUTER_AUTH_KEY")
 
 
 def make_agent(model: str):

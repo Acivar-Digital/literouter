@@ -50,7 +50,7 @@ Perform a live streaming request through the daemon to verify prefix preservatio
 
 ```bash
 curl -N -X POST http://localhost:7766/v1/chat/completions \
-  -H "Authorization: Bearer sk-lr-8f2a9e3b1c4d7e5f" \
+  -H "Authorization: Bearer {{API_KEY}}" \
   -H "Content-Type: application/json" \
   -d '{
     "model": "openrouter/owl-alpha",

@@ -178,7 +178,7 @@ print('All metrics zero at startup')
 ### Test C-1: Non-Streaming Request
 ```bash
 curl -sf -X POST http://localhost:7766/v1/chat/completions \
-  -H "Authorization: Bearer sk-lr-8f2a9e3b1c4d7e5f" \
+  -H "Authorization: Bearer {{API_KEY}}" \
   -H "Content-Type: application/json" \
   -d '{"model":"openrouter/anthropic/claude-3-haiku","messages":[{"role":"user","content":"Reply with exactly one word: hello"}],"max_tokens":10,"stream":false}' \
   | python3 -c "
@@ -195,7 +195,7 @@ print(f'Model: {d[\"model\"]}')
 ### Test C-2: Free Model Request
 ```bash
 curl -sf -X POST http://localhost:7766/v1/chat/completions \
-  -H "Authorization: Bearer sk-lr-8f2a9e3b1c4d7e5f" \
+  -H "Authorization: Bearer {{API_KEY}}" \
   -H "Content-Type: application/json" \
   -d '{"model":"nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free","messages":[{"role":"user","content":"hi"}],"max_tokens":5}' \
   | python3 -c "
@@ -220,7 +220,7 @@ grep "Using rotated key" /tmp/literouter_test.log | tail -3
 ### Test D-1: Nvidia Non-Streaming Request
 ```bash
 curl -sf -X POST http://localhost:7766/v1/chat/completions \
-  -H "Authorization: Bearer sk-lr-8f2a9e3b1c4d7e5f" \
+  -H "Authorization: Bearer {{API_KEY}}" \
   -H "Content-Type: application/json" \
   -d '{"model":"nvidia/openai/gpt-oss-120b","messages":[{"role":"user","content":"What is 2+2? Give a short answer."}],"max_tokens":50}' \
   | python3 -c "
@@ -260,14 +260,14 @@ Run both requests and verify they hit different providers:
 ```bash
 # OpenRouter request
 curl -sf -X POST http://localhost:7766/v1/chat/completions \
-  -H "Authorization: Bearer sk-lr-8f2a9e3b1c4d7e5f" \
+  -H "Authorization: Bearer {{API_KEY}}" \
   -H "Content-Type: application/json" \
   -d '{"model":"openrouter/anthropic/claude-3-haiku","messages":[{"role":"user","content":"one word: hello"}],"max_tokens":5}' \
   > /tmp/test_or.json 2>/dev/null &
 
 # Nvidia request
 curl -sf -X POST http://localhost:7766/v1/chat/completions \
-  -H "Authorization: Bearer sk-lr-8f2a9e3b1c4d7e5f" \
+  -H "Authorization: Bearer {{API_KEY}}" \
   -H "Content-Type: application/json" \
   -d '{"model":"nvidia/openai/gpt-oss-120b","messages":[{"role":"user","content":"one word: hello"}],"max_tokens":5}' \
   > /tmp/test_nv.json 2>/dev/null &
@@ -287,7 +287,7 @@ grep "Using rotated key" /tmp/literouter_test.log | tail -4
 ### Test E-2: Unknown Provider Returns 400
 ```bash
 curl -s -X POST http://localhost:7766/v1/chat/completions \
-  -H "Authorization: Bearer sk-lr-8f2a9e3b1c4d7e5f" \
+  -H "Authorization: Bearer {{API_KEY}}" \
   -H "Content-Type: application/json" \
   -d '{"model":"unknown-provider/some-model","messages":[{"role":"user","content":"hi"}],"max_tokens":5}' \
   | python3 -c "
@@ -301,7 +301,7 @@ assert 'Unknown provider' in d.get('error',{}).get('message','') or 'unknown-pro
 ### Test E-3: No Model Defaults to Config Provider
 ```bash
 curl -sf -X POST http://localhost:7766/v1/chat/completions \
-  -H "Authorization: Bearer sk-lr-8f2a9e3b1c4d7e5f" \
+  -H "Authorization: Bearer {{API_KEY}}" \
   -H "Content-Type: application/json" \
   -d '{"messages":[{"role":"user","content":"health check"}],"max_tokens":1}' \
   | python3 -c "
@@ -321,7 +321,7 @@ Send 7 requests (more than 5 keys) and verify all 5 keys are used at least once:
 ```bash
 for i in $(seq 1 7); do
   curl -sf -X POST http://localhost:7766/v1/chat/completions \
-    -H "Authorization: Bearer sk-lr-8f2a9e3b1c4d7e5f" \
+    -H "Authorization: Bearer {{API_KEY}}" \
     -H "Content-Type: application/json" \
     -d "{\"model\":\"nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free\",\"messages\":[{\"role\":\"user\",\"content\":\"r$i\"}],\"max_tokens\":1}" &
 done
@@ -343,11 +343,11 @@ sleep 3
 
 for i in 1 2 3; do
   curl -sf -X POST http://localhost:7766/v1/chat/completions \
-    -H "Authorization: Bearer sk-lr-8f2a9e3b1c4d7e5f" \
+    -H "Authorization: Bearer {{API_KEY}}" \
     -H "Content-Type: application/json" \
     -d "{\"model\":\"nvidia/openai/gpt-oss-120b\",\"messages\":[{\"role\":\"user\",\"content\":\"nv$i\"}],\"max_tokens\":1}" &
   curl -sf -X POST http://localhost:7766/v1/chat/completions \
-    -H "Authorization: Bearer sk-lr-8f2a9e3b1c4d7e5f" \
+    -H "Authorization: Bearer {{API_KEY}}" \
     -H "Content-Type: application/json" \
     -d "{\"model\":\"nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free\",\"messages\":[{\"role\":\"user\",\"content\":\"or$i\"}],\"max_tokens\":1}" &
 done
@@ -366,7 +366,7 @@ grep "\[nvidia\] Using rotated key" /tmp/literouter_test.log | grep -o "nvapi-[a
 ### Test G-1: OpenRouter Streaming
 ```bash
 curl -sf -X POST http://localhost:7766/v1/chat/completions \
-  -H "Authorization: Bearer sk-lr-8f2a9e3b1c4d7e5f" \
+  -H "Authorization: Bearer {{API_KEY}}" \
   -H "Content-Type: application/json" \
   -d '{"model":"openrouter/anthropic/claude-3-haiku","messages":[{"role":"user","content":"Count to 3"}],"max_tokens":20,"stream":true}' \
   | python3 -c "
@@ -387,7 +387,7 @@ for l in data_lines[:3]:
 ### Test G-2: Nvidia Streaming with Reasoning
 ```bash
 curl -sf -X POST http://localhost:7766/v1/chat/completions \
-  -H "Authorization: Bearer sk-lr-8f2a9e3b1c4d7e5f" \
+  -H "Authorization: Bearer {{API_KEY}}" \
   -H "Content-Type: application/json" \
   -d '{"model":"nvidia/openai/gpt-oss-120b","messages":[{"role":"user","content":"What is 5+5? Think step by step."}],"max_tokens":100,"stream":true}' \
   | python3 -c "
@@ -417,7 +417,7 @@ print(f'Has [DONE]: {any(\"[DONE]\" in l for l in data_lines)}')
 Set a max timeout — streaming requests must complete or error within 30 seconds:
 ```bash
 timeout 30 curl -f -X POST http://localhost:7766/v1/chat/completions \
-  -H "Authorization: Bearer sk-lr-8f2a9e3b1c4d7e5f" \
+  -H "Authorization: Bearer {{API_KEY}}" \
   -H "Content-Type: application/json" \
   -d '{"model":"nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free","messages":[{"role":"user","content":"hi"}],"max_tokens":5,"stream":true}' \
   > /dev/null 2>&1
@@ -432,7 +432,7 @@ echo "Exit code: $?"
 ### Test H-1: Invalid Model Returns Error (Not Crash)
 ```bash
 curl -s -X POST http://localhost:7766/v1/chat/completions \
-  -H "Authorization: Bearer sk-lr-8f2a9e3b1c4d7e5f" \
+  -H "Authorization: Bearer {{API_KEY}}" \
   -H "Content-Type: application/json" \
   -d '{"model":"openrouter/this-model-does-not-exist-xyz","messages":[{"role":"user","content":"hi"}],"max_tokens":5}' \
   | python3 -c "
@@ -446,7 +446,7 @@ assert 'error' in d or 'choices' in d  # either error or upstream response
 ### Test H-2: Invalid JSON Body
 ```bash
 curl -s -X POST http://localhost:7766/v1/chat/completions \
-  -H "Authorization: Bearer sk-lr-8f2a9e3b1c4d7e5f" \
+  -H "Authorization: Bearer {{API_KEY}}" \
   -H "Content-Type: application/json" \
   -d 'not valid json' \
   | python3 -c "
@@ -495,7 +495,7 @@ This requires a temporary `.env` change. Skip if `LITEROUTER_AUTH_KEY` is set.
 After running any request, verify no full API key appears in logs:
 ```bash
 grep -c "sk-or-v1-" /tmp/literouter_test.log
-# Should only show truncated keys like "sk-or-v1-571cd6..."
+# Should only show truncated keys like "sk-or-v1-XXXX......"
 grep "sk-or-v1-[a-f0-9]\{15,\}" /tmp/literouter_test.log | grep -v "Using rotated key" | head -5
 ```
 **Expected**: No full keys in log lines. Only truncated prefixes in `[provider] Using rotated key:` lines.
@@ -513,7 +513,7 @@ grep -c "RAW BODY\|OUTBOUND PAYLOAD\|TRANSFORMED ANTHROPIC" /tmp/literouter_test
 ### Test J-1: Model ID Preserved in Response
 ```bash
 curl -sf -X POST http://localhost:7766/v1/chat/completions \
-  -H "Authorization: Bearer sk-lr-8f2a9e3b1c4d7e5f" \
+  -H "Authorization: Bearer {{API_KEY}}" \
   -H "Content-Type: application/json" \
   -d '{"model":"openrouter/anthropic/claude-3-haiku","messages":[{"role":"user","content":"hi"}],"max_tokens":5}' \
   | python3 -c "
@@ -529,7 +529,7 @@ assert d.get('model'), 'No model in response'
 Send `nvidia/openai/gpt-oss-120b`. The upstream Nvidia call must use `openai/gpt-oss-120b` (no `nvidia/` prefix). Verify the response comes from Nvidia (not OpenRouter):
 ```bash
 curl -sf -X POST http://localhost:7766/v1/chat/completions \
-  -H "Authorization: Bearer sk-lr-8f2a9e3b1c4d7e5f" \
+  -H "Authorization: Bearer {{API_KEY}}" \
   -H "Content-Type: application/json" \
   -d '{"model":"nvidia/openai/gpt-oss-120b","messages":[{"role":"user","content":"hi"}],"max_tokens":5}' \
   | python3 -c "
@@ -545,7 +545,7 @@ print('Provider in response:', d.get('provider','N/A'))
 Send `openrouter/anthropic/claude-3-haiku`. The upstream OpenRouter call must use `anthropic/claude-3-haiku`:
 ```bash
 curl -sf -X POST http://localhost:7766/v1/chat/completions \
-  -H "Authorization: Bearer sk-lr-8f2a9e3b1c4d7e5f" \
+  -H "Authorization: Bearer {{API_KEY}}" \
   -H "Content-Type: application/json" \
   -d '{"model":"openrouter/anthropic/claude-3-haiku","messages":[{"role":"user","content":"hi"}],"max_tokens":5}' \
   | python3 -c "
@@ -568,7 +568,7 @@ sleep 3
 
 for i in $(seq 1 5); do
   curl -sf -X POST http://localhost:7766/v1/chat/completions \
-    -H "Authorization: Bearer sk-lr-8f2a9e3b1c4d7e5f" \
+    -H "Authorization: Bearer {{API_KEY}}" \
     -H "Content-Type: application/json" \
     -d "{\"model\":\"nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free\",\"messages\":[{\"role\":\"user\",\"content\":\"rl$i\"}],\"max_tokens\":1}" &
 done
@@ -588,7 +588,7 @@ grep "RateLimiter.*waiting" /tmp/literouter_test.log | wc -l
 OpenCode TUI sends `input_text` block types that some upstream providers reject. LiteRouter must convert them to `text`:
 ```bash
 curl -sf -X POST http://localhost:7766/v1/chat/completions \
-  -H "Authorization: Bearer sk-lr-8f2a9e3b1c4d7e5f" \
+  -H "Authorization: Bearer {{API_KEY}}" \
   -H "Content-Type: application/json" \
   -d '{"model":"openrouter/anthropic/claude-3-haiku","messages":[{"role":"user","content":[{"type":"input_text","text":"hello"}]}],"max_tokens":10}' \
   | python3 -c "
@@ -602,7 +602,7 @@ print('Sanitized request succeeded')
 ### Test L-2: Responses API Format (input → messages)
 ```bash
 curl -sf -X POST http://localhost:7766/v1/responses \
-  -H "Authorization: Bearer sk-lr-8f2a9e3b1c4d7e5f" \
+  -H "Authorization: Bearer {{API_KEY}}" \
   -H "Content-Type: application/json" \
   -d '{"model":"openrouter/anthropic/claude-3-haiku","input":[{"role":"user","content":"hi"}],"max_tokens":10}' \
   | python3 -c "

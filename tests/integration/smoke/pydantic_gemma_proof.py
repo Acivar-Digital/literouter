@@ -1,4 +1,5 @@
 import asyncio
+import os
 
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIChatModel
@@ -6,7 +7,7 @@ from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.settings import ModelSettings
 
 GATEWAY = "http://localhost:7766/v1"
-AUTH = "sk-lr-8f2a9e3b1c4d7e5f"
+AUTH = os.environ.get("LITEROUTER_AUTH_KEY")
 
 
 def gemma_4_31b_it() -> Agent:

@@ -29,7 +29,7 @@ import httpx
 
 GATEWAY_URL = os.getenv("BENCH_URL", "http://localhost:7766/v1/chat/completions")
 AUTH_HEADER = {
-    "Authorization": f"Bearer {os.getenv('LITEROUTER_AUTH_KEY', 'sk-lr-8f2a9e3b1c4d7e5f')}"
+    "Authorization": f"Bearer {os.getenv('LITEROUTER_AUTH_KEY')}"
 }
 ITERATIONS = int(os.getenv("BENCH_ITER", "3"))
 MAX_TOKENS = int(os.getenv("BENCH_MAX_TOKENS", "256"))

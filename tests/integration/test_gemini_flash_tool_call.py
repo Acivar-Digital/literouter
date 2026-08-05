@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 
 import pytest
 from pydantic_ai import Agent, RunContext
@@ -8,8 +9,11 @@ from pydantic_ai.models.google import GoogleModel
 from pydantic_ai.providers.google import GoogleProvider
 
 GATEWAY_URL = "http://127.0.0.1:7766"
-AUTH_TOKEN = "sk-lr-8f2a9e3b1c4d7e5f"
+AUTH_TOKEN = os.environ.get("LITEROUTER_AUTH_KEY")
 MODEL = "gemini-3.1-flash-lite"
+
+if not AUTH_TOKEN:
+    pytest.skip("LITEROUTER_AUTH_KEY not set", allow_module_level=True)
 
 provider = GoogleProvider(api_key=AUTH_TOKEN, base_url=GATEWAY_URL)
 model = GoogleModel(MODEL, provider=provider)
@@ -36,7 +40,7 @@ async def test_gemini_flash_tool_call_via_openai_compat():
     from pydantic_ai.models.openai import OpenAIChatModel
     from pydantic_ai.providers.openai import OpenAIProvider
 
-    p = OpenAIProvider(base_url="http://127.0.0.1:7766/v1", api_key="sk-lr-8f2a9e3b1c4d7e5f")
+    p = OpenAIProvider(base_url="http://127.0.0.1:7766/v1", api_key=os.environ.get("LITEROUTER_AUTH_KEY"))
     m = OpenAIChatModel("google/gemini-3.1-flash-lite", provider=p)
     ag = Agent(model=m, system_prompt="You are a helpful assistant.")
 

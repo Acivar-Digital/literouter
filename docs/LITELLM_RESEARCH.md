@@ -437,7 +437,7 @@ from pydantic_ai.providers.google import GoogleProvider
 
 # 1. Define the provider pointing to LiteRouter (excluding /v1beta)
 custom_provider = GoogleProvider(
-    api_key="sk-lr-8f2a9e3b1c4d7e5f",  # LiteRouter authorization key
+    api_key="{{API_KEY}}",  # LiteRouter authorization key
     base_url="http://localhost:7766"   # Proxy URL (SDK appends /v1beta)
 )
 

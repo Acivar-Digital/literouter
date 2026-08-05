@@ -132,7 +132,7 @@ Each entry in `models.json` must be a JSON object adhering to the following sche
   ```bash
   curl -s http://localhost:7766/v1/chat/completions \
     -H "Content-Type: application/json" \
-    -H "Authorization: Bearer ${LITEROUTER_AUTH_KEY:-sk-lr-8f2a9e3b1c4d7e5f}" \
+    -H "Authorization: Bearer ${LITEROUTER_AUTH_KEY}" \
     -d '{"model": "provider/model-name", "messages": [{"role": "user", "content": "hi"}]}'
   ```
 
@@ -152,7 +152,7 @@ OpenCode reads model definitions from `~/.config/opencode/opencode.json` under `
     "literouter": {
       "options": {
         "baseURL": "http://localhost:7766/v1",
-        "apiKey": "sk-lr-8f2a9e3b1c4d7e5f"
+        "apiKey": "${LITEROUTER_AUTH_KEY}"
       },
       "models": {
         "google/gemini-3.6-flash": {
@@ -266,7 +266,7 @@ Fusion groups define ordered fallback chains that automatically fail over to sec
   ```bash
   curl -i -s http://localhost:7766/v1/chat/completions \
     -H "Content-Type: application/json" \
-    -H "Authorization: Bearer ${LITEROUTER_AUTH_KEY:-sk-lr-8f2a9e3b1c4d7e5f}" \
+    -H "Authorization: Bearer ${LITEROUTER_AUTH_KEY}" \
     -d '{"model": "fusion-group-id", "messages": [{"role": "user", "content": "test fusion"}]}' \
     | grep -i "x-literouter-model"
   ```
@@ -350,7 +350,7 @@ uv run ruff check .
 ```bash
 curl -s http://localhost:7766/v1/chat/completions \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer ${LITEROUTER_AUTH_KEY:-sk-lr-8f2a9e3b1c4d7e5f}" \
+  -H "Authorization: Bearer ${LITEROUTER_AUTH_KEY}" \
   -d '{
     "model": "google/gemini-3.6-flash",
     "messages": [{"role": "user", "content": "Hello LiteRouter"}]
@@ -359,7 +359,7 @@ curl -s http://localhost:7766/v1/chat/completions \
 
 #### B. Google Native Endpoint (`/v1beta/models/...`)
 ```bash
-curl -s "http://localhost:7766/v1beta/models/gemini-3.6-flash:generateContent?key=${LITEROUTER_AUTH_KEY:-sk-lr-8f2a9e3b1c4d7e5f}" \
+curl -s "http://localhost:7766/v1beta/models/gemini-3.6-flash:generateContent?key=${LITEROUTER_AUTH_KEY}" \
   -H "Content-Type: application/json" \
   -d '{
     "contents": [{"parts": [{"text": "Hello Google Native"}]}]

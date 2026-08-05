@@ -25,7 +25,7 @@ Fusion groups define "virtual" models with priority-based fallback chains. If th
 
 ```bash
 curl -X POST http://localhost:$PORT/v1/chat/completions \
-  -H "Authorization: Bearer sk-lr-your-auth-key" \
+  -H "Authorization: Bearer {{API_KEY}}" \
   -d '{"model": "pydantic/google", "messages": [{"role": "user", "content": "Hello"}]}'
 ```
 
@@ -65,7 +65,7 @@ Edit `.env`:
 ```env
 # Server
 LITEROUTER_PORT=7766
-LITEROUTER_AUTH_KEY=sk-lr-your-auth-key
+LITEROUTER_AUTH_KEY={{API_KEY}}
 
 # Redis (REQUIRED — the gateway fails loud if Redis/Valkey is unreachable)
 REDIS_HOST=localhost
@@ -78,12 +78,12 @@ LITEROUTER_PROVIDER=openrouter
 
 # ── Provider: OpenRouter ──
 OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
-OPENROUTER_API_KEYS=sk-or-key1,sk-or-key2,sk-or-key3
+OPENROUTER_API_KEYS={{API_KEY_1}},{{API_KEY_2}},{{API_KEY_3}}
 OPENROUTER_MIN_DELAY_MS=3000
 
 # ── Provider: Nvidia ──
 NVIDIA_BASE_URL=https://integrate.api.nvidia.com/v1
-NVIDIA_API_KEYS=nvapi-key1,nvapi-key2,nvapi-key3
+NVIDIA_API_KEYS={{API_KEY_1}},{{API_KEY_2}},{{API_KEY_3}}
 NVIDIA_MIN_DELAY_MS=3000
 
 # ── Provider: Anthropic (optional) ──
@@ -109,7 +109,7 @@ tmux attach -t literouter   # View runtime logs
 ```bash
 curl -X POST http://localhost:7766/v1/chat/completions \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer sk-lr-your-auth-key" \
+  -H "Authorization: Bearer {{API_KEY}}" \
   -d '{
     "model": "openrouter/owl-alpha",
     "messages": [{"role": "user", "content": "Hello!"}]
@@ -120,7 +120,7 @@ curl -X POST http://localhost:7766/v1/chat/completions \
 ```bash
 curl -X POST http://localhost:7766/v1/chat/completions \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer sk-lr-your-auth-key" \
+  -H "Authorization: Bearer {{API_KEY}}" \
   -d '{
     "model": "nvidia/openai/gpt-oss-120b",
     "messages": [{"role": "user", "content": "Tell me a story"}],
@@ -131,7 +131,7 @@ curl -X POST http://localhost:7766/v1/chat/completions \
 ### Model Availability
 ```bash
 curl http://localhost:7766/v1/models \
-  -H "Authorization: Bearer sk-lr-your-auth-key"
+  -H "Authorization: Bearer {{API_KEY}}"
 ```
 
 ### Health
@@ -156,13 +156,13 @@ Point any OpenCode provider at LiteRouter to get automatic key rotation:
     "openrouter": {
       "npm": "@ai-sdk/openai-compatible",
       "baseURL": "http://localhost:7766/v1",
-      "apiKey": "sk-lr-your-auth-key",
+      "apiKey": "{{API_KEY}}",
       "models": {}
     },
     "nvidia": {
       "npm": "@ai-sdk/openai-compatible",
       "baseURL": "http://localhost:7766/v1",
-      "apiKey": "sk-lr-your-auth-key",
+      "apiKey": "{{API_KEY}}",
       "models": {}
     }
   }

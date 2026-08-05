@@ -1,8 +1,10 @@
+import os
+
 import httpx
 import pytest
 
 GATEWAY_URL = "http://127.0.0.1:7766"
-AUTH_TOKEN = "sk-lr-8f2a9e3b1c4d7e5f"
+AUTH_TOKEN = os.environ.get("LITEROUTER_AUTH_KEY")
 
 MODEL = "google/gemini-3.1-flash-lite"
 

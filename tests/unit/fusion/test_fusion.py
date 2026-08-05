@@ -19,7 +19,7 @@ import httpx
 FUSION_URL = "http://localhost:7766/v1/chat/completions"
 # Gateway auth token (matches LITEROUTER_AUTH_KEY in .env). Override via env if different.
 AUTH_HEADER = {
-    "Authorization": f"Bearer {os.getenv('LITEROUTER_AUTH_KEY', 'sk-lr-8f2a9e3b1c4d7e5f')}"
+    "Authorization": f"Bearer {os.getenv('LITEROUTER_AUTH_KEY')}"
 }
 
 

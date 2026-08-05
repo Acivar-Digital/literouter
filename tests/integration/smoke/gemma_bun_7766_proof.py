@@ -5,7 +5,7 @@ from openai import OpenAI
 # Hit OUR Bun LiteRouter (7766) via OpenAI-compat template.
 client = OpenAI(
     base_url="http://localhost:7766/v1",
-    api_key=os.environ.get("LITEROUTER_AUTH_KEY", "sk-lr-8f2a9e3b1c4d7e5f"),
+    api_key=os.environ.get("LITEROUTER_AUTH_KEY"),
 )
 
 # gemma-4-31b-it via OpenAI-compat, double-nested extra_body (matches controls.py:112),

@@ -1,9 +1,12 @@
 
+import os
+
 import httpx
 
 url = "http://localhost:7766/v1/chat/completions"
+auth_key = os.environ.get("LITEROUTER_AUTH_KEY")
 headers = {
-    "Authorization": "Bearer sk-lr-8f2a9e3b1c4d7e5f",
+    "Authorization": f"Bearer {auth_key}" if auth_key else "",
     "Content-Type": "application/json"
 }
 
