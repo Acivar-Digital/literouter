@@ -64,6 +64,10 @@ export const LITEROUTER_PORT = parseInt(
 export const LITEROUTER_AUTH_KEY = Bun.env.LITEROUTER_AUTH_KEY || "";
 export const LITEROUTER_COLLAPSE_REASONING =
   (Bun.env.LITEROUTER_COLLAPSE_REASONING || "false").toLowerCase() === "true";
+export const LITEROUTER_STRIP_REASONING =
+  !["false", "0", "no", "off"].includes(
+    (Bun.env.LITEROUTER_STRIP_REASONING || "true").trim().toLowerCase(),
+  );
 export const LITEROUTER_ROTATE_DELAY_MS = parseInt(
   Bun.env.LITEROUTER_ROTATE_DELAY_MS || "10000",
   10,

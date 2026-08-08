@@ -2,6 +2,14 @@
 
 All notable changes to LiteRouter will be documented in this file.
 
+## [3.3.9] — 2026-08-08
+
+### Added / Fixed
+- **Historical Assistant Reasoning Sanitization & Context Bloat Prevention** — Added `sanitizeHistoricalMessages` in `src/transformers/payload.ts` and integrated it into `src/handlers/openai_compat.ts`. Before upstream dispatch, prior assistant turns have volatile reasoning fields (`reasoning_content`, `reasoningContent`, `thought`, `thought_summary`) stripped to prevent cumulative context bloat and token cost spikes during multi-turn agent sessions.
+- **Universal Assistant Content Normalization** — Updated `sanitizeHistoricalMessages` so that any `role: "assistant"` message with `content: null` or `content: undefined` normalizes to `content: ""` (empty string), preventing `400 Bad Request` schema rejections from strict upstream providers (Anthropic, DeepSeek, OpenRouter) on empty assistant turns or tool-calling turns.
+- **Configurable Environment Toggle** — Added `LITEROUTER_STRIP_REASONING` in `src/config/env.ts` (defaults to `true`), supporting flexible boolean string parsing (`"false"`, `"0"`, `"no"`, `"off"` to disable).
+- **Unit Test Coverage** — Added comprehensive unit tests in `tests/unit/core/gateway.test.ts` covering assistant reasoning stripping, null content normalization (with and without tool calls), and toggle bypass.
+
 ## [3.3.8] — 2026-08-01
 
 ### Added / Fixed

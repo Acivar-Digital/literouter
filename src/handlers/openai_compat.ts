@@ -20,6 +20,7 @@ import {
   extractThoughtSignature,
   injectThoughtSignature,
   mergeConsecutiveMessages,
+  sanitizeHistoricalMessages,
   transformNonStreaming,
 } from "../transformers/payload";
 import { translateGoogleThinking } from "../transformers/thinking";
@@ -214,7 +215,9 @@ export async function executeOpenAICompat(
 
   const { provider, upstream_model, api_url } = meta;
   reqJson.model = upstream_model;
-  reqJson.messages = mergeConsecutiveMessages(reqJson.messages);
+  reqJson.messages = sanitizeHistoricalMessages(
+    mergeConsecutiveMessages(reqJson.messages),
+  );
   if (provider === "google") reqJson = translateGoogleThinking(reqJson);
   if (upstream_model.toLowerCase().includes("gemma")) {
     reqJson = cleanGemmaPayload(reqJson);

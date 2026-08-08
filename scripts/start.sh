@@ -6,8 +6,13 @@ source scripts/lib/flush_valkey.sh
 TMUX_SESSION="literouter"
 PID_FILE=".literouter.pid"
 
-# Read port from .env, default to 7766
-set -a; source .env 2>/dev/null; set +a
+# Load Dolt/beads config (.env) then app config + API keys (.env.local).
+# .env.local is auto-loaded by Bun at runtime too; sourcing here ensures the
+# daemon tmux path exports the same variables. .env.local is NOT touched by `bd`.
+set -a
+source .env 2>/dev/null
+source .env.local 2>/dev/null
+set +a
 PORT="${LITEROUTER_PORT:-7766}"
 
 # Check if already running

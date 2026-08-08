@@ -1,5 +1,6 @@
 import {
   EMOJI,
+  LITEROUTER_STRIP_REASONING,
   logWarn,
   parseUsageFromJson,
 } from "../config/env";
@@ -122,6 +123,29 @@ export function mergeConsecutiveMessages(messages: any[]): any[] {
     }
   }
   return merged;
+}
+
+export function sanitizeHistoricalMessages(
+  messages: any[],
+  stripReasoning: boolean = LITEROUTER_STRIP_REASONING,
+): any[] {
+  if (!messages || !Array.isArray(messages)) return [];
+  if (!stripReasoning) return messages;
+
+  return messages.map((msg) => {
+    if (msg && typeof msg === "object" && msg.role === "assistant") {
+      const cleaned = { ...msg };
+      delete cleaned.reasoning_content;
+      delete cleaned.reasoningContent;
+      delete cleaned.thought;
+      delete cleaned.thought_summary;
+      if (cleaned.content === undefined || cleaned.content === null) {
+        cleaned.content = "";
+      }
+      return cleaned;
+    }
+    return msg;
+  });
 }
 
 export function transformNonStreaming(

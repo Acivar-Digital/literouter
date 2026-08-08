@@ -2,6 +2,7 @@ export {
   MODEL_LIMITS,
   PROVIDER_LIMITS,
   DEFAULT_LIMITS,
+  LITEROUTER_STRIP_REASONING,
   getModelLimits,
   staticValidateKeys,
 } from "./config/env";
@@ -22,6 +23,7 @@ export {
   cleanGemmaPayload,
   cleanLatexSymbols,
   mergeConsecutiveMessages,
+  sanitizeHistoricalMessages,
   transformNonStreaming,
   createStreamTransformer,
   injectThoughtSignature,

@@ -1,6 +1,7 @@
 import { test, expect } from "bun:test";
 import {
   mergeConsecutiveMessages,
+  sanitizeHistoricalMessages,
   cleanGemmaPayload,
   cleanLatexSymbols,
   getModelLimits,
@@ -108,4 +109,88 @@ test("staticValidateKeys rejects placeholder and short keys", () => {
 
 test("staticValidateKeys returns empty for empty input", () => {
   expect(staticValidateKeys("GOOGLE", "")).toEqual([]);
+});
+
+test("sanitizeHistoricalMessages strips reasoning fields from assistant messages", () => {
+  const messages = [
+    { role: "system", content: "system prompt" },
+    { role: "user", content: "what is 2+2?" },
+    {
+      role: "assistant",
+      content: "4",
+      reasoning_content: "thinking about addition...",
+      reasoningContent: "legacy field",
+      thought: "google thought",
+      thought_summary: "summary",
+    },
+    { role: "user", content: "what about 3+3?" },
+  ];
+  const cleaned = sanitizeHistoricalMessages(messages);
+  expect(cleaned).toEqual([
+    { role: "system", content: "system prompt" },
+    { role: "user", content: "what is 2+2?" },
+    { role: "assistant", content: "4" },
+    { role: "user", content: "what about 3+3?" },
+  ]);
+});
+
+test("sanitizeHistoricalMessages preserves tool_calls and ensures content string when empty", () => {
+  const messages = [
+    {
+      role: "assistant",
+      content: null,
+      reasoning_content: "planning to run bash tool...",
+      tool_calls: [{ id: "call_1", type: "function", function: { name: "bash", arguments: "{}" } }],
+    },
+    { role: "tool", tool_call_id: "call_1", content: "ok" },
+  ];
+  const cleaned = sanitizeHistoricalMessages(messages);
+  expect(cleaned).toEqual([
+    {
+      role: "assistant",
+      content: "",
+      tool_calls: [{ id: "call_1", type: "function", function: { name: "bash", arguments: "{}" } }],
+    },
+    { role: "tool", tool_call_id: "call_1", content: "ok" },
+  ]);
+});
+
+test("sanitizeHistoricalMessages respects stripReasoning = false", () => {
+  const messages = [
+    {
+      role: "assistant",
+      content: "hi",
+      reasoning_content: "keep me",
+    },
+  ];
+  const cleaned = sanitizeHistoricalMessages(messages, false);
+  expect(cleaned).toEqual([
+    {
+      role: "assistant",
+      content: "hi",
+      reasoning_content: "keep me",
+    },
+  ]);
+});
+
+test("sanitizeHistoricalMessages normalizes null content on assistant without tool_calls", () => {
+  const messages = [
+    {
+      role: "assistant",
+      content: null,
+      reasoning_content: "internal monologue",
+    },
+  ];
+  const cleaned = sanitizeHistoricalMessages(messages);
+  expect(cleaned).toEqual([
+    {
+      role: "assistant",
+      content: "",
+    },
+  ]);
+});
+
+test("sanitizeHistoricalMessages handles null/undefined input safely", () => {
+  expect(sanitizeHistoricalMessages(null as any)).toEqual([]);
+  expect(sanitizeHistoricalMessages(undefined as any)).toEqual([]);
 });
