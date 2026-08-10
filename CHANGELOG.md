@@ -4,6 +4,9 @@ All notable changes to LiteRouter will be documented in this file.
 
 ## [3.3.12] — 2026-08-11
 
+### Fixed / Logging & Stream Lifecycle
+- **Keepalive Timer Lifecycle & `logWarn` Formatting** — Fixed argument signature for `logWarn` in `src/transformers/payload.ts` preventing `[object Object]` log pollution. Ensured SSE heartbeat `setInterval` timers are cleanly terminated via `stopKeepAlive()` on error or client stream cancellation in `payload.ts` and `google_native.ts`.
+
 ### Added / Configuration Separation & Protection
 - **`protect.sh` Root Protection Script** — Added `./protect.sh [lock|unlock|status]` helper script enabling users to lock `.env.local` ownership to root (`chmod 644`), making secret keys read-only to processes and impossible for automated LLM agents to overwrite.
 - **Split `.env` (Settings) and `.env.local` (Keys)** — Moved non-sensitive server configurations (ports, timeouts, retry delays, reasoning flags, endpoint URLs) into tracked `.env`. Secret provider API keys remain exclusively in git-ignored `.env.local`.

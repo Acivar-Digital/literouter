@@ -155,7 +155,11 @@ async function processGoogleNativeSuccess(
       try {
         controller.enqueue(encoder.encode(":\n\n"));
       } catch (e) {
-        logWarn(EMOJI.error, `[GOOGLE ${reqId}] Keep-alive enqueue failed: ${e}`);
+        stopKeepAlive();
+        logWarn(
+          EMOJI.warn,
+          `[GOOGLE ${reqId}] Keep-alive enqueue failed, timer stopped: ${e instanceof Error ? e.message : String(e)}`,
+        );
       }
     }, KEEPALIVE_INTERVAL_MS);
   };
@@ -170,6 +174,9 @@ async function processGoogleNativeSuccess(
   const transform = new TransformStream({
     start(controller) {
       startKeepAlive(controller);
+    },
+    cancel() {
+      stopKeepAlive();
     },
     transform(chunk, controller) {
       let text = decoder.decode(chunk, { stream: true });

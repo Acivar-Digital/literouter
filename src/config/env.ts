@@ -104,6 +104,7 @@ export const EMOJI = {
   amber: "🟡",
   retry: "🟠",
   limit: "⚠️",
+  warn: "⚠️",
   exhausted: "🔴",
   served: "🟢",
   boot: "🚀",

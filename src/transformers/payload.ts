@@ -217,7 +217,11 @@ export function createStreamTransformer(
       try {
         controller.enqueue(encoder.encode(":\n\n"));
       } catch (err) {
-        logWarn("keepalive enqueue failed", { error: err instanceof Error ? err.message : String(err) });
+        stopKeepAlive();
+        logWarn(
+          EMOJI.warn,
+          `[PAYLOAD] Keep-alive enqueue failed, timer stopped: ${err instanceof Error ? err.message : String(err)}`,
+        );
       }
     }, KEEPALIVE_INTERVAL_MS);
   };
@@ -232,6 +236,9 @@ export function createStreamTransformer(
   return new TransformStream({
     start(controller) {
       startKeepAlive(controller);
+    },
+    cancel() {
+      stopKeepAlive();
     },
     transform(chunk, controller) {
       buffer += cleanLatexSymbols(decoder.decode(chunk, { stream: true }));
