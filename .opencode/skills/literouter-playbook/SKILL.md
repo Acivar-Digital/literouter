@@ -24,6 +24,7 @@ description: LiteRouter API Gateway master operational guide for Bun/TypeScript 
 > - **DO NOT** modify, edit, sanitize, replace, or redact `.env.local` or `.env` files.
 > - **DO NOT** run sanitization, guardrails, or automated cleanup scripts against `.env` or `.env.local`.
 > - Key secrets in `.env.local` are live runtime keys — replacing them with `<REDACTED>` or placeholder strings causes `staticValidateKeys` to discard all provider keys and break gateway routing.
+> - Use `./protect.sh lock` to make `.env.local` owned by `root:root` (read-only for processes, unwritable by agents). Run `./protect.sh unlock` when you need to edit keys.
 
 ---
 

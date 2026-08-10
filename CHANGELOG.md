@@ -4,7 +4,8 @@ All notable changes to LiteRouter will be documented in this file.
 
 ## [3.3.12] — 2026-08-11
 
-### Added / Configuration Separation
+### Added / Configuration Separation & Protection
+- **`protect.sh` Root Protection Script** — Added `./protect.sh [lock|unlock|status]` helper script enabling users to lock `.env.local` ownership to root (`chmod 644`), making secret keys read-only to processes and impossible for automated LLM agents to overwrite.
 - **Split `.env` (Settings) and `.env.local` (Keys)** — Moved non-sensitive server configurations (ports, timeouts, retry delays, reasoning flags, endpoint URLs) into tracked `.env`. Secret provider API keys remain exclusively in git-ignored `.env.local`.
 - **Zero-Complexity Setup** — Leveraged Bun and `python-dotenv` cascading env loader (`.env` defaults overridden by `.env.local`) with 0 LOC change to TypeScript AST.
 
