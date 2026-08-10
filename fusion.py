@@ -40,6 +40,7 @@ from typing import Any, AsyncIterator, Dict, List, Optional
 from dotenv import load_dotenv
 
 load_dotenv()
+load_dotenv(".env.local", override=True)
 
 import httpx  # noqa: E402
 from fastapi import FastAPI, Request, Response  # noqa: E402
@@ -68,7 +69,7 @@ http_client: Optional[httpx.AsyncClient] = None
 # Per-model circuit breaker: mirrors the gateway's 65s rate-limit cooldown.
 # A model that returns a "all keys cooled/exhausted" 429 is skipped for this window
 # across requests, so the sidecar stops re-burning its keys and freezing the trio.
-CIRCUIT_TTL = 65.0
+CIRCUIT_TTL = float(os.getenv("FUSION_CIRCUIT_TTL_MS", "65000")) / 1000.0
 circuit_open_until: Dict[str, float] = {}
 
 
@@ -87,7 +88,7 @@ def _close_circuit(upstream_id: str) -> None:
 # Sticky fallback: once the chain falls back to a lower-priority model,
 # subsequent requests start from that position instead of from the top.
 # This gives higher-priority models real cooldown time (not just 65s).
-STICKY_TTL = 300.0  # 5 minutes
+STICKY_TTL = float(os.getenv("FUSION_STICKY_TTL_MS", "300000")) / 1000.0  # 5 minutes
 sticky_position: Dict[str, tuple[str, float]] = {}  # group_id -> (upstream_id, expiry_time)
 
 

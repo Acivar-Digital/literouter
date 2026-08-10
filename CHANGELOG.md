@@ -4,6 +4,10 @@ All notable changes to LiteRouter will be documented in this file.
 
 ## [3.3.12] — 2026-08-11
 
+### Added / Configuration Separation
+- **Split `.env` (Settings) and `.env.local` (Keys)** — Moved non-sensitive server configurations (ports, timeouts, retry delays, reasoning flags, endpoint URLs) into tracked `.env`. Secret provider API keys remain exclusively in git-ignored `.env.local`.
+- **Zero-Complexity Setup** — Leveraged Bun and `python-dotenv` cascading env loader (`.env` defaults overridden by `.env.local`) with 0 LOC change to TypeScript AST.
+
 ### Fixed / Security Mandate
 - **Restored API Keys & Protected `.env.local`** — Restored real API keys in `.env.local` from checkpoint backup after an automated sanitization pass accidentally replaced active keys with `<REDACTED>` placeholders.
 - **Strict Anti-Redaction Policy** — Added explicit mandates across project guidelines (`AGENTS.md`, `CLAUDE.md`, `literouter-playbook` skill, and `bd remember`): **NEVER modify, sanitize, replace, or touch API keys or `.env.local` files under any circumstances.**

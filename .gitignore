@@ -8,8 +8,8 @@ dist/
 build/
 
 # Environment
-.env
 .env.local
+.env.*.local
 
 # Archives
 *.tar.gz

@@ -13,9 +13,14 @@ from typing import Generator
 from unittest.mock import patch
 
 import pytest
+from dotenv import load_dotenv
 
 # Ensure src is importable
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+
+# Load base .env and local secret overrides if present
+load_dotenv()
+load_dotenv(".env.local", override=True)
 
 
 @pytest.fixture(autouse=True)
