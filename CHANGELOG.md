@@ -2,6 +2,14 @@
 
 All notable changes to LiteRouter will be documented in this file.
 
+## [3.3.10] — 2026-08-10
+
+### Reverted
+- **Immediate Key Rotation Module Rollback** — Reverted commit `9472adc` (`feat(keys): immediate rotation on provider errors, 3-attempt cap, configurable delay`).
+- **Key Rotation Helper Removed** — Deleted `src/handlers/key_rotation.ts` and `src/handlers/error_classifier.ts`.
+- **10-Second `timed_out` Cooldown Removed** — Errors no longer immediately place keys on cooldown; the prior key rotation and 3-attempt limit logic has been removed from `src/handlers/openai_compat.ts`.
+- **`LITEROUTER_KEY_ROTATE_DELAY_MS` Config Removed** — The default rotate delay of `2000ms` has been reverted to the original inline `LITEROUTER_ROTATE_DELAY_MS` behavior (no separate inter-attempt rotation delay).
+
 ## [3.3.9] — 2026-08-08
 
 ### Added / Fixed
