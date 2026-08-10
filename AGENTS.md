@@ -298,6 +298,28 @@ Provide clear, reproducible error messages. If possible, include guidance for
 next steps or recovery actions. For complex operations, emit progress markers
 so it's clear how far execution got before failure.
 
+### d. Grounding & Anti-Hallucination: Never Guess Signatures or Field Names
+
+LLMs frequently hallucinate function signatures, options objects, and data structures by copying patterns from external libraries (e.g., assuming `logWarn` takes a Winston/Pino logger metadata object). **You must strictly ground every call in the codebase's actual definitions.**
+
+#### 🟢 POSITIVES (Always Do This):
+1. **Inspect Before Calling:** Always read the definition site of a function or interface (`read` or `grep`) before invoking it.
+2. **Mirror Existing Call Sites:** Check 2-3 existing call sites in the repository to observe established conventions.
+3. **Verify Parameter Types:** In TypeScript, check parameter lists (e.g., `logWarn(emoji: string, msg: string)` requires an emoji string and a string message, not `{ error: ... }`).
+4. **Clean Lifecycle Hooks:** When using asynchronous timers or intervals (`setInterval`), always implement explicit teardown (`cancel()` on `TransformStream`, `stopKeepAlive()` on error).
+
+#### 🔴 NEGATIVES (Never Do This):
+1. **DO NOT assume external conventions:** Never assume an internal helper behaves like an npm package or external framework (e.g., passing `{ error }` objects to `logWarn`).
+2. **DO NOT invent fields or options:** Never add speculative fields to API payloads, headers, or config objects without verifying against upstream docs or internal schemas.
+3. **DO NOT leave ungrounded catch blocks:** When adding logging to catch blocks, verify the logger function signature rather than guessing.
+4. **DO NOT introduce un-cleared background intervals:** Never start a timer or background task without guaranteeing cancellation on error or reader disconnect.
+
+| Scenario | 🔴 Anti-Pattern (Hallucinated) | 🟢 Grounded Pattern (Verified) |
+|---|---|---|
+| Logging warning in TS | `logWarn("error", { err })` *(causes `[object Object]`)* | `logWarn(EMOJI.warn, \`Error details: \${err}\`)` |
+| Internal helper invocation | Assuming parameter order/types from intuition | `read` declaration in `src/config/env.ts` first |
+| SSE keepalive timers | Starting `setInterval` with no `cancel()` hook | Implementing `cancel() { stopTimer(); }` on stream |
+
 ## MCP Tools (for AI agents)
 
 Primary tools for codebase manipulation with AST support emphasized:
