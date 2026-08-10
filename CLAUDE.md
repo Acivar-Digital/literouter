@@ -2,6 +2,13 @@
 
 This file provides instructions and context for AI coding agents working on this project.
 
+## ⛔ ABSOLUTE MANDATE: NEVER TOUCH API KEYS OR `.env.local`
+- **NEVER** modify, edit, sanitize, replace, or overwrite API keys or `.env.local` / `.env` files under any circumstances.
+- **NEVER** run automated sanitization or guardrail scripts against `.env.local` or `.env`.
+- Replacing real API keys with `<REDACTED>` or placeholder values destroys gateway operation by causing `staticValidateKeys` to discard all provider keys on boot.
+
+---
+
 <!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:6cd5cc61 -->
 ## Beads Issue Tracker
 

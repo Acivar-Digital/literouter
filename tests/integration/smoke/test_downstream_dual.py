@@ -8,34 +8,37 @@ Run with:  uv run pytest tests/integration/smoke/ --collect-only
 Full run:  uv run pytest tests/integration/smoke/
 """
 
+import json
 import os
+from typing import Any, Dict, Optional
 
 import httpx
 import pytest
 
-BASE_URL = os.environ.get("LITEROUTER_BASE_URL", "http://localhost:7766").rstrip("/")
-AUTH_KEY = os.environ.get("LITEROUTER_AUTH_KEY", "")
+BASE_URL: str = os.environ.get("LITEROUTER_BASE_URL", "http://localhost:7766").rstrip(
+    "/"
+)
+AUTH_KEY: str = os.environ.get("LITEROUTER_AUTH_KEY", "")
 
-MODELS_PATH = os.path.join(
+MODELS_PATH: str = os.path.join(
     os.path.dirname(__file__), "..", "..", "..", "models.json"
 )
 
 
-def _load_models():
-    import json
-
+def _load_models() -> list[Dict[str, Any]]:
     with open(MODELS_PATH) as f:
-        return json.load(f)
+        data: list[Dict[str, Any]] = json.load(f)
+        return data
 
 
-def _pick(provider: str):
+def _pick(provider: str) -> Optional[Dict[str, Any]]:
     for m in _load_models():
         if m.get("provider") == provider:
             return m
     return None
 
 
-def _headers() -> dict:
+def _headers() -> Dict[str, str]:
     if AUTH_KEY:
         return {"Authorization": f"Bearer {AUTH_KEY}"}
     return {}
@@ -53,6 +56,22 @@ def _gateway_reachable() -> bool:
             return False
 
 
+def _post(url: str, body: Dict[str, Any]) -> httpx.Response:
+    try:
+        return httpx.post(url, json=body, headers=_headers(), timeout=30)
+    except (httpx.ConnectError, httpx.ConnectTimeout):
+        pytest.skip("Gateway became unreachable during test")
+        raise
+
+
+def _handle_response(resp: httpx.Response) -> None:
+    if resp.status_code in (401, 403):
+        pytest.skip("Auth key missing or invalid (LITEROUTER_AUTH_KEY)")
+    if resp.status_code in (429, 500):
+        pytest.skip(f"Upstream/provider unavailable (status {resp.status_code})")
+    assert resp.status_code == 200, resp.text[:500]
+
+
 # Skip the whole module if the gateway isn't up.
 pytestmark = pytest.mark.skipif(
     not _gateway_reachable(),
@@ -60,49 +79,35 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def test_opencode_native_generate_content():
+def test_opencode_native_generate_content() -> None:
     """OpenCode native path: POST /v1beta/models/<google>:generateContent."""
     model = _pick("google")
     if model is None:
         pytest.skip("No google model found in models.json")
-    upstream = model["upstream_id"]
-    url = f"{BASE_URL}/v1beta/models/{upstream}:generateContent"
-    body = {
+    upstream: str = model["upstream_id"]
+    url: str = f"{BASE_URL}/v1beta/models/{upstream}:generateContent"
+    body: Dict[str, Any] = {
         "contents": [{"role": "user", "parts": [{"text": "Say hi in one word."}]}],
     }
-    try:
-        resp = httpx.post(url, json=body, headers=_headers(), timeout=30)
-    except (httpx.ConnectError, httpx.ConnectTimeout):
-        pytest.skip("Gateway became unreachable during test")
-    if resp.status_code in (401, 403):
-        pytest.skip("Auth key missing or invalid (LITEROUTER_AUTH_KEY)")
-    if resp.status_code in (429, 500):
-        pytest.skip(f"Upstream/provider unavailable (status {resp.status_code})")
-    assert resp.status_code == 200, resp.text[:500]
+    resp = _post(url, body)
+    _handle_response(resp)
     data = resp.json()
     assert "candidates" in data, data
 
 
-def test_pydantic_ai_openai_compat():
+def test_pydantic_ai_openai_compat() -> None:
     """pydantic-ai OpenAI-compat path: POST /v1/chat/completions."""
     model = _load_models()[0]
-    system_id = model["system_id"]
-    url = f"{BASE_URL}/v1/chat/completions"
-    body = {
+    system_id: str = model["system_id"]
+    url: str = f"{BASE_URL}/v1/chat/completions"
+    body: Dict[str, Any] = {
         "model": system_id,
         "messages": [{"role": "user", "content": "Say hi in one word."}],
         "max_tokens": 16,
         "stream": False,
     }
-    try:
-        resp = httpx.post(url, json=body, headers=_headers(), timeout=30)
-    except (httpx.ConnectError, httpx.ConnectTimeout):
-        pytest.skip("Gateway became unreachable during test")
-    if resp.status_code in (401, 403):
-        pytest.skip("Auth key missing or invalid (LITEROUTER_AUTH_KEY)")
-    if resp.status_code in (429, 500):
-        pytest.skip(f"Upstream/provider unavailable (status {resp.status_code})")
-    assert resp.status_code == 200, resp.text[:500]
+    resp = _post(url, body)
+    _handle_response(resp)
     data = resp.json()
     assert "choices" in data, data
     assert data["choices"][0]["message"]["content"]

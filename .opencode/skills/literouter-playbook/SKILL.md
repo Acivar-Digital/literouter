@@ -19,6 +19,14 @@ description: LiteRouter API Gateway master operational guide for Bun/TypeScript 
 
 ---
 
+## ⛔ CRITICAL MANDATE: PROTECT `.env.local` & API KEYS
+> **NEVER EVER TOUCH API KEYS OR `.env.local` FILES.**
+> - **DO NOT** modify, edit, sanitize, replace, or redact `.env.local` or `.env` files.
+> - **DO NOT** run sanitization, guardrails, or automated cleanup scripts against `.env` or `.env.local`.
+> - Key secrets in `.env.local` are live runtime keys — replacing them with `<REDACTED>` or placeholder strings causes `staticValidateKeys` to discard all provider keys and break gateway routing.
+
+---
+
 ## 8-File Modular Architecture & Responsibilities
 
 LiteRouter is structured into 8 modular TypeScript source files located in `src/`:

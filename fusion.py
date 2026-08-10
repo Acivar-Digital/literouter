@@ -35,7 +35,7 @@ import sys
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, AsyncIterator, Dict, List, Optional
 
 from dotenv import load_dotenv
 
@@ -123,7 +123,7 @@ def _clear_sticky(group_id: str) -> None:
     sticky_position.pop(group_id, None)
 
 
-def _resolve_upstream(group: FusionGroup, path_is_native: bool):
+def _resolve_upstream(group: FusionGroup, path_is_native: bool) -> tuple[str, str]:
     """Return (upstream_url, protocol) for a fusion group.
 
     protocol is inferred from the group's `upstream` URL: a URL containing
@@ -140,49 +140,48 @@ def _resolve_upstream(group: FusionGroup, path_is_native: bool):
     return FUSION_UPSTREAM_URL, "openai"
 
 
+def _load_fusion_config() -> tuple[set[str], Dict[str, FusionGroup]]:
+    """Load models.json and fusion.json, validate chain ids against registry."""
+    with open(BASE_DIR / "models.json", "r") as f:
+        models_data = json.load(f)
+    valid_system_ids = {m["system_id"] for m in models_data}
+    with open(BASE_DIR / "fusion.json", "r") as f:
+        fusion_data = json.load(f)
+    groups: Dict[str, FusionGroup] = {}
+    for group_id, group_data in fusion_data.items():
+        group = FusionGroup(**group_data)
+        for model_id in group.chain:
+            if model_id not in valid_system_ids:
+                logger.error(
+                    f"Model '{model_id}' in fusion group '{group_id}' not found in models.json"
+                )
+                sys.exit(1)
+        groups[group_id] = group
+        logger.info(
+            f"Loaded fusion group '{group_id}' chain={group.chain} upstream={group.upstream}"
+        )
+    return valid_system_ids, groups
+
+
+def _init_http_client() -> httpx.AsyncClient:
+    """Create the shared httpx async client from env config."""
+    timeout = float(os.getenv("LITEROUTER_HTTP_TIMEOUT", "300"))
+    return httpx.AsyncClient(timeout=httpx.Timeout(timeout))
+
+
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     global fusion_groups, http_client
-
-    # 1. Load models.json (read-only validation of chain ids)
     try:
-        with open(BASE_DIR / "models.json", "r") as f:
-            models_data = json.load(f)
-        valid_system_ids = {m["system_id"] for m in models_data}
-    except Exception as e:
-        logger.error(f"Failed to load models.json: {e}")
-        sys.exit(1)
-
-    # 2. Load fusion.json
-    try:
-        with open(BASE_DIR / "fusion.json", "r") as f:
-            fusion_data = json.load(f)
-
-        for group_id, group_data in fusion_data.items():
-            group = FusionGroup(**group_data)
-            for model_id in group.chain:
-                if model_id not in valid_system_ids:
-                    logger.error(
-                        f"Model '{model_id}' in fusion group '{group_id}' not found in models.json"
-                    )
-                    sys.exit(1)
-            fusion_groups[group_id] = group
-            logger.info(
-                f"Loaded fusion group '{group_id}' chain={group.chain} upstream={group.upstream}"
-            )
+        _load_fusion_config()
     except FileNotFoundError:
         logger.error("fusion.json not found at repository root")
         sys.exit(1)
     except ValidationError as e:
         logger.error(f"Invalid fusion.json format: {e}")
         sys.exit(1)
-
-    # 3. Init HTTP client
-    http_timeout = float(os.getenv("LITEROUTER_HTTP_TIMEOUT", "300"))
-    http_client = httpx.AsyncClient(timeout=httpx.Timeout(http_timeout))
-
+    http_client = _init_http_client()
     yield
-
     await http_client.aclose()
 
 
@@ -190,11 +189,11 @@ app = FastAPI(lifespan=lifespan)
 
 
 @app.get("/health")
-async def health():
+async def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
-def clean_headers(headers: httpx.Headers) -> dict:
+def clean_headers(headers: httpx.Headers) -> dict[str, Any]:
     """Remove hop-by-hop headers before returning the response to the client."""
     h = dict(headers)
     for key in ["content-encoding", "content-length", "transfer-encoding", "connection"]:
@@ -202,112 +201,275 @@ def clean_headers(headers: httpx.Headers) -> dict:
     return h
 
 
+def _build_forward_headers(request: Request) -> dict[str, str]:
+    """Extract Authorization and Content-Type from the incoming request."""
+    req_headers: dict[str, str] = {}
+    if "authorization" in request.headers:
+        req_headers["authorization"] = request.headers["authorization"]
+    if "content-type" in request.headers:
+        req_headers["content-type"] = request.headers["content-type"]
+    return req_headers
+
+
+async def _advance_on_error(
+    resp: httpx.Response,
+    group_id: str,
+    upstream_id: str,
+    idx: int,
+    chain_len: int,
+) -> bool:
+    """Log, close, and circuit-open on 429/5xx. Returns True to advance."""
+    logger.info(f"{group_id} {upstream_id} {idx + 1}/{chain_len} -> {resp.status_code}")
+    detail = ""
+    try:
+        detail = (await resp.aread()).decode("utf-8", "ignore")
+    except Exception as e:
+        logger.debug(f"{group_id} {upstream_id} error reading response body: {e}")
+    finally:
+        await resp.aclose()
+    if "cooldown" in detail or "exhausted quota" in detail:
+        _open_circuit(upstream_id)
+        logger.warning(f"{group_id} {upstream_id} circuit OPEN (cooldown detected)")
+    return True
+
+
+async def _halt_on_client_error(resp: httpx.Response) -> Response:
+    """Return a verbatim Response for 4xx (non-429) errors."""
+    content = await resp.aread()
+    return Response(
+        content=content,
+        status_code=resp.status_code,
+        headers=clean_headers(resp.headers),
+    )
+
+
+def _success_postprocess(
+    group_id: str,
+    upstream_id: str,
+    idx: int,
+) -> None:
+    """Close circuit and set sticky on a successful upstream response."""
+    _close_circuit(upstream_id)
+    if idx > 0:
+        _set_sticky(group_id, upstream_id)
+    else:
+        _clear_sticky(group_id)
+
+
+def _build_response_headers(
+    resp: httpx.Response, upstream_id: str
+) -> dict[str, Any]:
+    """Clean upstream headers and inject X-Literouter-Model."""
+    resp_headers = clean_headers(resp.headers)
+    resp_headers["X-Literouter-Model"] = upstream_id
+    return resp_headers
+
+
+async def _openai_stream_or_halt(
+    resp: httpx.Response,
+    resp_headers: dict[str, Any],
+    group_id: str,
+    upstream_id: str,
+    idx: int,
+    chain_len: int,
+) -> Any:
+    """Return StreamingResponse on success, True to advance on empty stream."""
+    raw_it = resp.aiter_raw()
+    try:
+        first_chunk = await raw_it.__anext__()
+    except StopAsyncIteration:
+        await resp.aclose()
+        logger.warning(
+            f"{group_id} {upstream_id} {idx + 1}/{chain_len} empty stream, advancing"
+        )
+        return True
+    except Exception as e:
+        await resp.aclose()
+        logger.warning(
+            f"{group_id} {upstream_id} {idx + 1}/{chain_len} early stream failure: {e}, advancing"
+        )
+        return True
+
+    async def stream_gen(response: httpx.Response, it: Any, first: bytes) -> AsyncIterator[bytes]:
+        try:
+            yield first
+            async for chunk in it:
+                yield chunk
+        except Exception as ex:
+            logger.error(f"upstream stream broken mid-stream (model={upstream_id}): {ex}")
+        finally:
+            await response.aclose()
+
+    return StreamingResponse(
+        stream_gen(resp, raw_it, first_chunk),
+        status_code=resp.status_code,
+        headers=resp_headers,
+    )
+
+
+async def _native_stream_or_halt(
+    resp: httpx.Response,
+    upstream_id: str,
+    group_id: str,
+    idx: int,
+    chain_len: int,
+) -> Any:
+    """Return StreamingResponse on success, True to advance on empty stream."""
+    native_it = resp.aiter_bytes()
+    try:
+        first_chunk = await native_it.__anext__()
+    except StopAsyncIteration:
+        await resp.aclose()
+        logger.warning(
+            f"{group_id} {upstream_id} {idx + 1}/{chain_len} empty stream, advancing"
+        )
+        return True
+    except Exception as e:
+        await resp.aclose()
+        logger.warning(
+            f"{group_id} {upstream_id} {idx + 1}/{chain_len} early stream failure: {e}, advancing"
+        )
+        return True
+    _success_postprocess(group_id, upstream_id, idx)
+    logger.info(f"{group_id} {upstream_id} {idx + 1}/{chain_len} native action=generateContent")
+    return _relay_native(resp, upstream_id, native_it, first_chunk)
+
+
+async def _send_openai_request(
+    group_id: str,
+    upstream_id: str,
+    idx: int,
+    chain_len: int,
+    body: dict[str, Any],
+    req_headers: dict[str, str],
+    upstream: str,
+) -> Optional[httpx.Response]:
+    """Build and send an OpenAI-compat upstream request. Returns resp or None on error."""
+    assert http_client is not None
+    body["model"] = upstream_id
+    try:
+        req = http_client.build_request("POST", upstream, headers=req_headers, json=body)
+        return await http_client.send(req, stream=True)
+    except (httpx.RequestError, httpx.TimeoutException) as e:
+        logger.info(f"{group_id} {upstream_id} {idx + 1}/{chain_len} error: {e}")
+        return None
+
+
+async def _classify_response(
+    resp: httpx.Response,
+    group_id: str,
+    upstream_id: str,
+    idx: int,
+    chain_len: int,
+) -> Any:
+    """Classify an upstream response. Returns 'advance', 'halt', or 'success'."""
+    # Advance on 429 or 5xx
+    if resp.status_code == 429 or resp.status_code >= 500:
+        return await _advance_on_error(resp, group_id, upstream_id, idx, chain_len)
+    # Halt on 400/401/403
+    if 400 <= resp.status_code < 500:
+        logger.info(f"{group_id} {upstream_id} {idx + 1}/{chain_len} halt {resp.status_code}")
+        return await _halt_on_client_error(resp)
+    return "success"
+
+
+async def _openai_success_path(
+    resp: httpx.Response,
+    group_id: str,
+    upstream_id: str,
+    idx: int,
+    chain: List[str],
+    is_stream: bool,
+) -> Any:
+    """Handle the success path after classification for OpenAI upstreams."""
+    _success_postprocess(group_id, upstream_id, idx)
+    resp_headers = _build_response_headers(resp, upstream_id)
+    logger.info(f"{group_id} {upstream_id} {idx+1}/{len(chain)} stream={is_stream}")
+    if is_stream:
+        return await _openai_stream_or_halt(
+            resp, resp_headers, group_id, upstream_id, idx, len(chain)
+        )
+    content = await resp.aread()
+    return Response(content=content, status_code=resp.status_code, headers=resp_headers)
+
+
+async def _process_openai_upstream(
+    group_id: str,
+    chain: List[str],
+    body: dict[str, Any],
+    req_headers: dict[str, str],
+    is_stream: bool,
+    upstream: str,
+    idx: int,
+    upstream_id: str,
+) -> Any:
+    """Attempt a single upstream model in the OpenAI-compat fusion chain."""
+    if _circuit_open(upstream_id):
+        logger.info(f"{group_id} {upstream_id} {idx + 1}/{len(chain)} circuit-open, skipping")
+        return True
+    body["model"] = upstream_id
+    resp = await _send_openai_request(
+        group_id, upstream_id, idx, len(chain), body, req_headers, upstream
+    )
+    if resp is None:
+        return True
+    classified = await _classify_response(resp, group_id, upstream_id, idx, len(chain))
+    if classified != "success":
+        return classified
+    return await _openai_success_path(resp, group_id, upstream_id, idx, chain, is_stream)
+
+
+async def _process_native_upstream(
+    group_id: str,
+    chain: List[str],
+    query: dict[str, str],
+    req_headers: dict[str, Any],
+    body_bytes: bytes,
+    upstream: str,
+    idx: int,
+    upstream_id: str,
+    action: str,
+) -> Any:
+    """Attempt a single upstream model in the native Google SDK fusion chain."""
+    assert http_client is not None
+    if _circuit_open(upstream_id):
+        logger.info(f"{group_id} {upstream_id} {idx + 1}/{len(chain)} circuit-open, skipping")
+        return True
+    target = f"{upstream}/models/{upstream_id}:{action}"
+    try:
+        req = http_client.build_request(
+            "POST", target, params=query, headers=req_headers, content=body_bytes
+        )
+        resp = await http_client.send(req, stream=True)
+    except (httpx.RequestError, httpx.TimeoutException) as e:
+        logger.info(f"{group_id} {upstream_id} {idx + 1}/{len(chain)} error: {e}")
+        return True
+    classified = await _classify_response(resp, group_id, upstream_id, idx, len(chain))
+    if classified != "success":
+        return classified
+    return await _native_stream_or_halt(resp, upstream_id, group_id, idx, len(chain))
+
+
 async def _run_openai_fusion(
     group_id: str,
     chain: List[str],
-    body: dict,
-    req_headers: dict,
+    body: dict[str, Any],
+    req_headers: dict[str, str],
     is_stream: bool,
     upstream: str,
-):
+) -> Any:
     """Fusion fallback for an OpenAI-compat upstream (/v1/chat/completions)."""
+    assert http_client is not None
     start_idx = _get_sticky_start(group_id, chain)
     for i, upstream_id in enumerate(chain):
         if i < start_idx:
             continue
-
-        if _circuit_open(upstream_id):
-            logger.info(f"{group_id} {upstream_id} {i + 1}/{len(chain)} circuit-open, skipping")
+        result = await _process_openai_upstream(
+            group_id, chain, body, req_headers, is_stream, upstream, i, upstream_id
+        )
+        if isinstance(result, bool):
             continue
-
-        body["model"] = upstream_id
-        try:
-            req = http_client.build_request(
-                "POST", upstream, headers=req_headers, json=body
-            )
-            resp = await http_client.send(req, stream=True)
-
-            # Advance on 429 (exhausted/cooldown) or 5xx (upstream failure)
-            if resp.status_code == 429 or resp.status_code >= 500:
-                logger.info(f"{group_id} {upstream_id} {i + 1}/{len(chain)} -> {resp.status_code}")
-
-                detail = ""
-                try:
-                    detail = (await resp.aread()).decode("utf-8", "ignore")
-                except Exception:
-                    pass
-                finally:
-                    await resp.aclose()  # Guarantee the connection is released
-
-                if "cooldown" in detail or "exhausted quota" in detail:
-                    _open_circuit(upstream_id)
-                    logger.warning(f"{group_id} {upstream_id} circuit OPEN (cooldown detected)")
-                continue
-
-            # Halt on 400, 401, 403 (client/auth errors)
-            if 400 <= resp.status_code < 500 and resp.status_code != 429:
-                logger.info(f"{group_id} {upstream_id} {i + 1}/{len(chain)} halt {resp.status_code}")
-                content = await resp.aread()
-                return Response(
-                    content=content,
-                    status_code=resp.status_code,
-                    headers=clean_headers(resp.headers),
-                )
-
-            # Success (2xx) — recover the model early.
-            _close_circuit(upstream_id)
-            if i > 0:
-                _set_sticky(group_id, upstream_id)
-            else:
-                _clear_sticky(group_id)
-            logger.info(f"{group_id} {upstream_id} {i+1}/{len(chain)} stream={is_stream}")
-            resp_headers = clean_headers(resp.headers)
-            resp_headers["X-Literouter-Model"] = upstream_id
-
-            if is_stream:
-                raw_it = resp.aiter_raw()
-                try:
-                    first_chunk = await raw_it.__anext__()
-                except StopAsyncIteration:
-                    await resp.aclose()
-                    logger.warning(
-                        f"{group_id} {upstream_id} {i + 1}/{len(chain)} empty stream, advancing"
-                    )
-                    continue
-                except Exception as e:
-                    await resp.aclose()
-                    logger.warning(
-                        f"{group_id} {upstream_id} {i + 1}/{len(chain)} "
-                        f"early stream failure: {e}, advancing"
-                    )
-                    continue
-
-                async def stream_gen(response, it, first):
-                    try:
-                        yield first
-                        async for chunk in it:
-                            yield chunk
-                    except Exception as ex:
-                        logger.error(
-                            f"upstream stream broken mid-stream (model={upstream_id}): {ex}"
-                        )
-                    finally:
-                        await response.aclose()
-
-                return StreamingResponse(
-                    stream_gen(resp, raw_it, first_chunk),
-                    status_code=resp.status_code,
-                    headers=resp_headers,
-                )
-            else:
-                content = await resp.aread()
-                return Response(content=content, status_code=resp.status_code, headers=resp_headers)
-
-        except (httpx.RequestError, httpx.TimeoutException) as e:
-            # Advance on network timeout / connection error to upstream
-            logger.info(f"{group_id} {upstream_id} {i + 1}/{len(chain)} error: {e}")
-            continue
-
+        return result
     logger.warning(f"fusion group={group_id} exhausted all backends")
     return JSONResponse(
         status_code=429,
@@ -318,87 +480,24 @@ async def _run_openai_fusion(
 async def _run_native_fusion(
     group_id: str,
     chain: List[str],
-    model_name: str,
     action: str,
-    query: dict,
-    req_headers: dict,
+    query: dict[str, str],
+    req_headers: dict[str, Any],
     body_bytes: bytes,
     upstream: str,
-):
+) -> Any:
     """Fusion fallback for a native Google SDK upstream (/v1beta/models/...:action)."""
+    assert http_client is not None
     start_idx = _get_sticky_start(group_id, chain)
     for i, upstream_id in enumerate(chain):
         if i < start_idx:
             continue
-
-        if _circuit_open(upstream_id):
-            logger.info(f"{group_id} {upstream_id} {i + 1}/{len(chain)} circuit-open, skipping")
+        result = await _process_native_upstream(
+            group_id, chain, query, req_headers, body_bytes, upstream, i, upstream_id, action
+        )
+        if isinstance(result, bool):
             continue
-
-        target = f"{upstream}/models/{upstream_id}:{action}"
-        try:
-            req = http_client.build_request(
-                "POST", target, params=query, headers=req_headers, content=body_bytes
-            )
-            resp = await http_client.send(req, stream=True)
-        except (httpx.RequestError, httpx.TimeoutException) as e:
-            logger.info(f"{group_id} {upstream_id} {i + 1}/{len(chain)} error: {e}")
-            continue
-
-        # Advance on 429 (exhausted/cooldown) or 5xx (upstream failure)
-        if resp.status_code == 429 or resp.status_code >= 500:
-            logger.info(f"{group_id} {upstream_id} {i + 1}/{len(chain)} -> {resp.status_code}")
-            detail = ""
-            try:
-                detail = (await resp.aread()).decode("utf-8", "ignore")
-            except Exception:
-                pass
-            finally:
-                await resp.aclose()
-            if "cooldown" in detail or "exhausted quota" in detail:
-                _open_circuit(upstream_id)
-                logger.warning(f"{group_id} {upstream_id} circuit OPEN (cooldown detected)")
-            continue
-
-        # Halt on 400, 401, 403 (client/auth errors) — return verbatim
-        if 400 <= resp.status_code < 500 and resp.status_code != 429:
-            logger.info(f"{group_id} {upstream_id} {i + 1}/{len(chain)} halt {resp.status_code}")
-            content = await resp.aread()
-            return Response(
-                content=content,
-                status_code=resp.status_code,
-                headers=clean_headers(resp.headers),
-            )
-
-        # Success — read the first chunk NOW so an upstream that closes the
-        # stream before emitting any bytes (e.g. Google dropping the SSE early)
-        # falls back to the next chain model instead of poisoning the client
-        # stream with a truncated / broken response.
-        native_it = resp.aiter_bytes()
-        try:
-            first_chunk = await native_it.__anext__()
-        except StopAsyncIteration:
-            await resp.aclose()
-            logger.warning(
-                f"{group_id} {upstream_id} {i + 1}/{len(chain)} empty stream, advancing"
-            )
-            continue
-        except Exception as e:
-            await resp.aclose()
-            logger.warning(
-                f"{group_id} {upstream_id} {i + 1}/{len(chain)} "
-                f"early stream failure: {e}, advancing"
-            )
-            continue
-
-        _close_circuit(upstream_id)
-        if i > 0:
-            _set_sticky(group_id, upstream_id)
-        else:
-            _clear_sticky(group_id)
-        logger.info(f"{group_id} {upstream_id} {i + 1}/{len(chain)} native action={action}")
-        return _relay_native(resp, upstream_id, native_it, first_chunk)
-
+        return result
     logger.warning(f"fusion group={group_id} exhausted all backends")
     return JSONResponse(
         status_code=429,
@@ -407,71 +506,78 @@ async def _run_native_fusion(
 
 
 @app.post("/v1/chat/completions")
-async def chat_completions(request: Request):
+async def chat_completions(request: Request) -> Any:
     try:
         body = await request.json()
     except Exception:
         return JSONResponse({"error": "Invalid JSON body"}, status_code=400)
-
     model = body.get("model")
     if not model:
         return JSONResponse({"error": "Missing 'model' in request"}, status_code=400)
-
-    # Forward Authorization and Content-Type headers unchanged
-    req_headers = {}
-    if "authorization" in request.headers:
-        req_headers["authorization"] = request.headers["authorization"]
-    if "content-type" in request.headers:
-        req_headers["content-type"] = request.headers["content-type"]
-
+    req_headers = _build_forward_headers(request)
     is_stream = bool(body.get("stream"))
-
-    # ---------------------------------------------------------
-    # PATH A: Passthrough for non-fusion models (proxied unchanged)
-    # ---------------------------------------------------------
     if model not in fusion_groups:
-        try:
-            req = http_client.build_request(
-                "POST", FUSION_UPSTREAM_URL, headers=req_headers, json=body
-            )
-            resp = await http_client.send(req, stream=True)
+        return await _passthrough_openai(body, req_headers, is_stream)
+    return await _dispatch_fusion(model, body, req_headers, is_stream, request, False)
 
-            if is_stream:
 
-                async def stream_gen(response):
-                    try:
-                        async for chunk in response.aiter_raw():
-                            yield chunk
-                    finally:
-                        await response.aclose()
+async def _passthrough_openai(
+    body: dict[str, Any], req_headers: dict[str, str], is_stream: bool
+) -> Any:
+    """Dumb forwarder for non-fusion models through the /v1/chat/completions path."""
+    assert http_client is not None
+    try:
+        req = http_client.build_request(
+            "POST", FUSION_UPSTREAM_URL, headers=req_headers, json=body
+        )
+        resp = await http_client.send(req, stream=True)
+        return await _openai_passthrough_response(resp, body, req_headers, is_stream)
+    except Exception as e:
+        model = body.get("model", "unknown")
+        logger.error(f"Passthrough error for {model}: {e}")
+        return JSONResponse({"error": "Bad Gateway", "details": str(e)}, status_code=502)
 
-                return StreamingResponse(
-                    stream_gen(resp),
-                    status_code=resp.status_code,
-                    headers=clean_headers(resp.headers),
-                )
-            else:
-                content = await resp.aread()
-                return Response(
-                    content=content,
-                    status_code=resp.status_code,
-                    headers=clean_headers(resp.headers),
-                )
-        except Exception as e:
-            logger.error(f"Passthrough error for {model}: {e}")
-            return JSONResponse({"error": "Bad Gateway", "details": str(e)}, status_code=502)
 
-    # ---------------------------------------------------------
-    # PATH B: Fusion group — route by the group's protocol
-    # ---------------------------------------------------------
+async def _openai_passthrough_response(
+    resp: httpx.Response, body: dict[str, Any], req_headers: dict[str, str], is_stream: bool
+) -> Any:
+    """Build the passthrough response for OpenAI-compat non-fusion models."""
+    if is_stream:
+        async def stream_gen(response: httpx.Response) -> AsyncIterator[bytes]:
+            try:
+                async for chunk in response.aiter_raw():
+                    yield chunk
+            finally:
+                await response.aclose()
+        return StreamingResponse(
+            stream_gen(resp),
+            status_code=resp.status_code,
+            headers=clean_headers(resp.headers),
+        )
+    content = await resp.aread()
+    return Response(
+        content=content,
+        status_code=resp.status_code,
+        headers=clean_headers(resp.headers),
+    )
+
+
+async def _dispatch_fusion(
+    model: str,
+    body: dict[str, Any],
+    req_headers: dict[str, str],
+    is_stream: bool,
+    request: Request,
+    path_is_native: bool,
+) -> Any:
+    """Route a fusion-group model to the appropriate protocol handler."""
     group = fusion_groups[model]
-    upstream, protocol = _resolve_upstream(group, False)
+    upstream, protocol = _resolve_upstream(group, path_is_native)
     if protocol == "native":
         body_bytes = (await request.body()) or b"{}"
         return await _run_native_fusion(
             group_id=model,
             chain=group.chain,
-            model_name=model,
             action="generateContent",
             query=dict(request.query_params),
             req_headers=req_headers,
@@ -490,7 +596,7 @@ async def chat_completions(request: Request):
 
 @app.post("/v1beta/models/{model_name_and_action:path}")
 @app.post("/v1beta/{model_name_and_action:path}")
-async def fusion_native(model_name_and_action: str, request: Request):
+async def fusion_native(model_name_and_action: str, request: Request) -> Any:
     """
     Native Google proxy that mirrors 7766's /v1beta route. Dumb forwarder for
     non-fusion models; for a fusion-group model it substitutes the upstream model
@@ -498,55 +604,26 @@ async def fusion_native(model_name_and_action: str, request: Request):
     OpenAI-compat) is taken from the fusion group's `upstream`, so a group such as
     pydantic/google entered here still forwards its OpenAI payload correctly.
     """
-    if ":" in model_name_and_action:
-        model_name, action = model_name_and_action.split(":", 1)
-    else:
-        model_name, action = model_name_and_action, "generateContent"
-
-    # Strip 'models/' prefix if the client included it in the path
-    if model_name.startswith("models/"):
-        model_name = model_name[len("models/"):]
-
-    req_headers = {
-        k: v for k, v in request.headers.items()
-        if k.lower() not in ("host", "content-length")
-    }
+    assert http_client is not None
+    model_name, action = _parse_native_path(model_name_and_action)
+    req_headers = _build_native_forward_headers(request)
     query = dict(request.query_params)
     body_bytes = await request.body()
-
-    # Non-fusion model -> straight dumb forward as-is
     if model_name not in fusion_groups:
-        target = f"{FUSION_UPSTREAM_URL_NATIVE}/models/{model_name}:{action}"
-        try:
-            req = http_client.build_request(
-                "POST", target, params=query, headers=req_headers, content=body_bytes
-            )
-            resp = await http_client.send(req, stream=True)
-            return _relay_native(resp, None)
-        except Exception as e:
-            logger.error(f"fusion native passthrough error for {model_name}: {e}")
-            return JSONResponse({"error": "Bad Gateway", "details": str(e)}, status_code=502)
-
-    # Fusion group -> route by the group's protocol
+        return await _passthrough_native(model_name, action, req_headers, query, body_bytes)
     group = fusion_groups[model_name]
     upstream, protocol = _resolve_upstream(group, True)
     if protocol == "native":
         return await _run_native_fusion(
             group_id=model_name,
             chain=group.chain,
-            model_name=model_name,
             action=action,
             query=query,
             req_headers=req_headers,
             body_bytes=body_bytes,
             upstream=upstream,
         )
-
-    # OpenAI-compat group entered via /v1beta: parse body, run openai fusion
-    try:
-        body = json.loads(body_bytes) if body_bytes else {}
-    except Exception:
-        body = {}
+    body = _parse_body_bytes(body_bytes)
     is_stream = bool(body.get("stream"))
     return await _run_openai_fusion(
         group_id=model_name,
@@ -558,12 +635,61 @@ async def fusion_native(model_name_and_action: str, request: Request):
     )
 
 
+def _parse_native_path(model_name_and_action: str) -> tuple[str, str]:
+    """Split 'model:action' path into (model_name, action)."""
+    if ":" in model_name_and_action:
+        model_name, action = model_name_and_action.split(":", 1)
+    else:
+        model_name, action = model_name_and_action, "generateContent"
+    if model_name.startswith("models/"):
+        model_name = model_name[len("models/"):]
+    return model_name, action
+
+
+def _build_native_forward_headers(request: Request) -> dict[str, str]:
+    """Build headers for native forwarder, stripping hop-by-hop fields."""
+    return {
+        k: v for k, v in request.headers.items()
+        if k.lower() not in ("host", "content-length")
+    }
+
+
+def _parse_body_bytes(body_bytes: bytes) -> dict[str, Any]:
+    """Safely parse JSON body bytes into a dict."""
+    try:
+        body = json.loads(body_bytes) if body_bytes else {}
+    except Exception:
+        body = {}
+    return body
+
+
+async def _passthrough_native(
+    model_name: str,
+    action: str,
+    req_headers: dict[str, str],
+    query: dict[str, str],
+    body_bytes: bytes,
+) -> Any:
+    """Dumb forwarder for non-fusion models through the /v1beta path."""
+    assert http_client is not None
+    target = f"{FUSION_UPSTREAM_URL_NATIVE}/models/{model_name}:{action}"
+    try:
+        req = http_client.build_request(
+            "POST", target, params=query, headers=req_headers, content=body_bytes
+        )
+        resp = await http_client.send(req, stream=True)
+        return _relay_native(resp, None)
+    except Exception as e:
+        logger.error(f"fusion native passthrough error for {model_name}: {e}")
+        return JSONResponse({"error": "Bad Gateway", "details": str(e)}, status_code=502)
+
+
 def _relay_native(
     resp: httpx.Response,
     served_model: Optional[str],
-    iterator=None,
-    first_chunk=None,
-):
+    iterator: Optional[Any] = None,
+    first_chunk: Optional[bytes] = None,
+) -> StreamingResponse:
     """Stream a native upstream response back to the client, unchanged.
 
     `iterator` is the already-started async iterator (resp.aiter_bytes()).
@@ -578,7 +704,7 @@ def _relay_native(
     if iterator is None:
         iterator = resp.aiter_bytes()
 
-    async def stream_gen():
+    async def stream_gen() -> AsyncIterator[bytes]:
         try:
             if first_chunk is not None:
                 yield first_chunk

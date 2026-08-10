@@ -21,12 +21,12 @@ agent = Agent(model=model, system_prompt="You are a helpful assistant.")
 
 
 @agent.tool
-async def get_weather(ctx: RunContext[str], location: str) -> str:
+async def get_weather(ctx: RunContext[object], /, location: str) -> str:
     return f"The weather in {location} is 22°C and sunny."
 
 
 @pytest.mark.anyio
-async def test_gemini_flash_tool_call_via_native():
+async def test_gemini_flash_tool_call_via_native() -> None:
     result = await agent.run("What is the weather in Singapore? Use the get_weather tool.")
     assert result.output, f"No output: {result}"
     print(f"\nOutput: {result.output}")
@@ -35,7 +35,7 @@ async def test_gemini_flash_tool_call_via_native():
 
 
 @pytest.mark.anyio
-async def test_gemini_flash_tool_call_via_openai_compat():
+async def test_gemini_flash_tool_call_via_openai_compat() -> None:
     """Tool call through OpenAI-compat route — requires thought_signature fix."""
     from pydantic_ai.models.openai import OpenAIChatModel
     from pydantic_ai.providers.openai import OpenAIProvider
@@ -45,7 +45,7 @@ async def test_gemini_flash_tool_call_via_openai_compat():
     ag = Agent(model=m, system_prompt="You are a helpful assistant.")
 
     @ag.tool
-    async def get_weather(ctx: RunContext[str], location: str) -> str:
+    async def get_weather(ctx: RunContext[object], /, location: str) -> str:
         return f"The weather in {location} is 22°C and sunny."
 
     result = await ag.run("What is the weather in Singapore? Use the get_weather tool.")
@@ -55,7 +55,7 @@ async def test_gemini_flash_tool_call_via_openai_compat():
 
 
 if __name__ == "__main__":
-    async def main():
+    async def main() -> None:
         result = await agent.run("What is the weather in Singapore? Use the get_weather tool.")
         print(f"Output: {result.output}")
         print(f"Usage: {result.usage}")

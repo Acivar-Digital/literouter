@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import asyncio
 import os
 
@@ -31,7 +33,7 @@ def gemma_4_31b_it() -> Agent:
     return Agent(model)
 
 
-async def main():
+async def main() -> None:
     agent = gemma_4_31b_it()
     try:
         r = await agent.run("Say OK in one word.")

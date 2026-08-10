@@ -18,8 +18,16 @@ def _native_url(action: str) -> str:
     return f"{GATEWAY_URL}/v1beta/models/{MODEL}:{action}"
 
 
+def _assert_native_content_response(resp: httpx.Response) -> None:
+    assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text[:200]}"
+    data = resp.json()
+    candidates = data.get("candidates")
+    assert candidates, f"No candidates in response: {resp.text[:300]}"
+    assert len(candidates) > 0
+
+
 @pytest.mark.parametrize("action", ["generateContent", "streamGenerateContent"])
-def test_gemini_flash_via_native(action):
+def test_gemini_flash_via_native(action: str) -> None:
     url = _native_url(action)
     params = {"alt": "sse"} if "stream" in action else {}
 
@@ -37,13 +45,10 @@ def test_gemini_flash_via_native(action):
     assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text[:200]}"
 
     if action == "generateContent":
-        data = resp.json()
-        candidates = data.get("candidates")
-        assert candidates, f"No candidates in response: {resp.text[:300]}"
-        assert len(candidates) > 0
+        _assert_native_content_response(resp)
 
 
-def test_gemini_flash_via_openai_compat():
+def test_gemini_flash_via_openai_compat() -> None:
     url = f"{GATEWAY_URL}/v1/chat/completions"
     resp = httpx.post(
         url,

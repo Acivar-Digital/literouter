@@ -216,7 +216,9 @@ export function createStreamTransformer(
     keepAliveTimer = setInterval(() => {
       try {
         controller.enqueue(encoder.encode(":\n\n"));
-      } catch {}
+      } catch (err) {
+        logWarn("keepalive enqueue failed", { error: err instanceof Error ? err.message : String(err) });
+      }
     }, KEEPALIVE_INTERVAL_MS);
   };
 

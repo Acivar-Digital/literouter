@@ -38,7 +38,9 @@ function hasContentToken(chunkBytes: Uint8Array): boolean {
         if (Array.isArray(parts) && parts.some((p: any) => p?.text || p?.functionCall)) {
           return true;
         }
-      } catch {}
+      } catch (err) {
+        logWarn(EMOJI.trace, `[FETCHER] error parsing SSE data token: ${err instanceof Error ? err.message : String(err)}`);
+      }
     }
     return false;
   }
@@ -49,7 +51,9 @@ function hasContentToken(chunkBytes: Uint8Array): boolean {
       if (json?.choices || json?.candidates || json?.id || json?.object) {
         return true;
       }
-    } catch {}
+    } catch (err) {
+      logWarn(EMOJI.trace, `[FETCHER] error parsing JSON content token: ${err instanceof Error ? err.message : String(err)}`);
+    }
   }
 
   return text.trim().length > 0;
@@ -157,7 +161,9 @@ export async function fetchWithFirstByteTimeout(
                   );
                   try {
                     currentReader.cancel().catch(() => {});
-                  } catch {}
+                  } catch (err) {
+                    logWarn(EMOJI.trace, `[FETCHER] error canceling reader during stream stall retry: ${err instanceof Error ? err.message : String(err)}`);
+                  }
                   const freshResp = await fetch(url, init);
                   if (!freshResp.ok || !freshResp.body) {
                     controller.close();

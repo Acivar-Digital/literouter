@@ -1,19 +1,25 @@
-import { readdirSync, statSync } from "fs";
+import { readdirSync, statSync, realpathSync } from "fs";
 import { join, resolve, normalize } from "path";
 
 // @ts-ignore
 import tsComplex from "ts-complex";
 
 const PROJECT_ROOT = resolve(import.meta.dir, "..");
+const PROJECT_ROOT_REAL = realpathSync(PROJECT_ROOT);
 
-function isPathWithinBase(target: string, base: string): boolean {
+function isPathWithinBase(target: string, base: string, baseReal: string): boolean {
   const resolved = normalize(resolve(target));
-  const baseResolved = normalize(resolve(base));
-  return resolved === baseResolved || resolved.startsWith(baseResolved + "/");
+  if (resolved !== baseReal && !resolved.startsWith(baseReal + "/")) {
+    return false;
+  }
+  const realResolved = normalize(realpathSync(resolved));
+  return (
+    realResolved === baseReal || realResolved.startsWith(baseReal + "/")
+  );
 }
 
 function getAllTsFiles(dir: string): string[] {
-  if (!isPathWithinBase(dir, PROJECT_ROOT)) {
+  if (!isPathWithinBase(dir, PROJECT_ROOT, PROJECT_ROOT_REAL)) {
     throw new Error(
       `Path traversal detected: "${dir}" escapes the project root "${PROJECT_ROOT}"`,
     );
@@ -32,7 +38,7 @@ function getAllTsFiles(dir: string): string[] {
 
 const rawTargetDir = process.argv[2] || "src";
 const targetDir = resolve(rawTargetDir);
-if (!isPathWithinBase(targetDir, PROJECT_ROOT)) {
+if (!isPathWithinBase(targetDir, PROJECT_ROOT, PROJECT_ROOT_REAL)) {
   console.error(
     `Error: Target directory "${rawTargetDir}" resolves outside the project root.`,
   );

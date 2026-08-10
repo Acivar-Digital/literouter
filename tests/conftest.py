@@ -4,8 +4,12 @@ conftest.py — Shared fixtures for LiteRouter tests.
 Resets singletons and global state between tests to ensure isolation.
 """
 
+from __future__ import annotations
+
 import os
 import sys
+from pathlib import Path
+from typing import Generator
 from unittest.mock import patch
 
 import pytest
@@ -15,12 +19,13 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 
 @pytest.fixture(autouse=True)
-def reset_singletons():
+def reset_singletons() -> Generator[None, None, None]:
     """Reset all singleton caches before each test (Python gateway only)."""
+    yield
 
 
 @pytest.fixture
-def no_redis():
+def no_redis() -> Generator[None, None, None]:
     """Ensure Redis is unavailable (all Redis operations use in-memory fallback)."""
     with patch("src.redis_client.get_redis_client", return_value=None):
         with patch("src.redis_client.redis_available", return_value=False):
@@ -28,7 +33,7 @@ def no_redis():
 
 
 @pytest.fixture
-def mock_env_openrouter(tmp_path, monkeypatch):
+def mock_env_openrouter(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Set up environment for a single OpenRouter provider."""
     env_file = tmp_path / ".env"
     env_file.write_text(
@@ -43,7 +48,7 @@ def mock_env_openrouter(tmp_path, monkeypatch):
 
 
 @pytest.fixture
-def mock_env_anthropic(tmp_path, monkeypatch):
+def mock_env_anthropic(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Set up environment for a single Anthropic provider."""
     env_file = tmp_path / ".env"
     env_file.write_text(
@@ -57,7 +62,7 @@ def mock_env_anthropic(tmp_path, monkeypatch):
 
 
 @pytest.fixture
-def mock_env_gemini(tmp_path, monkeypatch):
+def mock_env_gemini(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Set up environment for a Gemini provider."""
     env_file = tmp_path / ".env"
     env_file.write_text(

@@ -22,7 +22,9 @@ function loadEnvFile(path: string): Record<string, string> {
       const val = line.slice(eq + 1).trim().replace(/^["']|["']$/g, "");
       if (key) env[key] = val;
     }
-  } catch {}
+  } catch (exc) {
+    console.warn(`⚠️ Failed to load env file at ${path}: ${exc}`);
+  }
   return env;
 }
 
@@ -52,35 +54,35 @@ async function probeGoogleKey(key: string): Promise<boolean> {
     contents: [{ parts: [{ text: "ping" }] }],
     generationConfig: { maxOutputTokens: 100 },
   };
+  const maskedKey = mask(key);
   try {
     const resp = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     });
-    const m = mask(key);
     if (resp.status === 200) {
-      console.log(`[GOOGLE] ✅ Key '${m}' is healthy (200 OK).`);
+      console.log(`[GOOGLE] ✅ Key '${maskedKey}' is healthy (200 OK).`);
       return true;
     } else if (resp.status === 401 || resp.status === 403) {
       console.error(
-        `[GOOGLE] ❌ Key '${m}' failed with status ${resp.status} (UNAUTHORIZED).`,
+        `[GOOGLE] ❌ Key '${maskedKey}' failed with status ${resp.status} (UNAUTHORIZED).`,
       );
       return false;
     } else if (resp.status === 429) {
       console.warn(
-        `[GOOGLE] ⚠️ Key '${m}' is rate-limited (429) but validated as operational.`,
+        `[GOOGLE] ⚠️ Key '${maskedKey}' is rate-limited (429) but validated as operational.`,
       );
       return true;
     } else {
       console.warn(
-        `[GOOGLE] ⚠️ Key '${m}' warning status ${resp.status}.`,
+        `[GOOGLE] ⚠️ Key '${maskedKey}' warning status ${resp.status}.`,
       );
       return true;
     }
   } catch (exc) {
     console.warn(
-      `[GOOGLE] ⚠️ Connection error for key '${m}': ${exc}. Treating as warning.`,
+      `[GOOGLE] ⚠️ Connection error for key '${maskedKey}': ${exc}. Treating as warning.`,
     );
     return true;
   }

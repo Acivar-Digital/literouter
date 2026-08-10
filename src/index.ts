@@ -1,7 +1,9 @@
 import { serve } from "bun";
 import Redis from "ioredis";
+import { realpathSync } from "fs";
 import * as fs from "fs";
 import * as path from "path";
+import { normalize, resolve } from "path";
 import {
   COOLDOWN_AUTH_TTL_SEC,
   COOLDOWN_DEFAULT_TTL_SEC,
@@ -71,11 +73,33 @@ export const EMOJI = {
 
 const TRACES_DIR = path.resolve(ROOT_DIR, "logs", "traces");
 
+function isPathWithinBase(target: string, base: string): boolean {
+  const resolved = normalize(resolve(target));
+  const baseResolved = normalize(resolve(base));
+  if (resolved !== baseResolved && !resolved.startsWith(baseResolved + "/")) {
+    return false;
+  }
+  try {
+    const realResolved = normalize(realpathSync(resolved));
+    const baseReal = normalize(realpathSync(base));
+    return (
+      realResolved === baseReal || realResolved.startsWith(baseReal + "/")
+    );
+  } catch {
+    return false;
+  }
+}
+
 function clearTraces(): void {
   try {
     if (fs.existsSync(TRACES_DIR)) {
       for (const f of fs.readdirSync(TRACES_DIR)) {
-        fs.rmSync(path.join(TRACES_DIR, f), { force: true });
+        const full = path.join(TRACES_DIR, f);
+        if (!isPathWithinBase(full, TRACES_DIR)) {
+          logWarn(EMOJI.warn, `Skipping suspicious trace entry: ${f}`);
+          continue;
+        }
+        fs.rmSync(full, { force: true });
       }
     } else {
       fs.mkdirSync(TRACES_DIR, { recursive: true });
@@ -339,7 +363,10 @@ export class ModelFirstRouter {
           member,
         );
       } catch (e) {
-        res = await this.redis.eval(
+        // REQUIREMENT: Fail silently here because the Redis script-loading fallback
+        // (via bound eval reference) restores quota correctness when evalsha fails.
+        const redisEval = this.redis.eval.bind(this.redis);
+        res = await redisEval(
           QUOTA_CHECK_SCRIPT,
           1,
           rollingKey,
@@ -377,7 +404,10 @@ export class ModelFirstRouter {
           member,
         );
       } catch (e) {
-        res = await this.redis.eval(
+        // REQUIREMENT: Fail silently here because the Redis script-loading fallback
+        // (via bound eval reference) restores quota correctness when evalsha fails.
+        const redisEval = this.redis.eval.bind(this.redis);
+        res = await redisEval(
           QUOTA_CHECK_SCRIPT,
           1,
           rollingKey,
@@ -474,7 +504,7 @@ export class ModelFirstRouter {
       await this.redis.hincrby(hkey, "total_tokens", usage.total_tokens || 0);
       await this.redis.expire(hkey, 60 * 60 * 24 * 30);
     } catch (e) {
-      // observability only
+      logWarn(EMOJI.warn, `Usage tracking failed for ${provider}/${modelName}: ${e}`);
     }
   }
 }
@@ -636,7 +666,9 @@ serve({
     if (bodyText) {
       try {
         reqJson = JSON.parse(bodyText);
-      } catch (e) {}
+      } catch (e) {
+        logWarn(EMOJI.warn, `JSON parse failed for request body: ${e}`);
+      }
     }
 
     if (url.pathname === "/v1/chat/completions") {

@@ -154,7 +154,9 @@ async function processGoogleNativeSuccess(
     keepAliveTimer = setInterval(() => {
       try {
         controller.enqueue(encoder.encode(":\n\n"));
-      } catch {}
+      } catch (e) {
+        logWarn(EMOJI.error, `[GOOGLE ${reqId}] Keep-alive enqueue failed: ${e}`);
+      }
     }, KEEPALIVE_INTERVAL_MS);
   };
 
@@ -191,7 +193,9 @@ async function processGoogleNativeSuccess(
           const j = JSON.parse(c);
           const u = parseUsageFromJson(j);
           if (u) capturedUsage = u;
-        } catch {}
+        } catch (e) {
+          logWarn(EMOJI.error, `[GOOGLE ${reqId}] Usage JSON parse failed: ${e}`);
+        }
       }
 
       controller.enqueue(encoder.encode(text));

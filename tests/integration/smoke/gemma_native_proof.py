@@ -1,10 +1,13 @@
+from __future__ import annotations
+
 import os
+from typing import Any
 
 from google import genai
 from google.genai import types
 
 
-def generate():
+def generate() -> None:
     client = genai.Client(
         api_key=os.environ.get("GEMINI_API_KEY"),
     )
@@ -18,12 +21,12 @@ def generate():
             ],
         ),
     ]
-    tools = [
-        types.Tool(googleSearch=types.GoogleSearch()),
+    tools: list[Any] = [
+        types.Tool(google_search=types.GoogleSearch()),
     ]
     generate_content_config = types.GenerateContentConfig(
         thinking_config=types.ThinkingConfig(
-            thinking_level="MINIMAL",
+            thinking_level=types.ThinkingLevel.MINIMAL,
         ),
         tools=tools,
     )
