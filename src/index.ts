@@ -3,6 +3,14 @@ import Redis from "ioredis";
 import * as fs from "fs";
 import * as path from "path";
 import {
+  COOLDOWN_AUTH_TTL_SEC,
+  COOLDOWN_DEFAULT_TTL_SEC,
+  COOLDOWN_RATE_LIMIT_TTL_SEC,
+  COOLDOWN_TTL_MAX_SEC,
+  COOLDOWN_TTL_MIN_SEC,
+  COOLDOWN_TIMEOUT_TTL_SEC,
+  FUSION_CIRCUIT_TTL_MS,
+  FUSION_STICKY_TTL_MS,
   LITEROUTER_AUTH_KEY,
   LITEROUTER_HTTP_TIMEOUT_MS,
   LITEROUTER_PORT,
@@ -404,26 +412,26 @@ export class ModelFirstRouter {
     const keyHash = this.hashKey(key);
     const cooldownKey = `cooldown:${provider}:${keyHash}:${modelName}`;
 
-    let ttl = 30;
+    let ttl = COOLDOWN_DEFAULT_TTL_SEC;
     let state = `error_${errorType}`;
 
     if (["429", "rate_limit"].includes(errorType)) {
-      ttl = 65;
+      ttl = COOLDOWN_RATE_LIMIT_TTL_SEC;
       state = "rate_limited";
     } else if (
       ["timeout", "500", "502", "503", "504"].includes(errorType)
     ) {
-      ttl = 10;
+      ttl = COOLDOWN_TIMEOUT_TTL_SEC;
       state = "timed_out";
     } else if (
       ["401", "403", "auth", "permission_denied"].includes(errorType)
     ) {
-      ttl = 604800;
+      ttl = COOLDOWN_AUTH_TTL_SEC;
       state = "quarantined";
     }
 
     if (ttlOverride && ttlOverride > 0) {
-      ttl = clamp(ttlOverride, 5, 7200);
+      ttl = clamp(ttlOverride, COOLDOWN_TTL_MIN_SEC, COOLDOWN_TTL_MAX_SEC);
     }
 
     if (
@@ -431,11 +439,11 @@ export class ModelFirstRouter {
       ttlOverride &&
       ttlOverride > 0
     ) {
-      ttl = Math.max(clamp(ttlOverride, 5, 7200), 65);
+      ttl = Math.max(clamp(ttlOverride, COOLDOWN_TTL_MIN_SEC, COOLDOWN_TTL_MAX_SEC), COOLDOWN_RATE_LIMIT_TTL_SEC);
     }
 
     if (provider === "google" || provider === "nvidia") {
-      ttl = Math.max(ttl, 65);
+      ttl = Math.max(ttl, COOLDOWN_RATE_LIMIT_TTL_SEC);
     }
 
     await this.redis.set(cooldownKey, state, "EX", ttl);
@@ -478,8 +486,8 @@ router.connect();
 // 3. Fusion State (In-Memory Circuit Breaker & Sticky Fallback)
 // ============================================================================
 
-const CIRCUIT_TTL = 65000;
-const STICKY_TTL = 300000;
+const CIRCUIT_TTL = FUSION_CIRCUIT_TTL_MS;
+const STICKY_TTL = FUSION_STICKY_TTL_MS;
 
 const circuitOpenUntil = new Map<string, number>();
 const stickyPosition = new Map<

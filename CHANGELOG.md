@@ -2,6 +2,24 @@
 
 All notable changes to LiteRouter will be documented in this file.
 
+## [3.3.11] — 2026-08-10
+
+### Added
+- **Environment-Driven Configuration** — Externalized all hardcoded models, timing constants, and endpoints to `.env.local`. New env vars in `src/config/env.ts`:
+  - `FUSION_CIRCUIT_TTL_MS` (65000ms) — Fusion circuit breaker TTL
+  - `FUSION_STICKY_TTL_MS` (300000ms) — Fusion sticky fallback expiry
+  - `COOLDOWN_DEFAULT_TTL_SEC` (30s), `COOLDOWN_RATE_LIMIT_TTL_SEC` (65s), `COOLDOWN_TIMEOUT_TTL_SEC` (10s), `COOLDOWN_AUTH_TTL_SEC` (604800s/7d) — per-error-class cooldown durations
+  - `COOLDOWN_TTL_MIN_SEC` (5s), `COOLDOWN_TTL_MAX_SEC` (7200s/2h) — TTL clamp bounds
+  - `GRACE_RETRY_DELAY_MS` (1500ms) — same-key retry delay after 502/soft reset
+  - `STREAM_STALL_MAX_RESENDS` (3) — SSE stream stall resend count
+  - `KEEPALIVE_INTERVAL_MS` (2000ms) — SSE keep-alive ping interval
+  - `GOOGLE_INTERACTIONS_MODEL` (`antigravity-preview-05-2026`) — Google interactions endpoint model
+  - `GOOGLE_NATIVE_BASE_URL` (`https://generativelanguage.googleapis.com`) — base URL for native `/v1beta/models/` calls
+- All new settings are documented inline in `.env.local` with comments explaining purpose and default values.
+
+### Removed
+- **`tencent/hy3:free` model** — Removed from `models.json` and associated metadata files. No longer referenced in `opencode.json` or gateway routing.
+
 ## [3.3.10] — 2026-08-10
 
 ### Reverted

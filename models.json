@@ -1,12 +1,5 @@
 [
   {
-    "system_id": "openrouter/tencent/hy3:free",
-    "provider": "openrouter",
-    "upstream_id": "tencent/hy3:free",
-    "context": 262144,
-    "max_output": 128000
-  },
-  {
     "system_id": "nvidia/meta/llama-3.1-8b-instruct",
     "provider": "nvidia",
     "upstream_id": "meta/llama-3.1-8b-instruct",

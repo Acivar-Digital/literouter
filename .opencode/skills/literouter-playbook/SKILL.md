@@ -48,7 +48,7 @@ src/
 | **`src/transformers/thinking.ts`** | Translates provider-specific reasoning/thinking options into standard OpenAI-style `reasoning_effort` fields (`extractThinkingLevel`, `applyReasoningEffort`, `translateGoogleThinking`). |
 | **`src/transformers/payload.ts`** | Manages thought signatures (`injectThoughtSignature`, `extractThoughtSignature`), token estimation (`estimateTokens`), Gemma unsupported field stripping (`cleanGemmaPayload`), LaTeX formatting (`cleanLatexSymbols`), message merging (`mergeConsecutiveMessages`), historical message reasoning sanitization (`sanitizeHistoricalMessages`), non-streaming reasoning transformations (`transformNonStreaming`), and streaming SSE stream transformations (`createStreamTransformer`). Exports `StreamMeta` interface. The `sanitizeHistoricalMessages` function strips past `reasoning_content`, `reasoningContent`, `thought`, and `thought_summary` from historical assistant messages and normalizes `content: null` to `""` to prevent context bloat and 400 Bad Request errors across providers. The `createStreamTransformer` function transforms upstream SSE chunks for OpenAI-compatible providers, handling thought signature injection, reasoning normalization, LaTeX cleaning, and usage extraction. A keep-alive timer injects SSE comment lines (`:\n\n`) every 15 seconds to prevent downstream SSE clients from idling out during slow upstream streams. |
 | **`src/handlers/openai_compat.ts`** | Implements `executeOpenAICompat`, `processOpenAIError`, and `processOpenAISuccess`. Manages key rotation loops for OpenAI-compatible providers (OpenRouter, NVIDIA, Zen, Google OpenAI-compat), error handling, 502 grace retries, and first-byte ghosting retry handling (no cooldown penalty on ghosted keys). |
-| **`src/handlers/google_native.ts`** | Implements `executeGoogleNative` (for Google `:generateContent` / `:streamGenerateContent` native endpoints) and `executeGoogleInteractions` (for Google agent API `antigravity-preview-05-2026`). Manages query parameter signing, error handling, first-byte ghosting retry via `fetchWithFirstByteTimeout`, and SSE keep-alive comment injection. |
+| **`src/handlers/google_native.ts`** | Implements `executeGoogleNative` (for Google `:generateContent` / `:streamGenerateContent` native endpoints) and `executeGoogleInteractions` (for Google agent API, model configurable via `GOOGLE_INTERACTIONS_MODEL`). Manages query parameter signing, error handling, first-byte ghosting retry via `fetchWithFirstByteTimeout`, and SSE keep-alive comment injection. |
 | **`src/lib.ts`** | **Barrel re-export file**. Exports all public types, constants, and utilities from `config/env`, `network/fetcher`, `transformers/thinking`, and `transformers/payload` for clean modular imports across handlers and 100% backward compatibility with `tests/unit/core/`. |
 | **`src/index.ts`** | Application entry point running `serve` on port 7766. Contains trace logging (`recordTrace`), emoji logging (`logState`, `logWarn`, `logError`), static key verification, model/fusion registry loading (`models.json`, `fusion.json`), Valkey/Redis `ModelFirstRouter` (ZSET rolling quota Lua script, `reportError` cooldowns, usage recording), Fusion state (in-memory circuit breaker and sticky position), auth checking (`verifyAuthKey`), and HTTP route dispatchers. |
 
@@ -62,7 +62,7 @@ LiteRouter exposes 4 main HTTP endpoints on port 7766:
 | :--- | :--- | :--- | :--- |
 | **`/v1/chat/completions`** | `executeOpenAICompat`<br>*(or `executeFusion` if in `fusion.json`)* | OpenAI-compatible endpoints (`/chat/completions`) for NVIDIA, OpenRouter, Zen, or Google OpenAI-compat (`/v1beta/openai/chat/completions`). | pydantic-ai, OpenAI SDKs, LiteLLM, OpenCode |
 | **`/v1beta/interactions`**<br>*(or `/v1/interactions`)* | `executeGoogleInteractions` | Google Interactions API (`https://generativelanguage.googleapis.com/v1beta/interactions`) for `antigravity-preview-05-2026`. | Google Agent clients, Antigravity runners |
-| **`/v1beta/models/*`**<br>*(e.g., `/v1beta/models/{model}:{action}`)* | `executeGoogleNative`<br>*(or `executeFusion` if in `fusion.json`)* | Google Native API (`https://generativelanguage.googleapis.com/v1beta/models/{upstream_model}:{action}`). | OpenCode native Gemini integration |
+| **`/v1beta/models/*`**<br>*(e.g., `/v1beta/models/{model}:{action}`)* | `executeGoogleNative`<br>*(or `executeFusion` if in `fusion.json`)* | Google Native API (`{GOOGLE_NATIVE_BASE_URL}/v1beta/models/{upstream_model}:{action}`). | OpenCode native Gemini integration |
 | **`/health`** | Inline handler | Returns `{"status": "ok"}` (200 OK). | Load balancers, health checks, monitoring |
 
 ---
@@ -95,7 +95,7 @@ The inter-chunk idle timeout is now handled at the `fetchWithFirstByteTimeout` l
 
 The stream transformers (`createStreamTransformer` for OpenAI-compatible providers, inline transform for Google Native) no longer handle idle timeouts. They focus solely on SSE parsing, thought signature injection, reasoning normalization, LaTeX cleaning, and usage extraction.
 
-Both stream transformers still inject SSE comment lines (`:\n\n`) every 15 seconds via keep-alive timers to prevent downstream SSE clients from triggering their own idle timeouts during slow upstream responses where tokens arrive infrequently.
+Both stream transformers still inject SSE comment lines (`:\n\n`) every `KEEPALIVE_INTERVAL_MS` (2s default) via keep-alive timers to prevent downstream SSE clients from triggering their own idle timeouts during slow upstream responses where tokens arrive infrequently.
 
 ---
 
@@ -104,7 +104,7 @@ Both stream transformers still inject SSE comment lines (`:\n\n`) every 15 secon
 1. **Rotation Delay Floor (`MIN_ROTATE_DELAY_MS = 2000`):**
    Key rotation delay between attempts is controlled by `getProviderDelayMs(provider)`. It resolves the environment variable `${PROVIDER}_MIN_DELAY_MS` or `LITEROUTER_ROTATE_DELAY_MS` (default 10s), but enforces a **hard minimum floor of 2000ms (2s)** (`MIN_ROTATE_DELAY_MS`).
 2. **Immediate Exhaustion Output (No 65s Stalls):**
-   When upstream returns 429 rate limit or quota errors, `router.reportError` places the active key on a 65s cooldown in Valkey/Redis.
+   When upstream returns 429 rate limit or quota errors, `router.reportError` places the active key on a 65s cooldown in Valkey/Redis (configurable via `COOLDOWN_RATE_LIMIT_TTL_SEC`).
    If all available keys in the pool are in cooldown or quota-exhausted, `router.getAvailableKey` throws:
    `All keys for {provider} are in cooldown or have exhausted quota for model {modelName}.`
    The handler catches this error and **immediately returns HTTP 429** to the downstream client without stalling or waiting out long 65s cooldown windows.
@@ -117,11 +117,11 @@ Cooldown states are stored in Valkey/Redis under `cooldown:{provider}:{keyHash}:
 
 | Error Type / Status | Default TTL | Cooldown State | Notes & Overrides |
 | :--- | :--- | :--- | :--- |
-| **`429` / `rate_limit`** | **65s** | `rate_limited` | Reset delays parsed via `parseResetDelay` from `Retry-After` headers or body regex (`quotaResetDelay`) can override TTL (clamped 5s–7200s). |
+| **`429` / `rate_limit`** | **65s** (`COOLDOWN_RATE_LIMIT_TTL_SEC`) | `rate_limited` | Reset delays parsed via `parseResetDelay` from `Retry-After` headers or body regex (`quotaResetDelay`) can override TTL (clamped to `COOLDOWN_TTL_MIN_SEC`–`COOLDOWN_TTL_MAX_SEC`). |
 | **Google & Nvidia Provider Errors** | **Min 65s** | `rate_limited` | Any error on `google` or `nvidia` providers is floored at a **minimum TTL of 65s** (`ttl = Math.max(ttl, 65)`). |
-| **Timeouts / `500`, `502`, `503`, `504`** | **10s** | `timed_out` | Short cooldown for transient upstream server or proxy errors. |
-| **Auth / Permission (`401`, `403`, `auth`, `permission_denied`)** | **7 days** (604,800s) | `quarantined` | Long-term quarantine for revoked or invalid keys. |
-| **General / Default Errors** | **30s** | `error_{errorType}` | Fallback cooldown duration for unclassified errors. |
+| **Timeouts / `500`, `502`, `503`, `504`** | **10s** (`COOLDOWN_TIMEOUT_TTL_SEC`) | `timed_out` | Short cooldown for transient upstream server or proxy errors. |
+| **Auth / Permission (`401`, `403`, `auth`, `permission_denied`)** | **7 days** (`COOLDOWN_AUTH_TTL_SEC`, default 604800s) | `quarantined` | Long-term quarantine for revoked or invalid keys. |
+| **General / Default Errors** | **30s** (`COOLDOWN_DEFAULT_TTL_SEC`) | `error_{errorType}` | Fallback cooldown duration for unclassified errors. |
 
 ---
 
@@ -129,10 +129,10 @@ Cooldown states are stored in Valkey/Redis under `cooldown:{provider}:{keyHash}:
 
 Fusion groups defined in `fusion.json` (e.g. `pydantic/google`, `pydantic/nvidia`) execute resilient multi-model fallback chains:
 
-1. **Circuit Breaker (`CIRCUIT_TTL = 65000` ms / 65s):**
+1. **Circuit Breaker (`FUSION_CIRCUIT_TTL_MS = 65000` ms / 65s):**
    When an upstream model in a fusion chain returns HTTP 429 or >= 500 status, `openCircuit(upstreamId)` marks the backend circuit as open for 65 seconds (`CIRCUIT_TTL`). Subsequent fusion requests skip open-circuit backends.
-2. **Sticky Position (`STICKY_TTL = 300000` ms / 300s / 5min):**
-   When a primary backend fails and a fallback upstream succeeds, `setSticky(groupId, upstreamId)` records the fallback position for 5 minutes (`STICKY_TTL`).
+2. **Sticky Position (`FUSION_STICKY_TTL_MS = 300000` ms / 300s / 5min):**
+   When a primary backend fails and a fallback upstream succeeds, `setSticky(groupId, upstreamId)` records the fallback position for 5 minutes (`FUSION_STICKY_TTL_SEC`).
    Subsequent requests for that fusion group begin directly at the sticky fallback position, avoiding unnecessary attempts against the failing primary.
    When the primary model recovers and succeeds, `clearSticky(groupId)` resets the group to start at the primary backend.
 

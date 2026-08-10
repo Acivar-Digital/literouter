@@ -220,3 +220,57 @@ export const PROVIDER_API_URLS: Record<string, string> = {
   })(),
   zen: `${ZEN_BASE_URL}/chat/completions`,
 };
+
+export const FUSION_CIRCUIT_TTL_MS = parseInt(
+  Bun.env.FUSION_CIRCUIT_TTL_MS || "65000",
+  10,
+);
+export const FUSION_STICKY_TTL_MS = parseInt(
+  Bun.env.FUSION_STICKY_TTL_MS || "300000",
+  10,
+);
+
+export const COOLDOWN_DEFAULT_TTL_SEC = parseInt(
+  Bun.env.COOLDOWN_DEFAULT_TTL_SEC || "30",
+  10,
+);
+export const COOLDOWN_RATE_LIMIT_TTL_SEC = parseInt(
+  Bun.env.COOLDOWN_RATE_LIMIT_TTL_SEC || "65",
+  10,
+);
+export const COOLDOWN_TIMEOUT_TTL_SEC = parseInt(
+  Bun.env.COOLDOWN_TIMEOUT_TTL_SEC || "10",
+  10,
+);
+export const COOLDOWN_AUTH_TTL_SEC = parseInt(
+  Bun.env.COOLDOWN_AUTH_TTL_SEC || "604800",
+  10,
+);
+export const COOLDOWN_TTL_MIN_SEC = parseInt(
+  Bun.env.COOLDOWN_TTL_MIN_SEC || "5",
+  10,
+);
+export const COOLDOWN_TTL_MAX_SEC = parseInt(
+  Bun.env.COOLDOWN_TTL_MAX_SEC || "7200",
+  10,
+);
+
+export const GRACE_RETRY_DELAY_MS = parseInt(
+  Bun.env.GRACE_RETRY_DELAY_MS || "1500",
+  10,
+);
+
+export const STREAM_STALL_MAX_RESENDS = parseInt(
+  Bun.env.STREAM_STALL_MAX_RESENDS || "3",
+  10,
+);
+export const KEEPALIVE_INTERVAL_MS = parseInt(
+  Bun.env.KEEPALIVE_INTERVAL_MS || "2000",
+  10,
+);
+
+export const GOOGLE_INTERACTIONS_MODEL =
+  Bun.env.GOOGLE_INTERACTIONS_MODEL || "antigravity-preview-05-2026";
+
+export const GOOGLE_NATIVE_BASE_URL =
+  Bun.env.GOOGLE_NATIVE_BASE_URL || "https://generativelanguage.googleapis.com";

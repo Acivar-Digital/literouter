@@ -1,4 +1,10 @@
-import { EMOJI, LITEROUTER_STREAM_IDLE_TIMEOUT_MS, logWarn } from "../config/env";
+import {
+  EMOJI,
+  KEEPALIVE_INTERVAL_MS,
+  LITEROUTER_STREAM_IDLE_TIMEOUT_MS,
+  STREAM_STALL_MAX_RESENDS,
+  logWarn,
+} from "../config/env";
 
 export class NoResponseError extends Error {
   constructor(msg = "upstream sent no response") {
@@ -112,7 +118,7 @@ export async function fetchWithFirstByteTimeout(
         throw new NoResponseError("upstream sent 0 content tokens");
       }
 
-      const MAX_IDLE_RESENDS = 3;
+      const MAX_IDLE_RESENDS = STREAM_STALL_MAX_RESENDS;
 
       const combinedStream = new ReadableStream<Uint8Array>({
         async start(controller) {

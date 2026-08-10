@@ -1,4 +1,8 @@
 import {
+  GRACE_RETRY_DELAY_MS,
+  GOOGLE_INTERACTIONS_MODEL,
+  GOOGLE_NATIVE_BASE_URL,
+  KEEPALIVE_INTERVAL_MS,
   LITEROUTER_HTTP_TIMEOUT_MS,
   LITEROUTER_MAX_ATTEMPTS,
   LITEROUTER_NO_RESPONSE_RETRY_DELAY_MS,
@@ -55,7 +59,7 @@ async function processGoogleNativeError(
   if (reset && reset <= 2 && !graceTried && resp.status !== 429) {
     return {
       action: "retry_same",
-      delayMs: Math.max(reset, 2) * 1000 + 1500,
+      delayMs: Math.max(reset, 2) * 1000 + GRACE_RETRY_DELAY_MS,
     };
   }
 
@@ -151,7 +155,7 @@ async function processGoogleNativeSuccess(
       try {
         controller.enqueue(encoder.encode(":\n\n"));
       } catch {}
-    }, 2000);
+    }, KEEPALIVE_INTERVAL_MS);
   };
 
   const stopKeepAlive = () => {
@@ -272,7 +276,7 @@ export async function executeGoogleNative(
       reuseKey = null;
 
       const url = new URL(
-        `https://generativelanguage.googleapis.com/v1beta/models/${upstream_model}:${action}`,
+        `${GOOGLE_NATIVE_BASE_URL}/v1beta/models/${upstream_model}:${action}`,
       );
       queryParams.forEach((v, k) => url.searchParams.append(k, v));
       url.searchParams.set("key", activeKey);
@@ -310,10 +314,10 @@ export async function executeGoogleNative(
 
         if (errorResult.action === "return") {
           return errorResult.response!;
-        } else if (errorResult.action === "retry_same") {
+        } else       if (errorResult.action === "retry_same") {
           graceTried = true;
           reuseKey = activeKey;
-          await new Promise((r) => setTimeout(r, errorResult.delayMs || 1500));
+          await new Promise((r) => setTimeout(r, errorResult.delayMs || GRACE_RETRY_DELAY_MS));
           continue;
         } else {
           if (attempt < maxAttempts - 1) {
@@ -396,9 +400,9 @@ export async function executeGoogleInteractions(
   signal?: AbortSignal,
 ): Promise<Response> {
   const agentName =
-    reqJson.agent || reqJson.model || "antigravity-preview-05-2026";
-  const upstream_model = "antigravity-preview-05-2026";
-  const modelName = "google/antigravity-preview-05-2026";
+    reqJson.agent || reqJson.model || GOOGLE_INTERACTIONS_MODEL;
+  const upstream_model = GOOGLE_INTERACTIONS_MODEL;
+  const modelName = `google/${GOOGLE_INTERACTIONS_MODEL}`;
 
   logState(
     EMOJI.inbound,
@@ -421,15 +425,14 @@ export async function executeGoogleInteractions(
         estimatedTokens,
       );
 
-      const url =
-        "https://generativelanguage.googleapis.com/v1beta/interactions";
+      const url = `${GOOGLE_NATIVE_BASE_URL}/v1beta/interactions`;
       const headers = cleanHeaders(reqHeaders);
       headers.set("x-goog-api-key", activeKey);
       headers.set("Content-Type", "application/json");
       headers.delete("authorization");
 
       console.log(
-        `[GOOGLE-INTERACTIONS] url=${url} key=${activeKey.substring(0, 6)}...`,
+        `[INTERACTIONS-UPSTREAM] url=${url} key=${activeKey.substring(0, 6)}...`,
       );
       const resp = await fetch(url, {
         method: "POST",

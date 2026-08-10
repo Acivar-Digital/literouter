@@ -1,5 +1,6 @@
 import {
   EMOJI,
+  KEEPALIVE_INTERVAL_MS,
   LITEROUTER_STRIP_REASONING,
   logWarn,
   parseUsageFromJson,
@@ -216,7 +217,7 @@ export function createStreamTransformer(
       try {
         controller.enqueue(encoder.encode(":\n\n"));
       } catch {}
-    }, 2000);
+    }, KEEPALIVE_INTERVAL_MS);
   };
 
   const stopKeepAlive = () => {

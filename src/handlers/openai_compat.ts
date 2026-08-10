@@ -1,4 +1,5 @@
 import {
+  GRACE_RETRY_DELAY_MS,
   LITEROUTER_COLLAPSE_REASONING,
   LITEROUTER_HTTP_TIMEOUT_MS,
   LITEROUTER_MAX_ATTEMPTS,
@@ -75,7 +76,7 @@ async function processOpenAIError(
   if (resp.status === 502 && !graceTried) {
     return {
       action: "retry_same",
-      delayMs: 1500,
+      delayMs: GRACE_RETRY_DELAY_MS,
     };
   }
 
@@ -308,7 +309,7 @@ export async function executeOpenAICompat(
         } else if (errorResult.action === "retry_same") {
           graceTried = true;
           reuseKey = activeKey;
-          await new Promise((r) => setTimeout(r, errorResult.delayMs || 1500));
+          await new Promise((r) => setTimeout(r, errorResult.delayMs || GRACE_RETRY_DELAY_MS));
           continue;
         } else {
           if (attempt < maxAttempts - 1) {
