@@ -69,7 +69,7 @@ export async function fetchWithFirstByteTimeout(
     clientSignal?: AbortSignal;
   },
 ): Promise<Response> {
-  const { noResponseTimeoutMs, totalTimeoutMs, idleTimeoutMs = noResponseTimeoutMs, clientSignal } = opts;
+  const { noResponseTimeoutMs, totalTimeoutMs, idleTimeoutMs = LITEROUTER_STREAM_IDLE_TIMEOUT_MS, clientSignal } = opts;
   const ctrl = new AbortController();
   const totalSignal = clientSignal
     ? AbortSignal.any([clientSignal, AbortSignal.timeout(totalTimeoutMs)])

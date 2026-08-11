@@ -69,7 +69,7 @@ export const LITEROUTER_STRIP_REASONING =
     (Bun.env.LITEROUTER_STRIP_REASONING || "true").trim().toLowerCase(),
   );
 export const LITEROUTER_ROTATE_DELAY_MS = parseInt(
-  Bun.env.LITEROUTER_ROTATE_DELAY_MS || "10000",
+  Bun.env.LITEROUTER_ROTATE_DELAY_MS || "2000",
   10,
 );
 export const LITEROUTER_MAX_ATTEMPTS = parseInt(

@@ -2,6 +2,11 @@
 
 All notable changes to LiteRouter will be documented in this file.
 
+## [3.3.14] — 2026-08-11
+
+### Fixed / Streaming & Timeouts
+- **Stream Idle Timeout Fallback to `LITEROUTER_STREAM_IDLE_TIMEOUT_MS`** — Fixed `idleTimeoutMs` default in `src/network/fetcher.ts` to respect `LITEROUTER_STREAM_IDLE_TIMEOUT_MS` (derived from `LITEROUTER_STREAM_IDLE_TIMEOUT` in `.env`/`.env.local`, default 30s) instead of falling back to the 5s first-byte ghost timeout (`noResponseTimeoutMs`). This eliminates mid-stream socket dropouts ("Network connection lost") during extended model reasoning or slow token generation.
+
 ## [3.3.13] — 2026-08-11
 
 ### Changed / Key Rotation
