@@ -73,13 +73,6 @@ async function processOpenAIError(
     };
   }
 
-  if (resp.status === 502 && !graceTried) {
-    return {
-      action: "retry_same",
-      delayMs: GRACE_RETRY_DELAY_MS,
-    };
-  }
-
   const isQuota =
     errText.includes("cooldown") ||
     errText.includes("exhausted quota") ||

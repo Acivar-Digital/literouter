@@ -2,6 +2,11 @@
 
 All notable changes to LiteRouter will be documented in this file.
 
+## [3.3.13] — 2026-08-11
+
+### Changed / Key Rotation
+- **Immediate Key Rotation on HTTP 502** — Updated `processOpenAIError` in `src/handlers/openai_compat.ts` to immediately report HTTP 502 errors (`errorType = "502"`) to Valkey/Redis (placing the key on a 30s `timed_out` cooldown) and rotate to the next available key after a 2s inter-key delay (`MIN_ROTATE_DELAY_MS`), eliminating single-key grace retries (`action: "retry_same"`).
+
 ## [3.3.12] — 2026-08-11
 
 ### Fixed / Logging & Stream Lifecycle
