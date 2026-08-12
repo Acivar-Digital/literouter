@@ -135,7 +135,84 @@ Add as many providers as you want — just follow the `{PROVIDER}_BASE_URL` + `{
 ./scripts/stop.sh      # Stop
 ./scripts/restart.sh   # Restart (flushes Valkey, re-reads config)
 
-tmux attach -t literouter   # View runtime logs
+tmux attach -t literouter   # View runtime logs (Press Ctrl+B then D to detach)
+```
+
+---
+
+## Operations, Diagnostics & Process Management
+
+LiteRouter includes built-in tools for live API key diagnostics (`doctor.ts`) and daemon process control (`tmux`).
+
+### 1. Diagnostic Key Doctor (`doctor.ts`)
+Before or after starting LiteRouter, run the pre-flight doctor script to validate all configured API keys against real provider endpoints and check your Redis/Valkey connection:
+
+```bash
+bun run scripts/doctor.ts
+```
+
+What `doctor.ts` checks:
+- **Redis Health**: Verifies connection, latency, and Lua script engine readiness.
+- **Key Probing**: Probes each API key in parallel against its provider API.
+- **Status Classification**:
+  - `PASS`: Key is active and authorized.
+  - `RATE_LIMITED`: Key hit a provider 429 limit (placed on automatic cooldown).
+  - `FAIL`: Key is revoked/invalid (automatically excluded from rotation).
+
+---
+
+### 2. Tmux Background Management
+LiteRouter uses `tmux` to run as a resilient background daemon. This allows the service to survive terminal closures and SSH disconnects.
+
+- **Start Daemon**: `./scripts/start.sh` (launches background session `literouter`)
+- **View Live Logs**:
+  ```bash
+  tmux attach -t literouter
+  ```
+  *(To detach from the log view without stopping LiteRouter, press `Ctrl+B` then `D`)*
+- **Stop Daemon**: `./scripts/stop.sh`
+- **Restart Daemon**: `./scripts/restart.sh` (re-scans `.env` for new keys/providers)
+
+---
+
+## How to Add New Providers & Models (Zero-Code Extension)
+
+LiteRouter dynamically discovers providers using environment variable patterns. **No TypeScript code modifications are required.**
+
+### Adding any OpenAI-Compatible Provider (e.g., DeepSeek, Groq, Together, Cerebras, Ollama)
+
+1. Open `.env` and add the provider configuration using the pattern `{PROVIDER}_BASE_URL` + `{PROVIDER}_API_KEYS`:
+
+```env
+# ── Provider: DeepSeek ──
+DEEPSEEK_BASE_URL=https://api.deepseek.com/v1
+DEEPSEEK_API_KEYS=sk-ds-key1,sk-ds-key2,sk-ds-key3
+DEEPSEEK_MIN_DELAY_MS=1000
+
+# ── Provider: Groq ──
+GROQ_BASE_URL=https://api.groq.com/openai/v1
+GROQ_API_KEYS=gsk_key1,gsk_key2
+GROQ_MIN_DELAY_MS=2000
+
+# ── Provider: Local Ollama ──
+OLLAMA_BASE_URL=http://localhost:11434/v1
+OLLAMA_API_KEYS=ollama-local-key
+```
+
+2. Restart LiteRouter to pick up the new configuration:
+```bash
+./scripts/restart.sh
+```
+
+3. Route requests to your new provider using the `{provider}/{model}` prefix:
+```bash
+curl -X POST http://localhost:7766/v1/chat/completions \
+  -H "Authorization: Bearer $LITEROUTER_AUTH_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "deepseek/deepseek-chat",
+    "messages": [{"role": "user", "content": "Hello!"}]
+  }'
 ```
 
 ## Usage

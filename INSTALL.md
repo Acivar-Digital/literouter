@@ -78,20 +78,22 @@ Write the configured variables cleanly to `.env`. Ensure sensitive keys are NEVE
 
 ---
 
-### Step 4: Verification & Diagnostic Check
+### Step 4: Verification & Diagnostic Check (`doctor.ts`)
 
-Run the built-in diagnostic doctor tool:
+Run the built-in diagnostic doctor tool to probe all API keys and verify Redis connectivity:
 
 ```bash
 bun run scripts/doctor.ts
 ```
 
-- If `doctor.ts` reports Redis connection failure, ensure Redis is started and credentials match.
-- Verify static key validation passes for active providers.
+What the LLM / User should verify:
+- If `doctor.ts` reports Redis connection failure, ensure Redis is started (`docker run -d -p 6379:6379 valkey/valkey:alpine` or `brew services start redis`).
+- Verify keys report `PASS` or `RATE_LIMITED` (429 rate-limited keys are automatically placed on cooldown).
+- Invalid/revoked keys reporting `FAIL` will be cleanly ignored during rotation.
 
 ---
 
-### Step 5: Start LiteRouter Service
+### Step 5: Start LiteRouter Service & Tmux Management
 
 Launch the gateway daemon:
 
@@ -99,7 +101,7 @@ Launch the gateway daemon:
 ./scripts/start.sh
 ```
 
-*(Note: `start.sh` daemonizes LiteRouter inside a background tmux session named `literouter` and records its PID).*
+*(Note: `start.sh` daemonizes LiteRouter inside a background `tmux` session named `literouter` and records its PID so the gateway runs reliably without taking over your active terminal window).*
 
 ---
 
@@ -118,7 +120,25 @@ Expected JSON response:
 
 ---
 
-### Step 7: Configure Client AI Applications (OpenCode / SillyTavern / Cursor)
+### Step 7: Adding New Custom Providers (Zero Code Modifications)
+
+To add new LLM providers (e.g. DeepSeek, Groq, Together, Cerebras, Ollama), simply append their URL and API key(s) to `.env`:
+
+```env
+# ── Custom Provider Example: DeepSeek ──
+DEEPSEEK_BASE_URL=https://api.deepseek.com/v1
+DEEPSEEK_API_KEYS=sk-ds-key1,sk-ds-key2
+
+# ── Custom Provider Example: Groq ──
+GROQ_BASE_URL=https://api.groq.com/openai/v1
+GROQ_API_KEYS=gsk_key1,gsk_key2
+```
+
+Then restart LiteRouter: `./scripts/restart.sh`
+
+---
+
+### Step 8: Configure Client AI Applications (OpenCode / SillyTavern / Cursor)
 
 Output clean setup snippets for the user:
 
