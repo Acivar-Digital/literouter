@@ -4,6 +4,9 @@ All notable changes to LiteRouter will be documented in this file.
 
 ## [3.3.14] — 2026-08-11
 
+### Added / Models
+- **New OpenRouter Models**: `nvidia/nemotron-3.5-lightning:free` (200K context / 65K output) and `liquid/lfm-2.5-2.6b:free` (128K context / 65K output) added to `models.json` and OpenCode provider config.
+
 ### Fixed / Streaming & Timeouts
 - **Stream Idle Timeout Fallback to `LITEROUTER_STREAM_IDLE_TIMEOUT_MS`** — Fixed `idleTimeoutMs` default in `src/network/fetcher.ts` to respect `LITEROUTER_STREAM_IDLE_TIMEOUT_MS` (derived from `LITEROUTER_STREAM_IDLE_TIMEOUT` in `.env`/`.env.local`, default 30s) instead of falling back to the 5s first-byte ghost timeout (`noResponseTimeoutMs`). This eliminates mid-stream socket dropouts ("Network connection lost") during extended model reasoning or slow token generation.
 

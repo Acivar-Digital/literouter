@@ -91,9 +91,9 @@
     "max_output": 228000
   },
   {
-    "system_id": "openrouter/inclusionai/ling-3.0-flash:free",
+    "system_id": "openrouter/inclusionai/ling-3.0-tiny:free",
     "provider": "openrouter",
-    "upstream_id": "inclusionai/ling-3.0-flash:free",
+    "upstream_id": "inclusionai/ling-3.0-tiny:free",
     "context": 200000,
     "max_output": 65536
   },
@@ -264,5 +264,19 @@
     "upstream_id": "antigravity-preview-05-2026",
     "context": 1048576,
     "max_output": 65535
+  },
+  {
+    "system_id": "openrouter/nvidia/nemotron-3.5-lightning:free",
+    "provider": "openrouter",
+    "upstream_id": "nvidia/nemotron-3.5-lightning:free",
+    "context": 200000,
+    "max_output": 65536
+  },
+  {
+    "system_id": "openrouter/liquid/lfm-2.5-2.6b:free",
+    "provider": "openrouter",
+    "upstream_id": "liquid/lfm-2.5-2.6b:free",
+    "context": 128000,
+    "max_output": 65536
   }
 ]
