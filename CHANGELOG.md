@@ -2,6 +2,17 @@
 
 All notable changes to LiteRouter will be documented in this file.
 
+## [3.3.15] — 2026-08-12
+
+### Added / Routing & Model Discovery
+- **OpenAI Model Listing Endpoint (`/v1/models` & `/models`)** — Added dynamic model listing endpoint in `src/index.ts` returning standard OpenAI-compatible `{ "object": "list", "data": [...] }` schema, aggregating all models from `models.json` (`MODEL_REGISTRY`) and virtual fallback groups from `fusion.json` (`FUSION_GROUPS`). Enables instant model auto-discovery in OpenCode, Cursor, LibreChat, and SillyTavern.
+
+### Added / Documentation & Architecture Governance
+- **`KIV.md` (Keep In View)** — Established deferred features tracker and community PR guidelines. Includes a turnkey AI builder prompt for users needing direct Anthropic Messages (`/v1/messages`) compatibility.
+- **`GRAVEYARD.md` (Architecture Graveyard)** — Documented formally evaluated and rejected architectural anti-patterns (relational DB ORMs, heavy web admin GUIs, serverless edge rewrites, bespoke multi-modal parsers) to safeguard sub-millisecond Bun+Valkey latency.
+- **`INSTALL.md` Autonomous AI Setup Playbook** — Revamped setup instructions into a zero-babysitting machine-readable playbook for users' AI coding assistants, featuring Docker Valkey fallback (`valkey/valkey:alpine`), interactive key intake guardrails, and pre-flight health diagnostics (`doctor.ts`).
+- **`README.md` Architectural Updates** — Added documentation for the intelligent transparent pass-through philosophy for `/v1/*` endpoints and linked governance documents.
+
 ## [3.3.14] — 2026-08-11
 
 ### Added / Models

@@ -93,14 +93,25 @@ src/
 
 ## Endpoints & Handlers
 
-LiteRouter exposes 4 main HTTP endpoints on port 7766:
+LiteRouter exposes 5 main HTTP endpoints on port 7766:
 
 | Endpoint Path | Handler Function | Target Upstream | Target Clients |
 | :--- | :--- | :--- | :--- |
 | **`/v1/chat/completions`** | `executeOpenAICompat`<br>*(or `executeFusion` if in `fusion.json`)* | OpenAI-compatible endpoints (`/chat/completions`) for NVIDIA, OpenRouter, Zen, or Google OpenAI-compat (`/v1beta/openai/chat/completions`). | pydantic-ai, OpenAI SDKs, LiteLLM, OpenCode |
+| **`/v1/models`**<br>*(or `/models`)* | Inline handler | Aggregates all registered models from `models.json` and virtual fallback groups from `fusion.json`. Returns standard OpenAI `{ "object": "list", "data": [...] }`. | OpenCode, Cursor, LibreChat, SillyTavern auto-discovery |
 | **`/v1beta/interactions`**<br>*(or `/v1/interactions`)* | `executeGoogleInteractions` | Google Interactions API (`https://generativelanguage.googleapis.com/v1beta/interactions`) for `antigravity-preview-05-2026`. | Google Agent clients, Antigravity runners |
 | **`/v1beta/models/*`**<br>*(e.g., `/v1beta/models/{model}:{action}`)* | `executeGoogleNative`<br>*(or `executeFusion` if in `fusion.json`)* | Google Native API (`{GOOGLE_NATIVE_BASE_URL}/v1beta/models/{upstream_model}:{action}`). | OpenCode native Gemini integration |
 | **`/health`** | Inline handler | Returns `{"status": "ok"}` (200 OK). | Load balancers, health checks, monitoring |
+
+---
+
+## 🏛️ Architecture Governance: Pass-Through, KIV, and Graveyard
+
+* **Transparent Pass-Through**: LiteRouter acts as a high-throughput proxy for standard `/v1/*` routes with healthy rotated credentials and zero serialization overhead.
+* **Deferred Features & PR Policy**: Tracked in `KIV.md` (e.g., native Anthropic Messages API with user AI builder prompts).
+* **Architecture Graveyard**: Formally rejected anti-patterns (DB ORMs, Web GUIs, serverless edge rewrites) are documented in `GRAVEYARD.md` to prevent feature bloat and maintain sub-millisecond Bun+Valkey latency.
+
+---
 
 ---
 
