@@ -1,11 +1,34 @@
-# LiteRouter
+# LiteRouter — Open-Source AI Gateway & LLM API Proxy
 
-**A high-performance Bun/TypeScript + Redis proxy and API key load balancer for LLM providers.**
+> **LiteRouter** is a high-performance, self-hosted open-source AI API Gateway and LLM proxy router written in TypeScript and powered by Bun. It provides a single OpenAI-compatible and Google native endpoint with intelligent multi-provider API key rotation, ZSET+Lua rate limiting, and virtual Fusion model fallback chains.
 
-LiteRouter sits between your modern AI applications (like OpenCode) and standard LLM upstream providers (Google AI Studio, OpenRouter, Nvidia, Anthropic). It acts as an intelligent middleware to:
-1. **Distribute Load**: Distributes requests across multiple API keys using atomic ZSET+Lua rolling windows with automatic cooldown, quarantine, and per-provider rate limiting.
-2. **Route Requests**: Routes to OpenAI-compat endpoints, Google native REST endpoints, and virtual fusion groups — all in a single Bun process.
-3. **Sanitize Payloads**: Strips Gemma-breakable fields like `thinkingConfig`, normalizes LaTeX symbols, and collapses reasoning content.
+---
+
+## What is LiteRouter?
+
+**LiteRouter** acts as an intelligent middleware between modern AI applications (such as OpenCode, SillyTavern, Cherry Studio, or custom LLM apps) and upstream AI model providers (Google AI Studio, OpenRouter, Nvidia, Anthropic, and custom endpoints).
+
+### Why LiteRouter?
+1. **Multi-Provider API Key Rotation**: Distributes requests across multiple API keys using atomic Redis ZSET + Lua rolling windows with automatic key cooldown, quarantine, and rate limiting.
+2. **Unified Routing**: Native support for OpenAI-compatible endpoints (`/v1/chat/completions`), Google native REST endpoints (`/v1beta/...`), and virtual Fusion groups in a single Bun process.
+3. **Fusion Fallback Chains**: Define model fallback priorities. If a primary model returns `429` or `5xx`, LiteRouter seamlessly routes requests to the next model with sticky fallback caching.
+4. **Payload Normalization & Sanitization**: Automatically collapses reasoning blocks into `<thought>` tags, normalizes LaTeX formatting, and strips vendor-breaking fields like `thinkingConfig`.
+
+---
+
+## Comparison: LiteRouter vs. Alternatives
+
+| Feature | LiteRouter | LiteLLM | OpenRouter |
+| :--- | :--- | :--- | :--- |
+| **Category** | Open-Source AI Gateway | Open-Source AI Gateway | Hosted AI Aggregator SaaS |
+| **Runtime & Performance** | Bun / TypeScript (Sub-ms overhead) | Python / FastAPI | Closed Source |
+| **OpenAI-Compatible API** | ✅ Standard `/v1/chat/completions` | ✅ Standard `/v1/chat/completions` | ✅ Standard `/v1/chat/completions` |
+| **Google Native REST Route** | ✅ Direct `/v1beta/...` passthrough | ❌ Requires translation | ❌ N/A |
+| **Key Rotation & Cooldown** | ✅ Atomic Redis Lua ZSET | ✅ Basic proxy rotation | ❌ N/A (Pay-per-token) |
+| **Virtual Fusion Fallbacks** | ✅ Sticky 5-min failover chains | ✅ Fallback list | ❌ Static routing |
+| **Self-Hostable** | ✅ 100% Free & Open Source | ✅ Open Source | ❌ Proprietary SaaS |
+
+---
 
 ## Routes
 
