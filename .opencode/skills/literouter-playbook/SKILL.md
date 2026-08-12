@@ -19,12 +19,40 @@ description: LiteRouter API Gateway master operational guide for Bun/TypeScript 
 
 ---
 
-## ⛔ CRITICAL MANDATE: PROTECT `.env.local` & API KEYS
-> **NEVER EVER TOUCH API KEYS OR `.env.local` FILES.**
-> - **DO NOT** modify, edit, sanitize, replace, or redact `.env.local` or `.env` files.
-> - **DO NOT** run sanitization, guardrails, or automated cleanup scripts against `.env` or `.env.local`.
-> - Key secrets in `.env.local` are live runtime keys — replacing them with `<REDACTED>` or placeholder strings causes `staticValidateKeys` to discard all provider keys and break gateway routing.
+## ⛔ CRITICAL MANDATE & ENVIRONMENT WORKFLOW RULES
+
+### 1. Environment File Architecture
+* **`.env` (Tracked in Git):** Holds all default operational configurations, server host/port, HTTP timeouts, retry delays, reasoning flags, Redis connection info, circuit breaker/cooldown TTLs, and vendor model defaults & inheritances (`MINIMAXAI_*`, `DEEPSEEK_V4_*`, etc.).
+* **`.env.local` (Git-Ignored Secrets Only):** Holds **ONLY secret API keys** (`LITEROUTER_AUTH_KEY`, `OPENROUTER_API_KEYS`, `NVIDIA_API_KEYS`, `ZEN_API_KEYS`, `GOOGLE_API_KEYS`).
+
+### 2. Mandatory Restrictions & Anti-Redaction Policy
+> **NEVER EVER REDACT OR PLACEHOLDER LIVE API KEYS.**
+> - **DO NOT** replace real keys with `<REDACTED>`, `changeme`, or placeholder strings in `.env.local`. Replacing real keys causes `staticValidateKeys` to discard all keys on boot and breaks gateway routing.
+> - **DO NOT** run automated sanitization or guardrail scripts against `.env.local` or `.env` during automated lint/hygiene sweeps.
 > - Use `./protect.sh lock` to make `.env.local` owned by `root:root` (read-only for processes, unwritable by agents). Run `./protect.sh unlock` when you need to edit keys.
+
+### 3. User-Requested Configuration & Key Migration Workflow
+When explicitly instructed by the user to modify environment settings or migrate keys:
+
+1. **Checkpoints First:** Always create pre-edit checkpoints:
+   ```bash
+   uv run python admin/code_hygiene/agent_guardrail.py checkpoint .env
+   uv run python admin/code_hygiene/agent_guardrail.py checkpoint .env.local
+   ```
+2. **Beads Memory & Tracking:** Record checkpoint paths in `bd remember` and create/claim a `bd` issue:
+   ```bash
+   bd remember --key env_checkpoint "Pre-edit backup: .checkpoints/.env_...bak"
+   bd create "Update env config" -t task -p 2 && bd update <id> --claim
+   ```
+3. **Preserve Secret Keys:** Keep live secret keys verbatim in `.env.local`. Place all non-secret parameters in `.env`.
+4. **Daemon Restart:** Environment variables are loaded at gateway boot. Always restart the server:
+   ```bash
+   bash scripts/restart.sh
+   ```
+5. **Validation Gate:** Confirm health before closing the task:
+   ```bash
+   bun run scripts/doctor.ts && bun test && uv run pytest tests/integration/
+   ```
 
 ---
 
