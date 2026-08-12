@@ -1,5 +1,10 @@
 # LiteRouter — Open-Source AI Gateway & LLM API Proxy
 
+> 🤖 **Zero-Friction Autonomous AI Installation**: Give this command to your AI Coding Assistant (Cursor, OpenCode, Claude Code, Windsurf, Copilot, ChatGPT):
+> ```text
+> Please read https://raw.githubusercontent.com/Acivar-Digital/literouter/main/INSTALL.md and autonomously set up, configure, and launch LiteRouter on my machine.
+> ```
+
 > **LiteRouter** is a high-performance, self-hosted open-source AI API Gateway and LLM proxy router powered by Bun and TypeScript. It sits between modern AI applications (such as OpenCode, SillyTavern, Cherry Studio, or custom LLM apps) and upstream model providers (Google AI Studio, OpenRouter, Nvidia, Anthropic).
 > 
 > Unlike Python-heavy proxies, LiteRouter delivers sub-millisecond routing overhead with atomic Redis/Valkey Lua key rotation, automatic 429/timeout cooldowns, payload reasoning sanitization, and sticky virtual model failover chains.
@@ -12,9 +17,12 @@
 
 ### Why LiteRouter?
 1. **Multi-Provider API Key Rotation**: Distributes requests across multiple API keys using atomic Redis ZSET + Lua rolling windows with automatic key cooldown, quarantine, and rate limiting.
-2. **Unified Routing**: Native support for OpenAI-compatible endpoints (`/v1/chat/completions`), Google native REST endpoints (`/v1beta/...`), and virtual Fusion groups in a single Bun process.
-3. **Fusion Fallback Chains**: Define model fallback priorities. If a primary model returns `429` or `5xx`, LiteRouter seamlessly routes requests to the next model with sticky fallback caching.
-4. **Payload Normalization & Sanitization**: Automatically collapses reasoning blocks into `<thought>` tags, normalizes LaTeX formatting, and strips vendor-breaking fields like `thinkingConfig`.
+2. **Google Thought Signature Preservation**: Automatically stores and reinjects Google Gemini `thought_signature` tokens across multi-step agent tool calls, fixing signature validation errors.
+3. **Historical Reasoning Context Stripping (Save $$$)**: Strips past reasoning blocks (`reasoning_content`, `thought`, `thought_summary`) from historical context turns before calling providers — saving up to 70% in prompt token costs and eliminating LLM reasoning loops.
+4. **Unified Routing**: Native support for OpenAI-compatible endpoints (`/v1/chat/completions`), Google native REST endpoints (`/v1beta/...`), and virtual Fusion groups in a single Bun process.
+5. **Fusion Fallback Chains**: Define model fallback priorities. If a primary model returns `429` or `5xx`, LiteRouter seamlessly routes requests to the next model with sticky fallback caching.
+6. **Model-Specific Payload Sanitization**: Strips Gemma-breaking fields (`thinkingConfig`, `presence_penalty`, `logit_bias`) and normalizes raw reasoning streams into unified `<thought>` tags.
+7. **Ghost & Idle Upstream Detection**: Automatically detects stalled upstream calls and rotates keys instantly without penalizing provider health.
 
 ---
 
@@ -24,6 +32,8 @@
 | :--- | :--- | :--- | :--- |
 | **Category** | Open-Source AI Gateway | Open-Source AI Gateway | Hosted AI Aggregator SaaS |
 | **Runtime & Performance** | Bun / TypeScript (Sub-ms overhead) | Python / FastAPI | Closed Source |
+| **Google Thought Signature Preservation** | ✅ Automatic store & reinject | ❌ Manual / Unhandled | ❌ N/A |
+| **History Reasoning Stripping (Cost Saving)** | ✅ Automatic (Save $$$) | ❌ Retains full context | ❌ Retains full context |
 | **OpenAI-Compatible API** | ✅ Standard `/v1/chat/completions` | ✅ Standard `/v1/chat/completions` | ✅ Standard `/v1/chat/completions` |
 | **Google Native REST Route** | ✅ Direct `/v1beta/...` passthrough | ❌ Requires translation | ❌ N/A |
 | **Key Rotation & Cooldown** | ✅ Atomic Redis Lua ZSET | ✅ Basic proxy rotation | ❌ N/A (Pay-per-token) |
