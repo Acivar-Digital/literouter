@@ -199,7 +199,8 @@ export async function executeOpenAICompat(
   reqId?: string,
   signal?: AbortSignal,
 ): Promise<Response> {
-  const meta = MODEL_REGISTRY.get(modelName);
+  const meta =
+    MODEL_REGISTRY.get(modelName) || MODEL_REGISTRY.get(`google/${modelName}`);
   if (!meta) {
     return new Response(
       JSON.stringify({ error: `Model '${modelName}' not recognized.` }),

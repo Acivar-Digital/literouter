@@ -2,6 +2,11 @@
 
 All notable changes to LiteRouter will be documented in this file.
 
+## [3.3.16] — 2026-08-12
+
+### Fixed / OpenAI-Compatible Model Resolution
+- **Fallback Resolution for Unprefixed Model Identifiers in `executeOpenAICompat`** — Fixed model registry lookup in `src/handlers/openai_compat.ts` (`MODEL_REGISTRY.get(modelName) || MODEL_REGISTRY.get("google/" + modelName)`). Clients sending bare model identifiers like `gemini-3.5-flash-lite` to `/v1/chat/completions` (without the `google/` vendor prefix) now resolve seamlessly instead of failing with HTTP 400 Bad Request ("Model not recognized") and hanging in OpenCode CLI or OpenAI SDKs.
+
 ## [3.3.15] — 2026-08-12
 
 ### Added / Routing & Model Discovery
