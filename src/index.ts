@@ -744,6 +744,71 @@ serve({
       );
     }
 
+    if (url.pathname === "/v1/models" || url.pathname === "/models") {
+      const modelList: Array<{
+        id: string;
+        object: string;
+        created: number;
+        owned_by: string;
+      }> = [];
+      const seen = new Set<string>();
+
+      // 1. Models from models.json (MODEL_REGISTRY)
+      for (const [id, meta] of MODEL_REGISTRY.entries()) {
+        if (!seen.has(id)) {
+          seen.add(id);
+          modelList.push({
+            id,
+            object: "model",
+            created: 1700000000,
+            owned_by: meta.provider || "literouter",
+          });
+        }
+      }
+
+      // 2. Fusion groups from fusion.json (FUSION_GROUPS)
+      for (const id of FUSION_GROUPS.keys()) {
+        if (!seen.has(id)) {
+          seen.add(id);
+          modelList.push({
+            id,
+            object: "model",
+            created: 1700000000,
+            owned_by: "literouter-fusion",
+          });
+        }
+      }
+
+      // 3. Fallback/chain models from fusion groups
+      for (const group of FUSION_GROUPS.values()) {
+        if (Array.isArray(group.chain)) {
+          for (const chainModel of group.chain) {
+            if (!seen.has(chainModel)) {
+              seen.add(chainModel);
+              const provider = chainModel.split("/")[0] || "custom";
+              modelList.push({
+                id: chainModel,
+                object: "model",
+                created: 1700000000,
+                owned_by: provider,
+              });
+            }
+          }
+        }
+      }
+
+      return new Response(
+        JSON.stringify({
+          object: "list",
+          data: modelList,
+        }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        },
+      );
+    }
+
     if (url.pathname === "/health") {
       return new Response(JSON.stringify({ status: "ok" }), { status: 200 });
     }

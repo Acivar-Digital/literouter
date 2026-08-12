@@ -47,8 +47,19 @@
 | Route | Protocol | Target | Auth |
 |-------|----------|--------|------|
 | `/v1/chat/completions` | OpenAI-compat | Provider upstream (Google: `/v1beta/openai/chat/completions`) | `Authorization: Bearer {key}` |
+| `/v1/models` | OpenAI Model List | Aggregates all registered models from `models.json` & `fusion.json` | `Authorization: Bearer {key}` |
 | `/v1beta/...` | Google native REST | `generativelanguage.googleapis.com/v1beta/models/{model}:{action}` | `?key={API_KEY}` query param |
+| `/health` | Health Check | Service & provider status probe | None |
 | Fusion groups | Virtual chain | In-process — iterates model chain calling either route above | Internal |
+
+---
+
+## 🏛️ Architectural Philosophy: Intelligent Transparent Pass-Through
+
+LiteRouter is intentionally designed as an **ultra-lean, high-throughput streaming proxy**:
+- **Why we don't build custom parsers for `/v1/images`, `/v1/audio`, or `/v1/embeddings`**: LiteRouter acts as an intelligent transparent forwarder. It injects healthy rotated API credentials and pipes HTTP payloads directly to upstream providers with zero serialization latency and zero maintenance churn.
+- **Looking for experimental or deferred features?** Check 👉 [**`KIV.md`**](KIV.md) (Keep-In-View) for features like native Anthropic Messages API, along with an AI builder prompt for contributors.
+- **Wondering why certain features aren't supported?** Check 👉 [**`GRAVEYARD.md`**](GRAVEYARD.md) (Architecture Graveyard) explaining why database ORMs, bloated web admin GUIs, and serverless edge rewrites were explicitly rejected to preserve sub-millisecond Bun+Valkey performance.
 
 ## Fusion Groups (In-Process)
 
