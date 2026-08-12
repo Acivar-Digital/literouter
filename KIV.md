@@ -45,3 +45,36 @@ Requirements:
 
 * **Proposal**: Track rolling P95 response latencies per provider key and route non-streaming requests to the lowest-latency healthy endpoint.
 * **Tradeoff**: Adds Valkey ZADD score computations per request. Under evaluation for high-concurrency multi-region deployments.
+
+---
+
+### 3. "Literal LiteRouter" — Embedded OpenWrt / Home WiFi Router Edge Appliance
+
+* **The Vision**: Putting the literal **Router** in **LiteRouter**! Host LiteRouter directly inside home routers (OpenWrt, GL.iNet, Raspberry Pi / NanoPi edge gateways, or x86 mini-PCs) so that any device connected to your local WiFi (smartphones, laptops, iPads, IoT devices) can access a shared, resilient, multi-key AI gateway at `http://192.168.1.1:7766/v1` with zero local configuration.
+* **Feasibility & Resource Footprint**:
+  * **Compute**: Very low (<1–5% CPU for I/O proxying and streaming SSE parsing).
+  * **RAM**: ~80–150MB total (Bun runtime + native OpenWrt `redis-server` package).
+  * **Architecture Requirement**: Requires 64-bit ARM (`aarch64`) or `x86_64` (e.g. MediaTek MT7986, Rockchip RK3568/RK3588, Raspberry Pi 4/5, or Intel/AMD mini-PCs). Older 32-bit MIPS/ARM routers are unsupported by Bun.
+  * **Storage**: OpenWrt `extroot` via USB drive/MicroSD (expands flash storage to accommodate Bun + packages).
+
+#### 🤖 AI Builder Prompt for Community Builders & OpenWrt Enthusiasts
+If you want to package LiteRouter into an OpenWrt package (`.ipk`), a Docker Compose appliance for OpenWrt/DietPi/Armbian, or a LuCI web-ui companion, use the prompt below with your AI assistant:
+
+```text
+Act as an Embedded Linux & OpenWrt Systems Specialist.
+Task: Create an OpenWrt / Edge Gateway deployment recipe and automated service installer for LiteRouter (Bun + Valkey/Redis).
+
+Requirements:
+1. Target Platforms: OpenWrt 23.05+ (aarch64 / x86_64), DietPi, and Armbian edge routers.
+2. Produce an automated shell installer script (`scripts/deploy-openwrt.sh` or `scripts/openwrt/init.d/literouter`):
+   - Check architecture (`uname -m` for aarch64 / x86_64).
+   - Check available flash/overlay space; prompt/guide user on `extroot` setup if storage < 500MB.
+   - Install dependencies (`opkg update && opkg install redis-server curl ca-certificates`).
+   - Download official Bun standalone binary for aarch64/x64 to `/usr/local/bin/bun`.
+   - Configure a procd init service (`/etc/init.d/literouter`) managing both Valkey/Redis and LiteRouter daemon on boot.
+   - Bind LiteRouter to LAN interface (`0.0.0.0:7766` or `192.168.1.1:7766`).
+3. Optional: Create a simple LuCI companion page or OpenWrt firewall rule guide to expose port 7766 safely to LAN while blocking WAN ingress.
+4. Provide a step-by-step README for flashing, USB extroot mounting, key provisioning, and connecting client devices (OpenCode, Cursor, LibreChat).
+```
+
+
