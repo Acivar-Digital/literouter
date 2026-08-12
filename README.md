@@ -1,6 +1,8 @@
 # LiteRouter — Open-Source AI Gateway & LLM API Proxy
 
-> **LiteRouter** is a high-performance, self-hosted open-source AI API Gateway and LLM proxy router written in TypeScript and powered by Bun. It provides a single OpenAI-compatible and Google native endpoint with intelligent multi-provider API key rotation, ZSET+Lua rate limiting, and virtual Fusion model fallback chains.
+> **LiteRouter** is a high-performance, self-hosted open-source AI API Gateway and LLM proxy router powered by Bun and TypeScript. It sits between modern AI applications (such as OpenCode, SillyTavern, Cherry Studio, or custom LLM apps) and upstream model providers (Google AI Studio, OpenRouter, Nvidia, Anthropic).
+> 
+> Unlike Python-heavy proxies, LiteRouter delivers sub-millisecond routing overhead with atomic Redis/Valkey Lua key rotation, automatic 429/timeout cooldowns, payload reasoning sanitization, and sticky virtual model failover chains.
 
 ---
 
