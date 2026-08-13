@@ -1,0 +1,8 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "plugins": [
+    "./.opencode2/plugins/remind-workflow.ts",
+    "./.opencode2/plugins/clean_python.ts",
+    "./.opencode2/plugins/clean_ts.ts"
+  ]
+}

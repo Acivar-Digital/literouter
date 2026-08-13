@@ -77,6 +77,14 @@ export function cleanGemmaPayload(data: any): any {
   return data;
 }
 
+export function cleanOpenAICompatPayload(data: any): any {
+  if (data && typeof data === "object") {
+    delete data.prompt_cache_key;
+    delete data.promptCacheKey;
+  }
+  return data;
+}
+
 export function cleanLatexSymbols(text: string): string {
   let res = text.replace(/\\{1,2}times\s*(\d+(?:\.\d+)?)/g, "× $1");
   const replacements: [RegExp, string][] = [

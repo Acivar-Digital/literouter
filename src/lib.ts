@@ -21,6 +21,7 @@ export {
 export {
   estimateTokens,
   cleanGemmaPayload,
+  cleanOpenAICompatPayload,
   cleanLatexSymbols,
   mergeConsecutiveMessages,
   sanitizeHistoricalMessages,

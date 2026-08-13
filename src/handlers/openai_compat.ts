@@ -15,6 +15,7 @@ import { NoResponseError, fetchWithFirstByteTimeout } from "../network/fetcher";
 import {
   StreamMeta,
   cleanGemmaPayload,
+  cleanOpenAICompatPayload,
   cleanLatexSymbols,
   createStreamTransformer,
   estimateTokens,
@@ -209,6 +210,7 @@ export async function executeOpenAICompat(
   }
 
   const { provider, upstream_model, api_url } = meta;
+  reqJson = cleanOpenAICompatPayload(reqJson);
   reqJson.model = upstream_model;
   reqJson.messages = sanitizeHistoricalMessages(
     mergeConsecutiveMessages(reqJson.messages),
