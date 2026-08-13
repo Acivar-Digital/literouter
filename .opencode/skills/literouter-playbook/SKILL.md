@@ -28,9 +28,64 @@ description: LiteRouter API Gateway master operational guide for Bun/TypeScript 
 ### 2. Mandatory Restrictions & Anti-Redaction Policy
 > **NEVER EVER REDACT OR PLACEHOLDER LIVE API KEYS IN RUNTIME CONFIG.**
 > - **DO NOT** replace real keys with `<REDACTED>`, `changeme`, or placeholder strings in `.env.local`. Replacing real keys causes `staticValidateKeys` to discard all keys on boot and breaks gateway routing.
-> - **DO NOT** hardcode real API keys into code, unit tests, scratch scripts, docs, or commit messages. All temporary test scripts must be placed in `/tmp` or `scratch/` (gitignored).
+> - **DO NOT** hardcode real API keys into code, unit tests, scratch scripts, docs, or commit messages.
 > - **DO NOT** run automated sanitization or guardrail scripts against `.env.local` or `.env` during automated lint/hygiene sweeps.
 > - Use `./protect.sh lock` to make `.env.local` owned by `root:root` (read-only for processes, unwritable by agents). Run `./protect.sh unlock` when you need to edit keys.
+
+---
+
+## 🟢 POSITIVE STEERING: How to Test & Probe Safely (Without Hardcoding Keys)
+
+When developing, testing, or diagnosing LiteRouter or upstream providers, ALWAYS follow these 4 safe patterns:
+
+### Pattern 1: Unit Tests (Use Mock Stubs)
+In unit tests (e.g. `tests/unit/core/*.test.ts`), test logic using explicit mock stubs.
+```typescript
+// ✅ Safe: Mock stubs for unit tests
+const mockKey = "sk-test-stub-0001-padded-to-look-like-real";
+const mockNvidiaKey = "nvapi-key1";
+const validated = staticValidateKeys("NVIDIA", "nvapi-key1,nvapi-key2");
+```
+
+### Pattern 2: Integration Probing (Query Local Gateway on Port 7766)
+Do not query upstream providers directly in test scripts. Let LiteRouter handle the secret rotation:
+```bash
+# ✅ Safe: Call local gateway using client auth
+curl -s http://localhost:7766/v1/chat/completions \
+  -H "Authorization: Bearer sk-lr-your-auth-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "nvidia/openai/gpt-oss-120b",
+    "messages": [{"role": "user", "content": "hello"}]
+  }'
+```
+
+### Pattern 3: Dynamic Key Resolution in Diagnostic Scripts
+When writing health checks (like `scripts/doctor.ts`), read keys from runtime environment:
+```typescript
+// ✅ TypeScript: Read from Bun.env or process.env
+const keys = (Bun.env.NVIDIA_API_KEYS || "").split(",").map(k => k.trim()).filter(Boolean);
+for (const key of keys) {
+  await probeKey(key);
+}
+```
+```python
+# ✅ Python: Read from environment or load via dotenv
+import os
+from dotenv import load_dotenv
+
+load_dotenv(".env.local")
+nvidia_keys = [k.strip() for k in os.getenv("NVIDIA_API_KEYS", "").split(",") if k.strip()]
+```
+
+### Pattern 4: Scratch Scripts Location
+If you need temporary one-off exploration scripts:
+- Save them in `/tmp/` (e.g., `/tmp/test_nvidia.py`), which is completely outside the git repository.
+- Or save in `scratch/` (strictly gitignored).
+- Never hardcode the key string — always read from environment or `.env.local`.
+
+---
+
 
 
 ### 3. User-Requested Configuration & Key Migration Workflow

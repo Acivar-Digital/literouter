@@ -9,6 +9,13 @@ This file provides mandatory operational guidance to agents when working with co
 - Replacing real API keys with `<REDACTED>` or placeholder values destroys gateway operation by causing `staticValidateKeys` to discard all provider keys on boot.
 - `.env.local` is write-protected via `protect.sh` (owned by `root`, read-only `644` for runtime processes). Do not attempt to bypass this.
 
+### 🟢 POSITIVE RECIPE: How to Test & Probe Safely
+1. **Unit tests:** Always use mock stub tokens (e.g. `const mockKey = "sk-test-stub-0001-padded-to-look-like-real"`, `const nvidiaKey = "nvapi-key1"`).
+2. **Integration testing:** Send test requests to the local LiteRouter proxy at `http://localhost:7766/v1/chat/completions` using client authorization (`Bearer sk-lr-your-auth-key`) instead of calling vendor APIs directly. LiteRouter will rotate the real keys from `.env.local` automatically.
+3. **Diagnostic scripts:** If a script must probe upstream APIs directly (e.g. `scripts/doctor.ts`), dynamically read keys from `Bun.env.NVIDIA_API_KEYS` or `os.environ.get("NVIDIA_API_KEYS")` — never hardcode key literals.
+4. **Temporary exploration:** Put ad-hoc test scripts in `/tmp/` (outside the repo) or `scratch/` (gitignored).
+
+
 
 ---
 
