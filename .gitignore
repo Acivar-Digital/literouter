@@ -8,8 +8,18 @@ dist/
 build/
 
 # Environment
+.env
+.env.*
 .env.local
 .env.*.local
+*.pem
+*.key
+
+# Scratch & Temporary
+scratch/
+tmp/
+.scratch/
+
 
 # Archives
 *.tar.gz
@@ -31,9 +41,9 @@ node_modules/
 data/
 
 # Opencode internal
-.opencode/
+.opencode/*
 !.opencode/skills/
-.opencode2/
+.opencode2/*
 !.opencode2/skills/
 .agents/
 .ruff_cache/

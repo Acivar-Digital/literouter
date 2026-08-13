@@ -26,10 +26,12 @@ description: LiteRouter API Gateway master operational guide for Bun/TypeScript 
 * **`.env.local` (Git-Ignored Secrets Only):** Holds **ONLY secret API keys** (`LITEROUTER_AUTH_KEY`, `OPENROUTER_API_KEYS`, `NVIDIA_API_KEYS`, `ZEN_API_KEYS`, `GOOGLE_API_KEYS`).
 
 ### 2. Mandatory Restrictions & Anti-Redaction Policy
-> **NEVER EVER REDACT OR PLACEHOLDER LIVE API KEYS.**
+> **NEVER EVER REDACT OR PLACEHOLDER LIVE API KEYS IN RUNTIME CONFIG.**
 > - **DO NOT** replace real keys with `<REDACTED>`, `changeme`, or placeholder strings in `.env.local`. Replacing real keys causes `staticValidateKeys` to discard all keys on boot and breaks gateway routing.
+> - **DO NOT** hardcode real API keys into code, unit tests, scratch scripts, docs, or commit messages. All temporary test scripts must be placed in `/tmp` or `scratch/` (gitignored).
 > - **DO NOT** run automated sanitization or guardrail scripts against `.env.local` or `.env` during automated lint/hygiene sweeps.
 > - Use `./protect.sh lock` to make `.env.local` owned by `root:root` (read-only for processes, unwritable by agents). Run `./protect.sh unlock` when you need to edit keys.
+
 
 ### 3. User-Requested Configuration & Key Migration Workflow
 When explicitly instructed by the user to modify environment settings or migrate keys:

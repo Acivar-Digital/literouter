@@ -5,7 +5,10 @@ This file provides mandatory operational guidance to agents when working with co
 ## ⛔ ABSOLUTE MANDATE: NEVER TOUCH API KEYS OR `.env.local`
 - **NEVER** modify, edit, sanitize, replace, or overwrite API keys or `.env.local` / `.env` files under any circumstances.
 - **NEVER** run automated sanitization or guardrail scripts against `.env.local` or `.env`.
+- **NEVER** hardcode real API keys into code, unit tests, scratch scripts, docs, or commit messages. All temporary test scripts must be placed in `/tmp` or `scratch/` (gitignored).
 - Replacing real API keys with `<REDACTED>` or placeholder values destroys gateway operation by causing `staticValidateKeys` to discard all provider keys on boot.
+- `.env.local` is write-protected via `protect.sh` (owned by `root`, read-only `644` for runtime processes). Do not attempt to bypass this.
+
 
 ---
 
