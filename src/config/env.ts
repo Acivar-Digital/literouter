@@ -3,6 +3,7 @@ export const MODEL_LIMITS: Record<string, any> = {};
 export const PROVIDER_LIMITS: Record<string, any> = {
   nvidia: { max_tpm: 1000000, max_rpm: 40, context_window: 1000000 },
   openrouter: { max_tpm: 1000000, max_rpm: 20, context_window: 1000000 },
+  zen: { max_tpm: 1000000, max_rpm: 30, context_window: 1000000 },
 };
 
 export const DEFAULT_LIMITS = {

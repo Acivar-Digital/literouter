@@ -154,6 +154,13 @@
     "max_output": 65536
   },
   {
+    "system_id": "zen/hy3-free",
+    "provider": "zen",
+    "upstream_id": "hy3-free",
+    "context": 1048576,
+    "max_output": 65536
+  },
+  {
     "system_id": "nvidia/qwen/qwen3-next-80b-a3b-instruct",
     "provider": "nvidia",
     "upstream_id": "qwen/qwen3-next-80b-a3b-instruct",
