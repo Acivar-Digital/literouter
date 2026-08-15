@@ -1,3 +1,6 @@
+import * as fs from "fs";
+import * as path from "path";
+
 export const MODEL_LIMITS: Record<string, any> = {};
 
 export const PROVIDER_LIMITS: Record<string, any> = {
@@ -62,6 +65,20 @@ export const LITEROUTER_PORT = parseInt(
   Bun.env.LITEROUTER_PORT || "7766",
   10,
 );
+
+export const LITEROUTER_TLS_CERT =
+  Bun.env.LITEROUTER_TLS_CERT ||
+  path.resolve(process.cwd(), "certs", "localhost.pem");
+export const LITEROUTER_TLS_KEY =
+  Bun.env.LITEROUTER_TLS_KEY ||
+  path.resolve(process.cwd(), "certs", "localhost-key.pem");
+
+const tlsEnvVal = (Bun.env.LITEROUTER_TLS_ENABLED || "").trim().toLowerCase();
+export const LITEROUTER_TLS_ENABLED =
+  tlsEnvVal === "true" ||
+  (tlsEnvVal !== "false" &&
+    fs.existsSync(LITEROUTER_TLS_CERT) &&
+    fs.existsSync(LITEROUTER_TLS_KEY));
 export const LITEROUTER_AUTH_KEY = Bun.env.LITEROUTER_AUTH_KEY || "";
 export const LITEROUTER_COLLAPSE_REASONING =
   (Bun.env.LITEROUTER_COLLAPSE_REASONING || "false").toLowerCase() === "true";

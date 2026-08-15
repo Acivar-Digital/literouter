@@ -1,4 +1,5 @@
-import { serve } from "bun";
+import { file, serve } from "bun";
+import http2 from "node:http2";
 import Redis from "ioredis";
 import { realpathSync } from "fs";
 import * as fs from "fs";
@@ -17,6 +18,9 @@ import {
   LITEROUTER_HTTP_TIMEOUT_MS,
   LITEROUTER_PORT,
   LITEROUTER_ROTATE_DELAY_MS,
+  LITEROUTER_TLS_CERT,
+  LITEROUTER_TLS_ENABLED,
+  LITEROUTER_TLS_KEY,
   MIN_ROTATE_DELAY_MS,
   PROVIDER_API_URLS,
   REDIS_DB,
@@ -649,172 +653,213 @@ function verifyAuthKey(req: Request, url: URL): boolean {
 }
 
 // ============================================================================
-// 4. Server Entry Point
+// 4. Server Entry Point & HTTP/2 ALPN Support
 // ============================================================================
+
+async function handleWebRequest(
+  req: Request,
+  protocolHint: string = "HTTP/1.1",
+): Promise<Response> {
+  const url = new URL(req.url);
+  if (!verifyAuthKey(req, url)) {
+    return new Response("Unauthorized", { status: 401 });
+  }
+  const reqId = crypto.randomUUID();
+  const bodyText = await req.text();
+  let reqJson: any = {};
+  if (bodyText) {
+    try {
+      reqJson = JSON.parse(bodyText);
+    } catch (e) {
+      logWarn(EMOJI.warn, `JSON parse failed for request body: ${e}`);
+    }
+  }
+
+  if (url.pathname === "/v1/chat/completions") {
+    const modelName = reqJson.model;
+    if (!modelName) {
+      return new Response(
+        JSON.stringify({ error: "Missing 'model' in request" }),
+        { status: 400 },
+      );
+    }
+
+    if (FUSION_GROUPS.has(modelName)) {
+      return executeFusion(
+        modelName,
+        FUSION_GROUPS.get(modelName)!,
+        reqJson,
+        req.headers,
+        url.searchParams,
+        false,
+        "",
+        reqId,
+        req.signal,
+      );
+    }
+    return executeOpenAICompat(
+      modelName,
+      reqJson,
+      req.headers,
+      undefined,
+      false,
+      reqId,
+      req.signal,
+    );
+  }
+
+  if (
+    url.pathname === "/v1beta/interactions" ||
+    url.pathname === "/v1/interactions"
+  ) {
+    return executeGoogleInteractions(reqJson, req.headers, reqId, req.signal);
+  }
+
+  const nativeMatch = url.pathname.match(
+    /^\/v1beta\/(?:models\/)?([^:]+)(?::(.*))?$/,
+  );
+  if (nativeMatch) {
+    const modelName = nativeMatch[1];
+    const action = nativeMatch[2] || "generateContent";
+
+    if (FUSION_GROUPS.has(modelName)) {
+      return executeFusion(
+        modelName,
+        FUSION_GROUPS.get(modelName)!,
+        reqJson,
+        req.headers,
+        url.searchParams,
+        true,
+        action,
+        reqId,
+        req.signal,
+      );
+    }
+    return executeGoogleNative(
+      modelName,
+      action,
+      url.searchParams,
+      reqJson,
+      req.headers,
+      undefined,
+      false,
+      reqId,
+      req.signal,
+    );
+  }
+
+  if (url.pathname === "/v1/models" || url.pathname === "/models") {
+    const modelList: Array<{
+      id: string;
+      object: string;
+      created: number;
+      owned_by: string;
+    }> = [];
+    const seen = new Set<string>();
+
+    // 1. Models from models.json (MODEL_REGISTRY)
+    for (const [id, meta] of MODEL_REGISTRY.entries()) {
+      if (!seen.has(id)) {
+        seen.add(id);
+        modelList.push({
+          id,
+          object: "model",
+          created: 1700000000,
+          owned_by: meta.provider || "literouter",
+        });
+      }
+    }
+
+    // 2. Fusion groups from fusion.json (FUSION_GROUPS)
+    for (const id of FUSION_GROUPS.keys()) {
+      if (!seen.has(id)) {
+        seen.add(id);
+        modelList.push({
+          id,
+          object: "model",
+          created: 1700000000,
+          owned_by: "literouter-fusion",
+        });
+      }
+    }
+
+    // 3. Fallback/chain models from fusion groups
+    for (const group of FUSION_GROUPS.values()) {
+      if (Array.isArray(group.chain)) {
+        for (const chainModel of group.chain) {
+          if (!seen.has(chainModel)) {
+            seen.add(chainModel);
+            const provider = chainModel.split("/")[0] || "custom";
+            modelList.push({
+              id,
+              object: "model",
+              created: 1700000000,
+              owned_by: provider,
+            });
+          }
+        }
+      }
+    }
+
+    return new Response(
+      JSON.stringify({
+        object: "list",
+        data: modelList,
+      }),
+      {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      },
+    );
+  }
+
+  if (url.pathname === "/health") {
+    return new Response(
+      JSON.stringify({
+        status: "ok",
+        tls: LITEROUTER_TLS_ENABLED,
+        protocol: protocolHint,
+        port: LITEROUTER_PORT,
+      }),
+      {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      },
+    );
+  }
+
+  return new Response("Not found", { status: 404 });
+}
+
+// ============================================================================
+// 4. Server Entry Point (Native Bun.serve TLS ALPN)
+// ============================================================================
+
+const tlsConfig = LITEROUTER_TLS_ENABLED
+  ? {
+      cert: file(LITEROUTER_TLS_CERT),
+      key: file(LITEROUTER_TLS_KEY),
+    }
+  : undefined;
 
 serve({
   port: LITEROUTER_PORT,
   idleTimeout: Math.min(LITEROUTER_HTTP_TIMEOUT_MS / 1000, 255),
+  tls: tlsConfig,
   async fetch(req: Request) {
-    const url = new URL(req.url);
-    if (!verifyAuthKey(req, url)) {
-      return new Response("Unauthorized", { status: 401 });
-    }
-    const reqId = crypto.randomUUID();
-    const bodyText = await req.text();
-    let reqJson: any = {};
-    if (bodyText) {
-      try {
-        reqJson = JSON.parse(bodyText);
-      } catch (e) {
-        logWarn(EMOJI.warn, `JSON parse failed for request body: ${e}`);
-      }
-    }
-
-    if (url.pathname === "/v1/chat/completions") {
-      const modelName = reqJson.model;
-      if (!modelName) {
-        return new Response(
-          JSON.stringify({ error: "Missing 'model' in request" }),
-          { status: 400 },
-        );
-      }
-
-      if (FUSION_GROUPS.has(modelName)) {
-        return executeFusion(
-          modelName,
-          FUSION_GROUPS.get(modelName)!,
-          reqJson,
-          req.headers,
-          url.searchParams,
-          false,
-          "",
-          reqId,
-          req.signal,
-        );
-      }
-      return executeOpenAICompat(
-        modelName,
-        reqJson,
-        req.headers,
-        undefined,
-        false,
-        reqId,
-        req.signal,
-      );
-    }
-
-    if (
-      url.pathname === "/v1beta/interactions" ||
-      url.pathname === "/v1/interactions"
-    ) {
-      return executeGoogleInteractions(reqJson, req.headers, reqId, req.signal);
-    }
-
-    const nativeMatch = url.pathname.match(
-      /^\/v1beta\/(?:models\/)?([^:]+)(?::(.*))?$/,
-    );
-    if (nativeMatch) {
-      const modelName = nativeMatch[1];
-      const action = nativeMatch[2] || "generateContent";
-
-      if (FUSION_GROUPS.has(modelName)) {
-        return executeFusion(
-          modelName,
-          FUSION_GROUPS.get(modelName)!,
-          reqJson,
-          req.headers,
-          url.searchParams,
-          true,
-          action,
-          reqId,
-          req.signal,
-        );
-      }
-      return executeGoogleNative(
-        modelName,
-        action,
-        url.searchParams,
-        reqJson,
-        req.headers,
-        undefined,
-        false,
-        reqId,
-        req.signal,
-      );
-    }
-
-    if (url.pathname === "/v1/models" || url.pathname === "/models") {
-      const modelList: Array<{
-        id: string;
-        object: string;
-        created: number;
-        owned_by: string;
-      }> = [];
-      const seen = new Set<string>();
-
-      // 1. Models from models.json (MODEL_REGISTRY)
-      for (const [id, meta] of MODEL_REGISTRY.entries()) {
-        if (!seen.has(id)) {
-          seen.add(id);
-          modelList.push({
-            id,
-            object: "model",
-            created: 1700000000,
-            owned_by: meta.provider || "literouter",
-          });
-        }
-      }
-
-      // 2. Fusion groups from fusion.json (FUSION_GROUPS)
-      for (const id of FUSION_GROUPS.keys()) {
-        if (!seen.has(id)) {
-          seen.add(id);
-          modelList.push({
-            id,
-            object: "model",
-            created: 1700000000,
-            owned_by: "literouter-fusion",
-          });
-        }
-      }
-
-      // 3. Fallback/chain models from fusion groups
-      for (const group of FUSION_GROUPS.values()) {
-        if (Array.isArray(group.chain)) {
-          for (const chainModel of group.chain) {
-            if (!seen.has(chainModel)) {
-              seen.add(chainModel);
-              const provider = chainModel.split("/")[0] || "custom";
-              modelList.push({
-                id: chainModel,
-                object: "model",
-                created: 1700000000,
-                owned_by: provider,
-              });
-            }
-          }
-        }
-      }
-
-      return new Response(
-        JSON.stringify({
-          object: "list",
-          data: modelList,
-        }),
-        {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        },
-      );
-    }
-
-    if (url.pathname === "/health") {
-      return new Response(JSON.stringify({ status: "ok" }), { status: 200 });
-    }
-
-    return new Response("Not found", { status: 404 });
+    const protocolHint = tlsConfig ? "HTTP/2 + HTTP/1.1 (ALPN)" : "HTTP/1.1";
+    return handleWebRequest(req, protocolHint);
   },
 });
 
-logState(EMOJI.boot, `LiteRouter (Bun) running on port ${LITEROUTER_PORT}`);
+if (tlsConfig) {
+  logState(
+    EMOJI.boot,
+    `LiteRouter (Bun) running on port ${LITEROUTER_PORT} [TLS: ENABLED, Protocols: HTTP/2 (h2), HTTP/1.1 (ALPN)]`,
+  );
+} else {
+  logState(
+    EMOJI.boot,
+    `LiteRouter (Bun) running on port ${LITEROUTER_PORT} [Plaintext HTTP/1.1]`,
+  );
+}

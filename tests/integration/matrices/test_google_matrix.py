@@ -6,7 +6,7 @@ from typing import Any
 
 import httpx
 
-GATEWAY_URL = "http://127.0.0.1:7766"
+GATEWAY_URL = os.environ.get("LITEROUTER_BASE_URL", "http://127.0.0.1:7766")
 AUTH_TOKEN = os.environ.get("LITEROUTER_AUTH_KEY")
 
 google_tools = [{
@@ -73,7 +73,7 @@ def _validate_google_stream(full_body: str, use_tools: bool) -> bool:
 
 async def _google_rest_stream(url: str, payload: dict[str, Any], use_tools: bool) -> bool:
     """Execute streaming Google REST request."""
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(http2=True) as client:
         async with client.stream("POST", url, json=payload, timeout=20.0) as response:
             if response.status_code != 200:
                 return False
@@ -84,7 +84,7 @@ async def _google_rest_stream(url: str, payload: dict[str, Any], use_tools: bool
 
 async def _google_rest_non_stream(url: str, payload: dict[str, Any], use_tools: bool) -> bool:
     """Execute non-streaming Google REST request."""
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(http2=True) as client:
         resp = await client.post(url, json=payload, timeout=20.0)
         if resp.status_code != 200:
             return False
@@ -157,7 +157,7 @@ def _validate_openai_non_stream(data: dict[str, Any], use_tools: bool) -> bool:
 
 async def _openai_stream(url: str, headers: dict[str, str], payload: dict[str, Any], use_tools: bool) -> bool:
     """Execute streaming OpenAI request."""
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(http2=True) as client:
         async with client.stream("POST", url, headers=headers, json=payload, timeout=20.0) as response:
             if response.status_code != 200:
                 return False
@@ -171,7 +171,7 @@ async def _openai_stream(url: str, headers: dict[str, str], payload: dict[str, A
 
 async def _openai_non_stream(url: str, headers: dict[str, str], payload: dict[str, Any], use_tools: bool) -> bool:
     """Execute non-streaming OpenAI request."""
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(http2=True) as client:
         resp = await client.post(url, headers=headers, json=payload, timeout=20.0)
         if resp.status_code != 200:
             return False

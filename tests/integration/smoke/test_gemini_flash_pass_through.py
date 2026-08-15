@@ -3,7 +3,7 @@ import os
 import httpx
 import pytest
 
-GATEWAY_URL = "http://127.0.0.1:7766"
+GATEWAY_URL = os.environ.get("LITEROUTER_BASE_URL", "http://127.0.0.1:7766")
 AUTH_TOKEN = os.environ.get("LITEROUTER_AUTH_KEY")
 
 MODEL = "google/gemini-3.1-flash-lite"
@@ -31,16 +31,17 @@ def test_gemini_flash_via_native(action: str) -> None:
     url = _native_url(action)
     params = {"alt": "sse"} if "stream" in action else {}
 
-    resp = httpx.post(
-        url,
-        params=params or None,
-        json=PAYLOAD,
-        headers={
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {AUTH_TOKEN}",
-        },
-        timeout=30,
-    )
+    with httpx.Client(http2=True) as client:
+        resp = client.post(
+            url,
+            params=params or None,
+            json=PAYLOAD,
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {AUTH_TOKEN}",
+            },
+            timeout=30,
+        )
 
     assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text[:200]}"
 
@@ -50,20 +51,21 @@ def test_gemini_flash_via_native(action: str) -> None:
 
 def test_gemini_flash_via_openai_compat() -> None:
     url = f"{GATEWAY_URL}/v1/chat/completions"
-    resp = httpx.post(
-        url,
-        json={
-            "model": MODEL,
-            "messages": [{"role": "user", "content": "say OK"}],
-            "max_tokens": 10,
-            "stream": False,
-        },
-        headers={
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {AUTH_TOKEN}",
-        },
-        timeout=30,
-    )
+    with httpx.Client(http2=True) as client:
+        resp = client.post(
+            url,
+            json={
+                "model": MODEL,
+                "messages": [{"role": "user", "content": "say OK"}],
+                "max_tokens": 10,
+                "stream": False,
+            },
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {AUTH_TOKEN}",
+            },
+            timeout=30,
+        )
 
     assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text[:200]}"
     data = resp.json()

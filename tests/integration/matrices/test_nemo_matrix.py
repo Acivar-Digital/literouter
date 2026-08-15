@@ -5,7 +5,7 @@ import traceback
 
 import httpx
 
-GATEWAY_URL = "http://localhost:7766"
+GATEWAY_URL = os.environ.get("LITEROUTER_BASE_URL", "http://localhost:7766")
 AUTH_TOKEN = os.environ.get("LITEROUTER_AUTH_KEY")
 MODEL_ID = "openrouter/nvidia/nemotron-3-nano-30b-a3b:free"
 
@@ -148,7 +148,7 @@ async def execute_test(stream: bool, use_tools: bool) -> bool:
     print(f"\n--- Running: {test_name} ---")
     payload = build_payload(stream, use_tools)
     try:
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(http2=True) as client:
             if stream:
                 return await stream_request(client, payload)
             return await non_stream_request(client, payload)

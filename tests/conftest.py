@@ -22,6 +22,18 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 load_dotenv()
 load_dotenv(".env.local", override=True)
 
+# Auto-detect TLS for test runners
+_root_dir = Path(__file__).parent.parent
+_cert_path = _root_dir / "certs" / "localhost.pem"
+_ca_path = Path.home() / ".local" / "share" / "opencode2" / "mkcert" / "rootCA.pem"
+
+if _cert_path.exists() and os.environ.get("LITEROUTER_TLS_ENABLED", "").lower() != "false":
+    if not os.environ.get("LITEROUTER_BASE_URL"):
+        os.environ["LITEROUTER_BASE_URL"] = "https://localhost:7766"
+    if _ca_path.exists() and not os.environ.get("SSL_CERT_FILE"):
+        os.environ["SSL_CERT_FILE"] = str(_ca_path)
+        os.environ["REQUESTS_CA_BUNDLE"] = str(_ca_path)
+
 
 @pytest.fixture(autouse=True)
 def reset_singletons() -> Generator[None, None, None]:

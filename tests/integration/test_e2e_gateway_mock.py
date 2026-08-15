@@ -41,9 +41,10 @@ def _wait_for_health(url: str, timeout_sec: float = 6.0) -> bool:
     headers = {"Authorization": f"Bearer {AUTH_KEY}"}
     while time.time() < deadline:
         try:
-            resp = httpx.get(f"{url}/health", headers=headers, timeout=0.5)
-            if resp.status_code in (200, 401):
-                return True
+            with httpx.Client(http2=True) as client:
+                resp = client.get(f"{url}/health", headers=headers, timeout=0.5)
+                if resp.status_code in (200, 401):
+                    return True
         except (httpx.ConnectError, httpx.TimeoutException, httpx.HTTPError) as err:
             logger.debug(f"Health probe waiting: {err}")
         time.sleep(0.1)
@@ -88,7 +89,7 @@ def e2e_harness() -> Generator[Tuple[str, MockUpstreamContext], None, None]:
         stderr=subprocess.PIPE,
     )
 
-    gw_url = f"http://127.0.0.1:{gw_port}"
+    gw_url = f"https://127.0.0.1:{gw_port}"
     if not _wait_for_health(gw_url, timeout_sec=8.0):
         gw_proc.kill()
         server.should_exit = True
@@ -135,12 +136,13 @@ def test_e2e_mock_non_stream_success(
     _flush_test_redis()
     ctx.reset()
 
-    resp = httpx.post(
-        f"{gw_url}/v1/chat/completions",
-        json=_make_req_payload(stream=False),
-        headers=_auth_headers(),
-        timeout=10.0,
-    )
+    with httpx.Client(http2=True) as client:
+        resp = client.post(
+            f"{gw_url}/v1/chat/completions",
+            json=_make_req_payload(stream=False),
+            headers=_auth_headers(),
+            timeout=10.0,
+        )
 
     assert resp.status_code == 200
     data = resp.json()
@@ -158,12 +160,13 @@ def test_e2e_mock_429_rotation_failover(
     ctx.state.fail_first_n_requests = 1
 
     start_time = time.time()
-    resp = httpx.post(
-        f"{gw_url}/v1/chat/completions",
-        json=_make_req_payload(stream=False),
-        headers=_auth_headers(),
-        timeout=10.0,
-    )
+    with httpx.Client(http2=True) as client:
+        resp = client.post(
+            f"{gw_url}/v1/chat/completions",
+            json=_make_req_payload(stream=False),
+            headers=_auth_headers(),
+            timeout=10.0,
+        )
     elapsed = time.time() - start_time
 
     assert resp.status_code == 200
@@ -177,15 +180,16 @@ def test_e2e_mock_streaming_sse(
     _flush_test_redis()
     ctx.reset()
 
-    with httpx.stream(
-        "POST",
-        f"{gw_url}/v1/chat/completions",
-        json=_make_req_payload(stream=True),
-        headers=_auth_headers(),
-        timeout=10.0,
-    ) as stream_resp:
-        assert stream_resp.status_code == 200
-        chunks = [chunk for chunk in stream_resp.iter_text() if chunk.strip()]
+    with httpx.Client(http2=True) as client:
+        with client.stream(
+            "POST",
+            f"{gw_url}/v1/chat/completions",
+            json=_make_req_payload(stream=True),
+            headers=_auth_headers(),
+            timeout=10.0,
+        ) as stream_resp:
+            assert stream_resp.status_code == 200
+            chunks = [chunk for chunk in stream_resp.iter_text() if chunk.strip()]
 
     _assert_stream_chunks(chunks)
 
@@ -198,12 +202,13 @@ def test_e2e_mock_all_keys_exhausted(
     ctx.reset()
     ctx.state.fail_all_429 = True
 
-    resp = httpx.post(
-        f"{gw_url}/v1/chat/completions",
-        json=_make_req_payload(stream=False),
-        headers=_auth_headers(),
-        timeout=15.0,
-    )
+    with httpx.Client(http2=True) as client:
+        resp = client.post(
+            f"{gw_url}/v1/chat/completions",
+            json=_make_req_payload(stream=False),
+            headers=_auth_headers(),
+            timeout=15.0,
+        )
 
     assert resp.status_code in (429, 502)
     assert len(ctx.state.calls) >= 2

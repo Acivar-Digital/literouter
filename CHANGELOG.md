@@ -2,6 +2,17 @@
 
 All notable changes to LiteRouter will be documented in this file.
 
+## [3.4.0] — 2026-08-16
+
+### Added / Native HTTP/2 & Dual TLS ALPN Negotiation
+- **Native Bun.serve TLS ALPN on Port 7766** — Upgraded LiteRouter entry point in `src/index.ts` to natively serve TLS on port `7766` with automatic ALPN negotiation supporting concurrent `h2` (HTTP/2 multiplexing) and `http/1.1` clients without requiring Granian, Nginx, or external reverse proxies.
+- **Local Certificate Automation (`scripts/setup_certs.sh`)** — Added setup script utilizing `mkcert` to issue trusted local Root CA certificates into `certs/localhost.pem` and `certs/localhost-key.pem` (gitignored).
+- **Environment Auto-Detection (`src/config/env.ts`)** — Exported `LITEROUTER_TLS_CERT`, `LITEROUTER_TLS_KEY`, and `LITEROUTER_TLS_ENABLED` which automatically enables TLS when certificates are present in `certs/` and falls back to plaintext HTTP/1.1 if absent.
+- **Client Disconnect & Upstream Abort Propagation** — Downstream client stream aborts (`req.signal` / RST_STREAM) now propagate directly into upstream provider `fetch()` requests, freeing socket pools and preventing runaway upstream token burn.
+- **Health & Protocol Telemetry** — Enhanced `/health` response and startup logs to report active protocol mode (`HTTP/2 + HTTP/1.1 (ALPN)`).
+- **OpenCode 2 Client Integration** — Configured OpenCode 2 endpoint to `https://localhost:7766/v1` with `NODE_EXTRA_CA_CERTS` pointing to local `mkcert` root CA for seamless zero-warning execution.
+- **Test Suite Modernization** — Added TypeScript unit tests in `tests/unit/core/http2_tls.test.ts` and updated Python integration test fixtures in `tests/conftest.py` with `httpx[http2]` (`h2`) support.
+
 ## [3.3.16] — 2026-08-12
 
 ### Fixed / OpenAI-Compatible Model Resolution
