@@ -62,3 +62,6 @@ logs/traces/
 
 # Beads / Dolt files (added by bd init)
 .beads/proxieddb/
+
+# VPS deployment scripts and skills (local/private)
+vps/

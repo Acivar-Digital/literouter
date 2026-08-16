@@ -46,11 +46,13 @@
 
 | Route | Protocol | Target | Auth |
 |-------|----------|--------|------|
-| `/v1/chat/completions` | OpenAI-compat | Provider upstream (Google: `/v1beta/openai/chat/completions`) | `Authorization: Bearer {key}` |
-| `/v1/models` | OpenAI Model List | Aggregates all registered models from `models.json` & `fusion.json` | `Authorization: Bearer {key}` |
-| `/v1beta/...` | Google native REST | `generativelanguage.googleapis.com/v1beta/models/{model}:{action}` | `?key={API_KEY}` query param |
-| `/health` | Health Check | Service & provider status probe | None |
-| Fusion groups | Virtual chain | In-process — iterates model chain calling either route above | Internal |
+| `/v1/chat/completions` | HTTP/2 or HTTP/1.1 (ALPN) | Provider upstream (Google: `/v1beta/openai/chat/completions`) | `Authorization: Bearer {key}` |
+| `/v1/models` | HTTP/2 or HTTP/1.1 (ALPN) | Aggregates all registered models from `models.json` & `fusion.json` | `Authorization: Bearer {key}` |
+| `/v1beta/...` | HTTP/2 or HTTP/1.1 (ALPN) | `generativelanguage.googleapis.com/v1beta/models/{model}:{action}` | `?key={API_KEY}` query param |
+| `/health` | HTTP/2 or HTTP/1.1 (ALPN) | Service & provider status probe | None |
+| Fusion groups | HTTP/2 or HTTP/1.1 (ALPN) | Virtual chain (in-process) — iterates model chain calling either route above | Internal |
+
+> **Transport**: LiteRouter natively supports HTTP/2 + HTTP/1.1 ALPN negotiation via Bun's built-in TLS. When local certificates (`certs/localhost.pem`, `certs/localhost-key.pem`) are present, the gateway serves HTTPS on port 7766 with automatic HTTP/2 negotiation. Without certificates, it falls back to plaintext HTTP/1.1. See [docs/Upgrade_http2.md](docs/Upgrade_http2.md) for setup.
 
 ---
 
@@ -70,8 +72,9 @@ Fusion groups define "virtual" models with priority-based fallback chains. If th
 - **Identity**: Response header `X-Literouter-Model` identifies which upstream served.
 
 ```bash
-curl -X POST http://localhost:$PORT/v1/chat/completions \
+curl -X POST https://localhost:7766/v1/chat/completions \
   -H "Authorization: Bearer {{API_KEY}}" \
+  --cacert certs/localhost.pem \
   -d '{"model": "pydantic/google", "messages": [{"role": "user", "content": "Hello"}]}'
 ```
 
@@ -142,12 +145,15 @@ Add as many providers as you want — just follow the `{PROVIDER}_BASE_URL` + `{
 
 ### Running
 ```bash
-./scripts/start.sh     # Start (daemonizes in tmux, writes PID file)
-./scripts/stop.sh      # Stop
-./scripts/restart.sh   # Restart (flushes Valkey, re-reads config)
+./scripts/setup_certs.sh   # (optional) Issue localhost TLS certs via mkcert for HTTPS
+./scripts/start.sh        # Start (daemonizes in tmux, writes PID file)
+./scripts/stop.sh         # Stop
+./scripts/restart.sh      # Restart (flushes Valkey, re-reads config)
 
 tmux attach -t literouter   # View runtime logs (Press Ctrl+B then D to detach)
 ```
+
+If `certs/localhost.pem` and `certs/localhost-key.pem` exist, LiteRouter serves HTTPS with HTTP/2 + HTTP/1.1 ALPN on port 7766. Otherwise it runs plaintext HTTP/1.1.
 
 ---
 
@@ -217,9 +223,10 @@ OLLAMA_API_KEYS=ollama-local-key
 
 3. Route requests to your new provider using the `{provider}/{model}` prefix:
 ```bash
-curl -X POST http://localhost:7766/v1/chat/completions \
+curl -X POST https://localhost:7766/v1/chat/completions \
   -H "Authorization: Bearer $LITEROUTER_AUTH_KEY" \
   -H "Content-Type: application/json" \
+  --cacert certs/localhost.pem \
   -d '{
     "model": "deepseek/deepseek-chat",
     "messages": [{"role": "user", "content": "Hello!"}]
@@ -230,9 +237,10 @@ curl -X POST http://localhost:7766/v1/chat/completions \
 
 ### Non-streaming
 ```bash
-curl -X POST http://localhost:7766/v1/chat/completions \
+curl -X POST https://localhost:7766/v1/chat/completions \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer {{API_KEY}}" \
+  --cacert certs/localhost.pem \
   -d '{
     "model": "openrouter/owl-alpha",
     "messages": [{"role": "user", "content": "Hello!"}]
@@ -241,9 +249,10 @@ curl -X POST http://localhost:7766/v1/chat/completions \
 
 ### Streaming
 ```bash
-curl -X POST http://localhost:7766/v1/chat/completions \
+curl -X POST https://localhost:7766/v1/chat/completions \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer {{API_KEY}}" \
+  --cacert certs/localhost.pem \
   -d '{
     "model": "nvidia/openai/gpt-oss-120b",
     "messages": [{"role": "user", "content": "Tell me a story"}],
@@ -253,13 +262,14 @@ curl -X POST http://localhost:7766/v1/chat/completions \
 
 ### Model Availability
 ```bash
-curl http://localhost:7766/v1/models \
-  -H "Authorization: Bearer {{API_KEY}}"
+curl https://localhost:7766/v1/models \
+  -H "Authorization: Bearer {{API_KEY}}" \
+  --cacert certs/localhost.pem
 ```
 
 ### Health
 ```bash
-curl http://localhost:7766/health
+curl https://localhost:7766/health --cacert certs/localhost.pem
 ```
 
 Returns per-provider stats: key counts, health scores, active cooldowns, rotation counter position, and Redis connection status.
@@ -278,13 +288,13 @@ Point any OpenCode provider at LiteRouter to get automatic key rotation:
   "provider": {
     "openrouter": {
       "npm": "@ai-sdk/openai-compatible",
-      "baseURL": "http://localhost:7766/v1",
+      "baseURL": "https://localhost:7766/v1",
       "apiKey": "{{API_KEY}}",
       "models": {}
     },
     "nvidia": {
       "npm": "@ai-sdk/openai-compatible",
-      "baseURL": "http://localhost:7766/v1",
+      "baseURL": "https://localhost:7766/v1",
       "apiKey": "{{API_KEY}}",
       "models": {}
     }
@@ -296,18 +306,18 @@ Both providers point to the same LiteRouter endpoint. Routing is determined by t
 - `opencode run -m openrouter/owl-alpha "..."` → OpenRouter key pool
 - `opencode run -m nvidia/openai/gpt-oss-120b "..."` → Nvidia key pool
 
-## Local vs VPS Configuration (Do Not Assume)
+## Deployment Targets
 
 > [!IMPORTANT]
-> **DO NOT ASSUME DIRECTIVE**: Before starting or testing any configuration changes, you **MUST** verify which LiteRouter target is active. 
-> 
-> Check your global configuration at `~/.config/opencode/opencode.json` (specifically the `baseURL` under `provider.literouter.options`):
-> - If `baseURL` points to `localhost` (e.g. `http://localhost:7766/v1`), your requests route to your **local** LiteRouter instance.
-> - If `baseURL` points to the VPS IP (e.g. `http://10.32.34.243:7766/v1`), requests route to the **VPS** LiteRouter instance.
-> 
-> **Never assume that updates to your local `.env` will take effect on the VPS.** If OpenCode is configured to point to the VPS:
-> 1. You must apply/sync configuration changes (such as API keys or new providers like `zen`) directly on the VPS instance.
-> 2. You must monitor/verify VPS logs instead of local ones.
+> **DO NOT ASSUME DIRECTIVE**: Before starting or testing any configuration changes, you **MUST** verify which LiteRouter target is active.
+>
+> Check your OpenCode configuration at `~/.config/opencode/opencode.json` (or `~/.config/opencode2/config.json` for OpenCode 2). The `baseURL` under the provider options determines the routing target:
+> - If `baseURL` points to `localhost` (e.g. `https://localhost:7766/v1`), your requests route to your **local** LiteRouter instance.
+> - If `baseURL` points to a remote IP, requests route to that **remote** LiteRouter instance.
+>
+> **Never assume that updates to your local `.env` will take effect on a remote instance.** If OpenCode is configured to point to a remote host:
+> 1. You must apply/sync configuration changes (such as API keys) directly on that instance.
+> 2. You must monitor/verify that instance's logs instead of local ones.
 > 3. Verify the deployment target explicitly before declaring success.
 
 ## Configuration Reference
