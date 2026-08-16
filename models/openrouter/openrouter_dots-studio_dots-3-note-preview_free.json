@@ -1,0 +1,56 @@
+{
+  "id": "dots-studio/dots-3-note-preview:free",
+  "canonical_slug": "dots-studio/dots-3-note-preview:free",
+  "hugging_face_id": null,
+  "name": "Dots Studio: Dots 3 Note Preview (free)",
+  "created": null,
+  "description": "Dots Studio Dots 3 Note Preview (free)",
+  "context_length": 512000,
+  "architecture": {
+    "modality": "text->text",
+    "input_modalities": [
+      "text"
+    ],
+    "output_modalities": [
+      "text"
+    ],
+    "tokenizer": "Other",
+    "instruct_type": null
+  },
+  "pricing": {
+    "prompt": "0",
+    "completion": "0"
+  },
+  "top_provider": {
+    "context_length": 512000,
+    "max_completion_tokens": 512000,
+    "is_moderated": false
+  },
+  "per_request_limits": null,
+  "supported_parameters": [
+    "include_reasoning",
+    "max_tokens",
+    "reasoning",
+    "response_format",
+    "structured_outputs",
+    "temperature",
+    "tool_choice",
+    "tools",
+    "top_p"
+  ],
+  "default_parameters": {
+    "temperature": null,
+    "top_p": null,
+    "top_k": null,
+    "frequency_penalty": null,
+    "presence_penalty": null,
+    "repetition_penalty": null
+  },
+  "supported_voices": null,
+  "knowledge_cutoff": null,
+  "expiration_date": null,
+  "reasoning": {
+    "mandatory": false,
+    "default_enabled": true
+  }
+}

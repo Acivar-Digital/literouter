@@ -4,6 +4,9 @@ All notable changes to LiteRouter will be documented in this file.
 
 ## [3.4.0] — 2026-08-16
 
+### Added / OpenRouter Model
+- **Model `openrouter/dots-studio/dots-3-note-preview:free`** — Added `dots-studio/dots-3-note-preview:free` to the OpenRouter provider registry with `context: 512000`, `max_output: 512000`. Registered in OpenCode v1 and OpenCode2 provider configs under `provider.literouter.models` mirroring the laguna-s-2.1 reasoning setup (`include_reasoning: false`, `reasoning: true`, `reasoningEffort: high`) plus concise-assistant system prompt.
+
 ### Added / Native HTTP/2 & Dual TLS ALPN Negotiation
 - **Native Bun.serve TLS ALPN on Port 7766** — Upgraded LiteRouter entry point in `src/index.ts` to natively serve TLS on port `7766` with automatic ALPN negotiation supporting concurrent `h2` (HTTP/2 multiplexing) and `http/1.1` clients without requiring Granian, Nginx, or external reverse proxies.
 - **Local Certificate Automation (`scripts/setup_certs.sh`)** — Added setup script utilizing `mkcert` to issue trusted local Root CA certificates into `certs/localhost.pem` and `certs/localhost-key.pem` (gitignored).

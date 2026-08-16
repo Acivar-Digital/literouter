@@ -285,5 +285,12 @@
     "upstream_id": "liquid/lfm-2.5-2.6b:free",
     "context": 128000,
     "max_output": 65536
+  },
+  {
+    "system_id": "openrouter/dots-studio/dots-3-note-preview:free",
+    "provider": "openrouter",
+    "upstream_id": "dots-studio/dots-3-note-preview:free",
+    "context": 512000,
+    "max_output": 512000
   }
 ]
