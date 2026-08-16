@@ -181,7 +181,12 @@ end
 
 1. **Edit `models.json`** — Add entry with `system_id`, `provider`, `upstream_id`, `context`, `max_output`.
 2. **Run `gather_model_details.py`** (optional) — Fetches real `context`/`max_output` from OpenRouter catalog and creates detail file in `models/<provider>/`.
-3. **Sync `opencode.json`** — Add model under `provider.literouter.models` in `~/.config/opencode/opencode.json`.
+3. **Sync `opencode.json`** — Add model config to the appropriate OpenCode variant:
+
+   - **OpenCode2** (plugin `@0.0.0-next-*`, `@ai-sdk/openai-compatible`): Use `.opencode2/opencode.json` — note the **`"plugins"`** (plural) JSON key.
+   - **OpenCode** (stable plugin `@1.x`, `@ai-sdk/openai`): Use `.opencode/opencode.json` — note the **`"plugin"`** (singular) JSON key.
+
+   > ⚠️ **Critical:** OpenCode2 must use `"provider": "openai-compatible"` in model config. `@ai-sdk/openai` targets `/v1/responses` which LiteRouter does not proxy (see `docs/ARCHITECTURE.md` lines 66-76).
 4. **Update `CHANGELOG.md`** — Add entry under current version.
 5. **Restart gateway** — `bash scripts/restart.sh`.
 6. **Test** — `curl` the model endpoint.

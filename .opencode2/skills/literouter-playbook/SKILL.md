@@ -26,10 +26,67 @@ description: LiteRouter API Gateway master operational guide for Bun/TypeScript 
 * **`.env.local` (Git-Ignored Secrets Only):** Holds **ONLY secret API keys** (`LITEROUTER_AUTH_KEY`, `OPENROUTER_API_KEYS`, `NVIDIA_API_KEYS`, `ZEN_API_KEYS`, `GOOGLE_API_KEYS`).
 
 ### 2. Mandatory Restrictions & Anti-Redaction Policy
-> **NEVER EVER REDACT OR PLACEHOLDER LIVE API KEYS.**
+> **NEVER EVER REDACT OR PLACEHOLDER LIVE API KEYS IN RUNTIME CONFIG.**
 > - **DO NOT** replace real keys with `<REDACTED>`, `changeme`, or placeholder strings in `.env.local`. Replacing real keys causes `staticValidateKeys` to discard all keys on boot and breaks gateway routing.
+> - **DO NOT** hardcode real API keys into code, unit tests, scratch scripts, docs, or commit messages.
 > - **DO NOT** run automated sanitization or guardrail scripts against `.env.local` or `.env` during automated lint/hygiene sweeps.
 > - Use `./protect.sh lock` to make `.env.local` owned by `root:root` (read-only for processes, unwritable by agents). Run `./protect.sh unlock` when you need to edit keys.
+
+---
+
+## 🟢 POSITIVE STEERING: How to Test & Probe Safely (Without Hardcoding Keys)
+
+When developing, testing, or diagnosing LiteRouter or upstream providers, ALWAYS follow these 4 safe patterns:
+
+### Pattern 1: Unit Tests (Use Mock Stubs)
+In unit tests (e.g. `tests/unit/core/*.test.ts`), test logic using explicit mock stubs.
+```typescript
+// ✅ Safe: Mock stubs for unit tests
+const mockKey = "sk-test-stub-0001-padded-to-look-like-real";
+const mockNvidiaKey = "nvapi-key1";
+const validated = staticValidateKeys("NVIDIA", "nvapi-key1,nvapi-key2");
+```
+
+### Pattern 2: Integration Probing (Query Local Gateway on Port 7766)
+Do not query upstream providers directly in test scripts. Let LiteRouter handle the secret rotation:
+```bash
+# ✅ Safe: Call local gateway using client auth
+curl -s http://localhost:7766/v1/chat/completions \
+  -H "Authorization: Bearer sk-lr-your-auth-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "nvidia/openai/gpt-oss-120b",
+    "messages": [{"role": "user", "content": "hello"}]
+  }'
+```
+
+### Pattern 3: Dynamic Key Resolution in Diagnostic Scripts
+When writing health checks (like `scripts/doctor.ts`), read keys from runtime environment:
+```typescript
+// ✅ TypeScript: Read from Bun.env or process.env
+const keys = (Bun.env.NVIDIA_API_KEYS || "").split(",").map(k => k.trim()).filter(Boolean);
+for (const key of keys) {
+  await probeKey(key);
+}
+```
+```python
+# ✅ Python: Read from environment or load via dotenv
+import os
+from dotenv import load_dotenv
+
+load_dotenv(".env.local")
+nvidia_keys = [k.strip() for k in os.getenv("NVIDIA_API_KEYS", "").split(",") if k.strip()]
+```
+
+### Pattern 4: Scratch Scripts Location
+If you need temporary one-off exploration scripts:
+- Save them in `/tmp/` (e.g., `/tmp/test_nvidia.py`), which is completely outside the git repository.
+- Or save in `scratch/` (strictly gitignored).
+- Never hardcode the key string — always read from environment or `.env.local`.
+
+---
+
+
 
 ### 3. User-Requested Configuration & Key Migration Workflow
 When explicitly instructed by the user to modify environment settings or migrate keys:
@@ -220,3 +277,111 @@ uv run pytest tests/integration/
 # Run code complexity report
 bun run complexity
 ```
+
+---
+
+## 🛡️ TLS / HTTPS / HTTP/2 ALPN Configuration
+
+### Enabling HTTPS
+LiteRouter serves HTTPS with HTTP/2 + HTTP/1.1 ALPN negotiation natively via `Bun.serve()` when:
+1. **Local certificates** exist at `certs/localhost.pem` and `certs/localhost-key.pem`.
+2. **`LITEROUTER_TLS_ENABLED=true`** is set in `.env` (or auto-detected if certs exist and env var is not `"false"`).
+
+Generate local certs with mkcert:
+```bash
+bash scripts/setup_certs.sh
+```
+
+### OpenCode (v1) HTTPS Configuration
+OpenCode 1 (Stable) reads `~/.config/opencode/opencode.json`. Update the `baseURL`:
+```json
+{
+  "provider": {
+    "literouter": {
+      "options": {
+        "baseURL": "https://localhost:7766/v1"
+      },
+      "literouter-google": {
+        "options": {
+          "baseURL": "https://localhost:7766/v1beta"
+        }
+```
+Ensure the mkcert root CA is trusted by the OpenCode v1 wrapper (`~/.local/bin/opencode`):
+```bash
+export NODE_EXTRA_CA_CERTS="${HOME}/.local/share/opencode2/mkcert/rootCA.pem"
+```
+
+### OpenCode 2 (Next/Beta) HTTPS Configuration
+OpenCode 2 reads `~/.config/opencode2/config.json` (symlinked to `opencode.json`). The `baseURL` should point to **HTTPS** if TLS is enabled.
+
+**Critical: OpenCode 2 Background Service Restart Required After Any LiteRouter Config Change**
+
+When LiteRouter is restarted (TLS toggle, port change, env reload), the `opencode2 serve --service` daemon **caches the old endpoint in memory**. You **must** restart the OpenCode 2 service daemon or it will hit `ECONNRESET`:
+
+```bash
+# Kill stale service daemon
+pkill -f "opencode2 serve --service"
+
+# Restart OpenCode 2 (spawns a fresh serve --service)
+opencode2
+
+# Then re-run your task
+opencode2 run "..."
+```
+
+### Python Integration Test TLS Handling
+`tests/conftest.py` auto-detects TLS and configures:
+- `SSL_CERT_FILE` → mkcert `rootCA.pem`
+- `LITEROUTER_BASE_URL` → `https://localhost:7766`
+
+No manual intervention needed when running `uv run pytest tests/integration/`.
+
+---
+
+## 🤖 OpenCode 2 Integration Guide
+
+### Connecting OpenCode 2 to LiteRouter over HTTPS
+
+1. **Ensure TLS certificates exist:**
+   ```bash
+   ls certs/localhost.pem certs/localhost-key.pem
+   # If missing:
+   bash scripts/setup_certs.sh
+   ```
+
+2. **Ensure LiteRouter is running with TLS:**
+   ```bash
+   tmux capture-pane -pt literouter:0 | grep "TLS: ENABLED"
+   ```
+
+3. **Update OpenCode 2 config** (`~/.config/opencode2/config.json`):
+   ```json
+   {
+     "provider": {
+       "literouter": {
+         "npm": "@ai-sdk/openai-compatible",
+         "name": "LiteRouter",
+         "options": {
+           "baseURL": "https://localhost:7766/v1",
+           "apiKey": "sk-lr-your-auth-key"
+         }
+       }
+     }
+   }
+   ```
+
+4. **Restart OpenCode 2 service daemon (mandatory):**
+   ```bash
+   pkill -f "opencode2 serve --service"
+   # Next invocation of opencode2 will spawn a fresh daemon
+   ```
+
+### Common OpenCode 2 TLS Troubleshooting
+
+| Error | Cause | Fix |
+|---|---|---|
+| `ECONNRESET: The socket connection was closed unexpectedly` | OpenCode 2 daemon cached old HTTP endpoint | `pkill -f "opencode2 serve --service"` then restart |
+| `FetchError: request to https://localhost:7766/... failed, reason: unable get local issuer certificate` | NODE_EXTRA_CA_CERTS not set or wrong path | Verify `~/.local/share/opencode2/mkcert/rootCA.pem` exists and is exported in the `opencode2` wrapper |
+| `401 Unauthorized` on health probe | Health endpoint requires auth, but self-test uses no auth header | Expected behavior; the self-test catches this as a warning, not an error |
+
+---

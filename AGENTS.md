@@ -24,6 +24,17 @@ For all system design, folder maps, design decisions, and architectural constrai
 👉 `docs/ARCHITECTURE.md`
 👉 `docs/Longrunning_Mode.md` (Fusion Sticky Fallback details)
 
+### OpenCode vs OpenCode2 Config Format
+This repo maintains both OpenCode v1 and OpenCode2 v2 configurations. Key differences when editing JSON configs:
+
+| Config Key | OpenCode v1 | OpenCode v2 |
+|---|---|---|
+| Plugin array key | `"plugin"` (singular) | `"plugins"` (plural) |
+| Config file location | `.opencode/opencode.json` | `.opencode2/opencode.json` |
+| Plugin format | String IDs only | String IDs **or** `{ "package", "options" }` objects |
+
+When editing configs, verify which variant you are targeting. Using the wrong key name will silently drop the plugin list.
+
 ---
 
 ## MANDATORY WORKFLOW ENFORCEMENT

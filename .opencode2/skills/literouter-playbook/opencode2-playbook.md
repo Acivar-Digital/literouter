@@ -52,7 +52,9 @@ export XDG_DATA_HOME="${HOME}/.local/share"
 ```
 
 ### LiteRouter Configuration
-In `~/.config/opencode2/config.json` or `~/.config/opencode2/opencode.json`:
+In `~/.config/opencode2/config.json` or `~/.config/opencode2/opencode.json`.
+
+> **Config Key Note (v1 vs v2):** OpenCode v2 uses the plural key `"plugins"` (array of strings or `{ "package", "options" }` objects). OpenCode v1 uses the singular key `"plugin"` (array of strings only). Do not mix these keys — the wrong key name will silently drop the plugin list.
 ```json
 {
   "provider": {
