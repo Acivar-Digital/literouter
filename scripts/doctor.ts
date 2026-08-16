@@ -5,6 +5,17 @@
 // boot, MUST NOT be invoked by start.sh/restart.sh, and has NO --force flag.
 
 import * as path from "path";
+import { existsSync } from "fs";
+
+// Inject mkcert root CA so Bun/Node.js fetch can verify localhost TLS certs
+const caPath = path.join(
+  path.resolve(process.env.HOME || "", ".local/share/opencode2/mkcert"),
+  "rootCA.pem",
+);
+if (existsSync(caPath)) {
+  process.env.NODE_EXTRA_CA_CERTS = caPath;
+  process.env.SSL_CERT_FILE = caPath;
+}
 
 const PROJECT_ROOT = path.resolve(import.meta.dir, "..");
 const DOTENV_PATH = path.join(PROJECT_ROOT, ".env");
@@ -179,7 +190,7 @@ async function probeZenKey(key: string): Promise<boolean> {
     "Content-Type": "application/json",
   };
   const payload = {
-    model: "deepseek-v4-flash-free",
+    model: "zen/hy3-free",
     messages: [{ role: "user", content: "ping" }],
     max_tokens: 100,
   };
@@ -213,8 +224,61 @@ async function probeZenKey(key: string): Promise<boolean> {
   }
 }
 
+async function probeSelf(): Promise<boolean> {
+  const port = getEnv("LITEROUTER_PORT") || "7766";
+  const certPath = path.resolve(PROJECT_ROOT, "certs", "localhost.pem");
+
+  // If TLS certs exist, probe via HTTPS over HTTP/2 ALPN
+  if (existsSync(certPath) && existsSync(caPath)) {
+    const url = `https://localhost:${port}/health`;
+    try {
+      const resp = await fetch(url);
+      if (resp.status === 200) {
+        console.log(
+          `[LITEROUTER] ✅ Self-test: HTTPS health check OK (HTTP/2 via ALPN).`,
+        );
+        return true;
+      }
+      console.warn(
+        `[LITEROUTER] ⚠️ Self-test: health returned HTTP ${resp.status}.`,
+      );
+      return true;
+    } catch (exc) {
+      console.warn(
+        `[LITEROUTER] ⚠️ Self-test: HTTPS failed (${exc}); trying plaintext.`,
+      );
+    }
+  }
+
+  // Fallback: plaintext HTTP probe
+  const url = `http://localhost:${port}/health`;
+  try {
+    const resp = await fetch(url);
+    if (resp.status === 200) {
+      console.log(
+        `[LITEROUTER] ✅ Self-test: plaintext health check OK (HTTP/1.1).`,
+      );
+      return true;
+    }
+    console.warn(
+      `[LITEROUTER] ⚠️ Self-test: health returned HTTP ${resp.status}.`,
+    );
+    return true;
+  } catch (exc) {
+    console.warn(
+      `[LITEROUTER] ⚠️ Self-test: gateway not running on ${url} — ${exc}.`,
+    );
+    return true;
+  }
+}
+
 async function runDiagnostics(): Promise<void> {
   console.log("🔍 Starting FYI-only key health probes (2s wait per key)...");
+
+  console.log("🔍 [0/4] Self-test (probe LiteRouter health endpoint)...");
+  await probeSelf();
+
+  console.log("🔍 [1/4] Probing Google API keys...");
 
   async function probePool(
     provider: string,
