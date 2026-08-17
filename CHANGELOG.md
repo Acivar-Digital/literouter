@@ -2,6 +2,15 @@
 
 All notable changes to LiteRouter will be documented in this file.
 
+## [3.5.1] — 2026-08-17
+
+### Fixed / OpenRouter Dots & Anthropic Compat Layer
+- **Directive Completion Endpoint Correction (`lr-or-cl-ch-dp`)** — Fixed OpenRouter Dots directive in OpenCode configs and skill playbooks. Because downstream Anthropic clients (`@ai-sdk/anthropic`) target `/v1/messages` but OpenRouter routes Dots models via `/api/v1/chat/completions`, directive was updated to `lr-or-cl-ch-dp` (payload: `cl`, upstream endpoint: `ch`).
+- **Output Token Clamping (`max_tokens <= 65536`)** — Added automatic defensive clamping in `src/transformers/payload.ts` to prevent total context overflow HTTP 400 rejections from OpenRouter (`input_tokens + max_tokens > 512,000`).
+- **OpenRouter Comment SSE Frame Handling (`hasContentToken`)** — Enhanced `hasContentToken` in `src/network/fetcher.ts` to recognize OpenRouter initial processing comment frames (`: OPENROUTER PROCESSING`) and structured JSON markers, avoiding false-positive ghost response classifications.
+- **Anthropic-to-OpenAI Tool Schema Translation** — Fixed `translateAnthropicToOpenAI` in `src/handlers/anthropic_compat.ts` to properly transform Anthropic tool structures into standard OpenAI function call schemas.
+- **Verification Matrix Update (`scripts/test_opencode2_models.sh`)** — Added `LR-DOTS` (`lr-dots/dots-studio/dots-3-note-preview:free`) to the automated multi-provider verification script.
+
 ## [3.5.0] — 2026-08-17
 
 ### Added / Upgrade 3.3 Visual Telemetry & Terminal UI
