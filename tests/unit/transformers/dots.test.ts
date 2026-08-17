@@ -41,6 +41,21 @@ cd /home/yapilwsl/arthityap/baziforecaster && git add admin/controls/controls.py
   expect(parsedArgs.command).toContain('echo "staged:');
 });
 
+test("parseDotsXml parses <tool_calls> format with parameter and argument tags", () => {
+  const xml = `
+<tool_calls>
+<invoke name="shell">
+<parameter name="command">cd /home/yapilwsl/arthityap/baziforecaster && echo "=== agent_b file ==="; ls -la scratch/agent_b_change_log.md 2>&1</parameter>
+</invoke>
+</tool_calls>
+`;
+  const result = parseDotsXml(xml);
+  expect(result.length).toBe(1);
+  expect(result[0].function.name).toBe("shell");
+  const parsedArgs = JSON.parse(result[0].function.arguments);
+  expect(parsedArgs.command).toContain("=== agent_b file ===");
+});
+
 test("parseDotsXml parses multiple parameters and multiple invokes", () => {
   const xml = `
 <dots_function_call>
@@ -99,6 +114,34 @@ test("transformDotsNonStreaming transforms message with dots tool calls", () => 
   expect(msg.content).toBeNull();
 });
 
+test("transformDotsNonStreaming transforms <tool_calls> XML message", () => {
+  const rawData = {
+    choices: [
+      {
+        message: {
+          role: "assistant",
+          content: `Scribe finished.
+<tool_calls>
+<invoke name="shell">
+<parameter name="command">bd list</parameter>
+</invoke>
+</tool_calls>`,
+        },
+      },
+    ],
+  };
+
+  const transformed = transformDotsNonStreaming(rawData);
+  const msg = transformed.choices[0].message;
+  expect(msg.tool_calls).toBeDefined();
+  expect(msg.tool_calls.length).toBe(1);
+  expect(msg.tool_calls[0].function.name).toBe("shell");
+  expect(JSON.parse(msg.tool_calls[0].function.arguments).command).toBe(
+    "bd list",
+  );
+  expect(msg.content).toBe("Scribe finished.");
+});
+
 test("transformDotsNonStreaming preserves surrounding text content", () => {
   const rawData = {
     choices: [
@@ -125,18 +168,16 @@ Let me know if you need more.`,
   );
 });
 
-test("createDotsStreamTransformer parses stream chunks split across boundaries", async () => {
+test("createDotsStreamTransformer parses stream chunks split across <tool_calls> boundaries", async () => {
   const transformer = createDotsStreamTransformer();
 
-  // Create stream of SSE chunks with proper JSON encoding
   const textDeltas = [
-    "I will run ",
-    "the status check.\n<dots_",
-    'function_call>\n<invoke name="shell">\n',
+    "Scribe finished. Let me check its deliverable.\n<tool_",
+    'calls>\n<invoke name="shell">\n',
     '<parameter name="command">\n',
-    "git status\n</parameter>\n",
-    "</invoke>\n</dots_function_call>\n",
-    "Done!",
+    'cd /home/yapilwsl/arthityap/baziforecaster && echo "=== agent_b file ==="; ls -la scratch/agent_b_change_log.md\n</parameter>\n',
+    "</invoke>\n</tool_calls>\n",
+    "Verification complete.",
   ];
 
   const chunks = textDeltas.map(
@@ -164,13 +205,15 @@ test("createDotsStreamTransformer parses stream chunks split across boundaries",
     fullOutput += decoder.decode(value);
   }
 
-  expect(fullOutput).toContain("I will run ");
-  expect(fullOutput).toContain("the status check.");
+  expect(fullOutput).toContain("Scribe finished. Let me check its deliverable.");
+  expect(fullOutput).not.toContain("<tool_calls>");
+  expect(fullOutput).not.toContain("</tool_calls>");
+  expect(fullOutput).not.toContain("<invoke");
   expect(fullOutput).toContain("tool_calls");
   expect(fullOutput).toContain("call_dots_");
   expect(fullOutput).toContain("shell");
-  expect(fullOutput).toContain("git status");
-  expect(fullOutput).toContain("Done!");
+  expect(fullOutput).toContain("agent_b file");
+  expect(fullOutput).toContain("Verification complete.");
   expect(fullOutput).toContain("[DONE]");
 });
 
@@ -204,5 +247,5 @@ test("createDotsStreamTransformer passes through normal stream untouched", async
 
   expect(fullOutput).toContain("Hello! ");
   expect(fullOutput).toContain("How are you today?");
-  expect(fullOutput).not.toContain("tool_calls");
+  expect(fullOutput).toContain("[DONE]");
 });

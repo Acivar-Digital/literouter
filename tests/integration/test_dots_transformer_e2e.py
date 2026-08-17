@@ -26,13 +26,14 @@ AUTH_KEY = "test-e2e-token-secret-dots-12345"
 KEY_1 = "sk-test-key-dots-00000000000000001"
 TEST_MODEL = "openrouter/dots-studio/dots-3-note-preview:free"
 
-DOTS_XML_CONTENT = """<dots_function_call>
+TOOL_CALLS_XML_CONTENT = """Scribe finished. Let me check its deliverable.
+<tool_calls>
 <invoke name="shell">
 <parameter name="command">
-cd /home/yapilwsl/arthityap/baziforecaster && git status
+cd /home/yapilwsl/arthityap/baziforecaster && echo "=== agent_b file ==="; ls -la scratch/agent_b_change_log.md 2>&1
 </parameter>
 </invoke>
-</dots_function_call>"""
+</tool_calls>"""
 
 
 def make_dots_chat_payload() -> Dict[str, Any]:
@@ -46,7 +47,7 @@ def make_dots_chat_payload() -> Dict[str, Any]:
                 "index": 0,
                 "message": {
                     "role": "assistant",
-                    "content": DOTS_XML_CONTENT,
+                    "content": TOOL_CALLS_XML_CONTENT,
                 },
                 "finish_reason": "stop",
             }
@@ -57,19 +58,19 @@ def make_dots_chat_payload() -> Dict[str, Any]:
 
 async def dots_sse_event_generator() -> AsyncIterator[bytes]:
     chunks = [
-        {"choices": [{"index": 0, "delta": {"content": "Checking status:\n<dots_"}, "finish_reason": None}]},
+        {"choices": [{"index": 0, "delta": {"content": "Checking status:\n<tool_"}, "finish_reason": None}]},
         {
             "choices": [
                 {
                     "index": 0,
-                    "delta": {"content": "function_call>\n<invoke name=\"shell\">\n"},
+                    "delta": {"content": "calls>\n<invoke name=\"shell\">\n"},
                     "finish_reason": None,
                 }
             ]
         },
         {"choices": [{"index": 0, "delta": {"content": "<parameter name=\"command\">\n"}, "finish_reason": None}]},
         {"choices": [{"index": 0, "delta": {"content": "git status\n</parameter>\n"}, "finish_reason": None}]},
-        {"choices": [{"index": 0, "delta": {"content": "</invoke>\n</dots_function_call>"}, "finish_reason": None}]},
+        {"choices": [{"index": 0, "delta": {"content": "</invoke>\n</tool_calls>"}, "finish_reason": None}]},
         {
             "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
             "usage": {"prompt_tokens": 15, "completion_tokens": 25, "total_tokens": 40},
@@ -192,7 +193,8 @@ def test_dots_non_streaming_converts_to_tool_calls(dots_e2e_stack: Dict[str, Any
         assert tool_calls[0]["function"]["name"] == "shell"
 
         parsed_args = json.loads(tool_calls[0]["function"]["arguments"])
-        assert "git status" in parsed_args["command"]
+        assert "agent_b file" in parsed_args["command"]
+        assert message["content"] == "Scribe finished. Let me check its deliverable."
 
 
 def test_dots_streaming_converts_to_tool_calls(dots_e2e_stack: Dict[str, Any]) -> None:
@@ -230,9 +232,12 @@ def test_dots_streaming_converts_to_tool_calls(dots_e2e_stack: Dict[str, Any]) -
                     if "tool_calls" in delta and delta["tool_calls"]:
                         tool_calls_received.extend(delta["tool_calls"])
 
-            # Assert standard text was passed through
+            # Assert standard text was passed through without XML tags
             full_content = "".join(content_chunks)
             assert "Checking status:" in full_content
+            assert "<tool_calls>" not in full_content
+            assert "</tool_calls>" not in full_content
+            assert "<invoke" not in full_content
 
             # Assert tool calls were parsed and emitted
             assert len(tool_calls_received) >= 1
