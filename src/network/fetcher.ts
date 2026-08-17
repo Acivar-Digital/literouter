@@ -175,14 +175,27 @@ export function extractUsageFromChunk(chunk: Uint8Array): UsageCallbackPayload |
       const data = JSON.parse(jsonStr) as Record<string, unknown>;
       if (data.usage && typeof data.usage === "object") {
         const u = data.usage as Record<string, unknown>;
-        const promptTokens = typeof u.prompt_tokens === "number" ? u.prompt_tokens : 0;
-        const completionTokens = typeof u.completion_tokens === "number" ? u.completion_tokens : 0;
+        const promptTokens = typeof u.prompt_tokens === "number"
+          ? u.prompt_tokens
+          : typeof u.input_tokens === "number"
+            ? u.input_tokens
+            : 0;
+        const completionTokens = typeof u.completion_tokens === "number"
+          ? u.completion_tokens
+          : typeof u.output_tokens === "number"
+            ? u.output_tokens
+            : 0;
         const totalTokens = typeof u.total_tokens === "number" ? u.total_tokens : promptTokens + completionTokens;
         let reasoningTokens: number | undefined;
         if (u.completion_tokens_details && typeof u.completion_tokens_details === "object") {
           const details = u.completion_tokens_details as Record<string, unknown>;
           if (typeof details.reasoning_tokens === "number") {
             reasoningTokens = details.reasoning_tokens;
+          }
+        } else if (u.output_tokens_details && typeof u.output_tokens_details === "object") {
+          const details = u.output_tokens_details as Record<string, unknown>;
+          if (typeof details.thinking_tokens === "number") {
+            reasoningTokens = details.thinking_tokens;
           }
         }
         return { promptTokens, completionTokens, totalTokens, reasoningTokens };

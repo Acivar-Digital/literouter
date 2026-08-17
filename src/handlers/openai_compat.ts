@@ -156,7 +156,7 @@ async function collectFullBody(
   return mergeUint8Arrays(chunks, totalLength);
 }
 
-function parseRetryAfterHeader(headers: Headers): number | undefined {
+export function parseRetryAfterHeader(headers: Headers): number | undefined {
   const ra = headers.get("retry-after");
   if (!ra) {
     return undefined;

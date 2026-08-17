@@ -67,7 +67,7 @@ lr-<provider>-<payload>-<completions>-<nuances>
 | Directive API Key | Target Wire & Protocol | Use Case |
 |---|---|---|
 | `lr-or-oa-ch-no` | OpenRouter OpenAI Chat Completions | Standard chat models on OpenRouter |
-| `lr-or-cl-ch-dp` | OpenRouter OpenAI Chat Completions (Claude client format) | Dots models with XML tool-calling polyfill |
+| `lr-or-cl-ms-dp` | OpenRouter Anthropic Messages API | Dots models with native Anthropic passthrough |
 | `lr-nv-oa-ch-no` | NVIDIA NIM Chat Completions | NVIDIA inference microservices |
 | `lr-zn-oa-ch-no` | Zen OpenAI Chat Completions | OpenCode Zen free models |
 | `lr-gg-oa-ob-gm` | Google OpenAI-compat Beta + Gemma Nuance | Gemma & Gemini models with system-turn merging |

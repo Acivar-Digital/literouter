@@ -3,9 +3,27 @@ import { createUnauthorizedResponse, validateDirective } from "../directive/vali
 import {
   globalKeyPool,
   handleOpenAICompat,
+  parseRetryAfterHeader,
   resolveUpstreamEndpoint,
 } from "./openai_compat";
-import { logError, logInbound } from "../ui/logger";
+import {
+  logError,
+  logInbound,
+  logLimit,
+  logRotate,
+  logSeparator,
+  logServed,
+  logTtft,
+  logUsage,
+} from "../ui/logger";
+import {
+  createResilientStream,
+  fetchWithTtftGuard,
+  NoResponseError,
+} from "../network/fetcher";
+import { scrubUnsupportedParameters } from "../transformers/payload";
+import type { DirectDirective } from "../directive/parser";
+import type { SelectedKey } from "../network/pool";
 
 export interface AnthropicContentBlock {
   readonly type: "text" | "image" | "tool_use" | "tool_result";
@@ -245,6 +263,189 @@ async function handleNonStreamingResult(
   return Response.json(translated, { status: 200 });
 }
 
+async function collectFullBody(
+  firstChunk: Uint8Array,
+  rawReader: ReadableStreamDefaultReader<Uint8Array>
+): Promise<Uint8Array> {
+  const chunks: Uint8Array[] = [firstChunk];
+  let totalLength = firstChunk.length;
+
+  while (true) {
+    const { done, value } = await rawReader.read();
+    if (done) break;
+    if (value) {
+      chunks.push(value);
+      totalLength += value.length;
+    }
+  }
+
+  const result = new Uint8Array(totalLength);
+  let offset = 0;
+  for (const chunk of chunks) {
+    result.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return result;
+}
+
+async function executeAnthropicDirectCall(
+  directive: DirectDirective,
+  payload: AnthropicMessagesRequest,
+  clientSignal: AbortSignal | undefined,
+  selected: SelectedKey,
+  reqId: string,
+  attempt: number,
+  maxAttempts: number
+): Promise<Response> {
+  const endpoint = resolveUpstreamEndpoint(directive.provider, directive.completion, payload.model);
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    Authorization: `Bearer ${selected.key}`,
+    "HTTP-Referer": "https://literouter.local",
+    "X-Title": "LiteRouter Gateway",
+  };
+
+  const startTime = Date.now();
+  const { response, ttftMs, firstChunk, rawReader } = await fetchWithTtftGuard({
+    url: endpoint.url,
+    method: "POST",
+    headers,
+    body: JSON.stringify(payload),
+    clientSignal,
+    provider: directive.provider,
+    keyIndex: selected.index,
+  });
+  const duration = Date.now() - startTime;
+  const isStream = Boolean(payload.stream);
+
+  logTtft(reqId, ttftMs, isStream ? "Stream established" : "First chunk streamed downstream");
+
+  if (response.status < 400) {
+    globalKeyPool.reportSuccess(directive.provider, selected.index);
+  } else if (response.status === 429) {
+    const retrySec = parseRetryAfterHeader(response.headers) ?? 60;
+    globalKeyPool.reportFailure(directive.provider, selected.index, 429, response.headers);
+    logLimit(reqId, directive.provider, selected.index, 429, retrySec, selected.totalKeys);
+  }
+
+  if (!isStream) {
+    const fullBody = await collectFullBody(firstChunk, rawReader);
+    try {
+      const decoded = new TextDecoder().decode(fullBody);
+      const json = JSON.parse(decoded) as Record<string, unknown>;
+      if (json.usage && typeof json.usage === "object") {
+        const u = json.usage as Record<string, unknown>;
+        const promptTokens = typeof u.input_tokens === "number" ? u.input_tokens : 0;
+        const completionTokens = typeof u.output_tokens === "number" ? u.output_tokens : 0;
+        const totalTokens = promptTokens + completionTokens;
+        let reasoningTokens: number | undefined;
+        if (u.output_tokens_details && typeof u.output_tokens_details === "object") {
+          const details = u.output_tokens_details as Record<string, unknown>;
+          if (typeof details.thinking_tokens === "number") {
+            reasoningTokens = details.thinking_tokens;
+          }
+        }
+        logUsage({
+          reqId,
+          provider: directive.provider,
+          keyIndex: selected.index,
+          totalKeys: selected.totalKeys,
+          promptTokens,
+          reasoningTokens,
+          completionTokens,
+          totalTokens,
+          durationMs: duration,
+        });
+      }
+    } catch {
+      // Body is not json
+    }
+
+    logServed(reqId, duration, response.status, attempt, maxAttempts);
+    logSeparator();
+
+    return new Response(fullBody.buffer as ArrayBuffer, {
+      status: response.status,
+      headers: response.headers,
+    });
+  }
+
+  const resilientStream = createResilientStream(firstChunk, rawReader, {
+    onUsage: (u) => {
+      const streamDuration = Date.now() - startTime;
+      logUsage({
+        reqId,
+        provider: directive.provider,
+        keyIndex: selected.index,
+        totalKeys: selected.totalKeys,
+        promptTokens: u.promptTokens,
+        reasoningTokens: u.reasoningTokens,
+        completionTokens: u.completionTokens,
+        totalTokens: u.totalTokens,
+        durationMs: streamDuration,
+      });
+      logServed(reqId, streamDuration, response.status, attempt, maxAttempts);
+      logSeparator();
+    },
+  });
+
+  return new Response(resilientStream, {
+    status: response.status,
+    headers: {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      Connection: "keep-alive",
+    },
+  });
+}
+
+async function executeAnthropicDirectLoop(
+  directive: DirectDirective,
+  payload: AnthropicMessagesRequest,
+  clientSignal: AbortSignal | undefined,
+  reqId: string
+): Promise<Response> {
+  const poolSize = globalKeyPool.getPoolSize(directive.provider);
+  const maxAttempts = Math.min(3, Math.max(1, poolSize));
+  let lastError: unknown = null;
+  let prevKeyIndex = -1;
+
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const selected = globalKeyPool.selectNextKey(directive.provider);
+    if (!selected) {
+      logLimit(reqId, directive.provider, 0, 429, 60, poolSize);
+      return Response.json(
+        { error: { message: `All API keys for provider '${directive.provider}' are cooling down.`, type: "insufficient_quota" } },
+        { status: 429 }
+      );
+    }
+
+    if (attempt > 0) {
+      logRotate(reqId, directive.provider, prevKeyIndex, selected.index, selected.totalKeys, attempt + 1, maxAttempts);
+    }
+    prevKeyIndex = selected.index;
+
+    try {
+      return await executeAnthropicDirectCall(directive, payload, clientSignal, selected, reqId, attempt + 1, maxAttempts);
+    } catch (err: unknown) {
+      lastError = err;
+      if (err instanceof NoResponseError) {
+        globalKeyPool.reportFailure(directive.provider, selected.index, 429);
+        logLimit(reqId, directive.provider, selected.index, 429, 60, selected.totalKeys);
+        continue;
+      }
+      logError(reqId, "Direct request error", err);
+      break;
+    }
+  }
+
+  const errMsg = lastError instanceof Error ? lastError.message : "All direct request attempts failed";
+  return Response.json(
+    { error: { message: `Direct request attempts exhausted - ${errMsg}`, type: "gateway_error" } },
+    { status: 502 }
+  );
+}
+
 export async function handleAnthropicCompat(
   req: Request,
   rawKey: string,
@@ -283,6 +484,16 @@ export async function handleAnthropicCompat(
     nuances: directive.type === "direct" ? directive.nuances : undefined,
   });
 
+  // If the directive targets upstream Anthropic Messages endpoint (e.g. completion 'ms'),
+  // forward the native Anthropic payload directly with zero lossy format conversion!
+  if (directive.type === "direct" && directive.completion === "ms") {
+    const payload = scrubUnsupportedParameters(
+      anthropicBody as unknown as OpenAIRequestPayload
+    ) as unknown as AnthropicMessagesRequest;
+    return executeAnthropicDirectLoop(directive, payload, req.signal, reqId);
+  }
+
+  // Cross-wire fallback: Translate to OpenAI if calling an OpenAI completion endpoint (e.g. 'ch')
   const openAiPayload = translateAnthropicToOpenAI(anthropicBody);
   const syntheticReq = new Request("http://localhost:7766/v1/chat/completions", {
     method: "POST",
