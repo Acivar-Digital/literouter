@@ -8,17 +8,36 @@ const DEFAULT_ENV_RECORD: Record<string, string> = {
   LITEROUTER_NO_RESPONSE_TIMEOUT_MS: "5000",
   LITEROUTER_STREAM_IDLE_TIMEOUT_MS: "30000",
   LITEROUTER_HTTP_TIMEOUT_MS: "300000",
+  LITEROUTER_IDLE_TIMEOUT_SEC: "60",
   COOLDOWN_RATE_LIMIT_TTL_SEC: "65",
   COOLDOWN_SERVER_ERROR_TTL_SEC: "10",
   COOLDOWN_AUTH_ERROR_TTL_SEC: "604800",
   FUSION_STICKY_TTL_MS: "300000",
   STREAM_STALL_MAX_RESENDS: "2",
   KEEPALIVE_INTERVAL_MS: "15000",
+  LITEROUTER_HTTP_REFERER: "",
+  LITEROUTER_X_TITLE: "",
   LOG_LEVEL: "info",
 };
 
 function parseSafeEnv(source: Record<string, string | undefined>): EnvConfig {
-  const result = EnvConfigSchema.safeParse(source);
+  const normalized: Record<string, string | undefined> = { ...source };
+  if (!normalized.LITEROUTER_IDLE_TIMEOUT_SEC && normalized.LITEROUTER_IDLE_TIMEOUT) {
+    normalized.LITEROUTER_IDLE_TIMEOUT_SEC = normalized.LITEROUTER_IDLE_TIMEOUT;
+  }
+  if (!normalized.LITEROUTER_STREAM_IDLE_TIMEOUT_MS && normalized.LITEROUTER_STREAM_IDLE_TIMEOUT) {
+    const val = Number(normalized.LITEROUTER_STREAM_IDLE_TIMEOUT);
+    normalized.LITEROUTER_STREAM_IDLE_TIMEOUT_MS = String(val < 1000 ? val * 1000 : val);
+  }
+  if (!normalized.LITEROUTER_HTTP_TIMEOUT_MS && normalized.LITEROUTER_HTTP_TIMEOUT) {
+    const val = Number(normalized.LITEROUTER_HTTP_TIMEOUT);
+    normalized.LITEROUTER_HTTP_TIMEOUT_MS = String(val < 1000 ? val * 1000 : val);
+  }
+  if (!normalized.LITEROUTER_NO_RESPONSE_TIMEOUT_MS && normalized.LITEROUTER_NO_RESPONSE_TIMEOUT) {
+    const val = Number(normalized.LITEROUTER_NO_RESPONSE_TIMEOUT);
+    normalized.LITEROUTER_NO_RESPONSE_TIMEOUT_MS = String(val < 1000 ? val * 1000 : val);
+  }
+  const result = EnvConfigSchema.safeParse(normalized);
   if (result.success) {
     return result.data;
   }

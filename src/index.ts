@@ -188,6 +188,7 @@ export function createServer(portOverride?: number): Server<unknown> {
   return Bun.serve({
     port,
     hostname: env.LITEROUTER_HOST,
+    idleTimeout: env.LITEROUTER_IDLE_TIMEOUT_SEC,
     tls: tls ? { cert: tls.cert, key: tls.key } : undefined,
     async fetch(req: Request) {
       const reqId = `req_${Math.random().toString(36).slice(2, 9)}`;

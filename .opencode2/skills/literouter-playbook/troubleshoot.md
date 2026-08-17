@@ -66,3 +66,8 @@ curl -sk -X POST https://localhost:7766/reset
 ### Pattern 5: Anthropic Tool Format Errors on OpenRouter (`Unknown server-tool shorthand`)
 - **Symptom**: Calling `/v1/messages` with `@ai-sdk/anthropic` returns 400 on OpenRouter.
 - **Fix**: Handled in `src/handlers/anthropic_compat.ts` by preserving native Anthropic tool schemas (`{ name, description, input_schema }`) without wrapping in `{ type: "function", ... }`.
+
+### Pattern 6: `Error: Decode error (200 POST /v1/messages)` / Mid-Stream Connection Cut
+- **Symptom**: Client receives HTTP 200 but fails with a JSON/SSE decode error during long reasoning or thinking pauses (e.g. `dots-studio/dots-3-note-preview:free`).
+- **Cause**: Bun's native HTTP server defaulting to a 10s socket idle timeout (`[Bun.serve]: request timed out after 10 seconds`).
+- **Fix**: Set `LITEROUTER_IDLE_TIMEOUT=60` in `.env` and pass `idleTimeout: env.LITEROUTER_IDLE_TIMEOUT_SEC` in `Bun.serve({ ... })` in `src/index.ts`. Ensure `KEEPALIVE_INTERVAL_MS` is actively emitting SSE `: keep-alive\n\n` comments.

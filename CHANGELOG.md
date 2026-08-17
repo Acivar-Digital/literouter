@@ -4,6 +4,11 @@ All notable changes to LiteRouter will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed / Bun Socket Idle Timeout & Streaming Keep-Alive
+- **Configured `idleTimeout: 60` on `Bun.serve`** — Prevented Bun runtime from cutting active SSE streams prematurely (default was 10s idle timeout in Bun) during model thinking pauses or slow token generation (e.g. `dots-studio/dots-3-note-preview:free`), resolving `Decode error (200 POST /v1/messages)` in OpenCode and Anthropic SDK clients.
+- **Dynamic Config Binding in `src/network/fetcher.ts`** — Updated `fetchWithTtftGuard`, `startKeepAliveTimer`, and `mergeSignals` to dynamically read `KEEPALIVE_INTERVAL_MS`, `LITEROUTER_NO_RESPONSE_TIMEOUT_MS`, and `LITEROUTER_HTTP_TIMEOUT_MS` from `getEnv()`.
+- **Environment Normalization (`src/config/schema.ts` & `src/config/env.ts`)** — Added `LITEROUTER_IDLE_TIMEOUT_SEC` schema coercion and automatic shorthand normalization for `.env` parameters (`LITEROUTER_IDLE_TIMEOUT`, `LITEROUTER_STREAM_IDLE_TIMEOUT`, `LITEROUTER_HTTP_TIMEOUT`).
+
 ### Documentation Update
 - **Documented API Key Directive (`lr-or-cl-ms-no`) for Claude Code** — Updated `literouter-playbook` SKILL to clarify that users targeting OpenRouter with downstream Anthropic clients (like Claude Code) must use the `ms` (Messages) completion code. Using `ch` triggers `translateAnthropicToOpenAI`, which drops `tool_use`/`tool_result` blocks during fallback, causing agents to hang indefinitely.
 

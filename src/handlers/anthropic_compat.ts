@@ -22,6 +22,7 @@ import {
   NoResponseError,
 } from "../network/fetcher";
 import { scrubUnsupportedParameters } from "../transformers/payload";
+import { getEnv } from "../config/env";
 import type { DirectDirective } from "../directive/parser";
 import type { SelectedKey } from "../network/pool";
 
@@ -298,11 +299,12 @@ async function executeAnthropicDirectCall(
   maxAttempts: number
 ): Promise<Response> {
   const endpoint = resolveUpstreamEndpoint(directive.provider, directive.completion, payload.model);
+  const env = getEnv();
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     Authorization: `Bearer ${selected.key}`,
-    "HTTP-Referer": "https://literouter.local",
-    "X-Title": "LiteRouter Gateway",
+    "HTTP-Referer": env.LITEROUTER_HTTP_REFERER,
+    "X-Title": env.LITEROUTER_X_TITLE,
   };
 
   const startTime = Date.now();

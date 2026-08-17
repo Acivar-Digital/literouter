@@ -123,12 +123,15 @@ export const EnvConfigSchema = z.object({
   LITEROUTER_NO_RESPONSE_TIMEOUT_MS: z.coerce.number().int().positive().default(5000),
   LITEROUTER_STREAM_IDLE_TIMEOUT_MS: z.coerce.number().int().positive().default(30000),
   LITEROUTER_HTTP_TIMEOUT_MS: z.coerce.number().int().positive().default(300000),
+  LITEROUTER_IDLE_TIMEOUT_SEC: z.coerce.number().int().positive().default(60),
   COOLDOWN_RATE_LIMIT_TTL_SEC: z.coerce.number().int().positive().default(65),
   COOLDOWN_SERVER_ERROR_TTL_SEC: z.coerce.number().int().positive().default(10),
   COOLDOWN_AUTH_ERROR_TTL_SEC: z.coerce.number().int().positive().default(604800),
   FUSION_STICKY_TTL_MS: z.coerce.number().int().positive().default(300000),
   STREAM_STALL_MAX_RESENDS: z.coerce.number().int().nonnegative().default(2),
   KEEPALIVE_INTERVAL_MS: z.coerce.number().int().positive().default(15000),
+  LITEROUTER_HTTP_REFERER: z.string().default(""),
+  LITEROUTER_X_TITLE: z.string().default(""),
   LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("info"),
 });
 

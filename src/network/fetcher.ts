@@ -1,3 +1,5 @@
+import { getEnv } from "../config/env";
+
 export interface FetcherOptions {
   readonly url: string;
   readonly method: "GET" | "POST";
@@ -105,8 +107,9 @@ function tryEnqueueKeepAlive(controller: ReadableStreamDefaultController<Uint8Ar
 function startKeepAliveTimer(
   controller: ReadableStreamDefaultController<Uint8Array>
 ): IntervalHandle | null {
+  const interval = getEnv().KEEPALIVE_INTERVAL_MS || KEEPALIVE_INTERVAL_MS;
   try {
-    return setInterval(() => tryEnqueueKeepAlive(controller), KEEPALIVE_INTERVAL_MS);
+    return setInterval(() => tryEnqueueKeepAlive(controller), interval);
   } catch (err: unknown) {
     if (err instanceof Error) {
       console.error(`[KeepAlive] Timer error: ${err.message}`);
@@ -126,9 +129,10 @@ type DefaultReadResult = Awaited<ReturnType<ReadableStreamDefaultReader<Uint8Arr
 async function readFirstChunkWithTimeout(
   reader: ReadableStreamDefaultReader<Uint8Array>
 ): Promise<DefaultReadResult> {
+  const timeoutMs = getEnv().LITEROUTER_NO_RESPONSE_TIMEOUT_MS || TTFT_TIMEOUT_MS;
   const readPromise = reader.read();
   const timeoutPromise = new Promise<never>((_, reject) => {
-    setTimeout(() => reject(new NoResponseError(`TTFT exceeded ${TTFT_TIMEOUT_MS}ms`)), TTFT_TIMEOUT_MS);
+    setTimeout(() => reject(new NoResponseError(`TTFT exceeded ${timeoutMs}ms`)), timeoutMs);
   });
   return Promise.race([readPromise, timeoutPromise]);
 }
@@ -217,7 +221,8 @@ export function extractUsageFromChunk(chunk: Uint8Array): UsageCallbackPayload |
 export async function fetchWithTtftGuard(
   options: FetcherOptions
 ): Promise<{ response: Response; ttftMs: number; firstChunk: Uint8Array; rawReader: ReadableStreamDefaultReader<Uint8Array> }> {
-  const signal = mergeSignals(options.clientSignal, MAX_HTTP_TIMEOUT_MS);
+  const timeoutMs = getEnv().LITEROUTER_HTTP_TIMEOUT_MS || MAX_HTTP_TIMEOUT_MS;
+  const signal = mergeSignals(options.clientSignal, timeoutMs);
   const startTime = Date.now();
   const response = await fetch(options.url, {
     method: options.method,
