@@ -104,7 +104,7 @@ export function translateAnthropicToOpenAI(req: AnthropicMessagesRequest): OpenA
     max_tokens: req.max_tokens,
     stream: req.stream,
     temperature: req.temperature,
-    tools: req.tools,
+    tools: translateTools(req.tools),
   };
 }
 
@@ -292,6 +292,11 @@ export async function handleAnthropicCompat(
   });
 
   const openAiRes = await handleOpenAICompat(syntheticReq, rawKey, reqId, { skipInboundLog: true });
+  if (openAiRes.status >= 400) {
+    const errClone = openAiRes.clone();
+    const errText = await errClone.text();
+    logError(reqId, `OpenAI Compat returned HTTP ${openAiRes.status}: ${errText}`);
+  }
 
   if (anthropicBody.stream) {
     return handleStreamingResult(openAiRes, anthropicBody.model);

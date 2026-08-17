@@ -9,6 +9,14 @@
       "context_window": 200000
     },
     {
+      "id": "dots-studio/dots-3-note-preview:free",
+      "provider": "openrouter",
+      "category": "reasoning",
+      "supports_thinking": true,
+      "supports_tools": true,
+      "context_window": 512000
+    },
+    {
       "id": "deepseek/deepseek-r1",
       "provider": "openrouter",
       "category": "reasoning",

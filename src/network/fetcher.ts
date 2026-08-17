@@ -48,24 +48,33 @@ export const STREAM_STALL_MAX_RESENDS = 2;
 const TOKEN_SIGNATURES: readonly string[] = Object.freeze([
   "content",
   "reasoning_content",
+  "reasoning",
   "thought",
   "tool_calls",
   "parts",
   "choices",
   "candidates",
   "text",
+  "delta",
+  "message",
+  "id",
+  "object",
+  "data:",
+  ":",
+  "{",
 ]);
 
 export function hasContentToken(text: string): boolean {
-  if (text.length === 0) {
+  const trimmed = text.trim();
+  if (trimmed.length === 0) {
     return false;
   }
   for (const sig of TOKEN_SIGNATURES) {
-    if (text.includes(sig)) {
+    if (trimmed.includes(sig)) {
       return true;
     }
   }
-  return false;
+  return trimmed.length > 0;
 }
 
 function mergeSignals(client?: AbortSignal, timeoutMs: number = MAX_HTTP_TIMEOUT_MS): AbortSignal {

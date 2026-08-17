@@ -220,6 +220,10 @@ export function scrubUnsupportedParameters(
   delete cleaned.prompt_cache_retrieval;
   delete cleaned.prompt_cache_reset;
 
+  if (typeof cleaned.max_tokens === "number" && cleaned.max_tokens > 65536) {
+    cleaned.max_tokens = 65536;
+  }
+
   if (capabilities && !capabilities.supportsThinking) {
     delete cleaned.thinking;
     delete cleaned.thinkingConfig;

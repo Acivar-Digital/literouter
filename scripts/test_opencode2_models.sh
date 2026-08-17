@@ -32,6 +32,7 @@ echo -e "${GREEN}✓ LiteRouter Gateway is healthy on port 7766${NC}\n"
 
 # Define test matrix: Array of "Provider_Label|Model_Identifier|Test_Prompt"
 TEST_MODELS=(
+  "LR-DOTS (Anthropic)|lr-dots/dots-studio/dots-3-note-preview:free|What is 2+2? Answer in one number."
   "LR-NV (Nvidia)|lr-nv/meta/llama-3.1-8b-instruct|What is 2+2? Answer in one short sentence."
   "LR-OR (OpenRouter)|lr-or/liquid/lfm-2.5-2.6b:free|Reply with exactly the word PONG."
 )

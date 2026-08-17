@@ -21,7 +21,7 @@ To route completions from Antigravity IDE through LiteRouter on `https://localho
 
 2. For Anthropic Claude endpoints:
    - **Base URL:** `https://localhost:7766/v1`
-   - **API Key:** `lr-or-cl-ms-dp`
+   - **API Key:** `lr-or-cl-ch-dp`
    - **Model:** `dots-studio/dots-3-note-preview:free`
 
 ---
