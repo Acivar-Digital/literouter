@@ -1,0 +1,147 @@
+{
+  "$schema": "./fusion.schema.json",
+  "version": "3.1",
+  "presets": {
+    "quad": {
+      "strategy": "sticky_fallback",
+      "timeout_ms": 30000,
+      "models": {
+        "anthropic/claude-3.7-sonnet": {
+          "tiers": [
+            {
+              "priority": 1,
+              "apikey": "lr-or-cl-ms-no",
+              "model": "anthropic/claude-3.7-sonnet"
+            },
+            {
+              "priority": 2,
+              "apikey": "lr-an-cl-ms-no",
+              "model": "claude-3-7-sonnet-20250219"
+            }
+          ]
+        },
+        "deepseek/deepseek-r1": {
+          "tiers": [
+            {
+              "priority": 1,
+              "apikey": "lr-nv-oa-ch-ts",
+              "model": "deepseek-ai/deepseek-r1"
+            },
+            {
+              "priority": 2,
+              "apikey": "lr-or-oa-ch-ts",
+              "model": "deepseek/deepseek-r1"
+            }
+          ]
+        },
+        "gemini-2.5-pro": {
+          "tiers": [
+            {
+              "priority": 1,
+              "apikey": "lr-gg-oa-ob-dp",
+              "model": "gemini-2.5-pro"
+            },
+            {
+              "priority": 2,
+              "apikey": "lr-or-oa-ch-no",
+              "model": "google/gemini-2.5-pro"
+            }
+          ]
+        }
+      }
+    },
+    "pydn": {
+      "strategy": "sticky_fallback",
+      "timeout_ms": 25000,
+      "models": {
+        "deepseek-reasoner": {
+          "tiers": [
+            {
+              "priority": 1,
+              "apikey": "lr-ds-oa-ch-ts",
+              "model": "deepseek-reasoner"
+            },
+            {
+              "priority": 2,
+              "apikey": "lr-nv-oa-ch-ts",
+              "model": "deepseek-ai/deepseek-r1"
+            }
+          ]
+        },
+        "claude-3-7-sonnet": {
+          "tiers": [
+            {
+              "priority": 1,
+              "apikey": "lr-an-cl-ms-no",
+              "model": "claude-3-7-sonnet-20250219"
+            },
+            {
+              "priority": 2,
+              "apikey": "lr-or-cl-ms-no",
+              "model": "anthropic/claude-3.7-sonnet"
+            }
+          ]
+        }
+      }
+    },
+    "fast": {
+      "strategy": "sticky_fallback",
+      "timeout_ms": 15000,
+      "models": {
+        "gemini-3.1-flash-lite": {
+          "tiers": [
+            {
+              "priority": 1,
+              "apikey": "lr-gg-oa-ob-dp",
+              "model": "gemini-3.1-flash-lite"
+            },
+            {
+              "priority": 2,
+              "apikey": "lr-or-oa-ch-no",
+              "model": "google/gemini-3.1-flash-lite"
+            }
+          ]
+        },
+        "llama-3.3-70b": {
+          "tiers": [
+            {
+              "priority": 1,
+              "apikey": "lr-gq-oa-ch-no",
+              "model": "llama-3.3-70b-versatile"
+            },
+            {
+              "priority": 2,
+              "apikey": "lr-cb-oa-ch-no",
+              "model": "llama-3.3-70b"
+            }
+          ]
+        }
+      }
+    },
+    "deep": {
+      "strategy": "sticky_fallback",
+      "timeout_ms": 45000,
+      "models": {
+        "deepseek-r1": {
+          "tiers": [
+            {
+              "priority": 1,
+              "apikey": "lr-nv-oa-ch-ts",
+              "model": "deepseek-ai/deepseek-r1"
+            },
+            {
+              "priority": 2,
+              "apikey": "lr-ds-oa-ch-ts",
+              "model": "deepseek-reasoner"
+            },
+            {
+              "priority": 3,
+              "apikey": "lr-or-oa-ch-ts",
+              "model": "deepseek/deepseek-r1"
+            }
+          ]
+        }
+      }
+    }
+  }
+}

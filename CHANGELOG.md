@@ -2,7 +2,22 @@
 
 All notable changes to LiteRouter will be documented in this file.
 
-## [3.4.1] — 2026-08-17
+## [3.5.0] — 2026-08-17
+
+### Added / Upgrade 3.3 Visual Telemetry & Terminal UI
+- **Multi-Line Inbound Request Logging (`src/ui/logger.ts`)** — Restored full Upgrade 3.3 multi-line telemetry for all incoming requests across `/v1/chat/completions`, `/v1/messages`, and `/v1beta/models/*`. Logs show Request ID, Method, Path, Client User-Agent, Directive Token, Target Provider, Wire Format, Upstream Endpoint, Model identifier, Active Key Index (`Key #X/Y`), and Nuance modifiers (`[dp, ts]`).
+- **Live Stream TTFT & Token Speed Telemetry** — Added real-time Time-To-First-Token emission (`🟢 [TTFT reqId] TTFT = Xms | Stream established`) and live token accounting (`🟢 [USAGE reqId] Provider (Key #X/Y) | Tokens: Prompt=X | Reasoning=Y | Completion=Z | Total=N | Speed=X.X tok/s`) directly into stdout for streaming and non-streaming responses.
+- **Key Rotation & Attempt Round Visibility** — Explicitly tracks and logs key rotation events (`🔄 [ROTATE reqId] Advancing to Provider [Key #X/Y] -> Retrying immediately (Attempt 2/3)`) and rate limit cooldown quarantines with parsed `Retry-After` headers.
+- **Visual Section Dividers (`logSeparator`)** — Clean terminal boundary lines separating discrete request lifecycles during high-concurrency agent sessions.
+
+### Added / OpenCode v2 Multi-Provider Support & Client Suite
+- **Declarative OpenCode 2 Provider Directives** — Added support for `lr-dots` (`@ai-sdk/anthropic` with `lr-or-cl-ms-dp`), `lr-or` (`@ai-sdk/openai-compatible` with `lr-or-oa-ch-no`), `lr-nv` (`@ai-sdk/openai-compatible` with `lr-nv-oa-ch-no`), `lr-zn` (`@ai-sdk/openai-compatible` with `lr-zn-oa-ch-no`), and `lr-gg` (`@ai-sdk/openai-compatible` with `lr-gg-oa-ob-gm`).
+- **Client Cache Tag Sanitizer** — Automatically strips client cache keys (`prompt_cache_key`, `prompt_cache_retrieval`, `prompt_cache_reset`) to prevent HTTP 400 validation rejections from strict upstream providers (NVIDIA NIM).
+- **Automated Verification Script (`scripts/test_opencode2_models.sh`)** — Executable multi-provider CLI test runner validating live streaming and model routing end-to-end.
+
+### Documentation & Skills
+- **`literouter-playbook` Skill Modernization** — Complete rewrite of all 7 guide documents in `.opencode/skills/literouter-playbook/` (`SKILL.md`, `setup.md`, `setup_checklist.md`, `troubleshoot.md`, `opencode2-playbook.md`, `antigravity.md`, `agy-ide-setup.md`) reflecting declarative directive architecture and full visual telemetry.
+
 
 ### Added / Dots Tool-Calling Polyfill
 - **Modular Dots XML Transformer (`src/transformers/dots.ts`)** — Added dedicated streaming and non-streaming XML tool-calling polyfill. Automatically intercepts `<dots_function_call>` and `<invoke name="...">` XML tags emitted into plain text by Dots Studio preview models (`dots-studio/dots-3-note-preview:free`) and translates them into OpenAI-standard JSON `tool_calls` and SSE deltas for OpenCode 2 and agentic CLI execution.

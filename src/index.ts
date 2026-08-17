@@ -1,865 +1,207 @@
-import { file, serve } from "bun";
-import http2 from "node:http2";
-import Redis from "ioredis";
-import { realpathSync } from "fs";
-import * as fs from "fs";
-import * as path from "path";
-import { normalize, resolve } from "path";
+import { existsSync, readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import type { Server } from "bun";
+import { getEnv } from "./config/env";
+import { loadKeyPools } from "./config/keys";
+import { parseDirective } from "./directive/parser";
+import { extractDirectiveToken } from "./directive/validator";
+import { handleAnthropicCompat } from "./handlers/anthropic_compat";
+import { handleModelsDiscovery } from "./handlers/discovery";
+import { handleGoogleNative, handleGoogleOpenAIBeta } from "./handlers/google_native";
 import {
-  COOLDOWN_AUTH_TTL_SEC,
-  COOLDOWN_DEFAULT_TTL_SEC,
-  COOLDOWN_RATE_LIMIT_TTL_SEC,
-  COOLDOWN_TTL_MAX_SEC,
-  COOLDOWN_TTL_MIN_SEC,
-  COOLDOWN_TIMEOUT_TTL_SEC,
-  FUSION_CIRCUIT_TTL_MS,
-  FUSION_STICKY_TTL_MS,
-  LITEROUTER_AUTH_KEY,
-  LITEROUTER_HTTP_TIMEOUT_MS,
-  LITEROUTER_PORT,
-  LITEROUTER_ROTATE_DELAY_MS,
-  LITEROUTER_TLS_CERT,
-  LITEROUTER_TLS_ENABLED,
-  LITEROUTER_TLS_KEY,
-  MIN_ROTATE_DELAY_MS,
-  PROVIDER_API_URLS,
-  REDIS_DB,
-  REDIS_HOST,
-  REDIS_PASSWORD,
-  REDIS_PORT,
-  clamp,
-  getModelLimits,
-  staticValidateKeys,
-} from "./config/env";
-import { StreamMeta } from "./transformers/payload";
-import { executeOpenAICompat } from "./handlers/openai_compat";
-import {
-  executeGoogleInteractions,
-  executeGoogleNative,
-} from "./handlers/google_native";
+  globalCooldownManager,
+  globalKeyPool,
+  handleOpenAICompat,
+  initializeKeyPools,
+} from "./handlers/openai_compat";
+import { type BannerOptions, printBanner } from "./ui/banner";
+import { logError } from "./ui/logger";
 
-// ============================================================================
-// 0. Emoji State Logging & Trace Archive
-// ============================================================================
+function loadTlsOptions(): { cert: string; key: string } | undefined {
+  const certPath = resolve(process.cwd(), "certs", "localhost.pem");
+  const keyPath = resolve(process.cwd(), "certs", "localhost-key.pem");
 
-const ROOT_DIR = import.meta.dir
-  ? path.resolve(import.meta.dir, "..")
-  : process.cwd();
-
-function logTimestamp(): string {
-  const d = new Date();
-  const p = (n: number, w: number) => String(n).padStart(w, "0");
-  return `${p(d.getMonth() + 1, 2)}-${p(d.getDate(), 2)}-${p(d.getHours(), 2)}:${p(d.getMinutes(), 2)}:${p(d.getSeconds(), 2)}:${p(d.getMilliseconds(), 3)}`;
-}
-
-export function logState(emoji: string, msg: string): void {
-  console.log(`${emoji} [${logTimestamp()}] ${msg}`);
-}
-export function logWarn(emoji: string, msg: string): void {
-  console.warn(`${emoji} [${logTimestamp()}] ${msg}`);
-}
-export function logError(emoji: string, msg: string): void {
-  console.error(`${emoji} [${logTimestamp()}] ${msg}`);
-}
-
-export const EMOJI = {
-  inbound: "🔵",
-  rotate: "🔄",
-  amber: "🟡",
-  limit: "⚠️",
-  exhausted: "🔴",
-  served: "🟢",
-  boot: "🚀",
-  error: "💥",
-  fusion: "🔗",
-  trace: "📝",
-};
-
-const TRACES_DIR = path.resolve(ROOT_DIR, "logs", "traces");
-
-function isPathWithinBase(target: string, base: string): boolean {
-  const resolved = normalize(resolve(target));
-  const baseResolved = normalize(resolve(base));
-  if (resolved !== baseResolved && !resolved.startsWith(baseResolved + "/")) {
-    return false;
-  }
-  try {
-    const realResolved = normalize(realpathSync(resolved));
-    const baseReal = normalize(realpathSync(base));
-    return (
-      realResolved === baseReal || realResolved.startsWith(baseReal + "/")
-    );
-  } catch {
-    return false;
-  }
-}
-
-function clearTraces(): void {
-  try {
-    if (fs.existsSync(TRACES_DIR)) {
-      for (const f of fs.readdirSync(TRACES_DIR)) {
-        const full = path.join(TRACES_DIR, f);
-        if (!isPathWithinBase(full, TRACES_DIR)) {
-          logWarn(EMOJI.warn, `Skipping suspicious trace entry: ${f}`);
-          continue;
-        }
-        fs.rmSync(full, { force: true });
-      }
-    } else {
-      fs.mkdirSync(TRACES_DIR, { recursive: true });
-    }
-    logState(EMOJI.trace, `Trace archive cleared at boot (${TRACES_DIR})`);
-  } catch (e) {
-    logError(EMOJI.error, `Failed to clear trace archive: ${e}`);
-  }
-}
-
-export function recordTrace(
-  reqId: string,
-  part: "downstream" | "upstream",
-  payload: unknown,
-  meta: { model: string; provider: string; status?: number },
-): void {
-  void (async () => {
+  if (existsSync(certPath) && existsSync(keyPath)) {
     try {
-      fs.mkdirSync(TRACES_DIR, { recursive: true });
-      const file = path.join(TRACES_DIR, `${reqId}.json`);
-      let record: any = {};
-      if (fs.existsSync(file)) {
-        try {
-          record = JSON.parse(fs.readFileSync(file, "utf-8"));
-        } catch {
-          record = {};
-        }
-      }
-      record.reqId = reqId;
-      record.model = meta.model;
-      record.provider = meta.provider;
-      if (meta.status !== undefined) record.status = meta.status;
-      record.ts = record.ts || new Date().toISOString();
-      record[part] = payload;
-      fs.writeFileSync(file, JSON.stringify(record, null, 2), { mode: 0o600 });
-    } catch (e) {
-      logError(EMOJI.error, `Trace write failed for ${reqId}/${part}: ${e}`);
+      const cert = readFileSync(certPath, "utf-8");
+      const key = readFileSync(keyPath, "utf-8");
+      return { cert, key };
+    } catch (err) {
+      logError("BOOT", "Failed to read TLS certificates", err);
+      return undefined;
     }
-  })();
+  }
+  return undefined;
 }
 
-export function sinkUsage(meta: StreamMeta, usage: any, ttftMs?: number) {
-  if (usage) {
-    logState(
-      EMOJI.served,
-      `[USAGE ${meta.reqId}] provider=${meta.provider} model=${meta.upstream_model} prompt=${usage.prompt_tokens ?? "?"} completion=${usage.completion_tokens ?? "?"} total=${usage.total_tokens ?? "?"}`,
-    );
-    router.recordUsage(meta.provider, meta.activeKey, meta.modelName, usage);
-  }
-  if (ttftMs != null) {
-    logState(
-      EMOJI.served,
-      `[TTFT ${meta.reqId}] provider=${meta.provider} model=${meta.upstream_model} ${ttftMs}ms`,
-    );
-  }
-}
-
-// ============================================================================
-// 1. API Keys & Registry Loading
-// ============================================================================
-
-export const API_KEYS = {
-  google: staticValidateKeys("GOOGLE", Bun.env.GOOGLE_API_KEYS || ""),
-  nvidia: staticValidateKeys("NVIDIA", Bun.env.NVIDIA_API_KEYS || ""),
-  openrouter: staticValidateKeys(
-    "OPENROUTER",
-    Bun.env.OPENROUTER_API_KEYS || "",
-  ),
-  zen: staticValidateKeys("ZEN", Bun.env.ZEN_API_KEYS || ""),
-};
-
-interface ModelMeta {
-  provider: string;
-  upstream_model: string;
-  api_url: string;
-}
-
-export const MODEL_REGISTRY = new Map<string, ModelMeta>();
-export const FUSION_GROUPS = new Map<
-  string,
-  { description: string; chain: string[]; upstream?: string }
->();
-
-function loadRegistries() {
-  try {
-    const modelsPath = path.resolve(ROOT_DIR, "models.json");
-    const modelsData = JSON.parse(fs.readFileSync(modelsPath, "utf-8"));
-    for (const m of modelsData) {
-      const provider = (m.provider || "").toLowerCase();
-      const apiUrl = PROVIDER_API_URLS[provider];
-      if (apiUrl) {
-        MODEL_REGISTRY.set(m.system_id, {
-          provider,
-          upstream_model: m.upstream_id,
-          api_url: apiUrl,
-        });
-      }
-    }
-    console.log(`Loaded ${MODEL_REGISTRY.size} models from models.json`);
-  } catch (e) {
-    console.error("Failed to load models.json:", e);
-    process.exit(1);
-  }
-
-  try {
-    const fusionPath = path.resolve(ROOT_DIR, "fusion.json");
-    if (fs.existsSync(fusionPath)) {
-      const fusionData = JSON.parse(fs.readFileSync(fusionPath, "utf-8"));
-      for (const [id, data] of Object.entries(fusionData)) {
-        FUSION_GROUPS.set(id, data as any);
-      }
-      console.log(
-        `Loaded ${FUSION_GROUPS.size} fusion groups from fusion.json`,
-      );
-    }
-  } catch (e) {
-    console.error("Failed to load fusion.json:", e);
-  }
-}
-loadRegistries();
-clearTraces();
-
-// ============================================================================
-// 2. Redis Router (ZSET + Lua Quota & Cooldowns)
-// ============================================================================
-
-const QUOTA_CHECK_SCRIPT = `
-local key = KEYS[1]
-local now = tonumber(ARGV[1])
-local max_rpm = tonumber(ARGV[2])
-local max_tpm = tonumber(ARGV[3])
-local estimated_tokens = tonumber(ARGV[4])
-local member_string = ARGV[5]
-
-redis.call('ZREMRANGEBYSCORE', key, '-inf', now - 60)
-local members = redis.call('ZRANGEBYSCORE', key, now - 60, now)
-
-local current_rpm = #members
-local current_tpm = 0
-
-for i=1, #members do
-    local mem = members[i]
-    local colon_idx = string.find(mem, ":")
-    if colon_idx then
-        local tokens = tonumber(string.sub(mem, colon_idx + 1))
-        if tokens then
-            current_tpm = current_tpm + tokens
-        end
-    end
-end
-
-if current_rpm >= max_rpm or (current_tpm + estimated_tokens) > max_tpm then
-    return {0, current_rpm, current_tpm}
-else
-    redis.call('ZADD', key, now, member_string)
-    redis.call('EXPIRE', key, 120)
-    return {1, current_rpm, current_tpm}
-end
-`;
-
-export class ModelFirstRouter {
-  private redis: Redis;
-  private scriptSha: string | null = null;
-  private lastUsed = new Map<string, number>();
-  private nextIndex = new Map<string, number>();
-
-  constructor() {
-    this.redis = new Redis({
-      host: REDIS_HOST,
-      port: REDIS_PORT,
-      password: REDIS_PASSWORD,
-      db: REDIS_DB,
-      lazyConnect: true,
-    });
-    this.redis.on("error", (err) => {
-      logError(EMOJI.error, `Redis error: ${err} — exiting (no fallback)`);
-      process.exit(1);
-    });
-  }
-
-  async connect() {
-    try {
-      await this.redis!.connect();
-      await this.redis!.flushall();
-      this.scriptSha = await this.redis!.script("LOAD", QUOTA_CHECK_SCRIPT);
-      console.log("Connected to Redis/Valkey. Flushed state & loaded Lua script.");
-    } catch (e) {
-      logError(EMOJI.error, `Failed to connect to Redis. Exiting (no fallback): ${e}`);
-      process.exit(1);
-    }
-  }
-
-  private hashKey(key: string): string {
-    return new Bun.CryptoHasher("sha256")
-      .update(key)
-      .digest("hex")
-      .substring(0, 16);
-  }
-
-  private getMinDelayMs(provider: string): number {
-    const envOverride = Bun.env[`${provider.toUpperCase()}_MIN_DELAY_MS`] as
-      | string
-      | undefined;
-    return Math.max(
-      envOverride ? parseInt(envOverride, 10) : LITEROUTER_ROTATE_DELAY_MS,
-      MIN_ROTATE_DELAY_MS,
-    );
-  }
-
-  async getAvailableKey(
-    provider: string,
-    modelName: string,
-    estimatedTokens: number,
-  ): Promise<{ key: string; currentRpm: number }> {
-    const keys = API_KEYS[provider as keyof typeof API_KEYS] || [];
-    if (!keys.length) {
-      throw new Error(`No keys configured for provider: ${provider}`);
-    }
-
-    const limits = getModelLimits(modelName, provider);
-    const now = Date.now() / 1000;
-    const minDelay = this.getMinDelayMs(provider) / 1000.0;
-    const startIdx = this.nextIndex.get(provider) || 0;
-    const n = keys.length;
-
-    let lruCandidate: { key: string; idx: number; lastUsed: number } | null =
-      null;
-
-    for (let i = 0; i < n; i++) {
-      const idx = (startIdx + i) % n;
-      const key = keys[idx];
-      const keyHash = this.hashKey(key);
-      const lastUsedKey = `${provider}:${keyHash}`;
-      const cooldownKey = `cooldown:${provider}:${keyHash}:${modelName}`;
-
-      if (await this.redis.exists(cooldownKey)) continue;
-
-      const lastUsedTime = this.lastUsed.get(lastUsedKey) || 0;
-      const elapsed = now - lastUsedTime;
-
-      if (elapsed < minDelay) {
-        if (!lruCandidate || lastUsedTime < lruCandidate.lastUsed) {
-          lruCandidate = { key, idx, lastUsed: lastUsedTime };
-        }
-        continue;
-      }
-
-      const rollingKey = `rolling:${provider}:${keyHash}:${modelName}`;
-      const member = `${Date.now()}-${Math.random().toString(36).substring(2, 10)}:${estimatedTokens}`;
-
-      let res: any;
-      try {
-        res = await this.redis.evalsha(
-          this.scriptSha!,
-          1,
-          rollingKey,
-          now,
-          limits.max_rpm,
-          limits.max_tpm,
-          estimatedTokens,
-          member,
-        );
-      } catch (e) {
-        // REQUIREMENT: Fail silently here because the Redis script-loading fallback
-        // (via bound eval reference) restores quota correctness when evalsha fails.
-        const redisEval = this.redis.eval.bind(this.redis);
-        res = await redisEval(
-          QUOTA_CHECK_SCRIPT,
-          1,
-          rollingKey,
-          now,
-          limits.max_rpm,
-          limits.max_tpm,
-          estimatedTokens,
-          member,
-        );
-      }
-
-      if (res[0] === 0) continue;
-
-      this.lastUsed.set(lastUsedKey, now);
-      this.nextIndex.set(provider, (idx + 1) % n);
-      return { key, currentRpm: res[1] };
-    }
-
-    if (lruCandidate) {
-      const { key, idx } = lruCandidate;
-      const keyHash = this.hashKey(key);
-      const rollingKey = `rolling:${provider}:${keyHash}:${modelName}`;
-      const member = `${Date.now()}-${Math.random().toString(36).substring(2, 10)}:${estimatedTokens}`;
-
-      let res: any;
-      try {
-        res = await this.redis.evalsha(
-          this.scriptSha!,
-          1,
-          rollingKey,
-          now,
-          limits.max_rpm,
-          limits.max_tpm,
-          estimatedTokens,
-          member,
-        );
-      } catch (e) {
-        // REQUIREMENT: Fail silently here because the Redis script-loading fallback
-        // (via bound eval reference) restores quota correctness when evalsha fails.
-        const redisEval = this.redis.eval.bind(this.redis);
-        res = await redisEval(
-          QUOTA_CHECK_SCRIPT,
-          1,
-          rollingKey,
-          now,
-          limits.max_rpm,
-          limits.max_tpm,
-          estimatedTokens,
-          member,
-        );
-      }
-
-      if (res[0] === 1) {
-        this.lastUsed.set(`${provider}:${keyHash}`, now);
-        this.nextIndex.set(provider, (idx + 1) % n);
-        return { key, currentRpm: res[1] };
-      }
-    }
-
-    throw new Error(
-      `All keys for ${provider} are in cooldown or have exhausted quota for model ${modelName}.`,
-    );
-  }
-
-  async reportError(
-    provider: string,
-    key: string,
-    errorType: string,
-    modelName: string,
-    ttlOverride?: number | null,
-  ) {
-    if (!this.redis) return;
-    const keyHash = this.hashKey(key);
-    const cooldownKey = `cooldown:${provider}:${keyHash}:${modelName}`;
-
-    let ttl = COOLDOWN_DEFAULT_TTL_SEC;
-    let state = `error_${errorType}`;
-
-    if (["429", "rate_limit"].includes(errorType)) {
-      ttl = COOLDOWN_RATE_LIMIT_TTL_SEC;
-      state = "rate_limited";
-    } else if (
-      ["timeout", "500", "502", "503", "504"].includes(errorType)
-    ) {
-      ttl = COOLDOWN_TIMEOUT_TTL_SEC;
-      state = "timed_out";
-    } else if (
-      ["401", "403", "auth", "permission_denied"].includes(errorType)
-    ) {
-      ttl = COOLDOWN_AUTH_TTL_SEC;
-      state = "quarantined";
-    }
-
-    if (ttlOverride && ttlOverride > 0) {
-      ttl = clamp(ttlOverride, COOLDOWN_TTL_MIN_SEC, COOLDOWN_TTL_MAX_SEC);
-    }
-
-    if (
-      ["429", "rate_limit"].includes(errorType) &&
-      ttlOverride &&
-      ttlOverride > 0
-    ) {
-      ttl = Math.max(clamp(ttlOverride, COOLDOWN_TTL_MIN_SEC, COOLDOWN_TTL_MAX_SEC), COOLDOWN_RATE_LIMIT_TTL_SEC);
-    }
-
-    if (provider === "google" || provider === "nvidia") {
-      ttl = Math.max(ttl, COOLDOWN_RATE_LIMIT_TTL_SEC);
-    }
-
-    await this.redis.set(cooldownKey, state, "EX", ttl);
-    console.error(
-      `[${provider.toUpperCase()}] Placed key ${keyHash} on ${state} cooldown for ${modelName} (TTL ${ttl}s)`,
-    );
-  }
-
-  async recordUsage(
-    provider: string,
-    key: string,
-    modelName: string,
-    usage: {
-      prompt_tokens?: number;
-      completion_tokens?: number;
-      total_tokens?: number;
+function handleHardReset(): Response {
+  globalCooldownManager.clearAll();
+  globalKeyPool.reset();
+  initializeKeyPools();
+  return Response.json(
+    {
+      status: "ok",
+      message: "Hard reset successful. Cooldowns and key pools reloaded.",
+      timestamp: new Date().toISOString(),
     },
-  ) {
-    if (!this.redis) return;
-    const hkey = `usage:${provider}:${modelName}`;
-    try {
-      await this.redis.hincrby(hkey, "prompt_tokens", usage.prompt_tokens || 0);
-      await this.redis.hincrby(
-        hkey,
-        "completion_tokens",
-        usage.completion_tokens || 0,
-      );
-      await this.redis.hincrby(hkey, "total_tokens", usage.total_tokens || 0);
-      await this.redis.expire(hkey, 60 * 60 * 24 * 30);
-    } catch (e) {
-      logWarn(EMOJI.warn, `Usage tracking failed for ${provider}/${modelName}: ${e}`);
-    }
-  }
-}
-
-export const router = new ModelFirstRouter();
-router.connect();
-
-// ============================================================================
-// 3. Fusion State (In-Memory Circuit Breaker & Sticky Fallback)
-// ============================================================================
-
-const CIRCUIT_TTL = FUSION_CIRCUIT_TTL_MS;
-const STICKY_TTL = FUSION_STICKY_TTL_MS;
-
-const circuitOpenUntil = new Map<string, number>();
-const stickyPosition = new Map<
-  string,
-  { upstreamId: string; expiry: number }
->();
-
-function openCircuit(upstreamId: string) {
-  circuitOpenUntil.set(upstreamId, Date.now() + CIRCUIT_TTL);
-}
-function closeCircuit(upstreamId: string) {
-  circuitOpenUntil.delete(upstreamId);
-}
-function isCircuitOpen(upstreamId: string) {
-  return Date.now() < (circuitOpenUntil.get(upstreamId) || 0);
-}
-
-function getStickyStart(groupId: string, chain: string[]): number {
-  const entry = stickyPosition.get(groupId);
-  if (!entry) return 0;
-  if (Date.now() >= entry.expiry) {
-    stickyPosition.delete(groupId);
-    return 0;
-  }
-  const idx = chain.indexOf(entry.upstreamId);
-  return idx > 0 ? idx : 0;
-}
-function setSticky(groupId: string, upstreamId: string) {
-  stickyPosition.set(groupId, { upstreamId, expiry: Date.now() + STICKY_TTL });
-}
-function clearSticky(groupId: string) {
-  stickyPosition.delete(groupId);
-}
-
-async function executeFusion(
-  groupId: string,
-  group: any,
-  reqJson: any,
-  headers: Headers,
-  queryParams: URLSearchParams,
-  isNativeRoute: boolean,
-  action: string,
-  reqId?: string,
-  signal?: AbortSignal,
-): Promise<Response> {
-  const isNativeUpstream =
-    isNativeRoute || (group.upstream?.includes("/v1beta") ?? false);
-  const chain: string[] = group.chain;
-  const startIdx = getStickyStart(groupId, chain);
-  logState(
-    EMOJI.fusion,
-    `[FUSION ${reqId}] group=${groupId} chain=${chain.join("->")} start=${chain[startIdx]}`,
-  );
-
-  for (let i = startIdx; i < chain.length; i++) {
-    const upstreamId = chain[i];
-    if (isCircuitOpen(upstreamId)) continue;
-
-    let resp: Response;
-    if (isNativeUpstream) {
-      resp = await executeGoogleNative(
-        upstreamId,
-        action || "generateContent",
-        queryParams,
-        reqJson,
-        headers,
-        upstreamId,
-        true,
-        reqId,
-        signal,
-      );
-    } else {
-      resp = await executeOpenAICompat(
-        upstreamId,
-        reqJson,
-        headers,
-        upstreamId,
-        true,
-        reqId,
-        signal,
-      );
-    }
-
-    if (resp.status === 429 || resp.status >= 500) {
-      openCircuit(upstreamId);
-      logWarn(
-        EMOJI.rotate,
-        `[FUSION ${reqId}] ${groupId} -> ${upstreamId} failed (${resp.status}), advancing chain.`,
-      );
-      continue;
-    }
-
-    if (resp.status >= 400 && resp.status < 500) {
-      logWarn(
-        EMOJI.limit,
-        `[FUSION ${reqId}] ${groupId} -> ${upstreamId} halted on client error (${resp.status}).`,
-      );
-      return resp;
-    }
-
-    closeCircuit(upstreamId);
-    if (i > 0) setSticky(groupId, upstreamId);
-    else clearSticky(groupId);
-
-    return resp;
-  }
-
-  return new Response(
-    JSON.stringify({
-      error: "All fusion backends exhausted",
-      model: groupId,
-      attempted: chain,
-    }),
-    { status: 429 },
+    { status: 200 }
   );
 }
 
-function verifyAuthKey(req: Request, url: URL): boolean {
-  if (!LITEROUTER_AUTH_KEY) return true;
-  const authHeader = req.headers.get("Authorization") || "";
-  if (authHeader.startsWith("Bearer ")) {
-    if (authHeader.slice(7).trim() === LITEROUTER_AUTH_KEY) return true;
-  }
-  const googKey = req.headers.get("x-goog-api-key") || "";
-  if (googKey.trim() === LITEROUTER_AUTH_KEY) return true;
-  const queryKey = url.searchParams.get("key") || "";
-  if (queryKey.trim() === LITEROUTER_AUTH_KEY) return true;
-  return false;
+function handleHealthCheck(): Response {
+  return Response.json(
+    {
+      status: "healthy",
+      uptime: process.uptime(),
+      timestamp: new Date().toISOString(),
+    },
+    { status: 200 }
+  );
 }
 
-// ============================================================================
-// 4. Server Entry Point & HTTP/2 ALPN Support
-// ============================================================================
+type RouteHandler = (req: Request, rawKey: string, reqId: string) => Promise<Response>;
 
-async function handleWebRequest(
-  req: Request,
-  protocolHint: string = "HTTP/1.1",
-): Promise<Response> {
+const ROUTE_MAP: Readonly<Record<string, RouteHandler>> = {
+  "/v1/chat/completions": handleOpenAICompat,
+  "/v1/messages": handleAnthropicCompat,
+};
+
+const SYSTEM_MAP: Readonly<Record<string, () => Response>> = {
+  "/health": handleHealthCheck,
+  "/reset": handleHardReset,
+};
+
+function dispatchModelsRoute(path: string, req: Request, rawKey: string): Promise<Response> | null {
+  if (path === "/v1/models" || path === "/v1beta/models") {
+    if (!rawKey) {
+      return Promise.resolve(
+        Response.json(
+          {
+            error: {
+              message: "Missing API key directive. Directives format: lr-<prov>-<payload>-<compl>-<nuances>",
+              type: "invalid_request_error",
+              code: "invalid_api_key",
+            },
+          },
+          { status: 401 }
+        )
+      );
+    }
+    const directive = parseDirective(rawKey);
+    if (!directive) {
+      return Promise.resolve(
+        Response.json(
+          {
+            error: {
+              message: `Invalid API key directive '${rawKey}'. Must follow lr-<provider>-<payload>-<completions>-<nuance>`,
+              type: "invalid_request_error",
+              code: "invalid_api_key",
+            },
+          },
+          { status: 401 }
+        )
+      );
+    }
+    return handleModelsDiscovery(req, directive);
+  }
+  return null;
+}
+
+function dispatchGoogleBeta(path: string, req: Request, rawKey: string, reqId: string): Promise<Response> | null {
+  if (path.startsWith("/v1beta/openai/")) {
+    return handleGoogleOpenAIBeta(req, rawKey, reqId);
+  }
+  if (path.startsWith("/v1beta/models/")) {
+    return handleGoogleNative(req, rawKey, reqId);
+  }
+  return null;
+}
+
+async function dispatchRoute(req: Request, rawKey: string, reqId: string): Promise<Response> {
   const url = new URL(req.url);
-  if (!verifyAuthKey(req, url)) {
-    return new Response("Unauthorized", { status: 401 });
-  }
-  const reqId = crypto.randomUUID();
-  const bodyText = await req.text();
-  let reqJson: any = {};
-  if (bodyText) {
-    try {
-      reqJson = JSON.parse(bodyText);
-    } catch (e) {
-      logWarn(EMOJI.warn, `JSON parse failed for request body: ${e}`);
-    }
+  const path = url.pathname;
+
+  const sysHandler = SYSTEM_MAP[path];
+  if (sysHandler) {
+    return sysHandler();
   }
 
-  if (url.pathname === "/v1/chat/completions") {
-    const modelName = reqJson.model;
-    if (!modelName) {
-      return new Response(
-        JSON.stringify({ error: "Missing 'model' in request" }),
-        { status: 400 },
-      );
-    }
-
-    if (FUSION_GROUPS.has(modelName)) {
-      return executeFusion(
-        modelName,
-        FUSION_GROUPS.get(modelName)!,
-        reqJson,
-        req.headers,
-        url.searchParams,
-        false,
-        "",
-        reqId,
-        req.signal,
-      );
-    }
-    return executeOpenAICompat(
-      modelName,
-      reqJson,
-      req.headers,
-      undefined,
-      false,
-      reqId,
-      req.signal,
-    );
+  const modelsRes = dispatchModelsRoute(path, req, rawKey);
+  if (modelsRes !== null) {
+    return modelsRes;
   }
 
-  if (
-    url.pathname === "/v1beta/interactions" ||
-    url.pathname === "/v1/interactions"
-  ) {
-    return executeGoogleInteractions(reqJson, req.headers, reqId, req.signal);
+  const directHandler = ROUTE_MAP[path];
+  if (directHandler) {
+    return directHandler(req, rawKey, reqId);
   }
 
-  const nativeMatch = url.pathname.match(
-    /^\/v1beta\/(?:models\/)?([^:]+)(?::(.*))?$/,
-  );
-  if (nativeMatch) {
-    const modelName = nativeMatch[1];
-    const action = nativeMatch[2] || "generateContent";
-
-    if (FUSION_GROUPS.has(modelName)) {
-      return executeFusion(
-        modelName,
-        FUSION_GROUPS.get(modelName)!,
-        reqJson,
-        req.headers,
-        url.searchParams,
-        true,
-        action,
-        reqId,
-        req.signal,
-      );
-    }
-    return executeGoogleNative(
-      modelName,
-      action,
-      url.searchParams,
-      reqJson,
-      req.headers,
-      undefined,
-      false,
-      reqId,
-      req.signal,
-    );
+  const betaRes = dispatchGoogleBeta(path, req, rawKey, reqId);
+  if (betaRes !== null) {
+    return betaRes;
   }
 
-  if (url.pathname === "/v1/models" || url.pathname === "/models") {
-    const modelList: Array<{
-      id: string;
-      object: string;
-      created: number;
-      owned_by: string;
-    }> = [];
-    const seen = new Set<string>();
-
-    // 1. Models from models.json (MODEL_REGISTRY)
-    for (const [id, meta] of MODEL_REGISTRY.entries()) {
-      if (!seen.has(id)) {
-        seen.add(id);
-        modelList.push({
-          id,
-          object: "model",
-          created: 1700000000,
-          owned_by: meta.provider || "literouter",
-        });
-      }
-    }
-
-    // 2. Fusion groups from fusion.json (FUSION_GROUPS)
-    for (const id of FUSION_GROUPS.keys()) {
-      if (!seen.has(id)) {
-        seen.add(id);
-        modelList.push({
-          id,
-          object: "model",
-          created: 1700000000,
-          owned_by: "literouter-fusion",
-        });
-      }
-    }
-
-    // 3. Fallback/chain models from fusion groups
-    for (const group of FUSION_GROUPS.values()) {
-      if (Array.isArray(group.chain)) {
-        for (const chainModel of group.chain) {
-          if (!seen.has(chainModel)) {
-            seen.add(chainModel);
-            const provider = chainModel.split("/")[0] || "custom";
-            modelList.push({
-              id,
-              object: "model",
-              created: 1700000000,
-              owned_by: provider,
-            });
-          }
-        }
-      }
-    }
-
-    return new Response(
-      JSON.stringify({
-        object: "list",
-        data: modelList,
-      }),
-      {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      },
-    );
-  }
-
-  if (url.pathname === "/health") {
-    return new Response(
-      JSON.stringify({
-        status: "ok",
-        tls: LITEROUTER_TLS_ENABLED,
-        protocol: protocolHint,
-        port: LITEROUTER_PORT,
-      }),
-      {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      },
-    );
-  }
-
-  return new Response("Not found", { status: 404 });
+  return Response.json({ error: { message: `Not Found: ${path}`, type: "invalid_request_error" } }, { status: 404 });
 }
 
-// ============================================================================
-// 4. Server Entry Point (Native Bun.serve TLS ALPN)
-// ============================================================================
+export function resetAllState(): void {
+  globalCooldownManager.clearAll();
+  globalKeyPool.reset();
+  initializeKeyPools();
+}
 
-const tlsConfig = LITEROUTER_TLS_ENABLED
-  ? {
-      cert: file(LITEROUTER_TLS_CERT),
-      key: file(LITEROUTER_TLS_KEY),
-    }
-  : undefined;
+export function getCooldownState(): Record<string, unknown> {
+  return {};
+}
 
-serve({
-  port: LITEROUTER_PORT,
-  idleTimeout: Math.min(LITEROUTER_HTTP_TIMEOUT_MS / 1000, 255),
-  tls: tlsConfig,
-  async fetch(req: Request) {
-    const protocolHint = tlsConfig ? "HTTP/2 + HTTP/1.1 (ALPN)" : "HTTP/1.1";
-    return handleWebRequest(req, protocolHint);
-  },
-});
+export async function handleAppRequest(req: Request): Promise<Response> {
+  initializeKeyPools();
+  const reqId = `req_${Math.random().toString(36).slice(2, 9)}`;
+  const rawKey = extractDirectiveToken(req) || "";
+  try {
+    return await dispatchRoute(req, rawKey, reqId);
+  } catch (err) {
+    logError(reqId, "Unhandled exception in request handler", err);
+    return Response.json({ error: { message: "Internal Gateway Error", type: "server_error" } }, { status: 500 });
+  }
+}
 
-if (tlsConfig) {
-  logState(
-    EMOJI.boot,
-    `LiteRouter (Bun) running on port ${LITEROUTER_PORT} [TLS: ENABLED, Protocols: HTTP/2 (h2), HTTP/1.1 (ALPN)]`,
-  );
-} else {
-  logState(
-    EMOJI.boot,
-    `LiteRouter (Bun) running on port ${LITEROUTER_PORT} [Plaintext HTTP/1.1]`,
-  );
+export function createServer(portOverride?: number): Server<unknown> {
+  initializeKeyPools();
+  const env = getEnv();
+  const port = portOverride ?? env.LITEROUTER_PORT;
+  const tls = loadTlsOptions();
+
+  const pools = loadKeyPools(process.env);
+  const keyPools = Array.from(pools.entries())
+    .map(([code, keys]) => ({ provider: code, activeKeys: keys.length }))
+    .filter((p) => p.activeKeys > 0);
+
+  const bannerOpts: BannerOptions = {
+    port,
+    tlsEnabled: Boolean(tls),
+    stripReasoning: env.LITEROUTER_STRIP_REASONING,
+    keyPools,
+  };
+  printBanner(bannerOpts);
+
+  return Bun.serve({
+    port,
+    hostname: env.LITEROUTER_HOST,
+    tls: tls ? { cert: tls.cert, key: tls.key } : undefined,
+    async fetch(req: Request) {
+      const reqId = `req_${Math.random().toString(36).slice(2, 9)}`;
+      const rawKey = extractDirectiveToken(req) || "";
+      try {
+        return await dispatchRoute(req, rawKey, reqId);
+      } catch (err) {
+        logError(reqId, "Unhandled exception in server route dispatch", err);
+        return Response.json({ error: { message: "Internal Gateway Error", type: "server_error" } }, { status: 500 });
+      }
+    },
+  });
+}
+
+if (import.meta.main) {
+  createServer();
 }

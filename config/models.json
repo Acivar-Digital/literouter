@@ -1,0 +1,270 @@
+{
+  "models": [
+    {
+      "id": "anthropic/claude-3.7-sonnet",
+      "provider": "openrouter",
+      "category": "reasoning",
+      "supports_thinking": true,
+      "supports_tools": true,
+      "context_window": 200000
+    },
+    {
+      "id": "deepseek/deepseek-r1",
+      "provider": "openrouter",
+      "category": "reasoning",
+      "supports_thinking": true,
+      "supports_tools": true,
+      "context_window": 164000
+    },
+    {
+      "id": "claude-3-7-sonnet-20250219",
+      "provider": "anthropic",
+      "category": "reasoning",
+      "supports_thinking": true,
+      "supports_tools": true,
+      "context_window": 200000
+    },
+    {
+      "id": "deepseek-ai/deepseek-r1",
+      "provider": "nvidia",
+      "category": "reasoning",
+      "supports_thinking": true,
+      "supports_tools": true,
+      "context_window": 164000
+    },
+    {
+      "id": "gemini-3.1-flash-lite",
+      "provider": "google",
+      "category": "text-out",
+      "supports_thinking": false,
+      "supports_tools": true,
+      "context_window": 1048576,
+      "quota": {
+        "rpm": 15,
+        "rpd": 500,
+        "tpm": 250000
+      }
+    },
+    {
+      "id": "gemini-3.5-flash-lite",
+      "provider": "google",
+      "category": "text-out",
+      "supports_thinking": false,
+      "supports_tools": true,
+      "context_window": 1048576,
+      "quota": {
+        "rpm": 15,
+        "rpd": 500,
+        "tpm": 250000
+      }
+    },
+    {
+      "id": "antigravity",
+      "provider": "google",
+      "category": "agents",
+      "supports_thinking": false,
+      "supports_tools": true,
+      "context_window": 128000,
+      "quota": {
+        "rpm": 60,
+        "rpd": 100,
+        "tpm": 100000
+      }
+    },
+    {
+      "id": "gemini-2.5-flash",
+      "provider": "google",
+      "category": "text-out",
+      "supports_thinking": false,
+      "supports_tools": true,
+      "context_window": 1048576,
+      "quota": {
+        "rpm": 5,
+        "rpd": 20,
+        "tpm": 250000
+      }
+    },
+    {
+      "id": "gemini-2.5-flash-lite",
+      "provider": "google",
+      "category": "text-out",
+      "supports_thinking": false,
+      "supports_tools": true,
+      "context_window": 1048576,
+      "quota": {
+        "rpm": 10,
+        "rpd": 20,
+        "tpm": 250000
+      }
+    },
+    {
+      "id": "gemini-3-flash",
+      "provider": "google",
+      "category": "text-out",
+      "supports_thinking": true,
+      "supports_tools": true,
+      "context_window": 1048576,
+      "quota": {
+        "rpm": 5,
+        "rpd": 20,
+        "tpm": 250000
+      }
+    },
+    {
+      "id": "gemini-3.5-flash",
+      "provider": "google",
+      "category": "text-out",
+      "supports_thinking": true,
+      "supports_tools": true,
+      "context_window": 1048576,
+      "quota": {
+        "rpm": 5,
+        "rpd": 20,
+        "tpm": 250000
+      }
+    },
+    {
+      "id": "gemini-3.6-flash",
+      "provider": "google",
+      "category": "text-out",
+      "supports_thinking": true,
+      "supports_tools": true,
+      "context_window": 1048576,
+      "quota": {
+        "rpm": 5,
+        "rpd": 20,
+        "tpm": 250000
+      }
+    },
+    {
+      "id": "gemini-3.7-flash",
+      "provider": "google",
+      "category": "text-out",
+      "supports_thinking": true,
+      "supports_tools": true,
+      "context_window": 1048576,
+      "quota": {
+        "rpm": 5,
+        "rpd": 20,
+        "tpm": 250000
+      }
+    },
+    {
+      "id": "gemma-4-26b",
+      "provider": "google",
+      "category": "open-weights",
+      "supports_thinking": false,
+      "supports_tools": false,
+      "context_window": 8192,
+      "quota": {
+        "rpm": 30,
+        "rpd": 14400,
+        "tpm": 16000
+      }
+    },
+    {
+      "id": "gemma-4-31b",
+      "provider": "google",
+      "category": "open-weights",
+      "supports_thinking": false,
+      "supports_tools": false,
+      "context_window": 8192,
+      "quota": {
+        "rpm": 30,
+        "rpd": 14400,
+        "tpm": 16000
+      }
+    },
+    {
+      "id": "text-embedding-004",
+      "provider": "google",
+      "category": "embeddings",
+      "supports_thinking": false,
+      "supports_tools": false,
+      "context_window": 2048,
+      "quota": {
+        "rpm": 100,
+        "rpd": 1000,
+        "tpm": 30000
+      }
+    },
+    {
+      "id": "gemini-embedding-2",
+      "provider": "google",
+      "category": "embeddings",
+      "supports_thinking": false,
+      "supports_tools": false,
+      "context_window": 8192,
+      "quota": {
+        "rpm": 100,
+        "rpd": 1000,
+        "tpm": 30000
+      }
+    },
+    {
+      "id": "gemini-2.5-flash-tts",
+      "provider": "google",
+      "category": "audio-tts",
+      "supports_thinking": false,
+      "supports_tools": false,
+      "context_window": 4096,
+      "quota": {
+        "rpm": 3,
+        "rpd": 10,
+        "tpm": 10000
+      }
+    },
+    {
+      "id": "gemini-3.1-flash-tts",
+      "provider": "google",
+      "category": "audio-tts",
+      "supports_thinking": false,
+      "supports_tools": false,
+      "context_window": 4096,
+      "quota": {
+        "rpm": 3,
+        "rpd": 10,
+        "tpm": 10000
+      }
+    },
+    {
+      "id": "gemini-robotics-er-1.5",
+      "provider": "google",
+      "category": "robotics",
+      "supports_thinking": false,
+      "supports_tools": true,
+      "context_window": 32768,
+      "quota": {
+        "rpm": 10,
+        "rpd": 20,
+        "tpm": 250000
+      }
+    },
+    {
+      "id": "gemini-robotics-er-1.6",
+      "provider": "google",
+      "category": "robotics",
+      "supports_thinking": false,
+      "supports_tools": true,
+      "context_window": 32768,
+      "quota": {
+        "rpm": 5,
+        "rpd": 20,
+        "tpm": 250000
+      }
+    },
+    {
+      "id": "gemini-robotics-er-2",
+      "provider": "google",
+      "category": "robotics",
+      "supports_thinking": false,
+      "supports_tools": true,
+      "context_window": 32768,
+      "quota": {
+        "rpm": 5,
+        "rpd": 20,
+        "tpm": 250000
+      }
+    }
+  ]
+}

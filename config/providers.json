@@ -1,0 +1,259 @@
+{
+  "providers": {
+    "openrouter": {
+      "code": "or",
+      "base_url": "https://openrouter.ai",
+      "auth_header": "Bearer",
+      "endpoints": {
+        "ch": "/api/v1/chat/completions",
+        "ms": "/api/v1/messages",
+        "em": "/api/v1/embeddings",
+        "md": "/api/v1/models"
+      },
+      "limits": {
+        "default": {
+          "rpm": 20,
+          "rpd": 1000,
+          "tpm": 1000000
+        }
+      }
+    },
+    "nvidia": {
+      "code": "nv",
+      "base_url": "https://integrate.api.nvidia.com",
+      "auth_header": "Bearer",
+      "endpoints": {
+        "ch": "/v1/chat/completions",
+        "em": "/v1/embeddings",
+        "md": "/v1/models"
+      },
+      "limits": {
+        "default": {
+          "rpm": 40,
+          "rpd": 10000,
+          "tpm": 1000000
+        }
+      }
+    },
+    "google": {
+      "code": "gg",
+      "base_url": "https://generativelanguage.googleapis.com",
+      "auth_header": "Bearer",
+      "endpoints": {
+        "ob": "/v1beta/openai/chat/completions",
+        "gc": "/v1beta/models/{model}:generateContent",
+        "em": "/v1beta/models/{model}:embedContent",
+        "md": "/v1beta/models"
+      },
+      "limits": {
+        "gemini-3.1-flash-lite": {
+          "rpm": 15,
+          "rpd": 500,
+          "tpm": 250000
+        },
+        "gemini-3.5-flash-lite": {
+          "rpm": 15,
+          "rpd": 500,
+          "tpm": 250000
+        },
+        "antigravity": {
+          "rpm": 60,
+          "rpd": 100,
+          "tpm": 100000
+        },
+        "gemini-2.5-flash": {
+          "rpm": 5,
+          "rpd": 20,
+          "tpm": 250000
+        },
+        "gemini-2.5-flash-lite": {
+          "rpm": 10,
+          "rpd": 20,
+          "tpm": 250000
+        },
+        "gemini-3-flash": {
+          "rpm": 5,
+          "rpd": 20,
+          "tpm": 250000
+        },
+        "gemini-3.5-flash": {
+          "rpm": 5,
+          "rpd": 20,
+          "tpm": 250000
+        },
+        "gemini-3.6-flash": {
+          "rpm": 5,
+          "rpd": 20,
+          "tpm": 250000
+        },
+        "gemini-3.7-flash": {
+          "rpm": 5,
+          "rpd": 20,
+          "tpm": 250000
+        },
+        "gemma-4-26b": {
+          "rpm": 30,
+          "rpd": 14400,
+          "tpm": 16000
+        },
+        "gemma-4-31b": {
+          "rpm": 30,
+          "rpd": 14400,
+          "tpm": 16000
+        },
+        "text-embedding-004": {
+          "rpm": 100,
+          "rpd": 1000,
+          "tpm": 30000
+        },
+        "gemini-embedding-2": {
+          "rpm": 100,
+          "rpd": 1000,
+          "tpm": 30000
+        },
+        "default": {
+          "rpm": 15,
+          "rpd": 1500,
+          "tpm": 1000000
+        }
+      }
+    },
+    "openai": {
+      "code": "oa",
+      "base_url": "https://api.openai.com",
+      "auth_header": "Bearer",
+      "endpoints": {
+        "ch": "/v1/chat/completions",
+        "em": "/v1/embeddings",
+        "im": "/v1/images/generations",
+        "au": "/v1/audio/transcriptions",
+        "md": "/v1/models",
+        "rs": "/v1/responses"
+      },
+      "limits": {
+        "default": {
+          "rpm": 60,
+          "rpd": 10000,
+          "tpm": 2000000
+        }
+      }
+    },
+    "anthropic": {
+      "code": "an",
+      "base_url": "https://api.anthropic.com",
+      "auth_header": "x-api-key",
+      "endpoints": {
+        "ms": "/v1/messages",
+        "md": "/v1/models"
+      },
+      "limits": {
+        "default": {
+          "rpm": 50,
+          "rpd": 10000,
+          "tpm": 1000000
+        }
+      }
+    },
+    "groq": {
+      "code": "gq",
+      "base_url": "https://api.groq.com/openai",
+      "auth_header": "Bearer",
+      "endpoints": {
+        "ch": "/v1/chat/completions",
+        "em": "/v1/embeddings",
+        "au": "/v1/audio/transcriptions",
+        "md": "/v1/models"
+      },
+      "limits": {
+        "default": {
+          "rpm": 30,
+          "rpd": 14400,
+          "tpm": 500000
+        }
+      }
+    },
+    "cerebras": {
+      "code": "cb",
+      "base_url": "https://api.cerebras.ai",
+      "auth_header": "Bearer",
+      "endpoints": {
+        "ch": "/v1/chat/completions",
+        "md": "/v1/models"
+      },
+      "limits": {
+        "default": {
+          "rpm": 30,
+          "rpd": 14400,
+          "tpm": 1000000
+        }
+      }
+    },
+    "deepseek": {
+      "code": "ds",
+      "base_url": "https://api.deepseek.com",
+      "auth_header": "Bearer",
+      "endpoints": {
+        "ch": "/v1/chat/completions",
+        "md": "/v1/models"
+      },
+      "limits": {
+        "default": {
+          "rpm": 60,
+          "rpd": 10000,
+          "tpm": 1000000
+        }
+      }
+    },
+    "mistral": {
+      "code": "ms",
+      "base_url": "https://api.mistral.ai",
+      "auth_header": "Bearer",
+      "endpoints": {
+        "ch": "/v1/chat/completions",
+        "em": "/v1/embeddings",
+        "md": "/v1/models"
+      },
+      "limits": {
+        "default": {
+          "rpm": 30,
+          "rpd": 10000,
+          "tpm": 1000000
+        }
+      }
+    },
+    "together": {
+      "code": "tg",
+      "base_url": "https://api.together.xyz",
+      "auth_header": "Bearer",
+      "endpoints": {
+        "ch": "/v1/chat/completions",
+        "em": "/v1/embeddings",
+        "im": "/v1/images/generations",
+        "md": "/v1/models"
+      },
+      "limits": {
+        "default": {
+          "rpm": 60,
+          "rpd": 10000,
+          "tpm": 1000000
+        }
+      }
+    },
+    "zen": {
+      "code": "zn",
+      "base_url": "https://api.zen.ai",
+      "auth_header": "Bearer",
+      "endpoints": {
+        "ch": "/v1/chat/completions",
+        "md": "/v1/models"
+      },
+      "limits": {
+        "default": {
+          "rpm": 30,
+          "rpd": 5000,
+          "tpm": 1000000
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,5 @@
+I will check the current weather for your location.
+<invoke name="get_current_weather">
+<parameter name="city">Tokyo</parameter>
+<parameter name="unit">celsius</parameter>
+</invoke>

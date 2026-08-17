@@ -1,0 +1,31 @@
+{
+  "candidates": [
+    {
+      "content": {
+        "role": "model",
+        "parts": [
+          {
+            "functionCall": {
+              "name": "lookup_stock",
+              "args": {
+                "ticker": "GOOGL"
+              }
+            }
+          }
+        ]
+      },
+      "finishReason": "STOP",
+      "index": 0,
+      "extra_content": {
+        "google": {
+          "thought_signature": "sig_gemini_thought_abc123xyz789=="
+        }
+      }
+    }
+  ],
+  "usageMetadata": {
+    "promptTokenCount": 42,
+    "candidatesTokenCount": 18,
+    "totalTokenCount": 60
+  }
+}
