@@ -62,6 +62,8 @@ lr-<provider>-<payload>-<completions>-<nuances>
 | **Completion** | `ch`, `ms`, `ob`, `gc`, `im`, `em`, `au`, `md` | Target endpoint type: `ch` (Chat `/v1/chat/completions`), `ms` (Messages `/v1/messages`), `ob` (OpenAI Beta `/v1beta/openai/*`), `gc` (GenerateContent `/v1beta/models/*:generateContent`), `em` (Embeddings), `md` (Models discovery) |
 | **Nuances** | `no`, `dp`, `ts`, `sb`, `gm`, `g3`, `tc` | Modifiers (compound with `+`, e.g. `dp+ts`):<br>• `no`: No-op standard behavior<br>• `dp`: Dots prompt XML tool calling & dot message padding<br>• `ts`: Thought signatures / preserve thinking content<br>• `sb`: Strip reasoning blocks from historical context<br>• `gm`: Gemma turn-merging and parameter scrubbing<br>• `g3`: Google 3 thinking parameter sanitizer<br>• `tc`: Tool choice normalizer |
 
+> ⚠️ **WARNING**: When using the Claude Wire Format (`cl`), you MUST use the Messages endpoint (`ms`). Using the Chat Completions endpoint (`ch`) with the Claude Wire Format (`cl`) triggers an incomplete cross-wire translation (`translateAnthropicToOpenAI`) which drops all `tool_use` and `tool_result` blocks, causing agents like Claude Code to hang indefinitely.
+
 ### Common Directive Examples
 
 | Directive API Key | Target Wire & Protocol | Use Case |

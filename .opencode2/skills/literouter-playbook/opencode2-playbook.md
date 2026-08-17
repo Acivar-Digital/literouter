@@ -40,7 +40,7 @@ OpenCode 2 connects to LiteRouter on `https://localhost:7766/v1` using declarati
       "name": "LR-DOTS (LiteRouter Dots Anthropic)",
       "options": {
         "baseURL": "https://localhost:7766/v1",
-        "apiKey": "lr-or-cl-ch-dp"
+        "apiKey": "lr-or-cl-ms-dp"
       },
       "models": {
         "dots-studio/dots-3-note-preview:free": {

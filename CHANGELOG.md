@@ -2,6 +2,11 @@
 
 All notable changes to LiteRouter will be documented in this file.
 
+## [Unreleased]
+
+### Documentation Update
+- **Documented API Key Directive (`lr-or-cl-ms-no`) for Claude Code** — Updated `literouter-playbook` SKILL to clarify that users targeting OpenRouter with downstream Anthropic clients (like Claude Code) must use the `ms` (Messages) completion code. Using `ch` triggers `translateAnthropicToOpenAI`, which drops `tool_use`/`tool_result` blocks during fallback, causing agents to hang indefinitely.
+
 ## [3.5.1] — 2026-08-17
 
 ### Fixed / OpenRouter Dots & Anthropic Compat Layer
