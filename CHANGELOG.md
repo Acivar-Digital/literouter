@@ -2,6 +2,13 @@
 
 All notable changes to LiteRouter will be documented in this file.
 
+## [3.4.1] — 2026-08-17
+
+### Added / Dots Tool-Calling Polyfill
+- **Modular Dots XML Transformer (`src/transformers/dots.ts`)** — Added dedicated streaming and non-streaming XML tool-calling polyfill. Automatically intercepts `<dots_function_call>` and `<invoke name="...">` XML tags emitted into plain text by Dots Studio preview models (`dots-studio/dots-3-note-preview:free`) and translates them into OpenAI-standard JSON `tool_calls` and SSE deltas for OpenCode 2 and agentic CLI execution.
+- **Zero-Blast-Radius Gating (`isDotsModel`)** — Transformer is conditionally enabled in `src/handlers/openai_compat.ts` strictly when the target model identifier contains `dots`. Standard models (Llama, Gemini, Mistral, Qwen) completely bypass this logic with zero performance overhead.
+- **End-to-End Test Suite** — Added unit test suite in `tests/unit/transformers/dots.test.ts` (covering token chunk fragmentation, character escaping, and fail-open fallbacks) and live proxy E2E integration test in `tests/integration/test_dots_transformer_e2e.py`.
+
 ## [3.4.0] — 2026-08-16
 
 ### Added / OpenRouter Model

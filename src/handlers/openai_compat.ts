@@ -27,6 +27,12 @@ import {
 } from "../transformers/payload";
 import { translateGoogleThinking } from "../transformers/thinking";
 import {
+  createDotsStreamTransformer,
+  isDotsModel,
+  transformDotsNonStreaming,
+} from "../transformers/dots";
+
+import {
   API_KEYS,
   EMOJI,
   MODEL_REGISTRY,
@@ -157,22 +163,26 @@ async function processOpenAISuccess(
   };
 
   if (isStream) {
-    return new Response(
-      resp.body!.pipeThrough(
-        createStreamTransformer(LITEROUTER_COLLAPSE_REASONING, streamMeta, sinkUsage),
-      ),
-      {
-        status: resp.status,
-        headers: outHeaders,
-      },
+    let stream = resp.body!.pipeThrough(
+      createStreamTransformer(LITEROUTER_COLLAPSE_REASONING, streamMeta, sinkUsage),
     );
+    if (isDotsModel(upstream_model) || isDotsModel(modelName)) {
+      stream = stream.pipeThrough(createDotsStreamTransformer());
+    }
+    return new Response(stream, {
+      status: resp.status,
+      headers: outHeaders,
+    });
   } else {
     let text = await resp.text();
     text = cleanLatexSymbols(text);
-    const data = transformNonStreaming(
+    let data = transformNonStreaming(
       JSON.parse(text),
       LITEROUTER_COLLAPSE_REASONING,
     );
+    if (isDotsModel(upstream_model) || isDotsModel(modelName)) {
+      data = transformDotsNonStreaming(data);
+    }
     extractThoughtSignature(data);
     const u = parseUsageFromJson(data);
     if (u) sinkUsage(streamMeta, u);

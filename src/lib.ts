@@ -30,3 +30,11 @@ export {
   injectThoughtSignature,
   extractThoughtSignature,
 } from "./transformers/payload";
+
+export {
+  isDotsModel,
+  parseDotsXml,
+  transformDotsNonStreaming,
+  createDotsStreamTransformer,
+} from "./transformers/dots";
+

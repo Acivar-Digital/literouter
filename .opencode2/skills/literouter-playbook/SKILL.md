@@ -113,9 +113,9 @@ When explicitly instructed by the user to modify environment settings or migrate
 
 ---
 
-## 8-File Modular Architecture & Responsibilities
+## 9-File Modular Architecture & Responsibilities
 
-LiteRouter is structured into 8 modular TypeScript source files located in `src/`:
+LiteRouter is structured into 9 modular TypeScript source files located in `src/`:
 
 ```
 src/
@@ -125,7 +125,8 @@ src/
 │   └── fetcher.ts        # First-byte timeout fetcher & NoResponseError definition
 ├── transformers/
 │   ├── thinking.ts       # Reasoning effort & thinking configuration translation
-│   └── payload.ts        # Payload cleaning, thought signature injection, latex normalization & streaming SSE
+│   ├── payload.ts        # Payload cleaning, thought signature injection, latex normalization & streaming SSE
+│   └── dots.ts           # Dots XML tool-calling polyfill (<dots_function_call> to tool_calls translation)
 ├── handlers/
 │   ├── openai_compat.ts  # OpenAI-compatible API execution & first-byte retry loop
 │   └── google_native.ts  # Google Native API execution & Google Interactions handler
@@ -141,9 +142,10 @@ src/
 | **`src/network/fetcher.ts`** | Exposes `fetchWithFirstByteTimeout` and `NoResponseError`. Monitors upstream requests to detect silent backends and stalled streams. Holds HTTP 200 OK headers from downstream while inspecting initial SSE chunks for actual content tokens (`delta.content`, `delta.reasoning_content`, `delta.thought`, `delta.tool_calls`, or Gemini `parts[].text`). If an upstream sends 0 content tokens (or metadata-only chunks `{"role":"assistant","content":""}`) within `LITEROUTER_NO_RESPONSE_TIMEOUT_MS` (5s), throws `NoResponseError`, aborting the fetch before headers reach downstream so handlers can immediately resend to Key #2. After the first byte arrives, continues monitoring the stream for idle timeouts (`LITEROUTER_STREAM_IDLE_TIMEOUT_MS`, default 30s). If no chunk arrives within the idle window, throws `NoResponseError` — same retry path as 0-token ghosting (immediate key rotation, 0ms delay, no cooldown). |
 | **`src/transformers/thinking.ts`** | Translates provider-specific reasoning/thinking options into standard OpenAI-style `reasoning_effort` fields (`extractThinkingLevel`, `applyReasoningEffort`, `translateGoogleThinking`). |
 | **`src/transformers/payload.ts`** | Manages thought signatures (`injectThoughtSignature`, `extractThoughtSignature`), token estimation (`estimateTokens`), Gemma unsupported field stripping (`cleanGemmaPayload`), LaTeX formatting (`cleanLatexSymbols`), message merging (`mergeConsecutiveMessages`), historical message reasoning sanitization (`sanitizeHistoricalMessages`), non-streaming reasoning transformations (`transformNonStreaming`), and streaming SSE stream transformations (`createStreamTransformer`). Exports `StreamMeta` interface. The `sanitizeHistoricalMessages` function strips past `reasoning_content`, `reasoningContent`, `thought`, and `thought_summary` from historical assistant messages and normalizes `content: null` to `""` to prevent context bloat and 400 Bad Request errors across providers. The `createStreamTransformer` function transforms upstream SSE chunks for OpenAI-compatible providers, handling thought signature injection, reasoning normalization, LaTeX cleaning, and usage extraction. A keep-alive timer injects SSE comment lines (`:\n\n`) every 15 seconds to prevent downstream SSE clients from idling out during slow upstream streams. |
-| **`src/handlers/openai_compat.ts`** | Implements `executeOpenAICompat`, `processOpenAIError`, and `processOpenAISuccess`. Manages key rotation loops for OpenAI-compatible providers (OpenRouter, NVIDIA, Zen, Google OpenAI-compat), error handling, immediate key rotation on HTTP 502 (30s key cooldown in Valkey + 2s inter-key delay), and first-byte ghosting retry handling (no cooldown penalty on ghosted keys). |
+| **`src/transformers/dots.ts`** | Implements the Dots XML tool-calling polyfill (`isDotsModel`, `parseDotsXml`, `transformDotsNonStreaming`, `createDotsStreamTransformer`). Intercepts non-standard `<dots_function_call><invoke name="...">...</invoke></dots_function_call>` XML blocks in plain text output and translates them dynamically into OpenAI-standard JSON `tool_calls` for streaming and non-streaming responses. Isolated and model-gated to ensure zero performance overhead on standard models. |
+| **`src/handlers/openai_compat.ts`** | Implements `executeOpenAICompat`, `processOpenAIError`, and `processOpenAISuccess`. Manages key rotation loops for OpenAI-compatible providers (OpenRouter, NVIDIA, Zen, Google OpenAI-compat), error handling, immediate key rotation on HTTP 502 (30s key cooldown in Valkey + 2s inter-key delay), and first-byte ghosting retry handling (no cooldown penalty on ghosted keys). Hooks into `dots.ts` when `isDotsModel()` matches the active model. |
 | **`src/handlers/google_native.ts`** | Implements `executeGoogleNative` (for Google `:generateContent` / `:streamGenerateContent` native endpoints) and `executeGoogleInteractions` (for Google agent API, model configurable via `GOOGLE_INTERACTIONS_MODEL`). Manages query parameter signing, error handling, first-byte ghosting retry via `fetchWithFirstByteTimeout`, and SSE keep-alive comment injection. |
-| **`src/lib.ts`** | **Barrel re-export file**. Exports all public types, constants, and utilities from `config/env`, `network/fetcher`, `transformers/thinking`, and `transformers/payload` for clean modular imports across handlers and 100% backward compatibility with `tests/unit/core/`. |
+| **`src/lib.ts`** | **Barrel re-export file**. Exports all public types, constants, and utilities from `config/env`, `network/fetcher`, `transformers/thinking`, `transformers/payload`, and `transformers/dots` for clean modular imports across handlers and 100% backward compatibility with `tests/unit/core/`. |
 | **`src/index.ts`** | Application entry point running `serve` on port 7766. Contains trace logging (`recordTrace`), emoji logging (`logState`, `logWarn`, `logError`), static key verification, model/fusion registry loading (`models.json`, `fusion.json`), Valkey/Redis `ModelFirstRouter` (ZSET rolling quota Lua script, `reportError` cooldowns, usage recording), Fusion state (in-memory circuit breaker and sticky position), auth checking (`verifyAuthKey`), and HTTP route dispatchers. |
 
 ---
