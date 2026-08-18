@@ -106,7 +106,12 @@ describe("Path Resolver — providers.json Completion URL Mapping", () => {
 
   it("resolves Zen chat endpoint (zn, ch)", () => {
     const url = resolveCompletionUrl("zn", "ch");
-    expect(url).toBe("https://api.zen.ai/v1/chat/completions");
+    expect(url).toBe("https://opencode.ai/zen/v1/chat/completions");
+  });
+
+  it("resolves Zen models endpoint (zn, md)", () => {
+    const url = resolveCompletionUrl("zn", "md");
+    expect(url).toBe("https://opencode.ai/zen/v1/models");
   });
 
   it("returns null for non-existent completion code on provider", () => {

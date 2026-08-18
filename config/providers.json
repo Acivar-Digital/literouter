@@ -241,7 +241,7 @@
     },
     "zen": {
       "code": "zn",
-      "base_url": "https://api.zen.ai",
+      "base_url": "https://opencode.ai/zen",
       "auth_header": "Bearer",
       "endpoints": {
         "ch": "/v1/chat/completions",

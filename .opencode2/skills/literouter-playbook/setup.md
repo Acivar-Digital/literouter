@@ -91,11 +91,11 @@ GOOGLE_API_KEYS=AIzaSyKey1...,AIzaSyKey2...
     },
     "zen": {
       "code": "zn",
-      "base_url": "https://opencode.ai/zen/v1",
+      "base_url": "https://opencode.ai/zen",
       "auth_header": "Bearer",
       "endpoints": {
-        "ch": "/chat/completions",
-        "md": "/models"
+        "ch": "/v1/chat/completions",
+        "md": "/v1/models"
       }
     }
   }

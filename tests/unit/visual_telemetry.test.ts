@@ -104,6 +104,26 @@ describe("Visual Telemetry & Terminal UI", () => {
     logSpy.mockRestore();
   });
 
+  it("logs served response with green indicator for 2xx status", () => {
+    const logSpy = spyOn(console, "log").mockImplementation(() => {});
+    logServed("REQ-89f2c", 125, 200);
+    expect(logSpy).toHaveBeenCalled();
+    const calls = logSpy.mock.calls.map((c) => c[0]);
+    expect(calls.some((c) => c.includes("🟢") && c.includes("[SERVED REQ-89f2c] HTTP 200 in 125ms"))).toBe(true);
+    logSpy.mockRestore();
+  });
+
+  it("logs served response with warning indicator for 4xx/5xx status", () => {
+    const warnSpy = spyOn(console, "warn").mockImplementation(() => {});
+    logServed("REQ-89f2d", 80, 404);
+    logServed("REQ-89f2e", 95, 500, 1, 2);
+    expect(warnSpy).toHaveBeenCalledTimes(2);
+    const calls = warnSpy.mock.calls.map((c) => c[0]);
+    expect(calls.some((c) => c.includes("⚠️") && c.includes("[SERVED REQ-89f2d] HTTP 404 in 80ms"))).toBe(true);
+    expect(calls.some((c) => c.includes("⚠️") && c.includes("[SERVED REQ-89f2e] HTTP 500 in 95ms (attempt 1/2)"))).toBe(true);
+    warnSpy.mockRestore();
+  });
+
   it("logs separator line", () => {
     const logSpy = spyOn(console, "log").mockImplementation(() => {});
     logSeparator();

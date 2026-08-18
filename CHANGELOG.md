@@ -4,6 +4,11 @@ All notable changes to LiteRouter will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed / Zen Provider Routing & Telemetry Error Handling
+- **Zen Provider Upstream `base_url` (`config/providers.json`)** — Fixed Zen provider upstream `base_url` to `https://opencode.ai/zen` (resolving `/v1/chat/completions` and `/v1/models` paths correctly).
+- **TTFT & Stream Telemetry Error Guard (`src/network/fetcher.ts`)** — Prevented TTFT and stream established telemetry logging on HTTP 4xx/5xx error responses.
+- **Response Status Visual Telemetry (`src/ui/logger.ts`)** — Updated `logServed` to warn on HTTP 4xx/5xx responses instead of logging a green success.
+
 ### Added / Mid-Stream Error Recovery & In-Band Error Suppression
 - **In-Band SSE Error Frame Interceptor (`isInBandErrorChunk` in `src/network/fetcher.ts`)** — Detects upstream in-band 5xx SSE error payloads (e.g. `"Server error mid-response. The response above may be incomplete."`, internal server errors, overloaded errors) and suppresses them from leaking downstream to client IDEs/TUIs.
 - **Multi-Attempt Resilient Stream Controller (`createResilientStream`)** — Enhanced `createResilientStream` with dynamic `retryProvider` callbacks. When an upstream stream encounters a mid-generation drop (socket reset, EOF) or in-band error chunk, LiteRouter quarantines the failing key (10s), rotates to the next active key in the pool (up to 3 attempts), re-fetches the generation, and transparently pipes the new stream into the open downstream client connection without terminating the session.

@@ -324,8 +324,6 @@ async function executeAnthropicDirectCall(
   const duration = Date.now() - startTime;
   const isStream = Boolean(payload.stream);
 
-  logTtft(reqId, ttftMs, isStream ? "Stream established" : "First chunk streamed downstream");
-
   if (response.status >= 400) {
     const fullBody = await collectFullBody(firstChunk, rawReader);
     const bodyText = new TextDecoder().decode(fullBody);
@@ -372,6 +370,7 @@ async function executeAnthropicDirectCall(
   }
 
   globalKeyPool.reportSuccess(directive.provider, selected.index);
+  logTtft(reqId, ttftMs, isStream ? "Stream established" : "First chunk streamed downstream");
 
   if (!isStream) {
     const fullBody = await collectFullBody(firstChunk, rawReader);

@@ -218,7 +218,12 @@ export function logServed(
 ): void {
   const ts = formatTimestamp();
   const attemptStr = attempt && maxAttempts && maxAttempts > 1 ? ` (attempt ${attempt}/${maxAttempts})` : "";
-  console.log(`🟢 ${ts} [SERVED ${reqId}] HTTP ${status} in ${durationMs}ms${attemptStr}`);
+  const icon = status >= 400 ? "⚠️" : "🟢";
+  if (status >= 400) {
+    console.warn(`${icon} ${ts} [SERVED ${reqId}] HTTP ${status} in ${durationMs}ms${attemptStr}`);
+  } else {
+    console.log(`${icon} ${ts} [SERVED ${reqId}] HTTP ${status} in ${durationMs}ms${attemptStr}`);
+  }
 }
 
 export function logBoot(message: string): void {

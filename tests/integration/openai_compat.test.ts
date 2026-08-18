@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import type { Server } from "bun";
 import { handleAppRequest, resetAllState } from "../../src/lib";
 
@@ -7,6 +7,7 @@ interface MockServerState {
   port: number;
   lastHeaders: Headers | null;
   lastBody: Record<string, unknown> | null;
+  statusOverride?: number;
 }
 
 const state: MockServerState = {
@@ -14,6 +15,7 @@ const state: MockServerState = {
   port: 19801,
   lastHeaders: null,
   lastBody: null,
+  statusOverride: undefined,
 };
 
 function createJsonResponse(body: Record<string, unknown>): Response {
@@ -45,6 +47,22 @@ async function handleMockRequest(req: Request): Promise<Response> {
     state.lastBody = JSON.parse(text) as Record<string, unknown>;
   } catch (err) {
     state.lastBody = { error: String(err) };
+  }
+
+  if (state.statusOverride && state.statusOverride >= 400) {
+    return new Response(
+      JSON.stringify({
+        error: {
+          message: "Upstream error message",
+          type: "invalid_request_error",
+          code: state.statusOverride,
+        },
+      }),
+      {
+        status: state.statusOverride,
+        headers: { "Content-Type": "application/json" },
+      }
+    );
   }
 
   const isStream = state.lastBody?.stream === true;
@@ -175,5 +193,40 @@ describe("OpenAI Compatibility Handler Integration", () => {
 
     const data = (await res.json()) as Record<string, unknown>;
     expect(data.error).toBeDefined();
+  });
+
+  it("does not log TTFT when upstream returns 4xx/5xx error", async () => {
+    state.statusOverride = 404;
+    const logSpy = spyOn(console, "log").mockImplementation(() => {});
+    const warnSpy = spyOn(console, "warn").mockImplementation(() => {});
+
+    const req = new Request("http://localhost:7766/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer lr-or-oa-ch-no",
+      },
+      body: JSON.stringify({
+        model: "openai/gpt-4o",
+        messages: [{ role: "user", content: "Fail please" }],
+        stream: true,
+      }),
+    });
+
+    const res = await handleAppRequest(req);
+    expect(res.status).toBe(404);
+
+    const logCalls = logSpy.mock.calls.map((c) => String(c[0]));
+    const warnCalls = warnSpy.mock.calls.map((c) => String(c[0]));
+
+    // Verify TTFT is not logged
+    expect(logCalls.some((c) => c.includes("[TTFT"))).toBe(false);
+    expect(logCalls.some((c) => c.includes("Stream established"))).toBe(false);
+
+    // Verify error was logged via warn with ⚠️
+    expect(warnCalls.some((c) => c.includes("⚠️") && c.includes("[SERVED") && c.includes("HTTP 404"))).toBe(true);
+
+    logSpy.mockRestore();
+    warnSpy.mockRestore();
   });
 });
