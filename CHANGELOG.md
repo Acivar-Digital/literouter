@@ -4,6 +4,11 @@ All notable changes to LiteRouter will be documented in this file.
 
 ## [Unreleased]
 
+### Added / Multilingual Guardrails & Domain Metaphysics Preservation
+- **Tiered Multi-Language Instruction Architecture** — Implemented global cognitive and explanatory pinning to English across Claude Code (`~/.claude/CLAUDE.md`) while explicitly whitelisting Chinese metaphysics entities (Heavenly Stems, Earthly Branches, Ten Gods, Trigrams, Hexagrams, and Solar Terms) in `baziforecaster/AGENTS.md`.
+- **Regression Test Coverage (`tests/unit/language_guardrail.test.ts`)** — Added automated verification asserting zero Chinese token leakage in generic code reasoning while guaranteeing 100% genuine Chinese character retention in BaZi metaphysics data payloads.
+- **Playbook Documentation Update (`claude-code.md`)** — Documented Chinese-native model language guardrails in `.opencode2/skills/literouter-playbook/claude-code.md`.
+
 ### Fixed / Claude Code & Bun Zlib Decompression Transport Immunity
 - **Enforced `Accept-Encoding: identity` Upstream (`src/network/fetcher.ts`, `src/handlers/anthropic_compat.ts`, `src/handlers/openai_compat.ts`)** — Injected `Accept-Encoding: identity` into all outbound upstream provider HTTP and SSE streaming requests. Prevents upstream providers and edge CDNs (OpenRouter, Cloudflare, Anthropic) from returning chunked gzip streams and zero-length sync frames, completely resolving Bun native engine `Decompression error: ZlibError` (Bun issue #23149) in Claude Code and Bun-compiled CLI clients.
 - **Downstream Response Header Sanitization (`sanitizeDownstreamHeaders`)** — Created centralized downstream header sanitizer stripping hop-by-hop and compression headers (`content-encoding`, `transfer-encoding`, `connection`, `keep-alive`) and recalculating `content-length` on non-streaming responses, preventing decompression mismatch errors in downstream clients over localhost.

@@ -205,3 +205,21 @@ Claude Code's binary is compiled via `bun compile`. Bun's native `fetch()` autom
 LiteRouter eliminates this natively:
 1. **Upstream Request Control:** Injects `Accept-Encoding: identity` on outbound fetches to OpenRouter/Anthropic/NVIDIA/Google, guaranteeing uncompressed SSE streams.
 2. **Downstream Response Sanitizer:** `sanitizeDownstreamHeaders()` strips compression (`content-encoding`, `transfer-encoding`) and hop-by-hop headers before returning responses to Claude Code over localhost.
+
+---
+
+## 10. Multilingual Guardrails & Chinese-Native Models (Dots / Qwen / DeepSeek)
+
+Chinese-native foundation models (such as Dots, Qwen, or DeepSeek) have pre-training weights and tokenizers optimized for Chinese text. In Claude Code, this can cause internal Chain-of-Thought (CoT) reasoning, tool call arguments, or explanations to leak Chinese tokens.
+
+To resolve this deterministically without breaking domain-specific Chinese metaphysics requirements in projects like `baziforecaster`:
+
+### Layered Architecture:
+1. **Global Client Baseline (`~/.claude/CLAUDE.md`)**:
+   - Pins all internal thoughts, tool calling arguments, comments, commit messages, and explanations to **English**.
+   - Strictly restricts Chinese characters to domain entity values (e.g. BaZi Stems/Branches/Ten Gods, localization fixtures, or test cases).
+2. **Project Domain Policy (`baziforecaster/AGENTS.md`)**:
+   - Explicitly whitelists Heavenly Stems, Earthly Branches, Ten Gods, Hexagrams/Trigrams, and Solar Terms for calculations and data ASTs.
+   - Maintains English for all logs, docstrings, commit messages, and explanations.
+3. **Verification Harness (`tests/unit/language_guardrail.test.ts`)**:
+   - Programmatically asserts zero Chinese character leakage on generic coding logic while ensuring 100% preservation of Chinese metaphysics data models.
