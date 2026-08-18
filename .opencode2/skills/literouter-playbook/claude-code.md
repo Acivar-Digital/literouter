@@ -194,3 +194,14 @@ Then use directive `lr-an-cl-ms-no` (provider=`an`, Anthropic direct). This bypa
 | Effort level stuck at "medium" | `CLAUDE_CODE_EFFORT_LEVEL` not set, or `--effort` not passed | Set `CLAUDE_CODE_EFFORT_LEVEL=max` in `~/.claude/settings.json`, or run `claude --effort max` |
 | Claude Code ignores `ANTHROPIC_MODEL` | Env var missing from `~/.claude/settings.json` | Add `ANTHROPIC_MODEL` to the `env` block in `~/.claude/settings.json` |
 | Claude Code can't find `claude` command | `~/.local/bin` not in PATH | Add to `~/.bashrc`: `export PATH="$HOME/.local/bin:$PATH"` |
+| `Decompression error: ZlibError` | Bun native fetch zlib parser issue on chunked gzip SSE | LiteRouter enforces `Accept-Encoding: identity` upstream and sanitizes downstream headers (`sanitizeDownstreamHeaders`). Ensure gateway is updated to latest. |
+
+---
+
+## 9. Bun Zlib Decompression & Transport Layer Immunity
+
+Claude Code's binary is compiled via `bun compile`. Bun's native `fetch()` automatically attaches `Accept-Encoding: gzip, deflate, br`. When upstream edge proxies return empty chunked gzip flushes in SSE streams, Bun's internal zlib engine throws `Decompression error: ZlibError` to stderr.
+
+LiteRouter eliminates this natively:
+1. **Upstream Request Control:** Injects `Accept-Encoding: identity` on outbound fetches to OpenRouter/Anthropic/NVIDIA/Google, guaranteeing uncompressed SSE streams.
+2. **Downstream Response Sanitizer:** `sanitizeDownstreamHeaders()` strips compression (`content-encoding`, `transfer-encoding`) and hop-by-hop headers before returning responses to Claude Code over localhost.

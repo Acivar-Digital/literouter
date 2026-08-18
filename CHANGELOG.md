@@ -4,6 +4,11 @@ All notable changes to LiteRouter will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed / Claude Code & Bun Zlib Decompression Transport Immunity
+- **Enforced `Accept-Encoding: identity` Upstream (`src/network/fetcher.ts`, `src/handlers/anthropic_compat.ts`, `src/handlers/openai_compat.ts`)** — Injected `Accept-Encoding: identity` into all outbound upstream provider HTTP and SSE streaming requests. Prevents upstream providers and edge CDNs (OpenRouter, Cloudflare, Anthropic) from returning chunked gzip streams and zero-length sync frames, completely resolving Bun native engine `Decompression error: ZlibError` (Bun issue #23149) in Claude Code and Bun-compiled CLI clients.
+- **Downstream Response Header Sanitization (`sanitizeDownstreamHeaders`)** — Created centralized downstream header sanitizer stripping hop-by-hop and compression headers (`content-encoding`, `transfer-encoding`, `connection`, `keep-alive`) and recalculating `content-length` on non-streaming responses, preventing decompression mismatch errors in downstream clients over localhost.
+- **Unit & Integration Test Coverage** — Added `tests/unit/header_sanitizer.test.ts` and updated `tests/integration/anthropic_compat.test.ts` to assert header stripping and `Accept-Encoding: identity` injection across streaming and non-streaming requests.
+
 ### Fixed / Bun Socket Idle Timeout & Streaming Keep-Alive
 - **Configured `idleTimeout: 60` on `Bun.serve`** — Prevented Bun runtime from cutting active SSE streams prematurely (default was 10s idle timeout in Bun) during model thinking pauses or slow token generation (e.g. `dots-studio/dots-3-note-preview:free`), resolving `Decode error (200 POST /v1/messages)` in OpenCode and Anthropic SDK clients.
 - **Dynamic Config Binding in `src/network/fetcher.ts`** — Updated `fetchWithTtftGuard`, `startKeepAliveTimer`, and `mergeSignals` to dynamically read `KEEPALIVE_INTERVAL_MS`, `LITEROUTER_NO_RESPONSE_TIMEOUT_MS`, and `LITEROUTER_HTTP_TIMEOUT_MS` from `getEnv()`.

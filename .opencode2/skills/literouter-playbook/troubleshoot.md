@@ -71,3 +71,8 @@ curl -sk -X POST https://localhost:7766/reset
 - **Symptom**: Client receives HTTP 200 but fails with a JSON/SSE decode error during long reasoning or thinking pauses (e.g. `dots-studio/dots-3-note-preview:free`).
 - **Cause**: Bun's native HTTP server defaulting to a 10s socket idle timeout (`[Bun.serve]: request timed out after 10 seconds`).
 - **Fix**: Set `LITEROUTER_IDLE_TIMEOUT=60` in `.env` and pass `idleTimeout: env.LITEROUTER_IDLE_TIMEOUT_SEC` in `Bun.serve({ ... })` in `src/index.ts`. Ensure `KEEPALIVE_INTERVAL_MS` is actively emitting SSE `: keep-alive\n\n` comments.
+
+### Pattern 7: `Decompression error: ZlibError` in Claude Code / Bun Clients
+- **Symptom**: Claude Code CLI or Bun-compiled clients throw `Decompression error: ZlibError` to stderr during streaming SSE or tool calling.
+- **Cause**: Bun's native `fetch()` sends `Accept-Encoding: gzip, deflate, br` and encounters parser errors on empty/flush chunked gzip frames in SSE streams.
+- **Fix**: LiteRouter enforces `Accept-Encoding: identity` on all upstream requests in `fetchWithTtftGuard` and sanitizes downstream response headers via `sanitizeDownstreamHeaders()` (stripping `content-encoding`, `transfer-encoding`, etc.).
