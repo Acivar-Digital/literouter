@@ -19,7 +19,7 @@ LiteRouter's `/v1/messages` endpoint is a full Anthropic Messages compatibility 
 | Setting | Value | Source |
 |---|---|---|
 | Claude Code version | `2.1.233` | `~/.local/bin/claude` |
-| `ANTHROPIC_BASE_URL` | `http://localhost:7766` | `~/.claude/settings.json` |
+| `ANTHROPIC_BASE_URL` | `https://localhost:7766` | `~/.claude/settings.json` |
 | `ANTHROPIC_API_KEY` | `lr-or-cl-ms-no` | `~/.claude/settings.json` |
 | Anthropic direct keys | **Commented out** in `.env.local` | `# ANTHROPIC_API_KEYS=...` |
 | Repo hook | `.claude/settings.json` → `SessionStart` → `bd prime --hook-json` | present |
@@ -32,7 +32,7 @@ LiteRouter's `/v1/messages` endpoint is a full Anthropic Messages compatibility 
 ```json
 {
   "env": {
-    "ANTHROPIC_BASE_URL": "http://localhost:7766",
+    "ANTHROPIC_BASE_URL": "https://localhost:7766",
     "ANTHROPIC_API_KEY": "lr-or-cl-ms-no",
     "ANTHROPIC_MODEL": "dots-studio/dots-3-note-preview:free",
     "ANTHROPIC_DEFAULT_SONNET_MODEL": "dots-studio/dots-3-note-preview:free",
@@ -187,6 +187,7 @@ Then use directive `lr-an-cl-ms-no` (provider=`an`, Anthropic direct). This bypa
 | `401 Invalid API key` | Wrong directive format | Must be `lr-*-cl-ms-*` for Claude Code |
 | `400 No endpoints found for <model>` | Model not in OpenRouter catalog | Check model ID spelling, or use a different directive |
 | Claude Code hangs mid-request | Used `lr-*-cl-ch-*` (wrong endpoint) | Switch to `lr-*-cl-ms-*` |
+| Claude Code hangs / connection refused | `ANTHROPIC_BASE_URL` uses `http://` but gateway is HTTPS-only | Change to `https://localhost:7766` in `~/.claude/settings.json` |
 | All keys 429 | OpenRouter rate limit pool exhausted | `curl -sk -X POST https://localhost:7766/reset` |
 | Thinking box not rendering | Missing `ts` nuance | Use `lr-or-cl-ms-ts` |
 | No thinking tokens at all | `CLAUDE_CODE_ALWAYS_ENABLE_EFFORT` not set | Claude Code won't send effort params for unrecognized model IDs. Set `CLAUDE_CODE_ALWAYS_ENABLE_EFFORT=1` in `~/.claude/settings.json`. |

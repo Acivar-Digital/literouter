@@ -10,6 +10,17 @@
         ],
         "matcher": ""
       }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "command": "bash scripts/cc_slop_guard.sh",
+            "type": "command"
+          }
+        ],
+        "matcher": "Edit|Write"
+      }
     ]
   }
 }
