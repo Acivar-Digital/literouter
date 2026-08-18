@@ -25,7 +25,19 @@ export interface UsageCallbackPayload {
 
 export interface StreamCallbacks {
   readonly onUsage?: (usage: UsageCallbackPayload) => void;
+  readonly retryProvider?: RetryProvider;
+  readonly nextAttemptProvider?: RetryProvider;
 }
+
+export interface NextAttemptResult {
+  readonly firstChunk: Uint8Array;
+  readonly rawReader?: ReadableStreamDefaultReader<Uint8Array>;
+  readonly reader?: ReadableStreamDefaultReader<Uint8Array>;
+}
+
+export type RetryProvider = (
+  reason: string
+) => Promise<NextAttemptResult | null>;
 
 export class NoResponseError extends Error {
   public constructor(message: string) {
@@ -290,11 +302,83 @@ export async function fetchWithTtftGuard(
   return { response, ttftMs, firstChunk, rawReader: reader };
 }
 
+export function isInBandErrorChunk(chunk: Uint8Array): { isError: boolean; message?: string } {
+  if (!chunk || chunk.length === 0) {
+    return { isError: false };
+  }
+  const text = new TextDecoder().decode(chunk).trim();
+  if (!text) {
+    return { isError: false };
+  }
+
+  // Fast check for explicit mid-response server error strings
+  if (text.includes("Server error mid-response")) {
+    return { isError: true, message: "Server error mid-response" };
+  }
+
+  // Check JSON / SSE error payloads line by line
+  const lines = text.split("\n");
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed === ": keep-alive" || trimmed === "data: [DONE]") {
+      continue;
+    }
+    let jsonStr = trimmed;
+    if (trimmed.startsWith("data:")) {
+      jsonStr = trimmed.slice(5).trim();
+      if (jsonStr === "[DONE]") {
+        continue;
+      }
+    }
+    if (jsonStr.startsWith("{") && jsonStr.endsWith("}")) {
+      try {
+        const parsed = JSON.parse(jsonStr) as Record<string, unknown>;
+        if (parsed.error && typeof parsed.error === "object") {
+          const errObj = parsed.error as Record<string, unknown>;
+          const msg = typeof errObj.message === "string"
+            ? errObj.message
+            : typeof errObj.type === "string"
+              ? errObj.type
+              : "In-band upstream error";
+          return { isError: true, message: msg };
+        }
+        if (parsed.type === "error") {
+          const msg = typeof parsed.message === "string" ? parsed.message : "In-band upstream error";
+          return { isError: true, message: msg };
+        }
+      } catch (err: unknown) {
+        void err;
+      }
+    }
+  }
+
+  const errorSubstrings = [
+    "Internal Server Error",
+    "internal_server_error",
+    "server_error",
+    "overloaded_error",
+    "internal_error",
+  ];
+  for (const sub of errorSubstrings) {
+    if (text.includes(sub)) {
+      return { isError: true, message: sub };
+    }
+  }
+
+  const codeRegex = /"(?:code|status)"\s*:\s*(500|502|503|504|"internal_error"|"server_error"|"overloaded_error")/i;
+  if (codeRegex.test(text)) {
+    return { isError: true, message: "In-band error code match" };
+  }
+
+  return { isError: false };
+}
+
 export function createResilientStream(
   firstChunk: Uint8Array,
   reader: ReadableStreamDefaultReader<Uint8Array>,
   callbacks?: StreamCallbacks
 ): ReadableStream<Uint8Array> {
+  let currentReader = reader;
   let keepAliveTimer: IntervalHandle | null = null;
   let usageEmitted = false;
 
@@ -311,13 +395,47 @@ export function createResilientStream(
     },
     async pull(controller) {
       try {
-        const { done, value } = await reader.read();
+        const { done, value } = await currentReader.read();
         if (done) {
           clearTimer(keepAliveTimer);
           controller.close();
           return;
         }
         if (value && value.length > 0) {
+          const errCheck = isInBandErrorChunk(value);
+          if (errCheck.isError) {
+            const provider = callbacks?.retryProvider ?? callbacks?.nextAttemptProvider;
+            if (provider) {
+              const reason = errCheck.message ?? "In-band error detected";
+              const next = await provider(reason);
+              if (next) {
+                const nextReader = next.rawReader ?? next.reader;
+                if (nextReader) {
+                  currentReader = nextReader;
+                }
+                if (next.firstChunk && next.firstChunk.length > 0) {
+                  if (!usageEmitted && callbacks?.onUsage) {
+                    const usage = extractUsageFromChunk(next.firstChunk);
+                    if (usage) {
+                      usageEmitted = true;
+                      callbacks.onUsage(usage);
+                    }
+                  }
+                  controller.enqueue(next.firstChunk);
+                }
+                return;
+              } else {
+                clearTimer(keepAliveTimer);
+                controller.error(new Error(reason));
+                return;
+              }
+            } else {
+              clearTimer(keepAliveTimer);
+              controller.error(new Error(errCheck.message ?? "In-band upstream error"));
+              return;
+            }
+          }
+
           if (!usageEmitted && callbacks?.onUsage) {
             const usage = extractUsageFromChunk(value);
             if (usage) {
@@ -328,13 +446,45 @@ export function createResilientStream(
           controller.enqueue(value);
         }
       } catch (err: unknown) {
+        const provider = callbacks?.retryProvider ?? callbacks?.nextAttemptProvider;
+        if (provider) {
+          try {
+            const reason = err instanceof Error ? err.message : String(err);
+            const next = await provider(reason);
+            if (next) {
+              const nextReader = next.rawReader ?? next.reader;
+              if (nextReader) {
+                currentReader = nextReader;
+              }
+              if (next.firstChunk && next.firstChunk.length > 0) {
+                if (!usageEmitted && callbacks?.onUsage) {
+                  const usage = extractUsageFromChunk(next.firstChunk);
+                  if (usage) {
+                    usageEmitted = true;
+                    callbacks.onUsage(usage);
+                  }
+                }
+                controller.enqueue(next.firstChunk);
+              }
+              return;
+            } else {
+              clearTimer(keepAliveTimer);
+              controller.error(err);
+              return;
+            }
+          } catch (retryErr: unknown) {
+            clearTimer(keepAliveTimer);
+            controller.error(retryErr);
+            return;
+          }
+        }
         clearTimer(keepAliveTimer);
         controller.error(err);
       }
     },
     cancel() {
       clearTimer(keepAliveTimer);
-      reader.cancel().catch((err: unknown) => {
+      currentReader.cancel().catch((err: unknown) => {
         if (err instanceof Error) {
           console.error(`[StreamCancel] Cancel error: ${err.message}`);
         }

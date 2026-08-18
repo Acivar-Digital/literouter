@@ -318,13 +318,16 @@ async function executeDirectCall(
     });
   }
 
+  let currentKeyIndex = selected.index;
+  let currentAttempt = attempt;
+
   let resilientStream = createResilientStream(firstChunk, rawReader, {
     onUsage: (u) => {
       const streamDuration = Date.now() - startTime;
       logUsage({
         reqId,
         provider: directive.provider,
-        keyIndex: selected.index,
+        keyIndex: currentKeyIndex,
         totalKeys: selected.totalKeys,
         promptTokens: u.promptTokens,
         reasoningTokens: u.reasoningTokens,
@@ -332,8 +335,55 @@ async function executeDirectCall(
         totalTokens: u.totalTokens,
         durationMs: streamDuration,
       });
-      logServed(reqId, streamDuration, response.status, attempt, maxAttempts);
+      logServed(reqId, streamDuration, response.status, currentAttempt, maxAttempts);
       logSeparator();
+    },
+    retryProvider: async (reason: string) => {
+      globalKeyPool.reportFailure(directive.provider, currentKeyIndex, 500, undefined, reason, Date.now(), 60);
+      logLimit(reqId, directive.provider, currentKeyIndex, 500, 60, selected.totalKeys);
+
+      while (currentAttempt < maxAttempts) {
+        currentAttempt++;
+        if (clientSignal?.aborted) {
+          return null;
+        }
+        const nextSelected = globalKeyPool.selectNextKey(directive.provider);
+        if (!nextSelected) {
+          return null;
+        }
+        logRotate(reqId, directive.provider, currentKeyIndex, nextSelected.index, nextSelected.totalKeys, currentAttempt, maxAttempts);
+        currentKeyIndex = nextSelected.index;
+
+        const nextHeaders = buildAuthHeaders(endpoint.authHeader, nextSelected.key, directive.provider);
+        const nextFetchOpts: FetcherOptions = {
+          url: endpoint.url,
+          method: "POST",
+          headers: nextHeaders,
+          body: JSON.stringify(payload),
+          clientSignal,
+          provider: directive.provider,
+          keyIndex: nextSelected.index,
+        };
+
+        try {
+          const nextResult = await fetchWithTtftGuard(nextFetchOpts);
+          if (nextResult.response.status >= 400) {
+            globalKeyPool.reportFailure(directive.provider, nextSelected.index, nextResult.response.status);
+            continue;
+          }
+          globalKeyPool.reportSuccess(directive.provider, nextSelected.index);
+          return {
+            firstChunk: nextResult.firstChunk,
+            rawReader: nextResult.rawReader,
+            reader: nextResult.rawReader,
+          };
+        } catch (fetchErr: unknown) {
+          void fetchErr;
+          globalKeyPool.reportFailure(directive.provider, nextSelected.index, 500);
+          continue;
+        }
+      }
+      return null;
     },
   });
 

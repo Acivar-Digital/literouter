@@ -76,20 +76,26 @@ function checkKeyPools(): void {
 
 async function pingLocalServer(): Promise<void> {
   const port = getEnv().LITEROUTER_PORT;
-  try {
-    const res = await fetch(`http://localhost:${port}/health`, { signal: AbortSignal.timeout(1000) });
-    if (res.ok) {
-      checks.push({ label: `Ping Server (: ${port})`, status: "PASS", message: "Gateway is live" });
-    } else {
-      checks.push({ label: `Ping Server (: ${port})`, status: "WARN", message: `Returned HTTP ${res.status}` });
+  for (const proto of ["https", "http"]) {
+    try {
+      const res = await fetch(`${proto}://localhost:${port}/health`, {
+        signal: AbortSignal.timeout(1000),
+        tls: { rejectUnauthorized: false },
+      });
+      if (res.ok) {
+        checks.push({ label: `Ping Server (: ${port})`, status: "PASS", message: `Gateway is live (${proto.toUpperCase()})` });
+        return;
+      }
+    } catch (err) {
+      void err;
     }
-  } catch {
-    checks.push({
-      label: `Ping Server (: ${port})`,
-      status: "WARN",
-      message: "Gateway is not currently running (FYI only)",
-    });
   }
+
+  checks.push({
+    label: `Ping Server (: ${port})`,
+    status: "WARN",
+    message: "Gateway is not currently running (FYI only)",
+  });
 }
 
 async function runDoctor(): Promise<void> {

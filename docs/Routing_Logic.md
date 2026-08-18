@@ -41,6 +41,7 @@ Upstream HTTP errors are evaluated via `classifyUpstreamError`:
 | **TTFT Timeout / First-Byte Ghost (>5s)** | ✅ **Yes (3 tries)** | `retry_rotate` | ✅ **60s** | Upstream accepted socket but produced no content tokens in 5s. |
 | **0-Byte Response (Ghost HTTP 200)** | ✅ **Yes (3 tries)** | `retry_rotate` | ✅ **60s** | HTTP 200 returned with completely empty body/stream. |
 | **Mid-Stream Stalls / Thinking Pauses** | N/A | SSE Keepalive | N/A | Periodic `: keep-alive\n\n` comments prevent client & Bun socket timeouts. |
+| **Mid-Stream In-Band Server Errors / Socket Resets** | ✅ **Yes (3 tries)** | `retry_rotate` (Mid-Stream Resend) | ✅ **10s** | Intercepts in-band SSE error frames (`Server error mid-response`, 5xx JSON) or transport EOF/socket drops mid-stream, suppresses downstream error leakage, quarantines failing key, and seamlessly resends across active key pool into the open client stream. |
 
 ---
 

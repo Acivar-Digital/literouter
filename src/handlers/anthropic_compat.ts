@@ -415,13 +415,16 @@ async function executeAnthropicDirectCall(
     });
   }
 
+  let currentKeyIndex = selected.index;
+  let currentAttempt = attempt;
+
   const resilientStream = createResilientStream(firstChunk, rawReader, {
     onUsage: (u) => {
       const streamDuration = Date.now() - startTime;
       logUsage({
         reqId,
         provider: directive.provider,
-        keyIndex: selected.index,
+        keyIndex: currentKeyIndex,
         totalKeys: selected.totalKeys,
         promptTokens: u.promptTokens,
         reasoningTokens: u.reasoningTokens,
@@ -429,8 +432,60 @@ async function executeAnthropicDirectCall(
         totalTokens: u.totalTokens,
         durationMs: streamDuration,
       });
-      logServed(reqId, streamDuration, response.status, attempt, maxAttempts);
+      logServed(reqId, streamDuration, response.status, currentAttempt, maxAttempts);
       logSeparator();
+    },
+    retryProvider: async (reason: string) => {
+      globalKeyPool.reportFailure(directive.provider, currentKeyIndex, 500, undefined, reason, Date.now(), 60);
+      logLimit(reqId, directive.provider, currentKeyIndex, 500, 60, selected.totalKeys);
+
+      while (currentAttempt < maxAttempts) {
+        currentAttempt++;
+        if (clientSignal?.aborted) {
+          return null;
+        }
+        const nextSelected = globalKeyPool.selectNextKey(directive.provider);
+        if (!nextSelected) {
+          return null;
+        }
+        logRotate(reqId, directive.provider, currentKeyIndex, nextSelected.index, nextSelected.totalKeys, currentAttempt, maxAttempts);
+        currentKeyIndex = nextSelected.index;
+
+        const nextHeaders: Record<string, string> = {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${nextSelected.key}`,
+          "Accept-Encoding": "identity",
+          "HTTP-Referer": env.LITEROUTER_HTTP_REFERER,
+          "X-Title": env.LITEROUTER_X_TITLE,
+        };
+
+        try {
+          const nextResult = await fetchWithTtftGuard({
+            url: endpoint.url,
+            method: "POST",
+            headers: nextHeaders,
+            body: JSON.stringify(payload),
+            clientSignal,
+            provider: directive.provider,
+            keyIndex: nextSelected.index,
+          });
+          if (nextResult.response.status >= 400) {
+            globalKeyPool.reportFailure(directive.provider, nextSelected.index, nextResult.response.status);
+            continue;
+          }
+          globalKeyPool.reportSuccess(directive.provider, nextSelected.index);
+          return {
+            firstChunk: nextResult.firstChunk,
+            rawReader: nextResult.rawReader,
+            reader: nextResult.rawReader,
+          };
+        } catch (fetchErr: unknown) {
+          void fetchErr;
+          globalKeyPool.reportFailure(directive.provider, nextSelected.index, 500);
+          continue;
+        }
+      }
+      return null;
     },
   });
 

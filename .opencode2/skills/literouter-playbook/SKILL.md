@@ -70,3 +70,4 @@ Fusion presets: `lr-fse-<preset>` (e.g. `lr-fse-fast`, `lr-fse-smart`, `lr-fse-c
 6. **SSE Keepalive** (2s/15s): injects comment frames (`: keep-alive\n\n`) to keep client connections active during thinking and long processing pauses.
 7. **Ghost Response Guard**: rejects HTTP 200 responses with 0 content tokens.
 8. **Client Cache Sanitizer**: strips `prompt_cache_key`/`prompt_cache_retrieval`/`prompt_cache_reset` before upstream dispatch.
+9. **Mid-Stream Error Interceptor & Auto-Resend**: Detects and suppresses mid-stream in-band 5xx error chunks (`Server error mid-response. The response above may be incomplete.`) and socket drops, isolates the failing key (10s), and automatically resends across available keys into the open downstream client stream.

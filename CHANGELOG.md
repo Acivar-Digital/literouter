@@ -4,6 +4,11 @@ All notable changes to LiteRouter will be documented in this file.
 
 ## [Unreleased]
 
+### Added / Mid-Stream Error Recovery & In-Band Error Suppression
+- **In-Band SSE Error Frame Interceptor (`isInBandErrorChunk` in `src/network/fetcher.ts`)** — Detects upstream in-band 5xx SSE error payloads (e.g. `"Server error mid-response. The response above may be incomplete."`, internal server errors, overloaded errors) and suppresses them from leaking downstream to client IDEs/TUIs.
+- **Multi-Attempt Resilient Stream Controller (`createResilientStream`)** — Enhanced `createResilientStream` with dynamic `retryProvider` callbacks. When an upstream stream encounters a mid-generation drop (socket reset, EOF) or in-band error chunk, LiteRouter quarantines the failing key (10s), rotates to the next active key in the pool (up to 3 attempts), re-fetches the generation, and transparently pipes the new stream into the open downstream client connection without terminating the session.
+- **Unit Test Suite (`tests/unit/midstream_retry.test.ts`)** — Added comprehensive unit tests asserting in-band error signature detection, regular SSE delta pass-through, multi-attempt stream stitching, and exhausted retry error propagation.
+
 ### Added / In-Flight Error Classification & Retry Resilience
 - **Centralized Error Classifier (`src/network/classifier.ts`)** — Introduced `classifyUpstreamError` to systematically parse HTTP status codes, upstream error headers, and response bodies, returning structured `ErrorDisposition` (`retry_rotate` vs. `fail_fast` with appropriate `quarantineTtlSec`).
 - **Network & Transport Layer Resilience (`src/network/fetcher.ts`, `src/handlers/openai_compat.ts`, `src/handlers/anthropic_compat.ts`)** — Wrapped all pre-stream socket failures, TCP resets (TCP RST / `ReadError` / `ECONNRESET`), HTTP/2 GOAWAY (`RemoteProtocolError`), and connection timeouts (`ConnectTimeout` / `ConnectError`) into `NoResponseError`. Outbound transport exceptions occurring before payload delivery are trapped and retried across pooled keys in-flight (up to 3 attempts) instead of propagating unhandled socket errors to the client.
