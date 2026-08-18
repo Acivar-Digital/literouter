@@ -263,7 +263,7 @@ async function probeZenKey(key: string): Promise<ProbeResult> {
   const masked = maskKey(key);
   const url = "https://opencode.ai/zen/v1/chat/completions";
   const payload = {
-    model: "zen/hy3-free",
+    model: "hy3-free",
     messages: [{ role: "user", content: "ping" }],
     max_tokens: 10,
   };

@@ -487,7 +487,14 @@ export async function executeDirectRequest(
   clientSignal: AbortSignal | undefined,
   reqId: string
 ): Promise<Response> {
-  const transformed = sanitizeAndTransformPayload(body, {
+  let normalizedBody = body;
+  if (directive.provider === "zn" && body.model.startsWith("zen/")) {
+    normalizedBody = { ...body, model: body.model.slice(4) };
+  } else if (directive.provider === "gg" && body.model.startsWith("google/")) {
+    normalizedBody = { ...body, model: body.model.slice(7) };
+  }
+
+  const transformed = sanitizeAndTransformPayload(normalizedBody, {
     nuances: directive.nuances,
     targetWire: directive.payload,
   });
