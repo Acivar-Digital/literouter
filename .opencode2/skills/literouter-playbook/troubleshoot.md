@@ -86,3 +86,7 @@ curl -sk -X POST https://localhost:7766/reset
   - **HTTP 401 / 403 Auth Error**: Retries next key, quarantines bad key for 7 days (`604,800s`).
   - **HTTP 5xx Server Error**: Retries next key, quarantines key for 10s.
   - **Client Errors (400 Context Length, 404, Safety)**: Fails fast immediately with 0s quarantine to return the actionable error directly to the caller.
+
+### Pattern 9: Network & Transport Layer Failures (Pre-Stream Socket Errors, TCP RST, GOAWAY, `ConnectTimeout`)
+- **Symptom**: Outbound upstream connection fails prior to stream establishment due to network hiccups, TCP reset (`ECONNRESET` / `ReadError`), HTTP/2 GOAWAY frame from edge load balancers (`RemoteProtocolError`), or connect timeouts (`ConnectTimeout` / `ConnectError`).
+- **Handling**: `fetchWithTtftGuard` in `src/network/fetcher.ts` intercepts pre-stream transport exceptions (unless caused by downstream client abort) and wraps them into `NoResponseError("Network transport failure: ...")`. Upstream execution loops catch `NoResponseError`, report failure on the current key, and rotate in-flight to the next pooled active key (up to 3 attempts) with 0s cooldown, preventing unhandled transport drops from bubbling up to the client.

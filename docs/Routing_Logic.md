@@ -6,12 +6,14 @@ LiteRouter employs an intelligent in-flight error classification and retry engin
 
 ## 1. Network & Transport Layer (HTTP/2, Sockets, Bun Runtime)
 
+All outbound transport exceptions occurring prior to stream establishment or byte delivery are caught in `fetchWithTtftGuard` and wrapped into a `NoResponseError`. The request handler catches this error, isolates the current key, and automatically rotates in-flight across pooled keys (up to 3 attempts).
+
 | Status / Error | In-Flight Retry? | Retry Strategy | Quarantines Key? | Behavior / Notes |
 | :--- | :--- | :--- | :--- | :--- |
-| **`ConnectTimeout` / `ConnectError`** | ✅ **Yes (Rotate)** | Immediate rotation (max 3 tries) | ❌ No (0s) | Network handshake or DNS issue; attempts next key/connection. |
-| **`RemoteProtocolError` (HTTP/2 GOAWAY)** | ✅ **Yes (Rotate)** | Immediate rotation (max 3 tries) | ❌ No (0s) | Transient upstream edge/load-balancer socket rotation. |
-| **`ReadError` (TCP RST / Connection Dropped)** | ✅ **Yes (Rotate)** | Immediate rotation (max 3 tries) | ❌ No (0s) | Transient network disconnect prior to first byte delivery. |
-| **Client Disconnect (`req.signal` Abort)** | ❌ **No** | Abort upstream immediately | ❌ No (0s) | Propagates abort downstream $\to$ upstream to prevent token burn. |
+| **`ConnectTimeout` / `ConnectError`** | ✅ **Yes (Rotate)** | Immediate rotation (max 3 tries) | ❌ No (0s) | Pre-stream handshake or DNS failure. Wrapped into `NoResponseError` and retried across pooled keys. |
+| **`RemoteProtocolError` (HTTP/2 GOAWAY)** | ✅ **Yes (Rotate)** | Immediate rotation (max 3 tries) | ❌ No (0s) | Upstream edge/load-balancer socket rotation. Wrapped into `NoResponseError` and retried across pooled keys. |
+| **`ReadError` (TCP RST / `ECONNRESET`)** | ✅ **Yes (Rotate)** | Immediate rotation (max 3 tries) | ❌ No (0s) | Pre-stream socket reset or connection drop before first byte delivery. Wrapped into `NoResponseError` and retried. |
+| **Client Disconnect (`req.signal` Abort)** | ❌ **No** | Abort upstream immediately | ❌ No (0s) | Client cancelled the request. Propagates abort downstream $\to$ upstream immediately to prevent token burn. |
 
 ---
 

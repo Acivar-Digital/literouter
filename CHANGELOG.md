@@ -6,6 +6,7 @@ All notable changes to LiteRouter will be documented in this file.
 
 ### Added / In-Flight Error Classification & Retry Resilience
 - **Centralized Error Classifier (`src/network/classifier.ts`)** — Introduced `classifyUpstreamError` to systematically parse HTTP status codes, upstream error headers, and response bodies, returning structured `ErrorDisposition` (`retry_rotate` vs. `fail_fast` with appropriate `quarantineTtlSec`).
+- **Network & Transport Layer Resilience (`src/network/fetcher.ts`, `src/handlers/openai_compat.ts`, `src/handlers/anthropic_compat.ts`)** — Wrapped all pre-stream socket failures, TCP resets (TCP RST / `ReadError` / `ECONNRESET`), HTTP/2 GOAWAY (`RemoteProtocolError`), and connection timeouts (`ConnectTimeout` / `ConnectError`) into `NoResponseError`. Outbound transport exceptions occurring before payload delivery are trapped and retried across pooled keys in-flight (up to 3 attempts) instead of propagating unhandled socket errors to the client.
 - **In-Flight Key Rotation (Up to 3 Attempts)** — Enabled immediate automatic key rotation for transient and provider-side errors:
   - **HTTP 400 (Provider temporary errors)**: Retries on "provider returned error", "no available provider", "temporarily unavailable" with 0s quarantine.
   - **HTTP 429 (Rate limits & Quota exhaustion)**: Retries immediately across keys; sets dynamic cooldown for rate limits (parsing `Retry-After` / `x-ratelimit-reset`) or 7-day quarantine for exhausted balances / credit limits (`insufficient_quota`, `credit_limit`, `out of balance`).

@@ -211,8 +211,8 @@ export function extractUsageFromChunk(chunk: Uint8Array): UsageCallbackPayload |
         const totalTokens = typeof u.totalTokenCount === "number" ? u.totalTokenCount : promptTokens + completionTokens;
         return { promptTokens, completionTokens, totalTokens };
       }
-    } catch {
-      // Continue parsing lines
+    } catch (err: unknown) {
+      void err;
     }
   }
   return null;
@@ -257,12 +257,20 @@ export async function fetchWithTtftGuard(
   if (!requestHeaders.has("accept-encoding")) {
     requestHeaders.set("accept-encoding", "identity");
   }
-  const response = await fetch(options.url, {
-    method: options.method,
-    headers: requestHeaders,
-    body: options.body,
-    signal,
-  });
+  let response: Response;
+  try {
+    response = await fetch(options.url, {
+      method: options.method,
+      headers: requestHeaders,
+      body: options.body,
+      signal,
+    });
+  } catch (err: unknown) {
+    if (options.clientSignal?.aborted) {
+      throw err;
+    }
+    throw new NoResponseError(`Network transport failure: ${err instanceof Error ? err.message : String(err)}`);
+  }
 
   if (!response.body) {
     throw new NoResponseError("Upstream response has no body stream");

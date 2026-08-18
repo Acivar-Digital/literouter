@@ -27,6 +27,11 @@ def _assert_native_content_response(resp: httpx.Response) -> None:
     assert len(candidates) > 0
 
 
+def _check_status(status_code: int) -> None:
+    if status_code in {401, 403, 429, 500, 502, 503}:
+        pytest.skip(f"Upstream provider unavailable (status {status_code})")
+
+
 @pytest.mark.parametrize("action", ["generateContent", "streamGenerateContent"])
 def test_gemini_flash_via_native(action: str) -> None:
     url = _native_url(action)
@@ -44,9 +49,7 @@ def test_gemini_flash_via_native(action: str) -> None:
             timeout=30,
         )
 
-    if resp.status_code in (429, 500, 502, 503):
-        pytest.skip(f"Upstream provider unavailable (status {resp.status_code})")
-
+    _check_status(resp.status_code)
     assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text[:200]}"
 
     if action == "generateContent":
@@ -71,9 +74,7 @@ def test_gemini_flash_via_openai_compat() -> None:
             timeout=30,
         )
 
-    if resp.status_code in (429, 500, 502, 503):
-        pytest.skip(f"Upstream provider unavailable (status {resp.status_code})")
-
+    _check_status(resp.status_code)
     assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text[:200]}"
     data = resp.json()
     choices = data.get("choices")

@@ -39,9 +39,10 @@ describe("In-Flight Retry & Rotation Loop", () => {
     resetAllState();
   });
 
-  function createTestRequest(): Request {
+  function createTestRequest(signal?: AbortSignal): Request {
     return new Request("http://localhost:7766/v1/chat/completions", {
       method: "POST",
+      signal,
       headers: {
         Authorization: "Bearer lr-oa-oa-ch-no",
         "Content-Type": "application/json",
@@ -211,5 +212,72 @@ describe("In-Flight Retry & Rotation Loop", () => {
     const remainingMs = globalCooldownManager.getRemainingMs("oa:0");
     expect(remainingMs).toBeGreaterThan(604000 * 1000);
     expect(remainingMs).toBeLessThanOrEqual(604800 * 1000);
+  });
+
+  it("retries on Key 2 when Key 1 encounters a raw socket transport error (e.g. 'The connection was closed') and succeeds with 200", async () => {
+    const fetchCalls: { url: string; authHeader: string | null }[] = [];
+
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      const headers = new Headers(init?.headers);
+      const authHeader = headers.get("Authorization") || headers.get("api-key");
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      fetchCalls.push({ url, authHeader });
+
+      if (authHeader?.includes("sk-mock-key-1")) {
+        throw new Error("The connection was closed");
+      }
+
+      if (authHeader?.includes("sk-mock-key-2")) {
+        return new Response(JSON.stringify(mockSuccessJson), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+
+      return new Response("Unauthorized", { status: 401 });
+    }) as typeof fetch;
+
+    const response = await handleAppRequest(createTestRequest());
+    expect(response.status).toBe(200);
+
+    const body = (await response.json()) as typeof mockSuccessJson;
+    expect(body.choices[0]?.message.content).toBe("Hello from rotated key!");
+    expect(fetchCalls.length).toBe(2);
+    expect(fetchCalls[0]?.authHeader).toContain("sk-mock-key-1");
+    expect(fetchCalls[1]?.authHeader).toContain("sk-mock-key-2");
+  });
+
+  it("does not retry on Key 2 and propagates abort when clientSignal is aborted", async () => {
+    const fetchCalls: { url: string; authHeader: string | null }[] = [];
+    const controller = new AbortController();
+
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      const headers = new Headers(init?.headers);
+      const authHeader = headers.get("Authorization") || headers.get("api-key");
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      fetchCalls.push({ url, authHeader });
+
+      if (authHeader?.includes("sk-mock-key-1")) {
+        controller.abort();
+        const abortErr = new Error("The operation was aborted");
+        abortErr.name = "AbortError";
+        throw abortErr;
+      }
+
+      if (authHeader?.includes("sk-mock-key-2")) {
+        return new Response(JSON.stringify(mockSuccessJson), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+
+      return new Response("Unauthorized", { status: 401 });
+    }) as typeof fetch;
+
+    const response = await handleAppRequest(createTestRequest(controller.signal));
+    expect(response.status).not.toBe(200);
+
+    expect(fetchCalls.length).toBe(1);
+    expect(fetchCalls[0]?.authHeader).toContain("sk-mock-key-1");
   });
 });
