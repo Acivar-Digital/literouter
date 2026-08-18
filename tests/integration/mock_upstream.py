@@ -114,6 +114,7 @@ def create_mock_upstream_app(ctx: MockUpstreamContext) -> FastAPI:
         return {"status": "reset"}
 
     @app.post("/chat/completions")
+    @app.post("/api/v1/chat/completions")
     async def chat_completions(request: Request) -> Response:
         auth_header = request.headers.get("Authorization", "")
         key = auth_header.replace("Bearer ", "").strip()

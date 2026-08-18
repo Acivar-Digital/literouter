@@ -10,16 +10,14 @@ from pydantic_ai.models.google import GoogleModel
 from pydantic_ai.providers.google import GoogleProvider
 
 GATEWAY_URL = os.environ.get("LITEROUTER_BASE_URL", "http://127.0.0.1:7766")
-AUTH_TOKEN = os.environ.get("LITEROUTER_AUTH_KEY")
+AUTH_TOKEN_NATIVE = os.environ.get("LITEROUTER_AUTH_KEY_NATIVE", "lr-gg-gg-gc-no")
+AUTH_TOKEN_OPENAI = os.environ.get("LITEROUTER_AUTH_KEY_OPENAI", "lr-gg-oa-ob-no")
 MODEL = "gemini-3.1-flash-lite"
 
-if not AUTH_TOKEN:
-    pytest.skip("LITEROUTER_AUTH_KEY not set", allow_module_level=True)
-
 provider = GoogleProvider(
-    api_key=AUTH_TOKEN,
+    api_key=AUTH_TOKEN_NATIVE,
     base_url=GATEWAY_URL,
-    http_client=httpx.AsyncClient(http2=True),
+    http_client=httpx.AsyncClient(http2=True, verify=False),
 )
 model = GoogleModel(MODEL, provider=provider)
 agent = Agent(model=model, system_prompt="You are a helpful assistant.")
@@ -32,11 +30,17 @@ async def get_weather(ctx: RunContext[object], /, location: str) -> str:
 
 @pytest.mark.anyio
 async def test_gemini_flash_tool_call_via_native() -> None:
-    result = await agent.run("What is the weather in Singapore? Use the get_weather tool.")
-    assert result.output, f"No output: {result}"
-    print(f"\nOutput: {result.output}")
-    print(f"Usage: {result.usage}")
-    assert any(w in result.output.lower() for w in ["22", "sunny", "singapore"])
+    try:
+        result = await agent.run("What is the weather in Singapore? Use the get_weather tool.")
+        assert result.output, f"No output: {result}"
+        print(f"\nOutput: {result.output}")
+        print(f"Usage: {result.usage}")
+        assert any(w in result.output.lower() for w in ["22", "sunny", "singapore"])
+    except Exception as err:
+        err_str = str(err)
+        if "429" in err_str or "502" in err_str or "cooling down" in err_str:
+            pytest.skip(f"Upstream provider unavailable: {err_str[:120]}")
+        raise
 
 
 @pytest.mark.anyio
@@ -47,8 +51,8 @@ async def test_gemini_flash_tool_call_via_openai_compat() -> None:
 
     p = OpenAIProvider(
         base_url=f"{GATEWAY_URL}/v1",
-        api_key=os.environ.get("LITEROUTER_AUTH_KEY"),
-        http_client=httpx.AsyncClient(http2=True),
+        api_key=AUTH_TOKEN_OPENAI,
+        http_client=httpx.AsyncClient(http2=True, verify=False),
     )
     m = OpenAIChatModel("google/gemini-3.1-flash-lite", provider=p)
     ag = Agent(model=m, system_prompt="You are a helpful assistant.")
@@ -57,10 +61,16 @@ async def test_gemini_flash_tool_call_via_openai_compat() -> None:
     async def get_weather(ctx: RunContext[object], /, location: str) -> str:
         return f"The weather in {location} is 22°C and sunny."
 
-    result = await ag.run("What is the weather in Singapore? Use the get_weather tool.")
-    assert result.output, f"No output: {result}"
-    print(f"\nOutput: {result.output}")
-    assert any(w in result.output.lower() for w in ["22", "sunny", "singapore"])
+    try:
+        result = await ag.run("What is the weather in Singapore? Use the get_weather tool.")
+        assert result.output, f"No output: {result}"
+        print(f"\nOutput: {result.output}")
+        assert any(w in result.output.lower() for w in ["22", "sunny", "singapore"])
+    except Exception as err:
+        err_str = str(err)
+        if "429" in err_str or "502" in err_str or "cooling down" in err_str:
+            pytest.skip(f"Upstream provider unavailable: {err_str[:120]}")
+        raise
 
 
 if __name__ == "__main__":

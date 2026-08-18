@@ -22,7 +22,7 @@ from tests.integration.mock_upstream import (
 
 logger = logging.getLogger("test_dots_transformer_e2e")
 
-AUTH_KEY = "test-e2e-token-secret-dots-12345"
+AUTH_KEY = "lr-or-oa-ch-no"
 KEY_1 = "sk-test-key-dots-00000000000000001"
 TEST_MODEL = "openrouter/dots-studio/dots-3-note-preview:free"
 
@@ -90,6 +90,7 @@ def create_dots_mock_upstream_app(ctx: MockUpstreamContext) -> FastAPI:
         return {"status": "ok"}
 
     @app.post("/chat/completions")
+    @app.post("/api/v1/chat/completions")
     async def chat_completions(request: Request) -> Response:
         auth_header = request.headers.get("Authorization", "")
         key = auth_header.replace("Bearer ", "").strip()
@@ -137,9 +138,8 @@ def dots_e2e_stack() -> Generator[Dict[str, Any], None, None]:
     gw_port = get_ephemeral_port()
     env = os.environ.copy()
     env["LITEROUTER_PORT"] = str(gw_port)
-    env["OPENROUTER_BASE_URL"] = f"http://127.0.0.1:{mock_port}"
+    env["MOCK_OR_PORT"] = str(mock_port)
     env["OPENROUTER_API_KEYS"] = KEY_1
-    env["LITEROUTER_AUTH_KEY"] = AUTH_KEY
 
     gw_proc = subprocess.Popen(
         ["bun", "run", "src/index.ts"],

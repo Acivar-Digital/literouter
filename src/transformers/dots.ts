@@ -78,7 +78,10 @@ export function parseDotsXml(content: string): DotsParseResult {
     match = regex.exec(content);
   }
 
-  const cleanText = content.replace(INVOKE_BLOCK_REGEX, "").trim();
+  const cleanText = content
+    .replace(INVOKE_BLOCK_REGEX, "")
+    .replace(/<\/?(?:tool_calls|function_calls)>/g, "")
+    .trim();
   return { cleanText, toolCalls };
 }
 
@@ -136,8 +139,14 @@ function formatOpenAITextDelta(text: string): string {
 }
 
 function flushNonTagContent(state: DotsStreamState): string {
-  const tagStart = state.buffer.indexOf("<invoke");
+  const tagStart = state.buffer.search(/<(?:tool_calls|function_calls|invoke)/i);
   if (tagStart === -1) {
+    const potentialTag = state.buffer.search(/<[a-zA-Z0-9_]*$/);
+    if (potentialTag !== -1) {
+      const textToEmit = state.buffer.slice(0, potentialTag);
+      state.buffer = state.buffer.slice(potentialTag);
+      return textToEmit.length > 0 ? formatOpenAITextDelta(textToEmit) : "";
+    }
     const textToEmit = state.buffer;
     state.buffer = "";
     return textToEmit.length > 0 ? formatOpenAITextDelta(textToEmit) : "";
@@ -156,7 +165,7 @@ export function processDotsStreamChunk(
 ): string {
   state.buffer += chunk;
 
-  if (!state.buffer.includes("</invoke>")) {
+  if (!state.buffer.includes("</invoke>") && !state.buffer.includes("</tool_calls>")) {
     return flushNonTagContent(state);
   }
 
@@ -172,4 +181,55 @@ export function processDotsStreamChunk(
     state.toolCallIndex += 1;
   }
   return output;
+}
+
+export function createDotsStreamTransformer(): TransformStream<Uint8Array, Uint8Array> {
+  const state = createDotsStreamState();
+  const decoder = new TextDecoder();
+  const encoder = new TextEncoder();
+  let lineBuffer = "";
+
+  return new TransformStream<Uint8Array, Uint8Array>({
+    transform(chunk, controller) {
+      lineBuffer += decoder.decode(chunk, { stream: true });
+      const lines = lineBuffer.split("\n");
+      lineBuffer = lines.pop() ?? "";
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith(":")) {
+          controller.enqueue(encoder.encode(line + "\n"));
+          continue;
+        }
+        if (trimmed === "data: [DONE]") {
+          controller.enqueue(encoder.encode(line + "\n"));
+          continue;
+        }
+        if (trimmed.startsWith("data: ")) {
+          const jsonStr = trimmed.slice(6);
+          try {
+            const data = JSON.parse(jsonStr);
+            const content = data.choices?.[0]?.delta?.content;
+            if (typeof content === "string") {
+              const processedSse = processDotsStreamChunk(content, state);
+              if (processedSse) {
+                controller.enqueue(encoder.encode(processedSse));
+              }
+            } else {
+              controller.enqueue(encoder.encode(line + "\n"));
+            }
+          } catch {
+            controller.enqueue(encoder.encode(line + "\n"));
+          }
+        } else {
+          controller.enqueue(encoder.encode(line + "\n"));
+        }
+      }
+    },
+    flush(controller) {
+      if (lineBuffer.length > 0) {
+        controller.enqueue(encoder.encode(lineBuffer));
+      }
+    },
+  });
 }

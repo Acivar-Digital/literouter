@@ -76,3 +76,13 @@ curl -sk -X POST https://localhost:7766/reset
 - **Symptom**: Claude Code CLI or Bun-compiled clients throw `Decompression error: ZlibError` to stderr during streaming SSE or tool calling.
 - **Cause**: Bun's native `fetch()` sends `Accept-Encoding: gzip, deflate, br` and encounters parser errors on empty/flush chunked gzip frames in SSE streams.
 - **Fix**: LiteRouter enforces `Accept-Encoding: identity` on all upstream requests in `fetchWithTtftGuard` and sanitizes downstream response headers via `sanitizeDownstreamHeaders()` (stripping `content-encoding`, `transfer-encoding`, etc.).
+
+### Pattern 8: In-Flight Error Classification & Upstream Key Failover
+- **Symptom**: Upstream provider returns HTTP 400 "Provider returned error", HTTP 429 rate limit/quota error, HTTP 401/403 bad key, or HTTP 5xx server error.
+- **Handling**: Handled automatically in `src/network/classifier.ts` via `classifyUpstreamError`:
+  - **Retryable 400**: Retries in-flight up to 3 times (0s quarantine).
+  - **HTTP 429 Quota / Credit Exhaustion**: Retries next key, quarantines exhausted key for 7 days (`604,800s`).
+  - **HTTP 429 Rate Limit**: Retries next key, quarantines using parsed `Retry-After` / `x-ratelimit-reset`.
+  - **HTTP 401 / 403 Auth Error**: Retries next key, quarantines bad key for 7 days (`604,800s`).
+  - **HTTP 5xx Server Error**: Retries next key, quarantines key for 10s.
+  - **Client Errors (400 Context Length, 404, Safety)**: Fails fast immediately with 0s quarantine to return the actionable error directly to the caller.

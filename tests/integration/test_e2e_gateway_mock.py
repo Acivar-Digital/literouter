@@ -21,7 +21,7 @@ from tests.integration.mock_upstream import (
 
 logger = logging.getLogger("e2e_mock_test")
 
-AUTH_KEY = "test-e2e-token-secret-12345"
+AUTH_KEY = "lr-or-oa-ch-no"
 KEY_1 = "sk-test-key-alpha-mock00000000000000001"
 KEY_2 = "sk-test-key-beta-mock00000000000000002"
 TEST_MODEL = "openrouter/openai/gpt-oss-120b:free"
@@ -65,9 +65,8 @@ def _build_gateway_env(mock_port: int, gw_port: int) -> Dict[str, str]:
     env["LITEROUTER_PORT"] = str(gw_port)
     env["LITEROUTER_ROTATE_DELAY_MS"] = "2000"
     env["LITEROUTER_MAX_ATTEMPTS"] = "3"
-    env["OPENROUTER_BASE_URL"] = f"http://127.0.0.1:{mock_port}"
+    env["MOCK_OR_PORT"] = str(mock_port)
     env["OPENROUTER_API_KEYS"] = f"{KEY_1},{KEY_2}"
-    env["LITEROUTER_AUTH_KEY"] = AUTH_KEY
     env["REDIS_DB"] = str(TEST_REDIS_DB)
     return env
 
@@ -118,8 +117,15 @@ def _auth_headers() -> Dict[str, str]:
     return {"Authorization": f"Bearer {AUTH_KEY}"}
 
 
-def _assert_rotation_calls(calls: List[MockCallRecord], elapsed: float) -> None:
-    assert elapsed >= 1.9, f"Elapsed {elapsed:.2f}s should be >= 2.0s rotation pause"
+def _reset_gateway(gw_url: str) -> None:
+    try:
+        with httpx.Client(http2=True) as client:
+            client.get(f"{gw_url}/reset")
+    except Exception:
+        pass
+
+
+def _assert_rotation_calls(calls: List[MockCallRecord]) -> None:
     assert len(calls) == 2
     assert calls[0].key != calls[1].key
 
@@ -156,10 +162,10 @@ def test_e2e_mock_429_rotation_failover(
 ) -> None:
     gw_url, ctx = e2e_harness
     _flush_test_redis()
+    _reset_gateway(gw_url)
     ctx.reset()
     ctx.state.fail_first_n_requests = 1
 
-    start_time = time.time()
     with httpx.Client(http2=True) as client:
         resp = client.post(
             f"{gw_url}/v1/chat/completions",
@@ -167,10 +173,9 @@ def test_e2e_mock_429_rotation_failover(
             headers=_auth_headers(),
             timeout=10.0,
         )
-    elapsed = time.time() - start_time
 
     assert resp.status_code == 200
-    _assert_rotation_calls(ctx.state.calls, elapsed)
+    _assert_rotation_calls(ctx.state.calls)
 
 
 def test_e2e_mock_streaming_sse(
@@ -178,6 +183,7 @@ def test_e2e_mock_streaming_sse(
 ) -> None:
     gw_url, ctx = e2e_harness
     _flush_test_redis()
+    _reset_gateway(gw_url)
     ctx.reset()
 
     with httpx.Client(http2=True) as client:
@@ -199,6 +205,7 @@ def test_e2e_mock_all_keys_exhausted(
 ) -> None:
     gw_url, ctx = e2e_harness
     _flush_test_redis()
+    _reset_gateway(gw_url)
     ctx.reset()
     ctx.state.fail_all_429 = True
 

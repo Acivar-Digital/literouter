@@ -4,6 +4,16 @@ All notable changes to LiteRouter will be documented in this file.
 
 ## [Unreleased]
 
+### Added / In-Flight Error Classification & Retry Resilience
+- **Centralized Error Classifier (`src/network/classifier.ts`)** — Introduced `classifyUpstreamError` to systematically parse HTTP status codes, upstream error headers, and response bodies, returning structured `ErrorDisposition` (`retry_rotate` vs. `fail_fast` with appropriate `quarantineTtlSec`).
+- **In-Flight Key Rotation (Up to 3 Attempts)** — Enabled immediate automatic key rotation for transient and provider-side errors:
+  - **HTTP 400 (Provider temporary errors)**: Retries on "provider returned error", "no available provider", "temporarily unavailable" with 0s quarantine.
+  - **HTTP 429 (Rate limits & Quota exhaustion)**: Retries immediately across keys; sets dynamic cooldown for rate limits (parsing `Retry-After` / `x-ratelimit-reset`) or 7-day quarantine for exhausted balances / credit limits (`insufficient_quota`, `credit_limit`, `out of balance`).
+  - **HTTP 401 & 403 (Auth/Permissions)**: Rotates to next key and quarantines invalid key for 7 days (`604800s`).
+  - **HTTP 5xx (500, 502, 503, 504)**: Retries transient server errors with a 10s key quarantine.
+- **Fail-Fast for Client-Side Errors** — Immediately aborts retry loops and returns error directly to the downstream client with 0s quarantine for deterministic client errors: HTTP 400 (context length exceeded, schema/validation errors, content moderation/safety filters), HTTP 404 (model or resource not found), and other non-retryable 4xx client errors.
+- **Unit Test Coverage (`tests/unit/classifier.test.ts` & `tests/unit/rotation_loop.test.ts`)** — Added comprehensive unit tests validating error body inspection, reset header parsing, disposition actions, quarantine durations, and in-flight retry loop exhaustion behavior.
+
 ### Added / Multilingual Guardrails & Domain Metaphysics Preservation
 - **Tiered Multi-Language Instruction Architecture** — Implemented global cognitive and explanatory pinning to English across Claude Code (`~/.claude/CLAUDE.md`) while explicitly whitelisting Chinese metaphysics entities (Heavenly Stems, Earthly Branches, Ten Gods, Trigrams, Hexagrams, and Solar Terms) in `baziforecaster/AGENTS.md`.
 - **Regression Test Coverage (`tests/unit/language_guardrail.test.ts`)** — Added automated verification asserting zero Chinese token leakage in generic code reasoning while guaranteeing 100% genuine Chinese character retention in BaZi metaphysics data payloads.

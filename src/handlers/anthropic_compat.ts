@@ -5,7 +5,9 @@ import {
   handleOpenAICompat,
   parseRetryAfterHeader,
   resolveUpstreamEndpoint,
+  UpstreamRetryableError,
 } from "./openai_compat";
+import { classifyUpstreamError } from "../network/classifier";
 import {
   logError,
   logInbound,
@@ -324,13 +326,52 @@ async function executeAnthropicDirectCall(
 
   logTtft(reqId, ttftMs, isStream ? "Stream established" : "First chunk streamed downstream");
 
-  if (response.status < 400) {
-    globalKeyPool.reportSuccess(directive.provider, selected.index);
-  } else if (response.status === 429) {
-    const retrySec = parseRetryAfterHeader(response.headers) ?? 60;
-    globalKeyPool.reportFailure(directive.provider, selected.index, 429, response.headers);
-    logLimit(reqId, directive.provider, selected.index, 429, retrySec, selected.totalKeys);
+  if (response.status >= 400) {
+    const fullBody = await collectFullBody(firstChunk, rawReader);
+    const bodyText = new TextDecoder().decode(fullBody);
+    const classification = classifyUpstreamError({
+      provider: directive.provider,
+      status: response.status,
+      headers: response.headers,
+      bodyText,
+    });
+
+    if (classification.quarantineTtlSec > 0) {
+      globalKeyPool.reportFailure(
+        directive.provider,
+        selected.index,
+        response.status,
+        response.headers,
+        bodyText,
+        Date.now(),
+        classification.quarantineTtlSec
+      );
+    }
+
+    if (response.status === 429 || classification.quarantineTtlSec > 0) {
+      const ttlSec = classification.quarantineTtlSec > 0 ? classification.quarantineTtlSec : 60;
+      logLimit(reqId, directive.provider, selected.index, response.status, ttlSec, selected.totalKeys);
+    }
+
+    const canRetry = classification.action === "retry_rotate" && attempt < maxAttempts && !clientSignal?.aborted;
+    if (canRetry) {
+      throw new UpstreamRetryableError(
+        `Upstream error ${response.status}: ${classification.reason}`,
+        response.status,
+        classification
+      );
+    }
+
+    logServed(reqId, duration, response.status, attempt, maxAttempts);
+    logSeparator();
+
+    return new Response(fullBody.buffer as ArrayBuffer, {
+      status: response.status,
+      headers: sanitizeDownstreamHeaders(response.headers, fullBody.byteLength),
+    });
   }
+
+  globalKeyPool.reportSuccess(directive.provider, selected.index);
 
   if (!isStream) {
     const fullBody = await collectFullBody(firstChunk, rawReader);
@@ -361,8 +402,8 @@ async function executeAnthropicDirectCall(
           durationMs: duration,
         });
       }
-    } catch {
-      // Body is not json
+    } catch (parseErr) {
+      void parseErr;
     }
 
     logServed(reqId, duration, response.status, attempt, maxAttempts);
@@ -433,6 +474,12 @@ async function executeAnthropicDirectLoop(
       return await executeAnthropicDirectCall(directive, payload, clientSignal, selected, reqId, attempt + 1, maxAttempts);
     } catch (err: unknown) {
       lastError = err;
+      if (clientSignal?.aborted) {
+        break;
+      }
+      if (err instanceof UpstreamRetryableError) {
+        continue;
+      }
       if (err instanceof NoResponseError) {
         globalKeyPool.reportFailure(directive.provider, selected.index, 429);
         logLimit(reqId, directive.provider, selected.index, 429, 60, selected.totalKeys);

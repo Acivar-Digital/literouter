@@ -5,7 +5,8 @@ import { globalKeyPool, handleOpenAICompat, resolveUpstreamEndpoint } from "./op
 
 function extractModelFromPath(pathname: string): string {
   const match = pathname.match(/\/v1beta\/models\/([^:]+)/);
-  return match?.[1] ?? "gemini-2.5-pro";
+  const raw = match?.[1] ?? "gemini-3.1-flash-lite";
+  return raw.startsWith("google/") ? raw.slice(7) : raw;
 }
 
 function extractTextParts(parts: ReadonlyArray<{ text?: string }> | undefined): string {

@@ -31,6 +31,7 @@ export * from "./handlers/anthropic_compat";
 export * from "./handlers/discovery";
 export * from "./handlers/google_native";
 export * from "./handlers/openai_compat";
+export * from "./network/classifier";
 export * from "./network/cooldown";
 export * from "./network/fetcher";
 export * from "./network/pool";

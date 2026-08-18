@@ -155,16 +155,36 @@ export class CooldownManager {
     status: number,
     headers?: Headers | Record<string, string>,
     errorBody?: string,
-    now: number = Date.now()
+    now: number = Date.now(),
+    customTtlSec?: number
   ): KeyCooldownState {
-    let ttlMs = computeStatusTtlSec(status) * 1000;
-    if (status === 429) {
+    let ttlMs = customTtlSec !== undefined ? customTtlSec * 1000 : computeStatusTtlSec(status) * 1000;
+    if (customTtlSec === undefined && status === 429) {
       const reset = parseResetDelay(headers, errorBody);
       ttlMs = reset.delayMs;
     }
     const state: KeyCooldownState = {
       quarantinedUntil: now + ttlMs,
       reason: `HTTP ${status}`,
+      lastErrorStatus: status,
+    };
+    if (ttlMs > 0) {
+      this.states.set(keyId, state);
+    }
+    return state;
+  }
+
+  public quarantineKeyWithTtl(
+    keyId: string,
+    ttlSec: number,
+    reason: string = "quarantined",
+    status?: number,
+    now: number = Date.now()
+  ): KeyCooldownState {
+    const ttlMs = ttlSec * 1000;
+    const state: KeyCooldownState = {
+      quarantinedUntil: now + ttlMs,
+      reason,
       lastErrorStatus: status,
     };
     if (ttlMs > 0) {

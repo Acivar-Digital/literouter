@@ -92,10 +92,23 @@ export class KeyPool {
     status: number,
     headers?: Headers | Record<string, string>,
     body?: string,
+    now: number = Date.now(),
+    customTtlSec?: number
+  ): KeyCooldownState {
+    const keyId = this.makeKeyId(provider, index);
+    return this.cooldownManager.quarantineKey(keyId, status, headers, body, now, customTtlSec);
+  }
+
+  public quarantineKey(
+    provider: string,
+    index: number,
+    ttlSec: number,
+    reason?: string,
+    status?: number,
     now: number = Date.now()
   ): KeyCooldownState {
     const keyId = this.makeKeyId(provider, index);
-    return this.cooldownManager.quarantineKey(keyId, status, headers, body, now);
+    return this.cooldownManager.quarantineKeyWithTtl(keyId, ttlSec, reason, status, now);
   }
 
   public getPoolSize(provider: string): number {

@@ -5,6 +5,7 @@ import type { DirectDirective, ParsedDirective } from "../directive/parser";
 import { parseDirective } from "../directive/parser";
 import { createUnauthorizedResponse, validateDirective } from "../directive/validator";
 import { FusionEngine } from "../fusion/engine";
+import { classifyUpstreamError, type ErrorDisposition } from "../network/classifier";
 import { CooldownManager } from "../network/cooldown";
 import {
   createResilientStream,
@@ -16,6 +17,7 @@ import {
 import { KeyPool, type SelectedKey } from "../network/pool";
 import { sanitizeAndTransformPayload } from "../transformers/payload";
 import type { OpenAIRequestPayload } from "../transformers/nuances";
+import { createDotsStreamTransformer, parseDotsXml } from "../transformers/dots";
 import type { FusionConfig, FusionTier } from "../config/schema";
 import {
   logError,
@@ -163,6 +165,18 @@ async function collectFullBody(
   return mergeUint8Arrays(chunks, totalLength);
 }
 
+export class UpstreamRetryableError extends Error {
+  public readonly status: number;
+  public readonly classification: ErrorDisposition;
+
+  public constructor(message: string, status: number, classification: ErrorDisposition) {
+    super(message);
+    this.name = "UpstreamRetryableError";
+    this.status = status;
+    this.classification = classification;
+  }
+}
+
 export function parseRetryAfterHeader(headers: Headers): number | undefined {
   const ra = headers.get("retry-after");
   if (!ra) {
@@ -200,19 +214,73 @@ async function executeDirectCall(
   const isStream = Boolean(payload.stream);
   logTtft(reqId, ttftMs, isStream ? "Stream established" : "First chunk streamed downstream");
 
-  if (response.status < 400) {
-    globalKeyPool.reportSuccess(directive.provider, selected.index);
-  } else if (response.status === 429) {
-    const retrySec = parseRetryAfterHeader(response.headers) ?? 60;
-    globalKeyPool.reportFailure(directive.provider, selected.index, 429, response.headers);
-    logLimit(reqId, directive.provider, selected.index, 429, retrySec, selected.totalKeys);
+  if (response.status >= 400) {
+    const fullBody = await collectFullBody(firstChunk, rawReader);
+    const bodyText = new TextDecoder().decode(fullBody);
+    const classification = classifyUpstreamError({
+      provider: directive.provider,
+      status: response.status,
+      headers: response.headers,
+      bodyText,
+    });
+
+    if (classification.quarantineTtlSec > 0) {
+      globalKeyPool.reportFailure(
+        directive.provider,
+        selected.index,
+        response.status,
+        response.headers,
+        bodyText,
+        Date.now(),
+        classification.quarantineTtlSec
+      );
+    }
+
+    if (response.status === 429 || classification.quarantineTtlSec > 0) {
+      const ttlSec = classification.quarantineTtlSec > 0 ? classification.quarantineTtlSec : 60;
+      logLimit(reqId, directive.provider, selected.index, response.status, ttlSec, selected.totalKeys);
+    }
+
+    const canRetry = classification.action === "retry_rotate" && attempt < maxAttempts && !clientSignal?.aborted;
+    if (canRetry) {
+      throw new UpstreamRetryableError(
+        `Upstream error ${response.status}: ${classification.reason}`,
+        response.status,
+        classification
+      );
+    }
+
+    logServed(reqId, duration, response.status, attempt, maxAttempts);
+    logSeparator();
+
+    return new Response(fullBody.buffer as ArrayBuffer, {
+      status: response.status,
+      headers: sanitizeDownstreamHeaders(response.headers, fullBody.byteLength),
+    });
   }
+
+  globalKeyPool.reportSuccess(directive.provider, selected.index);
 
   if (!isStream) {
     const fullBody = await collectFullBody(firstChunk, rawReader);
+    let finalBody: Uint8Array = fullBody;
     try {
       const decoded = new TextDecoder().decode(fullBody);
       const json = JSON.parse(decoded) as Record<string, unknown>;
+
+      if (directive.nuances.includes("tc") || payload.model.toLowerCase().includes("dots")) {
+        const choice = (json.choices as Array<{ message?: { content?: string | null; tool_calls?: unknown }; finish_reason?: string }>)?.[0];
+        if (choice?.message?.content && typeof choice.message.content === "string") {
+          const { cleanText, toolCalls } = parseDotsXml(choice.message.content);
+          if (toolCalls.length > 0) {
+            choice.message.content = cleanText || null;
+            choice.message.tool_calls = toolCalls;
+            choice.finish_reason = "tool_calls";
+            finalBody = new TextEncoder().encode(JSON.stringify(json));
+          }
+        }
+      }
+
       if (json.usage && typeof json.usage === "object") {
         const u = json.usage as Record<string, unknown>;
         const promptTokens = typeof u.prompt_tokens === "number" ? u.prompt_tokens : 0;
@@ -237,20 +305,20 @@ async function executeDirectCall(
           durationMs: duration,
         });
       }
-    } catch {
-      // Body is not json
+    } catch (parseErr) {
+      void parseErr;
     }
 
     logServed(reqId, duration, response.status, attempt, maxAttempts);
     logSeparator();
 
-    return new Response(fullBody.buffer as ArrayBuffer, {
+    return new Response(finalBody.buffer as ArrayBuffer, {
       status: response.status,
-      headers: sanitizeDownstreamHeaders(response.headers, fullBody.byteLength),
+      headers: sanitizeDownstreamHeaders(response.headers, finalBody.byteLength),
     });
   }
 
-  const resilientStream = createResilientStream(firstChunk, rawReader, {
+  let resilientStream = createResilientStream(firstChunk, rawReader, {
     onUsage: (u) => {
       const streamDuration = Date.now() - startTime;
       logUsage({
@@ -268,6 +336,10 @@ async function executeDirectCall(
       logSeparator();
     },
   });
+
+  if (directive.nuances.includes("tc") || payload.model.toLowerCase().includes("dots")) {
+    resilientStream = resilientStream.pipeThrough(createDotsStreamTransformer());
+  }
 
   return new Response(resilientStream, {
     status: response.status,
@@ -299,6 +371,12 @@ async function tryDirectAttempt(
     const res = await executeDirectCall(directive, transformed, clientSignal, selected, reqId, attempt, maxAttempts);
     return { success: true, response: res, retryable: false };
   } catch (err: unknown) {
+    if (clientSignal?.aborted) {
+      return { success: false, error: err, retryable: false };
+    }
+    if (err instanceof UpstreamRetryableError) {
+      return { success: false, error: err, retryable: true };
+    }
     if (err instanceof NoResponseError) {
       globalKeyPool.reportFailure(directive.provider, selected.index, 429);
       logLimit(reqId, directive.provider, selected.index, 429, 60, selected.totalKeys);
@@ -345,7 +423,12 @@ async function executeSingleAttemptLoop(
     }
   }
   logError(reqId, "Direct request attempts exhausted", lastError);
-  throw lastError;
+  const errMsg = lastError instanceof Error ? lastError.message : "All direct request attempts failed";
+  const statusCode = lastError instanceof UpstreamRetryableError ? lastError.status : 502;
+  return Response.json(
+    { error: { message: `Direct request attempts exhausted - ${errMsg}`, type: "gateway_error" } },
+    { status: statusCode }
+  );
 }
 
 export async function executeDirectRequest(
