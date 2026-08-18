@@ -6,7 +6,13 @@ import { parseDirective } from "../directive/parser";
 import { createUnauthorizedResponse, validateDirective } from "../directive/validator";
 import { FusionEngine } from "../fusion/engine";
 import { CooldownManager } from "../network/cooldown";
-import { createResilientStream, fetchWithTtftGuard, type FetcherOptions, NoResponseError } from "../network/fetcher";
+import {
+  createResilientStream,
+  fetchWithTtftGuard,
+  type FetcherOptions,
+  NoResponseError,
+  sanitizeDownstreamHeaders,
+} from "../network/fetcher";
 import { KeyPool, type SelectedKey } from "../network/pool";
 import { sanitizeAndTransformPayload } from "../transformers/payload";
 import type { OpenAIRequestPayload } from "../transformers/nuances";
@@ -99,6 +105,7 @@ function buildAuthHeaders(
 ): Record<string, string> {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
+    "Accept-Encoding": "identity",
   };
   if (authHeader === "x-api-key") {
     headers["x-api-key"] = key;
@@ -239,7 +246,7 @@ async function executeDirectCall(
 
     return new Response(fullBody.buffer as ArrayBuffer, {
       status: response.status,
-      headers: response.headers,
+      headers: sanitizeDownstreamHeaders(response.headers, fullBody.byteLength),
     });
   }
 

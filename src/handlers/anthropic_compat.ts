@@ -20,6 +20,7 @@ import {
   createResilientStream,
   fetchWithTtftGuard,
   NoResponseError,
+  sanitizeDownstreamHeaders,
 } from "../network/fetcher";
 import { scrubUnsupportedParameters } from "../transformers/payload";
 import { getEnv } from "../config/env";
@@ -303,6 +304,7 @@ async function executeAnthropicDirectCall(
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     Authorization: `Bearer ${selected.key}`,
+    "Accept-Encoding": "identity",
     "HTTP-Referer": env.LITEROUTER_HTTP_REFERER,
     "X-Title": env.LITEROUTER_X_TITLE,
   };
@@ -368,7 +370,7 @@ async function executeAnthropicDirectCall(
 
     return new Response(fullBody.buffer as ArrayBuffer, {
       status: response.status,
-      headers: response.headers,
+      headers: sanitizeDownstreamHeaders(response.headers, fullBody.byteLength),
     });
   }
 

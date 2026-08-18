@@ -218,15 +218,48 @@ export function extractUsageFromChunk(chunk: Uint8Array): UsageCallbackPayload |
   return null;
 }
 
+export const HOP_BY_HOP_AND_ENCODING_HEADERS = new Set([
+  "connection",
+  "keep-alive",
+  "proxy-authenticate",
+  "proxy-authorization",
+  "te",
+  "trailer",
+  "transfer-encoding",
+  "upgrade",
+  "content-encoding",
+  "content-length",
+]);
+
+export function sanitizeDownstreamHeaders(
+  upstreamHeaders: Headers,
+  bodyLength?: number
+): Headers {
+  const sanitized = new Headers();
+  upstreamHeaders.forEach((value, key) => {
+    if (!HOP_BY_HOP_AND_ENCODING_HEADERS.has(key.toLowerCase())) {
+      sanitized.set(key, value);
+    }
+  });
+  if (typeof bodyLength === "number") {
+    sanitized.set("content-length", String(bodyLength));
+  }
+  return sanitized;
+}
+
 export async function fetchWithTtftGuard(
   options: FetcherOptions
 ): Promise<{ response: Response; ttftMs: number; firstChunk: Uint8Array; rawReader: ReadableStreamDefaultReader<Uint8Array> }> {
   const timeoutMs = getEnv().LITEROUTER_HTTP_TIMEOUT_MS || MAX_HTTP_TIMEOUT_MS;
   const signal = mergeSignals(options.clientSignal, timeoutMs);
   const startTime = Date.now();
+  const requestHeaders = new Headers(options.headers);
+  if (!requestHeaders.has("accept-encoding")) {
+    requestHeaders.set("accept-encoding", "identity");
+  }
   const response = await fetch(options.url, {
     method: options.method,
-    headers: options.headers,
+    headers: requestHeaders,
     body: options.body,
     signal,
   });

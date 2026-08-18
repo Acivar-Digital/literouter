@@ -142,6 +142,8 @@ describe("Anthropic Compatibility Handler Integration", () => {
 
     const res = await handleAppRequest(req);
     expect(res.status).toBe(200);
+    expect(res.headers.has("content-encoding")).toBe(false);
+    expect(state.lastHeaders?.get("accept-encoding")).toBe("identity");
 
     const data = (await res.json()) as Record<string, unknown>;
     expect(data.type).toBe("message");
@@ -167,6 +169,8 @@ describe("Anthropic Compatibility Handler Integration", () => {
     const res = await handleAppRequest(req);
     expect(res.status).toBe(200);
     expect(res.headers.get("Content-Type")).toContain("text/event-stream");
+    expect(res.headers.has("content-encoding")).toBe(false);
+    expect(state.lastHeaders?.get("accept-encoding")).toBe("identity");
 
     if (!res.body) {
       throw new Error("Response body is null");
