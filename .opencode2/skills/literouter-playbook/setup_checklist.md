@@ -60,10 +60,13 @@ GOOGLE_API_KEYS=AIzaSyKey1...,AIzaSyKey2...
    # Or full restart:
    bash scripts/restart.sh
    ```
-5. Audit key pools:
+5. Audit key pools, validate JSON schemas, and probe live upstream keys:
    ```bash
    bun run scripts/doctor.ts
    ```
+   - Validates `config/providers.json`, `config/fusion.json`, and `config/models.json` JSON schema.
+   - Pings local `/health` endpoint.
+   - Sequentially probes (with 1s pacing) live upstream key health across Google Gemini (`gemini-2.5-flash`), NVIDIA NIM (`meta/llama-3.1-8b-instruct`), OpenRouter (`nvidia/nemotron-3-nano-30b-a3b:free`), and Zen (`zen/hy3-free`) using `mkcert` root CA TLS verification.
 
 ---
 
@@ -125,6 +128,6 @@ bun test
 # 3. Live Model Verification via OpenCode v2 CLI
 bash scripts/test_opencode2_models.sh
 
-# 4. Diagnostic Key Pool Health Probe
+# 4. Diagnostic Key Pool Health Probe (Local validation + live upstream auth probe for Google, NVIDIA, OpenRouter, Zen)
 bun run scripts/doctor.ts
 ```

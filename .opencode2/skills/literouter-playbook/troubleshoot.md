@@ -25,7 +25,7 @@ Detach anytime using `Ctrl+B`, then `D`.
 
 ---
 
-## 2. Health & Reset Endpoints
+## 2. Health, Diagnostic & Reset Endpoints
 
 ### 1. Health Probe (`GET /health`)
 ```bash
@@ -34,7 +34,25 @@ curl -sk https://localhost:7766/health
 # {"status":"healthy","uptime":120.45,"timestamp":"2026-08-17T13:30:00.000Z"}
 ```
 
-### 2. Hard Flush / Key Unfreeze (`POST /reset`)
+### 2. Diagnostic Doctor (`bun run scripts/doctor.ts`)
+Run the comprehensive diagnostic suite to inspect local configurations, JSON schemas, server status, and probe live upstream API keys:
+```bash
+bun run scripts/doctor.ts
+```
+**Doctor Capabilities & Execution Flow:**
+- **Local Files & JSON Schema Validation**: Asserts presence and valid JSON syntax for `config/providers.json`, `config/fusion.json`, and `config/models.json`.
+- **Key Pool Audit**: Validates `.env` and `.env.local`, warning on placeholder or corrupted keys (`changeme`, `todo`, `< 5` chars).
+- **Local Server Ping**: Probes local LiteRouter `/health` endpoint (`https` then `http`).
+- **Live Upstream Key Authentication Probes (FYI-only)**:
+  - **Google Gemini**: Probes `gemini-2.5-flash` via `generateContent`.
+  - **NVIDIA NIM**: Probes `meta/llama-3.1-8b-instruct` via `/v1/chat/completions`.
+  - **OpenRouter**: Probes `nvidia/nemotron-3-nano-30b-a3b:free` via `/api/v1/chat/completions`.
+  - **Zen**: Probes `zen/hy3-free` via `/v1/chat/completions`.
+- **TLS Verification**: Automatically binds `mkcert` root CA (`~/.local/share/opencode2/mkcert/rootCA.pem` or `SSL_CERT_FILE`) into `NODE_EXTRA_CA_CERTS`.
+- **Safe 1s Pacing**: Enforces a 1-second sequential delay between probes to prevent triggering upstream rate limits during diagnosis.
+- **Non-Blocking Diagnostics**: Runs purely for operator inspection without altering in-memory quotas, setting cooldowns, or gating gateway boot.
+
+### 3. Hard Flush / Key Unfreeze (`POST /reset`)
 To immediately clear all in-memory cooldowns and reload API key pools from disk without restarting the process:
 ```bash
 curl -sk -X POST https://localhost:7766/reset

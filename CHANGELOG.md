@@ -4,6 +4,9 @@ All notable changes to LiteRouter will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed / Restored Live Upstream API Key Health Probing (`scripts/doctor.ts`)
+- **Fixed / Restored Live Upstream API Key Health Probing (`scripts/doctor.ts`)** — Restored active upstream authentication probes for Google Gemini (`gemini-2.5-flash`), NVIDIA NIM (`meta/llama-3.1-8b-instruct`), OpenRouter (`nvidia/nemotron-3-nano-30b-a3b:free`), and Zen (`zen/hy3-free`) with `mkcert` root CA TLS verification and 1s safe pacing, alongside local config/JSON validations and `/health` server probe.
+
 ### Fixed / Zen Provider Routing & Telemetry Error Handling
 - **Zen Provider Upstream `base_url` (`config/providers.json`)** — Fixed Zen provider upstream `base_url` to `https://opencode.ai/zen` (resolving `/v1/chat/completions` and `/v1/models` paths correctly).
 - **TTFT & Stream Telemetry Error Guard (`src/network/fetcher.ts`)** — Prevented TTFT and stream established telemetry logging on HTTP 4xx/5xx error responses.

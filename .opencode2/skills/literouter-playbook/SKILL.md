@@ -18,7 +18,7 @@ description: LiteRouter API Gateway operational guide for Bun/TypeScript proxy o
 | Health probe | `curl -sk https://localhost:7766/health` |
 | Hard key reset | `curl -sk -X POST https://localhost:7766/reset` |
 | Unit tests | `bun test` |
-| Diagnostics | `bun run scripts/doctor.ts` |
+| Diagnostics | `bun run scripts/doctor.ts` (JSON schema + live upstream key probes for Google, NVIDIA, OpenRouter, Zen) |
 | Typecheck & lint | `bun x tsc --noEmit && uv run ruff check .` |
 
 ## ⛔ Critical: Zero Key Redaction
