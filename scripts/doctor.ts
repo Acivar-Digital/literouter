@@ -155,7 +155,7 @@ async function pingLocalServer(): Promise<void> {
 
 async function probeGoogleKey(key: string): Promise<ProbeResult> {
   const masked = maskKey(key);
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${encodeURIComponent(key)}`;
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent?key=${encodeURIComponent(key)}`;
   const payload = {
     contents: [{ parts: [{ text: "ping" }] }],
     generationConfig: { maxOutputTokens: 10 },
@@ -225,7 +225,7 @@ async function probeOpenrouterKey(key: string): Promise<ProbeResult> {
   const masked = maskKey(key);
   const url = "https://openrouter.ai/api/v1/chat/completions";
   const payload = {
-    model: "nvidia/nemotron-3-nano-30b-a3b:free",
+    model: "openrouter/free:nitro",
     messages: [{ role: "user", content: "ping" }],
     max_tokens: 10,
   };
