@@ -2,7 +2,6 @@
 
 import ast
 from collections import defaultdict
-from typing import Any
 
 from .allowlist import ExceptionAllowlist
 
