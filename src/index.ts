@@ -1,4 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
+import http2 from "node:http2";
 import { resolve } from "node:path";
 import type { Server } from "bun";
 import { getEnv } from "./config/env";
@@ -14,10 +15,16 @@ import {
   handleOpenAICompat,
   initializeKeyPools,
 } from "./handlers/openai_compat";
+import { getHttp2Pool, resetHttp2Pool } from "./network/h2_pool";
+import { getAllCircuitBreakers, clearCircuitBreakerRegistry } from "./network/circuit_breaker";
+import { clearPacerRegistry } from "./network/pacer";
 import { type BannerOptions, printBanner } from "./ui/banner";
-import { logError } from "./ui/logger";
+import { logAmber, logError } from "./ui/logger";
 
-function loadTlsOptions(): { cert: string; key: string } | undefined {
+function loadTlsOptions(tlsEnabledFlag?: boolean): { cert: string; key: string } | undefined {
+  if (process.env.LITEROUTER_TLS_ENABLED === "false" || tlsEnabledFlag === false) {
+    return undefined;
+  }
   const certPath = resolve(process.cwd(), "certs", "localhost.pem");
   const keyPath = resolve(process.cwd(), "certs", "localhost-key.pem");
 
@@ -38,10 +45,13 @@ function handleHardReset(): Response {
   globalCooldownManager.clearAll();
   globalKeyPool.reset();
   initializeKeyPools();
+  clearCircuitBreakerRegistry();
+  clearPacerRegistry();
+  resetHttp2Pool();
   return Response.json(
     {
       status: "ok",
-      message: "Hard reset successful. Cooldowns and key pools reloaded.",
+      message: "Hard reset successful. Cooldowns, circuit breakers, pacers, and H2 pools reloaded.",
       timestamp: new Date().toISOString(),
     },
     { status: 200 }
@@ -49,11 +59,20 @@ function handleHardReset(): Response {
 }
 
 function handleHealthCheck(): Response {
+  const circuitStats: Record<string, unknown> = {};
+  for (const [provider, breaker] of getAllCircuitBreakers().entries()) {
+    circuitStats[provider] = breaker.getStats();
+  }
+
+  const h2Stats = getHttp2Pool().getSessionStats();
+
   return Response.json(
     {
       status: "healthy",
       uptime: process.uptime(),
       timestamp: new Date().toISOString(),
+      h2_outbound: h2Stats,
+      circuit_breakers: circuitStats,
     },
     { status: 200 }
   );
@@ -64,11 +83,15 @@ type RouteHandler = (req: Request, rawKey: string, reqId: string) => Promise<Res
 const ROUTE_MAP: Readonly<Record<string, RouteHandler>> = {
   "/v1/chat/completions": handleOpenAICompat,
   "/v1/messages": handleAnthropicCompat,
+  "/messages": handleAnthropicCompat,
+  "/api/v1/messages": handleAnthropicCompat,
 };
 
 const SYSTEM_MAP: Readonly<Record<string, () => Response>> = {
   "/health": handleHealthCheck,
   "/reset": handleHardReset,
+  "/api/hello": handleHealthCheck,
+  "/hello": handleHealthCheck,
 };
 
 function dispatchModelsRoute(path: string, req: Request, rawKey: string): Promise<Response> | null {
@@ -141,6 +164,7 @@ async function dispatchRoute(req: Request, rawKey: string, reqId: string): Promi
     return betaRes;
   }
 
+  logAmber(reqId, `404 Route Not Found: ${req.method} ${path} from ${req.headers.get("user-agent") || "unknown"}`);
   return Response.json({ error: { message: `Not Found: ${path}`, type: "invalid_request_error" } }, { status: 404 });
 }
 
@@ -148,6 +172,9 @@ export function resetAllState(): void {
   globalCooldownManager.clearAll();
   globalKeyPool.reset();
   initializeKeyPools();
+  clearCircuitBreakerRegistry();
+  clearPacerRegistry();
+  resetHttp2Pool();
 }
 
 export function getCooldownState(): Record<string, unknown> {
@@ -166,11 +193,82 @@ export async function handleAppRequest(req: Request): Promise<Response> {
   }
 }
 
-export function createServer(portOverride?: number): Server<unknown> {
+function nodeHeadersToFetchHeaders(rawHeaders: NodeJS.Dict<string | string[]>): Headers {
+  const headers = new Headers();
+  for (const [key, value] of Object.entries(rawHeaders)) {
+    if (!key || key.startsWith(":") || value === undefined) {
+      continue;
+    }
+    if (Array.isArray(value)) {
+      for (const v of value) {
+        headers.append(key, v);
+      }
+    } else {
+      headers.set(key, value);
+    }
+  }
+  return headers;
+}
+
+async function pipeWebResponseToNode(
+  webRes: Response,
+  nodeReq: http2.Http2ServerRequest,
+  nodeRes: http2.Http2ServerResponse
+): Promise<void> {
+  nodeRes.statusCode = webRes.status;
+  webRes.headers.forEach((val, key) => {
+    const lower = key.toLowerCase();
+    if (lower !== "transfer-encoding" && lower !== "connection") {
+      nodeRes.setHeader(key, val);
+    }
+  });
+
+  if (!webRes.body) {
+    nodeRes.end();
+    return;
+  }
+
+  const reader = webRes.body.getReader();
+  let isAborted = false;
+
+  nodeReq.on("close", () => {
+    isAborted = true;
+    reader.cancel().catch((err: unknown) => {
+      logError("STREAM", "Failed to cancel stream on client close", err);
+    });
+  });
+
+  try {
+    while (!isAborted) {
+      const { done, value } = await reader.read();
+      if (done) {
+        break;
+      }
+      if (value) {
+        nodeRes.write(value);
+      }
+    }
+  } catch (err: unknown) {
+    if (!isAborted) {
+      logError("STREAM", "Stream read error during HTTP/2 response piping", err);
+    }
+  } finally {
+    if (!nodeRes.writableEnded) {
+      nodeRes.end();
+    }
+  }
+}
+
+export interface LiteRouterServer {
+  readonly port: number;
+  readonly stop: () => void | Promise<void>;
+}
+
+export function createServer(portOverride?: number): Server<unknown> | LiteRouterServer {
   initializeKeyPools();
   const env = getEnv();
   const port = portOverride ?? env.LITEROUTER_PORT;
-  const tls = loadTlsOptions();
+  const tls = loadTlsOptions(env.LITEROUTER_TLS_ENABLED);
 
   const pools = loadKeyPools(process.env);
   const keyPools = Array.from(pools.entries())
@@ -184,6 +282,58 @@ export function createServer(portOverride?: number): Server<unknown> {
     keyPools,
   };
   printBanner(bannerOpts);
+
+  if (tls && env.LITEROUTER_HTTP2) {
+    const h2Server = http2.createSecureServer(
+      {
+        cert: tls.cert,
+        key: tls.key,
+        allowHTTP1: true,
+      },
+      async (nodeReq, nodeRes) => {
+        const chunks: Buffer[] = [];
+        nodeReq.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+        nodeReq.on("end", async () => {
+          const reqId = `req_${Math.random().toString(36).slice(2, 9)}`;
+          try {
+            const hasBody = !["GET", "HEAD"].includes(nodeReq.method || "");
+            const body = hasBody && chunks.length > 0 ? Buffer.concat(chunks) : undefined;
+            const authority = (nodeReq.headers[":authority"] as string) || nodeReq.headers.host || `localhost:${port}`;
+            const url = `https://${authority}${nodeReq.url}`;
+
+            const fetchHeaders = nodeHeadersToFetchHeaders(nodeReq.headers);
+            fetchHeaders.set("x-http-version", `HTTP/${nodeReq.httpVersion}`);
+
+            const req = new Request(url, {
+              method: nodeReq.method,
+              headers: fetchHeaders,
+              body,
+            });
+
+            const rawKey = extractDirectiveToken(req) || "";
+            const webRes = await dispatchRoute(req, rawKey, reqId);
+            await pipeWebResponseToNode(webRes, nodeReq, nodeRes);
+          } catch (err) {
+            logError(reqId, "Unhandled exception in HTTP/2 server route dispatch", err);
+            if (!nodeRes.headersSent) {
+              nodeRes.writeHead(500, { "content-type": "application/json" });
+              nodeRes.end(JSON.stringify({ error: { message: "Internal Gateway Error", type: "server_error" } }));
+            }
+          }
+        });
+      }
+    );
+
+    h2Server.listen(port, env.LITEROUTER_HOST);
+
+    return {
+      port,
+      stop: () =>
+        new Promise<void>((resolve) => {
+          h2Server.close(() => resolve());
+        }),
+    };
+  }
 
   return Bun.serve({
     port,

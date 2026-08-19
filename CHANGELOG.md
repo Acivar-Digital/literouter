@@ -4,6 +4,14 @@ All notable changes to LiteRouter will be documented in this file.
 
 ## [Unreleased]
 
+### Added / Outbound HTTP/2 Multiplexing, Anti-429 Pacing & Provider Circuit Breaking
+- **Outbound HTTP/2 Multiplexed Session Pool (`src/network/h2_pool.ts`)** — Implemented persistent outbound HTTP/2 session multiplexing (`node:http2`) with single-flight connection mutexes, eliminating TCP handshake storms. Includes in-pool `GOAWAY` frame tracking with immediate teardown when active streams reach zero, and deterministic stream scope RAII lifecycle guards. Features transparent fallback to HTTP/1.1 keep-alive if ALPN or H2 negotiation fails.
+- **Token-Bucket Rate Pacer & Anti-429 Fast Queue (`src/network/pacer.ts`)** — Introduced per-provider and per-key token-bucket pacing with an $O(1)$ `FastFifoQueue`, bounded queue timeouts (15s), and clean local HTTP 429 backpressure responses with `Retry-After` headers. Tracks Exponential Moving Average (EMA, $\alpha=0.1$) queue dwell time telemetry.
+- **Provider Circuit Breaker with Expiring Canary Lease (`src/network/circuit_breaker.ts`)** — Added 3-state circuit breaking (`CLOSED`, `OPEN`, `HALF_OPEN`) per provider. Trips on 5xx/529 error bursts and restricts `HALF_OPEN` recovery to exactly one concurrent canary probe protected by a 60-second auto-expiring lease, preventing thundering herds and deadlock.
+- **Visual TTFT Upstream Protocol Tagging (`src/ui/logger.ts`, `src/network/fetcher.ts`)** — Enriched real-time TTFT terminal telemetry to explicitly log the outbound protocol (`[Upstream: HTTP/2]` vs `[Upstream: HTTP/1.1]`) on every request lifecycle.
+- **Health Telemetry & System Endpoints (`src/index.ts`)** — Extended `/health` endpoint with real-time outbound HTTP/2 session statistics and circuit breaker health telemetry across all configured upstream providers.
+- **Unit & Integration Test Coverage** — Added comprehensive unit test suites (`tests/unit/pacer.test.ts`, `tests/unit/circuit_breaker.test.ts`, `tests/unit/h2_pool.test.ts`) and end-to-end integration tests (`tests/integration/h2_resilience.test.ts`), bringing total passing test suite to 216 tests.
+
 ### Fixed / Restored Live Upstream API Key Health Probing (`scripts/doctor.ts`)
 - **Fixed / Restored Live Upstream API Key Health Probing (`scripts/doctor.ts`)** — Restored active upstream authentication probes for Google Gemini (`gemini-3.1-flash-lite`), NVIDIA NIM (`meta/llama-3.1-8b-instruct`), OpenRouter (`openrouter/free:nitro`), and Zen (`zen/hy3-free`) with `mkcert` root CA TLS verification and 1s safe pacing, alongside local config/JSON validations and `/health` server probe.
 

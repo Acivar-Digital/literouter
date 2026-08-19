@@ -119,6 +119,7 @@ export const EnvConfigSchema = z.object({
   LITEROUTER_PORT: z.coerce.number().int().positive().default(7766),
   LITEROUTER_HOST: z.string().default("0.0.0.0"),
   LITEROUTER_TLS_ENABLED: BooleanCoerceSchema.default(false),
+  LITEROUTER_HTTP2: BooleanCoerceSchema.default(false),
   LITEROUTER_STRIP_REASONING: BooleanCoerceSchema.default(true),
   LITEROUTER_NO_RESPONSE_TIMEOUT_MS: z.coerce.number().int().positive().default(5000),
   LITEROUTER_STREAM_IDLE_TIMEOUT_MS: z.coerce.number().int().positive().default(30000),
@@ -132,6 +133,12 @@ export const EnvConfigSchema = z.object({
   KEEPALIVE_INTERVAL_MS: z.coerce.number().int().positive().default(15000),
   LITEROUTER_HTTP_REFERER: z.string().default(""),
   LITEROUTER_X_TITLE: z.string().default(""),
+  LITEROUTER_H2_OUTBOUND: BooleanCoerceSchema.default(true),
+  LITEROUTER_PACER_ENABLED: BooleanCoerceSchema.default(true),
+  LITEROUTER_CIRCUIT_BREAKER: BooleanCoerceSchema.default(true),
+  LITEROUTER_PACER_MAX_RPM: z.coerce.number().int().positive().default(600),
+  LITEROUTER_PACER_MAX_QUEUE_DEPTH: z.coerce.number().int().positive().default(100),
+  LITEROUTER_PACER_MAX_QUEUE_WAIT_MS: z.coerce.number().int().positive().default(15000),
   LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("info"),
 });
 

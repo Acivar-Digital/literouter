@@ -1,4 +1,5 @@
 import { getEnv } from "../config/env";
+import { getHttp2Pool } from "./h2_pool";
 
 export interface FetcherOptions {
   readonly url: string;
@@ -259,9 +260,144 @@ export function sanitizeDownstreamHeaders(
   return sanitized;
 }
 
+export async function executeH2Fetch(
+  options: FetcherOptions,
+  signal: AbortSignal
+): Promise<Response> {
+  const url = new URL(options.url);
+  const origin = url.origin;
+  const pool = getHttp2Pool();
+  const session = await pool.acquireSession(origin);
+
+  return new Promise<Response>((resolve, reject) => {
+    let settled = false;
+    const reqHeaders: Record<string, string | number | string[]> = {
+      ":method": options.method,
+      ":path": url.pathname + url.search,
+      ":scheme": url.protocol.replace(":", ""),
+      ":authority": url.host,
+    };
+
+    for (const [k, v] of Object.entries(options.headers)) {
+      const lower = k.toLowerCase();
+      if (!HOP_BY_HOP_AND_ENCODING_HEADERS.has(lower) && !lower.startsWith(":")) {
+        reqHeaders[lower] = v;
+      }
+    }
+
+    let stream: ReturnType<typeof session.request>;
+    try {
+      stream = session.request(reqHeaders);
+    } catch (reqErr) {
+      return reject(reqErr);
+    }
+
+    pool.attachStreamGuard(origin, session, stream);
+
+    const abortListener = () => {
+      if (!settled) {
+        settled = true;
+        try {
+          stream.destroy();
+        } catch {
+          // ignore
+        }
+        reject(new Error("Request aborted"));
+      }
+    };
+
+    if (signal.aborted) {
+      abortListener();
+      return;
+    }
+
+    signal.addEventListener("abort", abortListener, { once: true });
+
+    stream.on("response", (headers) => {
+      if (settled) return;
+      settled = true;
+      signal.removeEventListener("abort", abortListener);
+
+      const status = Number(headers[":status"]) || 200;
+      const respHeaders = new Headers();
+      for (const [k, v] of Object.entries(headers)) {
+        if (!k.startsWith(":") && v !== undefined) {
+          if (Array.isArray(v)) {
+            for (const item of v) respHeaders.append(k, item);
+          } else {
+            respHeaders.set(k, String(v));
+          }
+        }
+      }
+
+      const webStream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          stream.on("data", (chunk: Buffer | Uint8Array) => {
+            controller.enqueue(new Uint8Array(chunk));
+          });
+          stream.on("end", () => {
+            try {
+              controller.close();
+            } catch {
+              // ignore
+            }
+          });
+          stream.on("error", (err) => {
+            try {
+              controller.error(err);
+            } catch {
+              // ignore
+            }
+          });
+        },
+        cancel() {
+          try {
+            stream.destroy();
+          } catch {
+            // ignore
+          }
+        },
+      });
+
+      const response = new Response(webStream, {
+        status,
+        headers: respHeaders,
+      });
+      resolve(response);
+    });
+
+    stream.on("error", (err) => {
+      if (!settled) {
+        settled = true;
+        signal.removeEventListener("abort", abortListener);
+        reject(err);
+      }
+    });
+
+    if (options.body) {
+      stream.write(options.body);
+    }
+    stream.end();
+  });
+}
+
+const NATIVE_FETCH = globalThis.fetch;
+
+export function isFetchMocked(): boolean {
+  return globalThis.fetch !== NATIVE_FETCH;
+}
+
+export type OutboundProtocol = "HTTP/2" | "HTTP/1.1";
+
 export async function fetchWithTtftGuard(
   options: FetcherOptions
-): Promise<{ response: Response; ttftMs: number; firstChunk: Uint8Array; rawReader: ReadableStreamDefaultReader<Uint8Array> }> {
+): Promise<{
+  response: Response;
+  ttftMs: number;
+  firstChunk: Uint8Array;
+  rawReader: ReadableStreamDefaultReader<Uint8Array>;
+  protocol: OutboundProtocol;
+}> {
   const timeoutMs = getEnv().LITEROUTER_HTTP_TIMEOUT_MS || MAX_HTTP_TIMEOUT_MS;
   const signal = mergeSignals(options.clientSignal, timeoutMs);
   const startTime = Date.now();
@@ -270,18 +406,48 @@ export async function fetchWithTtftGuard(
     requestHeaders.set("accept-encoding", "identity");
   }
   let response: Response;
-  try {
-    response = await fetch(options.url, {
-      method: options.method,
-      headers: requestHeaders,
-      body: options.body,
-      signal,
-    });
-  } catch (err: unknown) {
-    if (options.clientSignal?.aborted) {
-      throw err;
+  let protocol: OutboundProtocol = "HTTP/1.1";
+  const useH2 = getEnv().LITEROUTER_H2_OUTBOUND && options.url.startsWith("https://") && !isFetchMocked();
+
+  if (useH2) {
+    try {
+      response = await executeH2Fetch(options, signal);
+      protocol = "HTTP/2";
+    } catch (h2Err: unknown) {
+      if (options.clientSignal?.aborted) {
+        throw h2Err;
+      }
+      // Clean fallback to standard fetch (HTTP/1.1 keep-alive) if H2 fails
+      try {
+        response = await fetch(options.url, {
+          method: options.method,
+          headers: requestHeaders,
+          body: options.body,
+          signal,
+        });
+        protocol = "HTTP/1.1";
+      } catch (fetchErr: unknown) {
+        if (options.clientSignal?.aborted) {
+          throw fetchErr;
+        }
+        throw new NoResponseError(`Network transport failure: ${fetchErr instanceof Error ? fetchErr.message : String(fetchErr)}`);
+      }
     }
-    throw new NoResponseError(`Network transport failure: ${err instanceof Error ? err.message : String(err)}`);
+  } else {
+    try {
+      response = await fetch(options.url, {
+        method: options.method,
+        headers: requestHeaders,
+        body: options.body,
+        signal,
+      });
+      protocol = "HTTP/1.1";
+    } catch (err: unknown) {
+      if (options.clientSignal?.aborted) {
+        throw err;
+      }
+      throw new NoResponseError(`Network transport failure: ${err instanceof Error ? err.message : String(err)}`);
+    }
   }
 
   if (!response.body) {
@@ -299,7 +465,7 @@ export async function fetchWithTtftGuard(
   }
 
   const ttftMs = Date.now() - startTime;
-  return { response, ttftMs, firstChunk, rawReader: reader };
+  return { response, ttftMs, firstChunk, rawReader: reader, protocol };
 }
 
 export function isInBandErrorChunk(chunk: Uint8Array): { isError: boolean; message?: string } {

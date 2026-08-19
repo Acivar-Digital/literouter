@@ -4,6 +4,7 @@ const DEFAULT_ENV_RECORD: Record<string, string> = {
   LITEROUTER_PORT: "7766",
   LITEROUTER_HOST: "0.0.0.0",
   LITEROUTER_TLS_ENABLED: "false",
+  LITEROUTER_HTTP2: "true",
   LITEROUTER_STRIP_REASONING: "true",
   LITEROUTER_NO_RESPONSE_TIMEOUT_MS: "5000",
   LITEROUTER_STREAM_IDLE_TIMEOUT_MS: "30000",
@@ -17,6 +18,12 @@ const DEFAULT_ENV_RECORD: Record<string, string> = {
   KEEPALIVE_INTERVAL_MS: "15000",
   LITEROUTER_HTTP_REFERER: "",
   LITEROUTER_X_TITLE: "",
+  LITEROUTER_H2_OUTBOUND: "true",
+  LITEROUTER_PACER_ENABLED: "true",
+  LITEROUTER_CIRCUIT_BREAKER: "true",
+  LITEROUTER_PACER_MAX_RPM: "600",
+  LITEROUTER_PACER_MAX_QUEUE_DEPTH: "100",
+  LITEROUTER_PACER_MAX_QUEUE_WAIT_MS: "15000",
   LOG_LEVEL: "info",
 };
 
@@ -36,6 +43,9 @@ function parseSafeEnv(source: Record<string, string | undefined>): EnvConfig {
   if (!normalized.LITEROUTER_NO_RESPONSE_TIMEOUT_MS && normalized.LITEROUTER_NO_RESPONSE_TIMEOUT) {
     const val = Number(normalized.LITEROUTER_NO_RESPONSE_TIMEOUT);
     normalized.LITEROUTER_NO_RESPONSE_TIMEOUT_MS = String(val < 1000 ? val * 1000 : val);
+  }
+  if (normalized.LITEROUTER_HTTP2 === undefined && normalized.LITEROUTER_ENFORCE_HTTP2 !== undefined) {
+    normalized.LITEROUTER_HTTP2 = normalized.LITEROUTER_ENFORCE_HTTP2;
   }
   const result = EnvConfigSchema.safeParse(normalized);
   if (result.success) {

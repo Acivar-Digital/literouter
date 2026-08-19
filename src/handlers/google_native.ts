@@ -86,6 +86,7 @@ export async function handleGoogleNative(
     method: req.method,
     path: url.pathname,
     clientAgent,
+    protocol: req.headers.get("x-http-version") || "HTTP/1.1",
     directiveStr: rawKey,
     targetProvider: directive.type === "direct" ? directive.provider : directive.preset,
     wireFormat: directive.type === "direct" ? directive.payload : "gg",

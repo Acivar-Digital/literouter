@@ -64,7 +64,7 @@ describe("Visual Telemetry & Terminal UI", () => {
 
   it("logs TTFT and token usage with tok/s speed calculation", () => {
     const consoleSpy = spyOn(console, "log").mockImplementation(() => {});
-    logTtft("REQ-89f2a", 315, "First chunk streamed downstream");
+    logTtft("REQ-89f2a", 315, "First chunk streamed downstream", "HTTP/2");
     expect(consoleSpy).toHaveBeenCalled();
 
     logUsage({
@@ -79,7 +79,7 @@ describe("Visual Telemetry & Terminal UI", () => {
     });
 
     const calls = consoleSpy.mock.calls.map((c) => c[0]);
-    expect(calls.some((c) => c.includes("[TTFT REQ-89f2a] TTFT = 315ms | First chunk streamed downstream"))).toBe(true);
+    expect(calls.some((c) => c.includes("[TTFT REQ-89f2a] TTFT = 315ms | First chunk streamed downstream [Upstream: HTTP/2]"))).toBe(true);
     expect(calls.some((c) => c.includes("[USAGE REQ-89f2a] OpenRouter (Key #1/5)"))).toBe(true);
     expect(calls.some((c) => c.includes("Tokens: Prompt=1,420 | Completion=680 | Total=2,100 | Speed=198.8 tok/s"))).toBe(true);
     consoleSpy.mockRestore();

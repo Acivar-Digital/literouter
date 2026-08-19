@@ -26,6 +26,8 @@ import {
 } from "../network/fetcher";
 import { scrubUnsupportedParameters } from "../transformers/payload";
 import { getEnv } from "../config/env";
+import { getPacerForProvider, PacerQueueOverflowError, PacerQueueTimeoutError } from "../network/pacer";
+import { getCircuitBreakerForProvider } from "../network/circuit_breaker";
 import type { DirectDirective } from "../directive/parser";
 import type { SelectedKey } from "../network/pool";
 
@@ -301,8 +303,29 @@ async function executeAnthropicDirectCall(
   attempt: number,
   maxAttempts: number
 ): Promise<Response> {
-  const endpoint = resolveUpstreamEndpoint(directive.provider, directive.completion, payload.model);
   const env = getEnv();
+  const breaker = env.LITEROUTER_CIRCUIT_BREAKER
+    ? getCircuitBreakerForProvider(directive.provider)
+    : null;
+
+  if (breaker && !breaker.isAvailable()) {
+    logLimit(reqId, directive.provider, selected.index, 503, 60, selected.totalKeys);
+    throw new UpstreamRetryableError(
+      `Provider '${directive.provider}' circuit breaker is OPEN`,
+      503,
+      { action: "retry_rotate", reason: "circuit_breaker_open", quarantineTtlSec: 60 }
+    );
+  }
+
+  if (env.LITEROUTER_PACER_ENABLED) {
+    const pacer = getPacerForProvider(directive.provider, selected.index, {
+      maxQueueDepth: env.LITEROUTER_PACER_MAX_QUEUE_DEPTH,
+      maxQueueWaitMs: env.LITEROUTER_PACER_MAX_QUEUE_WAIT_MS,
+    });
+    await pacer.acquire(clientSignal);
+  }
+
+  const endpoint = resolveUpstreamEndpoint(directive.provider, directive.completion, payload.model);
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     Authorization: `Bearer ${selected.key}`,
@@ -312,7 +335,7 @@ async function executeAnthropicDirectCall(
   };
 
   const startTime = Date.now();
-  const { response, ttftMs, firstChunk, rawReader } = await fetchWithTtftGuard({
+  const { response, ttftMs, firstChunk, rawReader, protocol } = await fetchWithTtftGuard({
     url: endpoint.url,
     method: "POST",
     headers,
@@ -325,6 +348,12 @@ async function executeAnthropicDirectCall(
   const isStream = Boolean(payload.stream);
 
   if (response.status >= 400) {
+    if (response.status >= 500 || response.status === 529) {
+      breaker?.recordFailure(true);
+    } else {
+      breaker?.recordFailure(false);
+    }
+
     const fullBody = await collectFullBody(firstChunk, rawReader);
     const bodyText = new TextDecoder().decode(fullBody);
     const classification = classifyUpstreamError({
@@ -369,8 +398,10 @@ async function executeAnthropicDirectCall(
     });
   }
 
+  breaker?.recordSuccess();
+
   globalKeyPool.reportSuccess(directive.provider, selected.index);
-  logTtft(reqId, ttftMs, isStream ? "Stream established" : "First chunk streamed downstream");
+  logTtft(reqId, ttftMs, isStream ? "Stream established" : "First chunk streamed downstream", protocol);
 
   if (!isStream) {
     const fullBody = await collectFullBody(firstChunk, rawReader);
@@ -531,6 +562,23 @@ async function executeAnthropicDirectLoop(
       if (clientSignal?.aborted) {
         break;
       }
+      if (err instanceof PacerQueueOverflowError || err instanceof PacerQueueTimeoutError) {
+        return Response.json(
+          {
+            error: {
+              message: err.message,
+              type: "rate_limit_error",
+            },
+          },
+          {
+            status: 429,
+            headers: {
+              "Retry-After": String(err.retryAfterSec),
+              "Content-Type": "application/json",
+            },
+          }
+        );
+      }
       if (err instanceof UpstreamRetryableError) {
         continue;
       }
@@ -579,6 +627,7 @@ export async function handleAnthropicCompat(
     method: req.method,
     path: "/v1/messages",
     clientAgent,
+    protocol: req.headers.get("x-http-version") || "HTTP/1.1",
     directiveStr: rawKey,
     targetProvider: directive.type === "direct" ? directive.provider : directive.preset,
     wireFormat: directive.type === "direct" ? directive.payload : "cl",

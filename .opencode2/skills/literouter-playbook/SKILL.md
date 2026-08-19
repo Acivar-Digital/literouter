@@ -71,3 +71,23 @@ Fusion presets: `lr-fse-<preset>` (e.g. `lr-fse-fast`, `lr-fse-smart`, `lr-fse-c
 7. **Ghost Response Guard**: rejects HTTP 200 responses with 0 content tokens.
 8. **Client Cache Sanitizer**: strips `prompt_cache_key`/`prompt_cache_retrieval`/`prompt_cache_reset` before upstream dispatch.
 9. **Mid-Stream Error Interceptor & Auto-Resend**: Detects and suppresses mid-stream in-band 5xx error chunks (`Server error mid-response. The response above may be incomplete.`) and socket drops, isolates the failing key (10s), and automatically resends across available keys into the open downstream client stream.
+10. **Outbound HTTP/2 Multiplexed Session Pool (`src/network/h2_pool.ts`)**: Coalesces concurrent outbound requests into persistent HTTP/2 sessions with single-flight mutexes, in-pool `GOAWAY` stream tracking, and zero-stream auto-teardown. Falls back to HTTP/1.1 keep-alive on failure.
+11. **Token-Bucket Rate Pacer (`src/network/pacer.ts`)**: Enforces mandatory `minIntervalMs` (2000ms for Google `gg`, 500ms for others) with an $O(1)$ fast queue, 15s bounded timeout, and local HTTP 429 backpressure.
+12. **Provider Circuit Breaker (`src/network/circuit_breaker.ts`)**: 3-state protection (`CLOSED`, `OPEN`, `HALF_OPEN`) with 60s auto-expiring single-flight canary leases.
+
+## Connection Diagnostics & Protocol Inspection
+
+- **Inspect Health & Active H2 Pools**:
+  ```bash
+  curl -sk https://localhost:7766/health | jq .
+  ```
+- **Real-Time Terminal Protocol Tagging**:
+  The TTFT line in live stdout explicitly logs the upstream protocol:
+  `🟢 [TTFT req_id] TTFT = 320ms | Stream established [Upstream: HTTP/2]`
+- **Inspect OS Sockets**:
+  ```bash
+  # Downstream client connections (port 7766)
+  ss -tan '( sport = :7766 or dport = :7766 )'
+  # Upstream persistent TLS/H2 sockets (port 443)
+  ss -tanp | grep -E "7766|bun"
+  ```

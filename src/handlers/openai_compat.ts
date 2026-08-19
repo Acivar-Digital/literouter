@@ -19,6 +19,9 @@ import { sanitizeAndTransformPayload } from "../transformers/payload";
 import type { OpenAIRequestPayload } from "../transformers/nuances";
 import { createDotsStreamTransformer, parseDotsXml } from "../transformers/dots";
 import type { FusionConfig, FusionTier } from "../config/schema";
+import { getEnv } from "../config/env";
+import { getPacerForProvider, PacerQueueOverflowError, PacerQueueTimeoutError } from "../network/pacer";
+import { getCircuitBreakerForProvider } from "../network/circuit_breaker";
 import {
   logError,
   logInbound,
@@ -195,6 +198,28 @@ async function executeDirectCall(
   attempt: number,
   maxAttempts: number
 ): Promise<Response> {
+  const env = getEnv();
+  const breaker = env.LITEROUTER_CIRCUIT_BREAKER
+    ? getCircuitBreakerForProvider(directive.provider)
+    : null;
+
+  if (breaker && !breaker.isAvailable()) {
+    logLimit(reqId, directive.provider, selected.index, 503, 60, selected.totalKeys);
+    throw new UpstreamRetryableError(
+      `Provider '${directive.provider}' circuit breaker is OPEN`,
+      503,
+      { action: "retry_rotate", reason: "circuit_breaker_open", quarantineTtlSec: 60 }
+    );
+  }
+
+  if (env.LITEROUTER_PACER_ENABLED) {
+    const pacer = getPacerForProvider(directive.provider, selected.index, {
+      maxQueueDepth: env.LITEROUTER_PACER_MAX_QUEUE_DEPTH,
+      maxQueueWaitMs: env.LITEROUTER_PACER_MAX_QUEUE_WAIT_MS,
+    });
+    await pacer.acquire(clientSignal);
+  }
+
   const endpoint = resolveUpstreamEndpoint(directive.provider, directive.completion, payload.model);
   const headers = buildAuthHeaders(endpoint.authHeader, selected.key, directive.provider);
   const fetchOpts: FetcherOptions = {
@@ -208,12 +233,18 @@ async function executeDirectCall(
   };
 
   const startTime = Date.now();
-  const { response, ttftMs, firstChunk, rawReader } = await fetchWithTtftGuard(fetchOpts);
+  const { response, ttftMs, firstChunk, rawReader, protocol } = await fetchWithTtftGuard(fetchOpts);
   const duration = Date.now() - startTime;
 
   const isStream = Boolean(payload.stream);
 
   if (response.status >= 400) {
+    if (response.status >= 500 || response.status === 529) {
+      breaker?.recordFailure(true);
+    } else {
+      breaker?.recordFailure(false);
+    }
+
     const fullBody = await collectFullBody(firstChunk, rawReader);
     const bodyText = new TextDecoder().decode(fullBody);
     const classification = classifyUpstreamError({
@@ -258,8 +289,9 @@ async function executeDirectCall(
     });
   }
 
+  breaker?.recordSuccess();
   globalKeyPool.reportSuccess(directive.provider, selected.index);
-  logTtft(reqId, ttftMs, isStream ? "Stream established" : "First chunk streamed downstream");
+  logTtft(reqId, ttftMs, isStream ? "Stream established" : "First chunk streamed downstream", protocol);
 
   if (!isStream) {
     const fullBody = await collectFullBody(firstChunk, rawReader);
@@ -424,6 +456,28 @@ async function tryDirectAttempt(
     if (clientSignal?.aborted) {
       return { success: false, error: err, retryable: false };
     }
+    if (err instanceof PacerQueueOverflowError || err instanceof PacerQueueTimeoutError) {
+      return {
+        success: true,
+        response: Response.json(
+          {
+            error: {
+              message: err.message,
+              type: "rate_limit_exceeded",
+              code: "rate_limit_exceeded",
+            },
+          },
+          {
+            status: 429,
+            headers: {
+              "Retry-After": String(err.retryAfterSec),
+              "Content-Type": "application/json",
+            },
+          }
+        ),
+        retryable: false,
+      };
+    }
     if (err instanceof UpstreamRetryableError) {
       return { success: false, error: err, retryable: true };
     }
@@ -516,6 +570,13 @@ async function tryExecuteTier(
   if (!tierDirective || tierDirective.type !== "direct") {
     return null;
   }
+  const env = getEnv();
+  if (env.LITEROUTER_CIRCUIT_BREAKER) {
+    const breaker = getCircuitBreakerForProvider(tierDirective.provider);
+    if (!breaker.isAvailable()) {
+      return null;
+    }
+  }
   const tierBody: OpenAIRequestPayload = { ...body, model: tier.model };
   try {
     const res = await executeDirectRequest(tierDirective, tierBody, clientSignal, reqId);
@@ -596,6 +657,7 @@ export async function handleOpenAICompat(
       method: req.method,
       path,
       clientAgent,
+      protocol: req.headers.get("x-http-version") || "HTTP/1.1",
       directiveStr: rawKey,
       targetProvider: directive.type === "direct" ? directive.provider : directive.preset,
       wireFormat: directive.type === "direct" ? directive.payload : "oa",

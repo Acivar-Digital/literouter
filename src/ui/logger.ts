@@ -52,6 +52,7 @@ export interface InboundLogDetails {
   readonly method: string;
   readonly path: string;
   readonly clientAgent: string;
+  readonly protocol?: string;
   readonly directiveStr?: string;
   readonly targetProvider?: string;
   readonly wireFormat?: string;
@@ -74,7 +75,8 @@ export function logInbound(
   if (typeof reqIdOrDetails === "object") {
     const d = reqIdOrDetails;
     const client = d.clientAgent || "Unknown";
-    console.log(`🔵 ${ts} [${d.reqId}] Inbound ${d.method} ${d.path} from ${client}`);
+    const protoStr = d.protocol ? ` [${d.protocol}]` : "";
+    console.log(`🔵 ${ts} [${d.reqId}] Inbound ${d.method} ${d.path}${protoStr} from ${client}`);
     
     if (d.directiveStr) {
       const target = d.targetProvider ? getProviderDisplayName(d.targetProvider) : "Direct";
@@ -104,10 +106,12 @@ export function logInbound(
 export function logTtft(
   reqId: string,
   ttftMs: number,
-  details = "Stream established"
+  details = "Stream established",
+  protocol?: string
 ): void {
   const ts = formatTimestamp();
-  console.log(`🟢 ${ts} [TTFT ${reqId}] TTFT = ${ttftMs}ms | ${details}`);
+  const protoStr = protocol ? ` [Upstream: ${protocol}]` : "";
+  console.log(`🟢 ${ts} [TTFT ${reqId}] TTFT = ${ttftMs}ms | ${details}${protoStr}`);
 }
 
 export interface UsageLogDetails {
