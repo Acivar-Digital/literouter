@@ -5,9 +5,21 @@
 > Please read https://raw.githubusercontent.com/Acivar-Digital/literouter/main/INSTALL.md and autonomously set up, configure, and launch LiteRouter on my machine.
 > ```
 
-> **LiteRouter** is a high-performance, self-hosted open-source AI API Gateway and LLM proxy router powered by Bun and TypeScript. It sits between modern AI applications (such as OpenCode, SillyTavern, Cherry Studio, or custom LLM apps) and upstream model providers (Google AI Studio, OpenRouter, Nvidia, Anthropic).
+> **LiteRouter** is the world's first and only Bun/TypeScript AI API Gateway that combines **atomic Redis/Valkey Lua key rotation**, **Google Gemini `thought_signature` preservation** across multi-step agent tool calls, **70% reasoning-token cost stripping**, and **sticky fusion fallback chains** — solving the three problems every AI power user faces: 429 throttling, API key exhaustion, and bleeding money on reasoning tokens nobody asked for.
 > 
-> Unlike Python-heavy proxies, LiteRouter delivers sub-millisecond routing overhead with atomic Redis/Valkey Lua key rotation, automatic 429/timeout cooldowns, payload reasoning sanitization, and sticky virtual model failover chains.
+> It sits between modern AI applications (OpenCode, Claude Code, Cursor, SillyTavern, Cherry Studio, custom LLM apps) and upstream model providers (Google AI Studio, OpenRouter, NVIDIA, Anthropic). Unlike Python-heavy proxies, LiteRouter delivers **sub-millisecond** routing overhead with a single Bun process — no Python sidecars, no SaaS markup.
+
+> [!NOTE]
+> ### Why LiteRouter?
+>
+> Every AI developer hits three invisible walls. LiteRouter is the **only** gateway in the "High Performance + High Intelligence" quadrant that solves all three:
+>
+> - **⏱ 429 stalls** — keys get throttled; you wait 65s. LiteRouter recovers in **2 seconds**.
+> - **🔑 Key pool wastage** — manual round-robin causes race conditions. LiteRouter uses **atomic Lua ZSET rotation** — zero boundary bursts.
+> - **🧠 Reasoning token bleed** — `<thinking>` blocks inflate every turn. LiteRouter strips historical reasoning, saving **up to 70%** on token costs.
+>
+> **→ Deploy in 30 seconds:** `git clone … && bun install && cp .env.example .env && ./scripts/start.sh`
+> **→ Full truth source:** see [`demo/POSITIONING.md`](demo/POSITIONING.md)
 
 ---
 
