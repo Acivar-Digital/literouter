@@ -299,8 +299,8 @@ export async function executeH2Fetch(
         settled = true;
         try {
           stream.destroy();
-        } catch {
-          // ignore
+        } catch (_err: unknown) {
+          console.debug("[H2 Fetcher] Stream destroy on abort error:", _err);
         }
         reject(new Error("Request aborted"));
       }
@@ -338,23 +338,23 @@ export async function executeH2Fetch(
           stream.on("end", () => {
             try {
               controller.close();
-            } catch {
-              // ignore
+            } catch (_err: unknown) {
+              console.debug("[H2 Fetcher] Stream end controller close error:", _err);
             }
           });
           stream.on("error", (err) => {
             try {
               controller.error(err);
-            } catch {
-              // ignore
+            } catch (_err: unknown) {
+              console.debug("[H2 Fetcher] Stream error controller error:", _err);
             }
           });
         },
         cancel() {
           try {
             stream.destroy();
-          } catch {
-            // ignore
+          } catch (_err: unknown) {
+            console.debug("[H2 Fetcher] Stream cancel destroy error:", _err);
           }
         },
       });

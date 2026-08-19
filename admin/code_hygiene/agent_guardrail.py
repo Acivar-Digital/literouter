@@ -457,6 +457,8 @@ def _filter_pydantic_exceptions(
 def _pydantic_scan(path: Path) -> PydanticResult:
     if not path.exists() or not path.is_file():
         return PydanticResult(success=False, file=str(path), message=f"File not found: {path}")
+    if path.suffix != ".py":
+        return PydanticResult(success=True, file=str(path), message="Skipped pydantic check for non-Python file.")
     tree = _parse_file(path)
     if tree is None:
         return PydanticResult(success=False, file=str(path), message="Parse error in file.")
@@ -517,6 +519,8 @@ def _cc_precheck(path: Path) -> CCResult | None:
 def _cc_precheck_guard(path: Path) -> CCResult | None:
     if not path.exists():
         return CCResult(success=False, message=f"File not found: {path}")
+    if path.suffix != ".py":
+        return CCResult(success=True, message="Skipped CC check for non-Python file.")
     if not _radon_available():
         return CCResult(success=True, message="radon not available; skipping CC check.")
     return None

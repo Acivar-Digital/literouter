@@ -152,8 +152,8 @@ export class Http2SessionPool {
           if (!item.session.closed && !item.session.destroyed) {
             item.session.destroy();
           }
-        } catch {
-          // ignore destroy errors on cleanup
+        } catch (err: unknown) {
+          console.debug(`[H2 Pool] Ignored destroy error on closeAll for ${origin}:`, err);
         }
       }
     }
@@ -207,8 +207,8 @@ export class Http2SessionPool {
         this.removeSession(origin, session);
         try {
           session.destroy();
-        } catch {
-          // ignore
+        } catch (err: unknown) {
+          console.debug(`[H2 Pool] Ignored destroy error on timeout for ${origin}:`, err);
         }
         reject(new Error(`HTTP/2 connection timeout to origin ${origin}`));
       }, this.connectTimeoutMs);
@@ -234,8 +234,8 @@ export class Http2SessionPool {
     if (!item.session.closed && !item.session.destroyed) {
       try {
         item.session.close();
-      } catch {
-        // ignore
+      } catch (err: unknown) {
+        console.debug(`[H2 Pool] Ignored close error during destroySession for ${origin}:`, err);
       }
     }
     this.removeSession(origin, item.session);

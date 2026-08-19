@@ -172,10 +172,12 @@ When halted at an Approval Gate (major change >50 lines, new deps, schema change
 
 | Gate | Command | Evidence Required | Environment |
 |------|---------|-------------------|-------------|
-| Lint | `uv run ruff check .` | Zero errors output (Python test files) | Local |
+| TypeScript Typecheck | `bun run typecheck` | Zero errors (`tsc --noEmit`), exit code 0 | Local |
+| TypeScript Quality / Lint | `node node_modules/clean_ts/dist/cli.js validate <file>` or `uv run python admin/code_hygiene/agent_guardrail.py validate <file>` | `valid: true`, zero AST/slop/complexity errors | Local |
+| Python Lint | `uv run ruff check .` | Zero errors output (Python test files) | Local |
 | Unit | `bun test` | All pass, exit code 0 | Local |
 | Integration / Smoke | `uv run pytest tests/integration/` | All pass against a running gateway, exit code 0 | Local |
-| Full Suite | `bun test && uv run pytest tests/integration/` | `tests/test_results.md` updated with current timestamp | Local |
+| Full Suite | `bun run typecheck && bun test && uv run pytest tests/integration/` | `tests/test_results.md` updated with current timestamp | Local |
 | E2E / UAT Smoke | `uv run pytest tests/integration/ --env=uat` | Must run against UAT URL from `.env.uat`, not localhost | **UAT** |
 | Cutover | `bd human <golive-bead-id>` | Human approval in chat | Human gate |
 
@@ -261,12 +263,16 @@ This avoids unnecessary planning overhead while maintaining tracking.
 
 ### Self-Review (Critic Role)
 Before marking a task as complete, you MUST act as a Critic:
-1. Run linters: `uv run ruff check .`
-2. Run tests: `bun test` (unit) + `uv run pytest tests/integration/` (smoke)
-3. Verify the implementation matches the original request exactly (no gold-plating).
-4. If any check fails, fix it before proceeding.
+1. Run TypeScript typecheck: `bun run typecheck` (`tsc --noEmit`)
+2. Validate TypeScript code quality: `node node_modules/clean_ts/dist/cli.js validate <file>` or `uv run python admin/code_hygiene/agent_guardrail.py validate <file>`
+3. Run linters: `uv run ruff check .` (Python test files)
+4. Run tests: `bun test` (unit) + `uv run pytest tests/integration/` (smoke)
+5. Verify the implementation matches the original request exactly (no gold-plating).
+6. If any check fails, fix it before proceeding.
 
 ## Build/Lint/Test Commands
+- Run TypeScript static typecheck: `bun run typecheck` (`tsc --noEmit`)
+- Run TypeScript AST quality validator: `node node_modules/clean_ts/dist/cli.js validate <path>`
 - Run unit tests (TS logic): `bun test`
 - Run integration/smoke tests (live gateway): `uv run pytest tests/integration/`
 - Run linters: `uv run ruff check .` (Python test files)
@@ -276,11 +282,13 @@ Before marking a task as complete, you MUST act as a Critic:
 - Health probe (FYI key validation — does NOT gate boot): `bun run scripts/doctor.ts`
 
 ## Agent Guardrail & Sanitization
-To prevent broken scripts and escape artifacts (`\\n`, `\\u`), always use the guardrail workflow
+To prevent broken scripts, AST violations, and escape artifacts (`\\n`, `\\u`), always use the guardrail workflow
 (tools live in `admin/code_hygiene/`, synced from baziforecaster):
 1. **Checkpoint**: `uv run python admin/code_hygiene/agent_guardrail.py checkpoint <path>` (Run BEFORE editing)
 2. **Edit**: Make your changes to the file.
 3. **Validate**: `uv run python admin/code_hygiene/agent_guardrail.py validate <path>` (Run AFTER editing)
+   - For `.ts`/`.tsx` files: Automatically delegates to `clean_ts` (`node node_modules/clean_ts/dist/cli.js validate <path>`), enforcing `tsc` strictness, AST anti-slop rules, cognitive complexity < 6, and no swallowed catches.
+   - For `.py` files: Runs AST hygiene, syntax checks, and anti-hallucination guardrails.
    - If it fails: Check the output diff and fix errors.
    - If it passes: It automatically runs `agent_sanitizer.py` to fix escape artifacts.
 
