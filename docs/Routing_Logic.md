@@ -49,3 +49,43 @@ Upstream HTTP errors are evaluated via `classifyUpstreamError`:
 
 - When routing via Fusion directives (`lr-fse-<preset>`), request attempts progress across configured tiers (`Tier 1 -> Tier 2 -> Tier 3`).
 - If all API keys in a given tier fail with retryable errors or trigger circuit breakers, the router automatically cascades to the next tier in the fallback group.
+
+---
+
+## 5. Queue Scheduling & In-Flight Dispatch (FIFO & "Fail-to-Back" Policy)
+
+LiteRouter classifies request lifecycle management into rate-paced queueing and in-flight key assignment.
+
+### 5.1 The Anti-Pattern: Greedy Synchronous Cascades
+* **Problem**: In a naive loop, an in-flight request experiencing transient rate limits or upstream TTFT stalls immediately consumes Key #2 and Key #3 within the same synchronous tick.
+* **Impact**: A single pathological or oversized payload can sequentially burn and quarantine an entire provider key pool in under 2 seconds, causing key pool starvation for incoming healthy requests.
+
+### 5.2 The Architecture: Strict FIFO with Fail-to-Back (Re-Queue at Tail)
+To guarantee multi-tenant fairness and eliminate key exhaustion cascades, request dispatch enforces strict FIFO ordering paired with tail re-queueing:
+
+```
+[Inbound Requests] ────────► [FastFifoQueue: Head [Req 1, Req 2, Req 3] Tail]
+                                      │
+                                      ▼ (Pop Head: Req 1)
+                            [Acquire Pacer & Dispatch to Key 1]
+                                      │
+                              ┌───────┴───────┐
+                          (Success)        (Pre-TTFT Failure: 429/500/Timeout)
+                              │               │
+                            [Done]         [Quarantine Key 1]
+                                           [Re-Queue Req 1 at TAIL]
+                                           [Queue State: Head [Req 2, Req 3, Req 1] Tail]
+                                                  │
+                                                  ▼ (Pop Head: Req 2 -> Dispatched to Key 2)
+```
+
+### 5.3 Dispatch Invariants & Boundaries
+
+1. **Pre-TTFT vs. Post-TTFT Boundary**:
+   * **Pre-TTFT (Safe to Re-queue)**: If a request fails before the first byte/chunk is delivered to the client (handshake error, HTTP 429, HTTP 500, or TTFT timeout), the failing key is quarantined and the request yields immediately to the queue tail. The next queued request gains priority for Key #2.
+   * **Post-TTFT (Mid-Stream Resilience)**: Once HTTP 200 headers and SSE tokens have flushed downstream to the client, the request cannot be re-queued in the global FIFO buffer. It must rely on mid-stream transparent reconnects or fail fast.
+
+2. **Hop Counter & Queue Expiry**:
+   * Re-queued requests carry an atomic `attemptCount` / `hopCount` (default max: 3) and an initial `enqueuedAt` timestamp.
+   * If total queue dwell time exceeds `LITEROUTER_PACER_MAX_QUEUE_WAIT_MS` or hop limits are exhausted, the gateway emits an explicit `429 Too Many Requests` (with `Retry-After`) to prevent client socket hangs.
+

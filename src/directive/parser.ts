@@ -11,7 +11,7 @@ export type ProviderCode =
   | "tg"
   | "zn";
 
-export type PayloadCode = "oa" | "cl" | "gg" | "rs";
+export type PayloadCode = "oa" | "cl" | "gg" | "rs" | "ao";
 
 export type CompletionCode =
   | "ch"
@@ -56,7 +56,7 @@ const VALID_PROVIDERS: ReadonlySet<string> = new Set([
   "zn",
 ]);
 
-const VALID_PAYLOADS: ReadonlySet<string> = new Set(["oa", "cl", "gg", "rs"]);
+const VALID_PAYLOADS: ReadonlySet<string> = new Set(["oa", "cl", "gg", "rs", "ao"]);
 
 const VALID_COMPLETIONS: ReadonlySet<string> = new Set([
   "ch",

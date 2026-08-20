@@ -113,20 +113,23 @@ curl -sk -X POST https://localhost:7766/reset
 
 ## 4. Directive Key Reference
 
-Claude Code uses the Anthropic Messages wire format, so the directive must use payload `cl` (Claude wire) and completion `ms` (Messages endpoint).
+Claude Code speaks Anthropic Messages API (`/v1/messages`). Depending on the target model type on OpenRouter, choose the appropriate directive:
 
 | Directive | Provider | Wire | Endpoint | Use Case |
 |---|---|---|---|---|
-| `lr-or-cl-ms-no` | OpenRouter (`or`) | Claude (`cl`) | Messages (`ms`) | **Default** — routes Claude Code through OpenRouter's catalog |
+| `lr-or-ao-ch-no` | OpenRouter (`or`) | Anthropic->OpenAI (`ao`) | Chat (`ch`) | **Universal OpenRouter Directive** — full bidirectional translation (tools + SSE streams) to standard OpenAI Chat Completions. Works with all non-Anthropic models (e.g. `dots-studio/dots-3-note-preview:free`, DeepSeek, Qwen, Llama). |
+| `lr-or-cl-ms-no` | OpenRouter (`or`) | Claude (`cl`) | Messages (`ms`) | **Native Anthropic Direct** — zero-conversion pass-through to OpenRouter's `/api/v1/messages` (for native Claude models like `anthropic/claude-3.7-sonnet`). |
 | `lr-or-cl-ms-dp` | OpenRouter (`or`) | Claude (`cl`) | Messages (`ms`) | Dots models with native Anthropic passthrough + dot prompt XML tool calling |
 | `lr-or-cl-ms-ts` | OpenRouter (`or`) | Claude (`cl`) | Messages (`ms`) | Thought signatures preserved — thinking box renders in Claude Code UI |
 | `lr-or-cl-ms-no+dp` | OpenRouter (`or`) | Claude (`cl`) | Messages (`ms`) | Native + Dots nuance combined |
 
-### ⚠️ Critical: Never use `lr-or-cl-ch-no`
+### Cross-Wire Translation with `lr-or-ao-ch-no`
 
-Using payload `cl` (Claude wire) with completion `ch` (Chat Completions) triggers an **incomplete cross-wire translation** in `src/handlers/anthropic_compat.ts` (`translateAnthropicToOpenAI`). This drops all `tool_use` and `tool_result` blocks, causing Claude Code to hang indefinitely.
-
-**Rule: `cl` (Claude wire) → MUST use `ms` (Messages endpoint). `ch` (Chat Completions) → MUST use `oa` (OpenAI wire).**
+When using open-weights or OpenAI-format models with Claude Code:
+1. Claude Code sends Anthropic Messages (`tools`, `tool_use`, `tool_result`, `stream: true`).
+2. LiteRouter translates Anthropic tools into OpenAI function calls and maps multi-turn `tool_result` blocks into standard OpenAI `role: "tool"` messages.
+3. LiteRouter calls OpenRouter's standard `/api/v1/chat/completions`.
+4. LiteRouter's streaming transformer converts OpenAI SSE chunks (including `delta.tool_calls`) back into Anthropic `content_block_start`, `content_block_delta`, and `message_delta` events.
 
 ---
 

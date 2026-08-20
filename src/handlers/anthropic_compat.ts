@@ -37,6 +37,9 @@ export interface AnthropicContentBlock {
   readonly id?: string;
   readonly name?: string;
   readonly input?: unknown;
+  readonly tool_use_id?: string;
+  readonly content?: string | readonly unknown[];
+  readonly is_error?: boolean;
 }
 
 export interface AnthropicMessage {
@@ -52,17 +55,8 @@ export interface AnthropicMessagesRequest {
   readonly stream?: boolean;
   readonly temperature?: number;
   readonly tools?: readonly unknown[];
+  readonly tool_choice?: unknown;
   readonly [key: string]: unknown;
-}
-
-function translateContent(content: string | readonly AnthropicContentBlock[]): string {
-  if (typeof content === "string") {
-    return content;
-  }
-  return content
-    .filter((b) => b.type === "text" && b.text)
-    .map((b) => b.text)
-    .join("\n");
 }
 
 function extractSystemString(system: unknown): string | null {
@@ -115,11 +109,82 @@ export function translateAnthropicToOpenAI(req: AnthropicMessagesRequest): OpenA
     openAiMessages.push({ role: "system", content: systemText });
   }
 
-  for (const m of req.messages) {
-    openAiMessages.push({
-      role: m.role,
-      content: translateContent(m.content),
-    });
+  if (Array.isArray(req.messages)) {
+    for (const msg of req.messages) {
+      if (msg.role === "assistant") {
+        const toolCalls: Array<{ id: string; type: "function"; function: { name: string; arguments: string } }> = [];
+        let textContent = "";
+
+        if (Array.isArray(msg.content)) {
+          for (const block of msg.content) {
+            if (block.type === "text" && block.text) {
+              textContent += block.text;
+            } else if (block.type === "tool_use" && block.name) {
+              const callId = block.id || `call_${Math.random().toString(36).slice(2, 10)}`;
+              const args = typeof block.input === "string" ? block.input : JSON.stringify(block.input ?? {});
+              toolCalls.push({
+                id: callId,
+                type: "function",
+                function: {
+                  name: block.name,
+                  arguments: args,
+                },
+              });
+            }
+          }
+        } else if (typeof msg.content === "string") {
+          textContent = msg.content;
+        }
+
+        const assistantMsg: Record<string, unknown> = {
+          role: "assistant",
+          content: textContent.length > 0 ? textContent : null,
+        };
+        if (toolCalls.length > 0) {
+          assistantMsg.tool_calls = toolCalls;
+        }
+        openAiMessages.push(assistantMsg as unknown as OpenAIMessage);
+      } else if (msg.role === "user") {
+        if (Array.isArray(msg.content)) {
+          const contentList: readonly AnthropicContentBlock[] = msg.content;
+          const toolResults = contentList.filter((b: AnthropicContentBlock) => b.type === "tool_result");
+          const textBlocks = contentList.filter((b: AnthropicContentBlock) => b.type === "text");
+
+          for (const tr of toolResults) {
+            let resultText = "";
+            if (typeof tr.content === "string") {
+              resultText = tr.content;
+            } else if (Array.isArray(tr.content)) {
+              resultText = tr.content
+                .map((b: unknown) => {
+                  if (typeof b === "object" && b !== null && "text" in b && typeof (b as { text: unknown }).text === "string") {
+                    return (b as { text: string }).text;
+                  }
+                  return typeof b === "string" ? b : JSON.stringify(b);
+                })
+                .join("\n");
+            } else if (tr.content !== undefined && tr.content !== null) {
+              resultText = JSON.stringify(tr.content);
+            }
+
+            openAiMessages.push({
+              role: "tool",
+              tool_call_id: tr.tool_use_id ?? tr.id ?? "call_unknown",
+              content: resultText,
+            } as unknown as OpenAIMessage);
+          }
+
+          if (textBlocks.length > 0) {
+            const combinedText = textBlocks.map((b: AnthropicContentBlock) => b.text ?? "").join("\n");
+            if (combinedText.trim().length > 0) {
+              openAiMessages.push({ role: "user", content: combinedText });
+            }
+          }
+        } else if (typeof msg.content === "string") {
+          openAiMessages.push({ role: "user", content: msg.content });
+        }
+      }
+    }
   }
 
   return {
@@ -136,97 +201,219 @@ export function translateOpenAIToAnthropicResponse(
   openAiRes: Record<string, unknown>,
   model: string
 ): Record<string, unknown> {
-  const choices = (openAiRes.choices as Array<{ message?: { content?: string } }>) || [];
-  const text = choices[0]?.message?.content || "";
+  const choices = (openAiRes.choices as Array<{
+    message?: {
+      content?: string | null;
+      tool_calls?: Array<{
+        id?: string;
+        type?: string;
+        function?: { name?: string; arguments?: string };
+      }>;
+    };
+    finish_reason?: string;
+  }>) || [];
+
+  const firstChoice = choices[0];
+  const msg = firstChoice?.message;
+  const contentBlocks: AnthropicContentBlock[] = [];
+
+  if (msg?.content && typeof msg.content === "string" && msg.content.length > 0) {
+    contentBlocks.push({ type: "text", text: msg.content });
+  }
+
+  if (Array.isArray(msg?.tool_calls)) {
+    for (const tc of msg.tool_calls) {
+      if (tc.function?.name) {
+        let parsedInput: unknown = {};
+        if (tc.function.arguments) {
+          try {
+            parsedInput = JSON.parse(tc.function.arguments);
+          } catch {
+            parsedInput = { raw: tc.function.arguments };
+          }
+        }
+        contentBlocks.push({
+          type: "tool_use",
+          id: tc.id || `call_${Math.random().toString(36).slice(2, 10)}`,
+          name: tc.function.name,
+          input: parsedInput,
+        });
+      }
+    }
+  }
+
+  const hasToolUse = contentBlocks.some((b) => b.type === "tool_use");
+  const stopReason = hasToolUse ? "tool_use" : (firstChoice?.finish_reason === "stop" || firstChoice?.finish_reason === "end_turn" ? "end_turn" : "end_turn");
 
   return {
-    id: `msg_${Math.random().toString(36).slice(2, 11)}`,
+    id: (openAiRes.id as string) || `msg_${Math.random().toString(36).slice(2, 11)}`,
     type: "message",
     role: "assistant",
-    content: [{ type: "text", text }],
+    content: contentBlocks,
     model,
-    stop_reason: "end_turn",
+    stop_reason: stopReason,
     stop_sequence: null,
     usage: openAiRes.usage || { input_tokens: 0, output_tokens: 0 },
   };
 }
 
-function extractDeltaContent(rawJson: string): string | null {
-  try {
-    const parsed = JSON.parse(rawJson) as { choices?: Array<{ delta?: { content?: string } }> };
-    return parsed.choices?.[0]?.delta?.content ?? null;
-  } catch {
-    return null;
-  }
+interface ActiveToolInfo {
+  readonly blockIndex: number;
+  readonly id: string;
+  readonly name: string;
 }
 
 function isPassThroughEvent(rawData: string): boolean {
   return rawData.startsWith("{\"type\":") || rawData.startsWith("{\"event\":");
 }
 
-function tryEmitDeltaText(
-  rawData: string,
-  encoder: TextEncoder,
-  controller: TransformStreamDefaultController<Uint8Array>
-): void {
-  const deltaText = extractDeltaContent(rawData);
-  if (deltaText) {
-    const deltaEvt = `event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":${JSON.stringify(deltaText)}}}\n\n`;
-    controller.enqueue(encoder.encode(deltaEvt));
-  }
-}
-
-function tryProcessSseLine(
-  line: string,
-  encoder: TextEncoder,
-  controller: TransformStreamDefaultController<Uint8Array>
-): void {
-  if (!line.startsWith("data: ") || line.includes("[DONE]")) {
-    return;
-  }
-  const rawData = line.slice(6).trim();
-  if (isPassThroughEvent(rawData)) {
-    const evtLine = `event: content_block_delta\ndata: ${rawData}\n\n`;
-    controller.enqueue(encoder.encode(evtLine));
-    return;
-  }
-  tryEmitDeltaText(rawData, encoder, controller);
-}
-
-function processSseLines(
-  lines: readonly string[],
-  encoder: TextEncoder,
-  controller: TransformStreamDefaultController<Uint8Array>
-): void {
-  for (const line of lines) {
-    tryProcessSseLine(line, encoder, controller);
-  }
-}
-
 export function createAnthropicStreamTransformer(model: string): TransformStream<Uint8Array, Uint8Array> {
   const decoder = new TextDecoder();
   const encoder = new TextEncoder();
   let msgStartSent = false;
+  let currentBlockIndex = -1;
+  let currentBlockType: "text" | "tool_use" | null = null;
+  const activeToolMap = new Map<number, ActiveToolInfo>();
+  let messageDeltaSent = false;
+  let buffer = "";
+
+  const closeCurrentBlock = (controller: TransformStreamDefaultController<Uint8Array>) => {
+    if (currentBlockType !== null && currentBlockIndex >= 0) {
+      controller.enqueue(
+        encoder.encode(`event: content_block_stop\ndata: {"type":"content_block_stop","index":${currentBlockIndex}}\n\n`)
+      );
+      currentBlockType = null;
+    }
+  };
+
+  const processLine = (line: string, controller: TransformStreamDefaultController<Uint8Array>) => {
+    if (!line.startsWith("data: ") || line.includes("[DONE]")) {
+      return;
+    }
+    const rawData = line.slice(6).trim();
+    if (isPassThroughEvent(rawData)) {
+      const evtLine = `event: content_block_delta\ndata: ${rawData}\n\n`;
+      controller.enqueue(encoder.encode(evtLine));
+      return;
+    }
+
+    let parsed: Record<string, unknown>;
+    try {
+      parsed = JSON.parse(rawData) as Record<string, unknown>;
+    } catch {
+      return;
+    }
+
+    if (!msgStartSent) {
+      msgStartSent = true;
+      const msgId = (parsed.id as string) || `msg_${Math.random().toString(36).slice(2, 11)}`;
+      const startEvt = `event: message_start\ndata: {"type":"message_start","message":{"id":"${msgId}","type":"message","role":"assistant","content":[],"model":"${model}","stop_reason":null,"usage":{"input_tokens":0,"output_tokens":0}}}\n\n`;
+      controller.enqueue(encoder.encode(startEvt));
+    }
+
+    const choices = parsed.choices as Array<{
+      delta?: {
+        content?: string | null;
+        tool_calls?: Array<{
+          index?: number;
+          id?: string;
+          type?: string;
+          function?: { name?: string; arguments?: string };
+        }>;
+      };
+      finish_reason?: string | null;
+    }> | undefined;
+
+    const choice = choices?.[0];
+    if (!choice) {
+      return;
+    }
+
+    if (choice.delta?.content) {
+      if (currentBlockType !== "text") {
+        closeCurrentBlock(controller);
+        currentBlockIndex++;
+        currentBlockType = "text";
+        controller.enqueue(
+          encoder.encode(
+            `event: content_block_start\ndata: {"type":"content_block_start","index":${currentBlockIndex},"content_block":{"type":"text","text":""}}\n\n`
+          )
+        );
+      }
+      controller.enqueue(
+        encoder.encode(
+          `event: content_block_delta\ndata: {"type":"content_block_delta","index":${currentBlockIndex},"delta":{"type":"text_delta","text":${JSON.stringify(choice.delta.content)}}}\n\n`
+        )
+      );
+    }
+
+    if (Array.isArray(choice.delta?.tool_calls)) {
+      for (const tc of choice.delta.tool_calls) {
+        const tcIdx = typeof tc.index === "number" ? tc.index : 0;
+        let toolInfo = activeToolMap.get(tcIdx);
+
+        if (!toolInfo && (tc.id || tc.function?.name)) {
+          closeCurrentBlock(controller);
+          currentBlockIndex++;
+          currentBlockType = "tool_use";
+          const toolId = tc.id || `call_${Math.random().toString(36).slice(2, 10)}`;
+          const toolName = tc.function?.name || "tool";
+          toolInfo = { blockIndex: currentBlockIndex, id: toolId, name: toolName };
+          activeToolMap.set(tcIdx, toolInfo);
+
+          controller.enqueue(
+            encoder.encode(
+              `event: content_block_start\ndata: {"type":"content_block_start","index":${currentBlockIndex},"content_block":{"type":"tool_use","id":"${toolId}","name":"${toolName}","input":{}}}\n\n`
+            )
+          );
+        }
+
+        if (tc.function?.arguments && toolInfo) {
+          controller.enqueue(
+            encoder.encode(
+              `event: content_block_delta\ndata: {"type":"content_block_delta","index":${toolInfo.blockIndex},"delta":{"type":"input_json_delta","partial_json":${JSON.stringify(tc.function.arguments)}}}\n\n`
+            )
+          );
+        }
+      }
+    }
+
+    if (choice.finish_reason) {
+      closeCurrentBlock(controller);
+      const stopReason = choice.finish_reason === "tool_calls" ? "tool_use" : (choice.finish_reason === "stop" || choice.finish_reason === "end_turn" ? "end_turn" : choice.finish_reason);
+      if (!messageDeltaSent) {
+        messageDeltaSent = true;
+        controller.enqueue(
+          encoder.encode(
+            `event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"${stopReason}","stop_sequence":null},"usage":{"output_tokens":0}}\n\n`
+          )
+        );
+      }
+    }
+  };
 
   return new TransformStream<Uint8Array, Uint8Array>({
     transform(chunk, controller) {
-      const text = decoder.decode(chunk, { stream: true });
-      const lines = text.split("\n");
+      buffer += decoder.decode(chunk, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() ?? "";
 
-      if (!msgStartSent) {
-        msgStartSent = true;
-        const startEvt = `event: message_start\ndata: {"type":"message_start","message":{"id":"msg_stream","type":"message","role":"assistant","content":[],"model":"${model}"}}\n\n`;
-        controller.enqueue(encoder.encode(startEvt));
-        const blockStart = `event: content_block_start\ndata: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}\n\n`;
-        controller.enqueue(encoder.encode(blockStart));
+      for (const line of lines) {
+        processLine(line, controller);
       }
-
-      processSseLines(lines, encoder, controller);
     },
     flush(controller) {
-      const stopBlock = 'event: content_block_stop\ndata: {"type":"content_block_stop","index":0}\n\n';
-      const msgStop = 'event: message_stop\ndata: {"type":"message_stop"}\n\n';
-      controller.enqueue(encoder.encode(stopBlock + msgStop));
+      if (buffer.length > 0) {
+        processLine(buffer, controller);
+      }
+      closeCurrentBlock(controller);
+      if (!messageDeltaSent) {
+        messageDeltaSent = true;
+        controller.enqueue(
+          encoder.encode('event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":0}}\n\n')
+        );
+      }
+      controller.enqueue(encoder.encode('event: message_stop\ndata: {"type":"message_stop"}\n\n'));
     },
   });
 }
@@ -318,8 +505,12 @@ async function executeAnthropicDirectCall(
   }
 
   if (env.LITEROUTER_PACER_ENABLED) {
+    const dynamicMaxQueueDepth = globalKeyPool.getDynamicMaxQueueDepth(directive.provider);
+    const maxQueueDepth = env.LITEROUTER_PACER_MAX_QUEUE_DEPTH > 0
+      ? env.LITEROUTER_PACER_MAX_QUEUE_DEPTH
+      : dynamicMaxQueueDepth;
     const pacer = getPacerForProvider(directive.provider, selected.index, {
-      maxQueueDepth: env.LITEROUTER_PACER_MAX_QUEUE_DEPTH,
+      maxQueueDepth,
       maxQueueWaitMs: env.LITEROUTER_PACER_MAX_QUEUE_WAIT_MS,
     });
     await pacer.acquire(clientSignal);
@@ -343,6 +534,7 @@ async function executeAnthropicDirectCall(
     clientSignal,
     provider: directive.provider,
     keyIndex: selected.index,
+    model: payload.model,
   });
   const duration = Date.now() - startTime;
   const isStream = Boolean(payload.stream);
@@ -449,6 +641,7 @@ async function executeAnthropicDirectCall(
   let currentAttempt = attempt;
 
   const resilientStream = createResilientStream(firstChunk, rawReader, {
+    protocol: "anthropic",
     onUsage: (u) => {
       const streamDuration = Date.now() - startTime;
       logUsage({
@@ -498,6 +691,7 @@ async function executeAnthropicDirectCall(
             clientSignal,
             provider: directive.provider,
             keyIndex: nextSelected.index,
+            model: payload.model,
           });
           if (nextResult.response.status >= 400) {
             globalKeyPool.reportFailure(directive.provider, nextSelected.index, nextResult.response.status);
@@ -539,8 +733,20 @@ async function executeAnthropicDirectLoop(
   const maxAttempts = Math.min(3, Math.max(1, poolSize));
   let lastError: unknown = null;
   let prevKeyIndex = -1;
+  const startTime = Date.now();
+  const env = getEnv();
+  const maxWaitMs = env.LITEROUTER_PACER_MAX_QUEUE_WAIT_MS || 20000;
 
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const dwellMs = Date.now() - startTime;
+    if (globalKeyPool.shouldLoadShed(directive.provider, dwellMs, maxWaitMs)) {
+      logLimit(reqId, directive.provider, 0, 503, 60, poolSize);
+      return Response.json(
+        { error: { message: `Provider '${directive.provider}' unavailable: all keys in cooldown exceed wait budget.`, type: "service_unavailable" } },
+        { status: 503 }
+      );
+    }
+
     const selected = globalKeyPool.selectNextKey(directive.provider);
     if (!selected) {
       logLimit(reqId, directive.provider, 0, 429, 60, poolSize);
@@ -638,9 +844,9 @@ export async function handleAnthropicCompat(
     nuances: directive.type === "direct" ? directive.nuances : undefined,
   });
 
-  // If the directive targets upstream Anthropic Messages endpoint (e.g. completion 'ms'),
+  // If the directive targets upstream Anthropic Messages endpoint (e.g. completion 'ms' with native 'cl' payload),
   // forward the native Anthropic payload directly with zero lossy format conversion!
-  if (directive.type === "direct" && directive.completion === "ms") {
+  if (directive.type === "direct" && directive.payload === "cl" && directive.completion === "ms") {
     const payload = scrubUnsupportedParameters(
       anthropicBody as unknown as OpenAIRequestPayload
     ) as unknown as AnthropicMessagesRequest;
@@ -668,3 +874,6 @@ export async function handleAnthropicCompat(
   }
   return handleNonStreamingResult(openAiRes, anthropicBody.model);
 }
+
+export const handleAnthropicOpenAICompat = handleAnthropicCompat;
+

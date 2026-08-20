@@ -1,11 +1,12 @@
 import { describe, expect, it } from "bun:test";
 import {
+  classifyTransportError,
   classifyUpstreamError,
   type UpstreamErrorInfo,
   type ErrorClassification,
 } from "../../src/network/classifier";
 
-describe("Error Classifier — classifyUpstreamError", () => {
+describe("Error Classifier — classifyUpstreamError & classifyTransportError", () => {
   describe("HTTP 400 - Provider-side retryable vs client-side fail-fast", () => {
     it("classifies 'Provider returned error' as retry_rotate with 0s quarantine", () => {
       const result = classifyUpstreamError({
@@ -16,6 +17,7 @@ describe("Error Classifier — classifyUpstreamError", () => {
       });
       expect(result.action).toBe("retry_rotate");
       expect(result.quarantineTtlSec).toBe(0);
+      expect(result.isRetryable).toBe(true);
       expect(result.reason).toBeDefined();
     });
 
@@ -28,6 +30,7 @@ describe("Error Classifier — classifyUpstreamError", () => {
       });
       expect(result.action).toBe("retry_rotate");
       expect(result.quarantineTtlSec).toBe(0);
+      expect(result.isRetryable).toBe(true);
     });
 
     it("classifies 'temporarily unavailable' as retry_rotate with 0s quarantine", () => {
@@ -39,6 +42,7 @@ describe("Error Classifier — classifyUpstreamError", () => {
       });
       expect(result.action).toBe("retry_rotate");
       expect(result.quarantineTtlSec).toBe(0);
+      expect(result.isRetryable).toBe(true);
     });
 
     it("handles case-insensitivity for retryable 400 patterns", () => {
@@ -50,6 +54,7 @@ describe("Error Classifier — classifyUpstreamError", () => {
       });
       expect(result.action).toBe("retry_rotate");
       expect(result.quarantineTtlSec).toBe(0);
+      expect(result.isRetryable).toBe(true);
     });
 
     it("classifies 'maximum context length' as fail_fast with 0s quarantine", () => {
@@ -61,6 +66,7 @@ describe("Error Classifier — classifyUpstreamError", () => {
       });
       expect(result.action).toBe("fail_fast");
       expect(result.quarantineTtlSec).toBe(0);
+      expect(result.isRetryable).toBe(false);
     });
 
     it("classifies 'context_length' as fail_fast with 0s quarantine", () => {
@@ -72,6 +78,7 @@ describe("Error Classifier — classifyUpstreamError", () => {
       });
       expect(result.action).toBe("fail_fast");
       expect(result.quarantineTtlSec).toBe(0);
+      expect(result.isRetryable).toBe(false);
     });
 
     it("classifies 'safety' as fail_fast with 0s quarantine", () => {
@@ -83,6 +90,7 @@ describe("Error Classifier — classifyUpstreamError", () => {
       });
       expect(result.action).toBe("fail_fast");
       expect(result.quarantineTtlSec).toBe(0);
+      expect(result.isRetryable).toBe(false);
     });
 
     it("classifies 'HARM_PROBABILITY' as fail_fast with 0s quarantine", () => {
@@ -94,6 +102,7 @@ describe("Error Classifier — classifyUpstreamError", () => {
       });
       expect(result.action).toBe("fail_fast");
       expect(result.quarantineTtlSec).toBe(0);
+      expect(result.isRetryable).toBe(false);
     });
 
     it("classifies generic 400 errors as fail_fast with 0s quarantine", () => {
@@ -105,6 +114,7 @@ describe("Error Classifier — classifyUpstreamError", () => {
       });
       expect(result.action).toBe("fail_fast");
       expect(result.quarantineTtlSec).toBe(0);
+      expect(result.isRetryable).toBe(false);
     });
   });
 
@@ -118,6 +128,7 @@ describe("Error Classifier — classifyUpstreamError", () => {
       });
       expect(result.action).toBe("retry_rotate");
       expect(result.quarantineTtlSec).toBe(65);
+      expect(result.isRetryable).toBe(true);
     });
 
     it("honors Retry-After header for 429 standard rate limit", () => {
@@ -130,6 +141,7 @@ describe("Error Classifier — classifyUpstreamError", () => {
       });
       expect(result.action).toBe("retry_rotate");
       expect(result.quarantineTtlSec).toBe(120);
+      expect(result.isRetryable).toBe(true);
     });
 
     it("honors Retry-After in Record<string, string> format", () => {
@@ -141,6 +153,7 @@ describe("Error Classifier — classifyUpstreamError", () => {
       });
       expect(result.action).toBe("retry_rotate");
       expect(result.quarantineTtlSec).toBe(90);
+      expect(result.isRetryable).toBe(true);
     });
 
     it("classifies 429 with 'insufficient_quota' as retry_rotate with 7-day (604800s) quarantine", () => {
@@ -152,6 +165,7 @@ describe("Error Classifier — classifyUpstreamError", () => {
       });
       expect(result.action).toBe("retry_rotate");
       expect(result.quarantineTtlSec).toBe(604800);
+      expect(result.isRetryable).toBe(true);
     });
 
     it("classifies 429 with 'credit_limit' as retry_rotate with 7-day quarantine", () => {
@@ -163,6 +177,7 @@ describe("Error Classifier — classifyUpstreamError", () => {
       });
       expect(result.action).toBe("retry_rotate");
       expect(result.quarantineTtlSec).toBe(604800);
+      expect(result.isRetryable).toBe(true);
     });
 
     it("classifies 429 with 'out of balance' as retry_rotate with 7-day quarantine", () => {
@@ -174,11 +189,12 @@ describe("Error Classifier — classifyUpstreamError", () => {
       });
       expect(result.action).toBe("retry_rotate");
       expect(result.quarantineTtlSec).toBe(604800);
+      expect(result.isRetryable).toBe(true);
     });
   });
 
   describe("HTTP 401 & 403 - Authentication and Authorization errors", () => {
-    it("classifies 401 as retry_rotate with 7-day (604800s) quarantine", () => {
+    it("classifies 401 as retry_rotate with 7-day (604800s) quarantine and reason auth_failure_key_quarantined", () => {
       const result = classifyUpstreamError({
         provider: "oa",
         status: 401,
@@ -187,9 +203,11 @@ describe("Error Classifier — classifyUpstreamError", () => {
       });
       expect(result.action).toBe("retry_rotate");
       expect(result.quarantineTtlSec).toBe(604800);
+      expect(result.reason).toBe("auth_failure_key_quarantined");
+      expect(result.isRetryable).toBe(true);
     });
 
-    it("classifies 403 as retry_rotate with 7-day (604800s) quarantine", () => {
+    it("classifies 403 as retry_rotate with 7-day (604800s) quarantine and reason auth_failure_key_quarantined", () => {
       const result = classifyUpstreamError({
         provider: "gg",
         status: 403,
@@ -198,6 +216,8 @@ describe("Error Classifier — classifyUpstreamError", () => {
       });
       expect(result.action).toBe("retry_rotate");
       expect(result.quarantineTtlSec).toBe(604800);
+      expect(result.reason).toBe("auth_failure_key_quarantined");
+      expect(result.isRetryable).toBe(true);
     });
   });
 
@@ -211,6 +231,7 @@ describe("Error Classifier — classifyUpstreamError", () => {
       });
       expect(result.action).toBe("retry_rotate");
       expect(result.quarantineTtlSec).toBe(10);
+      expect(result.isRetryable).toBe(true);
     });
   });
 
@@ -224,6 +245,65 @@ describe("Error Classifier — classifyUpstreamError", () => {
       });
       expect(result.action).toBe("fail_fast");
       expect(result.quarantineTtlSec).toBe(0);
+      expect(result.isRetryable).toBe(false);
+    });
+  });
+
+  describe("Transport & Network Connection Drops (Pre-TTFT)", () => {
+    it("evaluates TCP RST / ECONNRESET with 2s cooldown quarantine", () => {
+      const result = classifyTransportError(new Error("read ECONNRESET"));
+      expect(result.action).toBe("retry_rotate");
+      expect(result.quarantineTtlSec).toBe(2);
+      expect(result.reason).toBe("transport_reset_cooldown");
+      expect(result.isRetryable).toBe(true);
+    });
+
+    it("evaluates socket EOF / hang up with 2s cooldown quarantine", () => {
+      const result = classifyTransportError(new Error("socket hang up: premature close EOF"));
+      expect(result.action).toBe("retry_rotate");
+      expect(result.quarantineTtlSec).toBe(2);
+      expect(result.isRetryable).toBe(true);
+    });
+
+    it("evaluates ConnectTimeout with 2s cooldown quarantine", () => {
+      const result = classifyTransportError(new Error("ConnectTimeoutError: Connect Timeout"));
+      expect(result.action).toBe("retry_rotate");
+      expect(result.quarantineTtlSec).toBe(2);
+      expect(result.isRetryable).toBe(true);
+    });
+
+    it("evaluates status 0 pre-stream transport reset with 2s cooldown quarantine", () => {
+      const result = classifyUpstreamError({
+        provider: "or",
+        status: 0,
+        headers: {},
+        bodyText: "Network transport failure: Connection reset by peer",
+      });
+      expect(result.action).toBe("retry_rotate");
+      expect(result.quarantineTtlSec).toBe(2);
+      expect(result.reason).toBe("transport_reset_cooldown");
+      expect(result.isRetryable).toBe(true);
+    });
+
+    it("evaluates TTFT timeout with 60s quarantine", () => {
+      const result = classifyTransportError(new Error("TTFT exceeded 5000ms"));
+      expect(result.action).toBe("retry_rotate");
+      expect(result.quarantineTtlSec).toBe(60);
+      expect(result.reason).toBe("ttft_timeout_exceeded");
+      expect(result.isRetryable).toBe(true);
+    });
+
+    it("evaluates status 0 TTFT timeout with 60s quarantine", () => {
+      const result = classifyUpstreamError({
+        provider: "or",
+        status: 0,
+        headers: {},
+        bodyText: "TTFT exceeded 5000ms",
+      });
+      expect(result.action).toBe("retry_rotate");
+      expect(result.quarantineTtlSec).toBe(60);
+      expect(result.reason).toBe("ttft_timeout_exceeded");
+      expect(result.isRetryable).toBe(true);
     });
   });
 
@@ -237,6 +317,7 @@ describe("Error Classifier — classifyUpstreamError", () => {
       });
       expect(result.action).toBe("retry_rotate");
       expect(result.quarantineTtlSec).toBe(10);
+      expect(result.isRetryable).toBe(true);
     });
 
     it("handles empty string bodyText gracefully", () => {
@@ -248,6 +329,7 @@ describe("Error Classifier — classifyUpstreamError", () => {
       });
       expect(result.action).toBe("fail_fast");
       expect(result.quarantineTtlSec).toBe(0);
+      expect(result.isRetryable).toBe(false);
     });
 
     it("safely processes huge bodies (>4KB) without performance degradation or errors", () => {
@@ -266,6 +348,7 @@ describe("Error Classifier — classifyUpstreamError", () => {
       });
       expect(result.action).toBe("retry_rotate");
       expect(result.quarantineTtlSec).toBe(0);
+      expect(result.isRetryable).toBe(true);
     });
 
     it("safely handles non-JSON malformed bodies", () => {
@@ -277,6 +360,7 @@ describe("Error Classifier — classifyUpstreamError", () => {
       });
       expect(result.action).toBe("fail_fast");
       expect(result.quarantineTtlSec).toBe(0);
+      expect(result.isRetryable).toBe(false);
     });
   });
 });

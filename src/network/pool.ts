@@ -128,6 +128,29 @@ export class KeyPool {
     return { total, active: total - quarantined, quarantined };
   }
 
+  public getMinQuarantineTtlMs(provider: string, now: number = Date.now()): number {
+    return this.cooldownManager.getMinQuarantineTtlMs(provider, now);
+  }
+
+  public getDynamicMaxQueueDepth(provider: string): number {
+    const status = this.getStatus(provider);
+    return Math.max(10, status.active * 10);
+  }
+
+  public shouldLoadShed(
+    provider: string,
+    currentDwellMs: number,
+    maxWaitMs: number = 20000,
+    now: number = Date.now()
+  ): boolean {
+    const status = this.getStatus(provider, now);
+    if (status.active > 0) return false;
+    if (status.total === 0) return false;
+    const minTtl = this.getMinQuarantineTtlMs(provider, now);
+    const remainingWaitMs = Math.max(0, maxWaitMs - currentDwellMs);
+    return minTtl > remainingWaitMs;
+  }
+
   public reset(): void {
     this.pointers.clear();
     this.cooldownManager.clearAll();

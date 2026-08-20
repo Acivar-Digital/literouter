@@ -150,6 +150,26 @@ export class CooldownManager {
     return remaining > 0 ? remaining : 0;
   }
 
+  public getMinQuarantineTtlMs(provider: string, now: number = Date.now()): number {
+    const prefix = `${provider}:`;
+    let minTtl = Number.POSITIVE_INFINITY;
+
+    for (const [keyId, state] of this.states.entries()) {
+      if (keyId === provider || keyId.startsWith(prefix)) {
+        if (now >= state.quarantinedUntil) {
+          this.states.delete(keyId);
+          continue;
+        }
+        const remaining = state.quarantinedUntil - now;
+        if (remaining > 0 && remaining < minTtl) {
+          minTtl = remaining;
+        }
+      }
+    }
+
+    return Number.isFinite(minTtl) ? minTtl : 0;
+  }
+
   public quarantineKey(
     keyId: string,
     status: number,

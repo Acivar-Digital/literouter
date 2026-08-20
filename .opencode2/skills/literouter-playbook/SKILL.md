@@ -40,11 +40,13 @@ lr-<provider>-<payload>-<completions>-<nuances>
 | Segment | Codes |
 |---|---|
 | Provider | `or` (OpenRouter), `nv` (NVIDIA), `gg` (Google), `zn` (Zen), `oa` (OpenAI), `an` (Anthropic), `gq` (Groq), `cb` (Cerebras), `ds` (DeepSeek), `ms` (Mistral), `tg` (Together) |
-| Payload (wire) | `oa` (OpenAI), `cl` (Claude/Anthropic), `gg` (Google), `rs` (Responses) |
+| Payload (wire) | `oa` (OpenAI), `cl` (Claude/Anthropic), `ao` (Anthropic->OpenAI cross-wire), `gg` (Google), `rs` (Responses) |
 | Completion (endpoint) | `ch` (Chat `/v1/chat/completions`), `ms` (Messages `/v1/messages`), `ob` (OpenAI Beta), `gc` (GenerateContent), `em` (Embeddings), `md` (Models discovery) |
 | Nuances | `no`, `dp`, `ts`, `sb`, `gm`, `g3`, `tc` (compound with `+`, e.g. `dp+ts`) |
 
-> ⚠️ **WARNING**: When using Claude wire format (`cl`), you MUST use the Messages endpoint (`ms`). Using `cl` with Chat Completions (`ch`) triggers incomplete cross-wire translation that drops all `tool_use`/`tool_result` blocks, causing Claude Code to hang indefinitely.
+### Claude Code Routing Rules:
+- **Native Claude models on OpenRouter/Anthropic**: Use `lr-or-cl-ms-no` (payload: `cl`, endpoint: `ms`).
+- **OpenAI-compat / open-weights models on OpenRouter (e.g. `dots-studio/dots-3-note-preview:free`, DeepSeek, Qwen)**: Use `lr-or-ao-ch-no` (payload: `ao`, endpoint: `ch`). This triggers full bidirectional tool calling and SSE streaming translation into OpenAI Chat Completions without triggering OpenRouter's broken `/api/v1/messages` translator.
 
 Fusion presets: `lr-fse-<preset>` (e.g. `lr-fse-fast`, `lr-fse-smart`, `lr-fse-code`, `lr-fse-cheap`).
 

@@ -4,6 +4,17 @@ All notable changes to LiteRouter will be documented in this file.
 
 ## [Unreleased]
 
+### Added / Anthropic-to-OpenAI Cross-Wire Payload (`ao`) & Bidirectional Tool Translation
+- **New Payload Directive `ao` (`src/directive/parser.ts`, `src/config/schema.ts`)** — Introduced `ao` (Anthropic-to-OpenAI cross-wire translation) payload code, allowing Claude Code and Anthropic Messages clients to seamlessly execute against any OpenAI-compatible backend using directives such as `lr-or-ao-ch-no` or `lr-nv-ao-ch-no`.
+- **Full Bidirectional Tool Calling & Schema Mapping (`src/handlers/anthropic_compat.ts`)** — Upgraded `translateAnthropicToOpenAI` to fully preserve all agent tools and execution turns:
+  - Transforms Anthropic tool schemas (`input_schema`) to OpenAI function specifications (`parameters`).
+  - Maps assistant `tool_use` blocks to OpenAI `tool_calls` with JSON-serialized arguments (with `content: null` when text is absent).
+  - Decomposes user multi-block turns with `tool_result` into discrete OpenAI `role: "tool"` messages with `tool_call_id` and stringified results, properly preceding trailing user text blocks.
+  - Transforms non-streaming OpenAI `tool_calls` responses into Anthropic `tool_use` content blocks with `stop_reason: "tool_use"`.
+- **Streaming Tool-Calling SSE State Machine (`createAnthropicStreamTransformer`)** — Enhanced the SSE streaming transformer with a stateful chunk parser. Tracks OpenAI `delta.tool_calls` streaming chunks and emits full Anthropic `content_block_start (type: "tool_use")`, `content_block_delta (type: "input_json_delta")`, `content_block_stop`, and `message_delta (stop_reason: "tool_use")` events, preventing agent loops from hanging during streaming tool execution.
+- **Unit Test Suite (`tests/unit/anthropic_openai_compat.test.ts`)** — Added comprehensive unit test suite covering system prompt extraction, tool schema transformation, assistant/user multi-turn tool execution, non-streaming responses, and streaming SSE tool-calling transitions (243 passed tests total).
+
+
 ### Added / Outbound HTTP/2 Multiplexing, Anti-429 Pacing & Provider Circuit Breaking
 - **Outbound HTTP/2 Multiplexed Session Pool (`src/network/h2_pool.ts`)** — Implemented persistent outbound HTTP/2 session multiplexing (`node:http2`) with single-flight connection mutexes, eliminating TCP handshake storms. Includes in-pool `GOAWAY` frame tracking with immediate teardown when active streams reach zero, and deterministic stream scope RAII lifecycle guards. Features transparent fallback to HTTP/1.1 keep-alive if ALPN or H2 negotiation fails.
 - **Token-Bucket Rate Pacer & Anti-429 Fast Queue (`src/network/pacer.ts`)** — Introduced per-provider and per-key token-bucket pacing with an $O(1)$ `FastFifoQueue`, bounded queue timeouts (15s), and clean local HTTP 429 backpressure responses with `Retry-After` headers. Tracks Exponential Moving Average (EMA, $\alpha=0.1$) queue dwell time telemetry.

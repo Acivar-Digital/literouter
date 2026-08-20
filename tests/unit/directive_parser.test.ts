@@ -68,6 +68,18 @@ describe("Directive Parser — Direct Keys", () => {
     }
   });
 
+  it("parses ao (Anthropic-to-OpenAI cross-wire) payload code", () => {
+    const parsed = parseDirective("lr-or-ao-ch-no");
+    expect(parsed).not.toBeNull();
+    expect(isDirectDirective(parsed!)).toBe(true);
+
+    const direct = parsed as DirectDirective;
+    expect(direct.provider).toBe("or");
+    expect(direct.payload).toBe("ao");
+    expect(direct.completion).toBe("ch");
+    expect(direct.nuances).toEqual(["no"]);
+  });
+
   it("parses all registered 2-letter completion codes", () => {
     const completions = ["ch", "ms", "ob", "gc", "im", "em", "au", "md"] as const;
     for (const c of completions) {

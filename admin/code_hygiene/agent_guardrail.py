@@ -454,11 +454,18 @@ def _filter_pydantic_exceptions(
     return [pc for pc in classes if not _is_pydantic_exception(rel_path, pc.name)]
 
 
-def _pydantic_scan(path: Path) -> PydanticResult:
+def _pydantic_precheck(path: Path) -> PydanticResult | None:
     if not path.exists() or not path.is_file():
         return PydanticResult(success=False, file=str(path), message=f"File not found: {path}")
     if path.suffix != ".py":
         return PydanticResult(success=True, file=str(path), message="Skipped pydantic check for non-Python file.")
+    return None
+
+
+def _pydantic_scan(path: Path) -> PydanticResult:
+    pre = _pydantic_precheck(path)
+    if pre is not None:
+        return pre
     tree = _parse_file(path)
     if tree is None:
         return PydanticResult(success=False, file=str(path), message="Parse error in file.")
@@ -1048,6 +1055,8 @@ def _run_checks(path: Path) -> CheckResult | None:
     # stages (CC/pydantic/kill-tries) which would hard-fail on TS syntax.
     if path.suffix in {".ts", ".tsx"}:
         return _run_ts_check(path)
+    if path.suffix != ".py":
+        return _check_sandbox_boundary(path)
     pre_fail = _check_sandbox_boundary(path)
     style_fail = _check_ast_slop_and_style(path)
     kt_fail = _kill_tries_gate(path)

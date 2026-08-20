@@ -9,6 +9,7 @@ export interface FetcherOptions {
   readonly clientSignal?: AbortSignal;
   readonly provider: string;
   readonly keyIndex: number;
+  readonly model?: string;
 }
 
 export interface StreamChunkResult {
@@ -28,6 +29,7 @@ export interface StreamCallbacks {
   readonly onUsage?: (usage: UsageCallbackPayload) => void;
   readonly retryProvider?: RetryProvider;
   readonly nextAttemptProvider?: RetryProvider;
+  readonly protocol?: "anthropic" | "openai" | string;
 }
 
 export interface NextAttemptResult {
@@ -139,15 +141,40 @@ function clearTimer(timer: IntervalHandle | null): void {
 
 type DefaultReadResult = Awaited<ReturnType<ReadableStreamDefaultReader<Uint8Array>["read"]>>;
 
-async function readFirstChunkWithTimeout(
-  reader: ReadableStreamDefaultReader<Uint8Array>
+export function resolveTtftTimeout(model?: string, envTimeoutMs?: number): number {
+  const base = envTimeoutMs && envTimeoutMs > 0 ? envTimeoutMs : 5000;
+  if (!model) return base;
+  const isReasoningModel = /o1|o3|deepseek-reasoner|r1|thinking|claude-3-7.*thought/i.test(model);
+  if (isReasoningModel) {
+    return Math.max(60000, base);
+  }
+  return base;
+}
+
+export function formatMidstreamErrorFrame(protocol: "anthropic" | "openai" | string, message: string): Uint8Array {
+  const encoder = new TextEncoder();
+  if (protocol === "anthropic" || protocol === "cl") {
+    return encoder.encode(`event: error\ndata: ${JSON.stringify({ type: "error", error: { type: "api_error", message } })}\n\n`);
+  }
+  return encoder.encode(`data: ${JSON.stringify({ error: { message, type: "server_error" } })}\n\ndata: [DONE]\n\n`);
+}
+
+export async function readFirstChunkWithTimeout(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  timeoutMs: number = TTFT_TIMEOUT_MS
 ): Promise<DefaultReadResult> {
-  const timeoutMs = getEnv().LITEROUTER_NO_RESPONSE_TIMEOUT_MS || TTFT_TIMEOUT_MS;
+  let timerId: ReturnType<typeof setTimeout> | undefined;
   const readPromise = reader.read();
   const timeoutPromise = new Promise<never>((_, reject) => {
-    setTimeout(() => reject(new NoResponseError(`TTFT exceeded ${timeoutMs}ms`)), timeoutMs);
+    timerId = setTimeout(() => reject(new NoResponseError(`TTFT exceeded ${timeoutMs}ms`)), timeoutMs);
   });
-  return Promise.race([readPromise, timeoutPromise]);
+  try {
+    return await Promise.race([readPromise, timeoutPromise]);
+  } finally {
+    if (timerId !== undefined) {
+      clearTimeout(timerId);
+    }
+  }
 }
 
 function isChunkEmpty(firstRead: DefaultReadResult): boolean {
@@ -455,9 +482,11 @@ export async function fetchWithTtftGuard(
   }
 
   const reader = response.body.getReader();
+  const envTtft = getEnv().LITEROUTER_NO_RESPONSE_TIMEOUT_MS;
+  const ttftTimeoutMs = resolveTtftTimeout(options.model, envTtft);
   let firstChunk: Uint8Array;
   try {
-    const firstRead = await readFirstChunkWithTimeout(reader);
+    const firstRead = await readFirstChunkWithTimeout(reader, ttftTimeoutMs);
     firstChunk = validateFirstChunk(firstRead, response.status);
   } catch (err: unknown) {
     reader.releaseLock();
@@ -592,11 +621,21 @@ export function createResilientStream(
                 return;
               } else {
                 clearTimer(keepAliveTimer);
+                if (callbacks?.protocol) {
+                  controller.enqueue(formatMidstreamErrorFrame(callbacks.protocol, reason));
+                  controller.close();
+                  return;
+                }
                 controller.error(new Error(reason));
                 return;
               }
             } else {
               clearTimer(keepAliveTimer);
+              if (callbacks?.protocol) {
+                controller.enqueue(formatMidstreamErrorFrame(callbacks.protocol, errCheck.message ?? "In-band upstream error"));
+                controller.close();
+                return;
+              }
               controller.error(new Error(errCheck.message ?? "In-band upstream error"));
               return;
             }
@@ -635,16 +674,33 @@ export function createResilientStream(
               return;
             } else {
               clearTimer(keepAliveTimer);
+              if (callbacks?.protocol) {
+                controller.enqueue(formatMidstreamErrorFrame(callbacks.protocol, reason));
+                controller.close();
+                return;
+              }
               controller.error(err);
               return;
             }
           } catch (retryErr: unknown) {
             clearTimer(keepAliveTimer);
+            if (callbacks?.protocol) {
+              const reason = retryErr instanceof Error ? retryErr.message : String(retryErr);
+              controller.enqueue(formatMidstreamErrorFrame(callbacks.protocol, reason));
+              controller.close();
+              return;
+            }
             controller.error(retryErr);
             return;
           }
         }
         clearTimer(keepAliveTimer);
+        if (callbacks?.protocol) {
+          const reason = err instanceof Error ? err.message : String(err);
+          controller.enqueue(formatMidstreamErrorFrame(callbacks.protocol, reason));
+          controller.close();
+          return;
+        }
         controller.error(err);
       }
     },

@@ -19,7 +19,7 @@ export interface ModelCapabilities {
 
 export interface PayloadTransformOptions {
   readonly nuances?: readonly string[];
-  readonly targetWire?: "oa" | "cl" | "gg" | "rs";
+  readonly targetWire?: "oa" | "cl" | "gg" | "rs" | "ao";
   readonly globalStripReasoning?: boolean;
   readonly capabilities?: ModelCapabilities;
 }

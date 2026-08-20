@@ -289,6 +289,7 @@ export function createServer(portOverride?: number): Server<unknown> | LiteRoute
         cert: tls.cert,
         key: tls.key,
         allowHTTP1: true,
+        ALPNProtocols: ["h2", "http/1.1"],
       },
       async (nodeReq, nodeRes) => {
         const chunks: Buffer[] = [];

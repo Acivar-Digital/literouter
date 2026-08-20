@@ -213,8 +213,12 @@ async function executeDirectCall(
   }
 
   if (env.LITEROUTER_PACER_ENABLED) {
+    const dynamicMaxQueueDepth = globalKeyPool.getDynamicMaxQueueDepth(directive.provider);
+    const maxQueueDepth = env.LITEROUTER_PACER_MAX_QUEUE_DEPTH > 0
+      ? env.LITEROUTER_PACER_MAX_QUEUE_DEPTH
+      : dynamicMaxQueueDepth;
     const pacer = getPacerForProvider(directive.provider, selected.index, {
-      maxQueueDepth: env.LITEROUTER_PACER_MAX_QUEUE_DEPTH,
+      maxQueueDepth,
       maxQueueWaitMs: env.LITEROUTER_PACER_MAX_QUEUE_WAIT_MS,
     });
     await pacer.acquire(clientSignal);
@@ -230,6 +234,7 @@ async function executeDirectCall(
     clientSignal,
     provider: directive.provider,
     keyIndex: selected.index,
+    model: payload.model,
   };
 
   const startTime = Date.now();
@@ -354,6 +359,7 @@ async function executeDirectCall(
   let currentAttempt = attempt;
 
   let resilientStream = createResilientStream(firstChunk, rawReader, {
+    protocol: "openai",
     onUsage: (u) => {
       const streamDuration = Date.now() - startTime;
       logUsage({
@@ -395,6 +401,7 @@ async function executeDirectCall(
           clientSignal,
           provider: directive.provider,
           keyIndex: nextSelected.index,
+          model: payload.model,
         };
 
         try {
@@ -501,8 +508,20 @@ async function executeSingleAttemptLoop(
   const maxAttempts = Math.min(3, Math.max(1, poolSize));
   let lastError: unknown = null;
   let prevKeyIndex = -1;
+  const startTime = Date.now();
+  const env = getEnv();
+  const maxWaitMs = env.LITEROUTER_PACER_MAX_QUEUE_WAIT_MS || 20000;
 
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const dwellMs = Date.now() - startTime;
+    if (globalKeyPool.shouldLoadShed(directive.provider, dwellMs, maxWaitMs)) {
+      logLimit(reqId, directive.provider, 0, 503, 60, poolSize);
+      return Response.json(
+        { error: { message: `Provider '${directive.provider}' unavailable: all keys in cooldown exceed wait budget.`, type: "service_unavailable" } },
+        { status: 503 }
+      );
+    }
+
     const selected = globalKeyPool.selectNextKey(directive.provider);
     if (!selected) {
       logLimit(reqId, directive.provider, 0, 429, 60, poolSize);

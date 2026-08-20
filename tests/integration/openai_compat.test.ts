@@ -229,4 +229,29 @@ describe("OpenAI Compatibility Handler Integration", () => {
     logSpy.mockRestore();
     warnSpy.mockRestore();
   });
+
+  it("returns 503 load shed when all provider keys are quarantined beyond wait budget", async () => {
+    const { globalKeyPool } = await import("../../src/handlers/openai_compat");
+    const poolSize = globalKeyPool.getPoolSize("or");
+    for (let i = 0; i < poolSize; i++) {
+      globalKeyPool.reportFailure("or", i, 429, undefined, "Rate limit", Date.now(), 600);
+    }
+
+    const req = new Request("http://localhost:7766/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer lr-or-oa-ch-no",
+      },
+      body: JSON.stringify({
+        model: "openai/gpt-4o",
+        messages: [{ role: "user", content: "Load shed test" }],
+      }),
+    });
+
+    const res = await handleAppRequest(req);
+    expect(res.status).toBe(503);
+    const data = (await res.json()) as Record<string, unknown>;
+    expect(data.error).toBeDefined();
+  });
 });
