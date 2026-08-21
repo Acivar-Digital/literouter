@@ -1,3 +1,5 @@
+import { getEnv } from "../config/env";
+
 export class PacerQueueOverflowError extends Error {
   public readonly retryAfterSec: number;
   constructor(message: string, retryAfterSec = 5) {
@@ -229,12 +231,21 @@ export class RequestPacer {
   }
 }
 
-const PROVIDER_DEFAULT_PACER_CONFIGS: Record<string, Partial<PacerConfig>> = {
-  gg: { maxRpm: 15, minIntervalMs: 2000, maxQueueDepth: 100, maxQueueWaitMs: 45000 },
-  or: { maxRpm: 30, minIntervalMs: 2000, maxQueueDepth: 100, maxQueueWaitMs: 45000 },
-  nv: { maxRpm: 40, minIntervalMs: 2000, maxQueueDepth: 100, maxQueueWaitMs: 45000 },
-  zn: { maxRpm: 60, minIntervalMs: 2000, maxQueueDepth: 100, maxQueueWaitMs: 45000 },
-};
+function getProviderMinDelayFromEnv(provider: string): number {
+  const env = getEnv();
+  switch (provider) {
+    case "or":
+      return env.OPENROUTER_MIN_DELAY_MS;
+    case "nv":
+      return env.NVIDIA_MIN_DELAY_MS;
+    case "zn":
+      return env.ZEN_MIN_DELAY_MS;
+    case "gg":
+      return env.GOOGLE_MIN_DELAY_MS;
+    default:
+      return 2000;
+  }
+}
 
 // Global registry for per-provider pacers (all keys for a provider share the single pipe)
 const pacerRegistry = new Map<string, RequestPacer>();
@@ -247,17 +258,13 @@ export function getPacerForProvider(
   const pacerKey = provider;
   let pacer = pacerRegistry.get(pacerKey);
   if (!pacer) {
-    const defaults = PROVIDER_DEFAULT_PACER_CONFIGS[provider] ?? {
-      maxRpm: 30,
-      minIntervalMs: 2000,
-      maxQueueDepth: 100,
-      maxQueueWaitMs: 45000,
-    };
+    const env = getEnv();
+    const envDelay = getProviderMinDelayFromEnv(provider);
     pacer = new RequestPacer({
-      maxRpm: config?.maxRpm ?? defaults.maxRpm ?? 30,
-      minIntervalMs: config?.minIntervalMs ?? defaults.minIntervalMs ?? 2000,
-      maxQueueDepth: config?.maxQueueDepth ?? defaults.maxQueueDepth ?? 100,
-      maxQueueWaitMs: config?.maxQueueWaitMs ?? defaults.maxQueueWaitMs ?? 45000,
+      maxRpm: config?.maxRpm ?? env.LITEROUTER_PACER_MAX_RPM ?? 30,
+      minIntervalMs: config?.minIntervalMs ?? envDelay,
+      maxQueueDepth: config?.maxQueueDepth ?? env.LITEROUTER_PACER_MAX_QUEUE_DEPTH ?? 100,
+      maxQueueWaitMs: config?.maxQueueWaitMs ?? env.LITEROUTER_PACER_MAX_QUEUE_WAIT_MS ?? 45000,
     });
     pacerRegistry.set(pacerKey, pacer);
   }

@@ -139,6 +139,10 @@ export const EnvConfigSchema = z.object({
   LITEROUTER_PACER_MAX_RPM: z.coerce.number().int().positive().default(600),
   LITEROUTER_PACER_MAX_QUEUE_DEPTH: z.coerce.number().int().positive().default(100),
   LITEROUTER_PACER_MAX_QUEUE_WAIT_MS: z.coerce.number().int().positive().default(15000),
+  OPENROUTER_MIN_DELAY_MS: z.coerce.number().int().nonnegative().default(2000),
+  NVIDIA_MIN_DELAY_MS: z.coerce.number().int().nonnegative().default(2000),
+  ZEN_MIN_DELAY_MS: z.coerce.number().int().nonnegative().default(2000),
+  GOOGLE_MIN_DELAY_MS: z.coerce.number().int().nonnegative().default(2000),
   LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("info"),
 });
 
