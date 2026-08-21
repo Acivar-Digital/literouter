@@ -357,31 +357,45 @@ export async function executeH2Fetch(
         }
       }
 
+      let isClosed = false;
       const webStream = new ReadableStream<Uint8Array>({
         start(controller) {
           stream.on("data", (chunk: Buffer | Uint8Array) => {
-            controller.enqueue(new Uint8Array(chunk));
+            if (!isClosed) {
+              try {
+                controller.enqueue(new Uint8Array(chunk));
+              } catch {
+                // Ignore enqueue on closed stream
+              }
+            }
           });
           stream.on("end", () => {
-            try {
-              controller.close();
-            } catch (_err: unknown) {
-              console.debug("[H2 Fetcher] Stream end controller close error:", _err);
+            if (!isClosed) {
+              isClosed = true;
+              try {
+                controller.close();
+              } catch {
+                // Ignore invalid state
+              }
             }
           });
           stream.on("error", (err) => {
-            try {
-              controller.error(err);
-            } catch (_err: unknown) {
-              console.debug("[H2 Fetcher] Stream error controller error:", _err);
+            if (!isClosed) {
+              isClosed = true;
+              try {
+                controller.error(err);
+              } catch {
+                // Ignore invalid state
+              }
             }
           });
         },
         cancel() {
+          isClosed = true;
           try {
             stream.destroy();
-          } catch (_err: unknown) {
-            console.debug("[H2 Fetcher] Stream cancel destroy error:", _err);
+          } catch {
+            // Ignore stream destroy error
           }
         },
       });
