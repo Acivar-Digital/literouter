@@ -96,14 +96,14 @@ export function mapOpenAIToAnthropicStopReason(
   finishReason?: string | null,
   hasToolUse = false
 ): string {
-  if (hasToolUse || finishReason === "tool_calls" || finishReason === "function_call") {
-    return "tool_use";
-  }
   if (finishReason === "length") {
     return "max_tokens";
   }
   if (finishReason === "content_filter") {
     return "refusal";
+  }
+  if (hasToolUse || finishReason === "tool_calls" || finishReason === "function_call") {
+    return "tool_use";
   }
   return "end_turn";
 }
@@ -194,14 +194,20 @@ function translateToolChoice(choice: unknown): unknown {
   return choice;
 }
 
-function extractThinkingOrText(block: AnthropicContentBlock): string {
-  if (block.type === "thinking") {
-    return block.thinking || block.text || "";
+export function validateAnthropicPayload(payload: AnthropicMessagesRequest): string | null {
+  if (!Array.isArray(payload.messages) || payload.messages.length === 0) {
+    return "messages must be a non-empty array";
   }
-  if (block.type === "text" && block.text) {
-    return block.text;
+  for (const msg of payload.messages) {
+    if (Array.isArray(msg.content)) {
+      for (const block of msg.content) {
+        if (block && typeof block === "object" && block.type === "document") {
+          return "Document content blocks (PDF/binary) are not supported by OpenAI-compatible endpoints.";
+        }
+      }
+    }
   }
-  return "";
+  return null;
 }
 
 function translateAssistantToolBlock(
@@ -231,10 +237,15 @@ function translateAssistantMessage(msg: AnthropicMessage): OpenAIMessage {
   }
 
   let textContent = "";
+  let reasoningContent = "";
   const toolCalls: Array<{ id: string; type: "function"; function: { name: string; arguments: string } }> = [];
 
   for (const block of msg.content) {
-    textContent += extractThinkingOrText(block);
+    if (block.type === "thinking") {
+      reasoningContent += (block.thinking || block.text || "");
+    } else if (block.type === "text" && block.text) {
+      textContent += block.text;
+    }
     const tc = translateAssistantToolBlock(block);
     if (tc) {
       toolCalls.push(tc);
@@ -245,6 +256,9 @@ function translateAssistantMessage(msg: AnthropicMessage): OpenAIMessage {
     role: "assistant",
     content: textContent.length > 0 ? textContent : null,
   };
+  if (reasoningContent.length > 0) {
+    result.reasoning_content = reasoningContent;
+  }
   if (toolCalls.length > 0) {
     result.tool_calls = toolCalls;
   }
@@ -325,6 +339,25 @@ function translateUserMessage(msg: AnthropicMessage, outMessages: OpenAIMessage[
   }
 }
 
+const ALLOWED_OPENAI_KEYS = new Set([
+  "model",
+  "messages",
+  "stream",
+  "stream_options",
+  "max_tokens",
+  "max_completion_tokens",
+  "temperature",
+  "top_p",
+  "stop",
+  "tools",
+  "tool_choice",
+  "parallel_tool_calls",
+  "user",
+  "metadata",
+  "response_format",
+  "seed",
+]);
+
 export function translateAnthropicToOpenAI(req: AnthropicMessagesRequest): OpenAIRequestPayload {
   const openAiMessages: OpenAIMessage[] = [];
   const systemText = extractSystemString(req.system);
@@ -375,12 +408,8 @@ export function translateAnthropicToOpenAI(req: AnthropicMessagesRequest): OpenA
     }
   }
 
-  const KNOWN_ANTHROPIC_KEYS = new Set([
-    "model", "messages", "system", "max_tokens", "stream", "temperature",
-    "top_p", "top_k", "stop_sequences", "metadata", "tools", "tool_choice", "thinking",
-  ]);
   for (const [key, value] of Object.entries(req)) {
-    if (!KNOWN_ANTHROPIC_KEYS.has(key) && value !== undefined) {
+    if (ALLOWED_OPENAI_KEYS.has(key) && result[key] === undefined && value !== undefined) {
       result[key] = value;
     }
   }
@@ -394,7 +423,7 @@ export function translateOpenAIToAnthropicResponse(
 ): Record<string, unknown> {
   const choices = (openAiRes.choices as Array<{
     message?: {
-      content?: string | null;
+      content?: string | Array<{ type?: string; text?: string }> | null;
       reasoning_content?: string | null;
       reasoning?: string | null;
       tool_calls?: Array<{
@@ -412,11 +441,21 @@ export function translateOpenAIToAnthropicResponse(
 
   const reasoning = msg?.reasoning_content || msg?.reasoning;
   if (typeof reasoning === "string" && reasoning.length > 0) {
-    contentBlocks.push({ type: "thinking", text: reasoning });
+    contentBlocks.push({ type: "thinking", thinking: reasoning } as AnthropicContentBlock);
   }
 
-  if (msg?.content && typeof msg.content === "string" && msg.content.length > 0) {
-    contentBlocks.push({ type: "text", text: msg.content });
+  let textContent = "";
+  if (typeof msg?.content === "string") {
+    textContent = msg.content;
+  } else if (Array.isArray(msg?.content)) {
+    textContent = msg.content
+      .filter((p) => p?.type === "text" && typeof p.text === "string")
+      .map((p) => p.text)
+      .join("");
+  }
+
+  if (textContent.length > 0) {
+    contentBlocks.push({ type: "text", text: textContent });
   }
 
   if (Array.isArray(msg?.tool_calls)) {
@@ -438,6 +477,10 @@ export function translateOpenAIToAnthropicResponse(
         });
       }
     }
+  }
+
+  if (contentBlocks.length === 0) {
+    contentBlocks.push({ type: "text", text: "" });
   }
 
   const hasToolUse = contentBlocks.some((b) => b.type === "tool_use");
@@ -470,6 +513,11 @@ interface StreamTransformState {
   accumulatedOutputTokens: number;
   readonly activeToolMap: Map<number, ActiveToolInfo>;
   readonly openBlockIndices: Set<number>;
+  pendingStopReason: string | null;
+}
+
+function sseEvent(encoder: TextEncoder, event: string, data: unknown): Uint8Array {
+  return encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
 }
 
 function handleNativeAnthropicPassThrough(
@@ -498,8 +546,24 @@ function ensureMessageStart(
   if (!state.msgStartSent) {
     state.msgStartSent = true;
     const msgId = (parsed.id as string) || `msg_${Math.random().toString(36).slice(2, 11)}`;
-    const startEvt = `event: message_start\ndata: {"type":"message_start","message":{"id":"${msgId}","type":"message","role":"assistant","content":[],"model":"${model}","stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":${state.accumulatedInputTokens},"output_tokens":0}}}\n\n`;
-    controller.enqueue(encoder.encode(startEvt));
+    controller.enqueue(
+      sseEvent(encoder, "message_start", {
+        type: "message_start",
+        message: {
+          id: msgId,
+          type: "message",
+          role: "assistant",
+          content: [],
+          model,
+          stop_reason: null,
+          stop_sequence: null,
+          usage: {
+            input_tokens: state.accumulatedInputTokens,
+            output_tokens: 0,
+          },
+        },
+      })
+    );
   }
 }
 
@@ -510,7 +574,10 @@ function closeAllOpenBlocks(
 ): void {
   for (const index of state.openBlockIndices) {
     controller.enqueue(
-      encoder.encode(`event: content_block_stop\ndata: {"type":"content_block_stop","index":${index}}\n\n`)
+      sseEvent(encoder, "content_block_stop", {
+        type: "content_block_stop",
+        index,
+      })
     );
   }
   state.openBlockIndices.clear();
@@ -524,7 +591,10 @@ function closeCurrentBlock(
 ): void {
   if (state.currentBlockType !== null && state.openBlockIndices.has(state.currentBlockIndex)) {
     controller.enqueue(
-      encoder.encode(`event: content_block_stop\ndata: {"type":"content_block_stop","index":${state.currentBlockIndex}}\n\n`)
+      sseEvent(encoder, "content_block_stop", {
+        type: "content_block_stop",
+        index: state.currentBlockIndex,
+      })
     );
     state.openBlockIndices.delete(state.currentBlockIndex);
     state.currentBlockType = null;
@@ -543,15 +613,19 @@ function processReasoningDelta(
     state.currentBlockType = "thinking";
     state.openBlockIndices.add(state.currentBlockIndex);
     controller.enqueue(
-      encoder.encode(
-        `event: content_block_start\ndata: {"type":"content_block_start","index":${state.currentBlockIndex},"content_block":{"type":"thinking","thinking":""}}\n\n`
-      )
+      sseEvent(encoder, "content_block_start", {
+        type: "content_block_start",
+        index: state.currentBlockIndex,
+        content_block: { type: "thinking", thinking: "" },
+      })
     );
   }
   controller.enqueue(
-    encoder.encode(
-      `event: content_block_delta\ndata: {"type":"content_block_delta","index":${state.currentBlockIndex},"delta":{"type":"thinking_delta","thinking":${JSON.stringify(reasoningDelta)}}}\n\n`
-    )
+    sseEvent(encoder, "content_block_delta", {
+      type: "content_block_delta",
+      index: state.currentBlockIndex,
+      delta: { type: "thinking_delta", thinking: reasoningDelta },
+    })
   );
 }
 
@@ -567,15 +641,19 @@ function processTextDelta(
     state.currentBlockType = "text";
     state.openBlockIndices.add(state.currentBlockIndex);
     controller.enqueue(
-      encoder.encode(
-        `event: content_block_start\ndata: {"type":"content_block_start","index":${state.currentBlockIndex},"content_block":{"type":"text","text":""}}\n\n`
-      )
+      sseEvent(encoder, "content_block_start", {
+        type: "content_block_start",
+        index: state.currentBlockIndex,
+        content_block: { type: "text", text: "" },
+      })
     );
   }
   controller.enqueue(
-    encoder.encode(
-      `event: content_block_delta\ndata: {"type":"content_block_delta","index":${state.currentBlockIndex},"delta":{"type":"text_delta","text":${JSON.stringify(textDelta)}}}\n\n`
-    )
+    sseEvent(encoder, "content_block_delta", {
+      type: "content_block_delta",
+      index: state.currentBlockIndex,
+      delta: { type: "text_delta", text: textDelta },
+    })
   );
 }
 
@@ -600,17 +678,21 @@ function processToolCallsDelta(
       state.activeToolMap.set(tcIdx, toolInfo);
 
       controller.enqueue(
-        encoder.encode(
-          `event: content_block_start\ndata: {"type":"content_block_start","index":${state.currentBlockIndex},"content_block":{"type":"tool_use","id":"${toolId}","name":"${toolName}","input":{}}}\n\n`
-        )
+        sseEvent(encoder, "content_block_start", {
+          type: "content_block_start",
+          index: state.currentBlockIndex,
+          content_block: { type: "tool_use", id: toolId, name: toolName, input: {} },
+        })
       );
     }
 
     if (tc.function?.arguments && toolInfo) {
       controller.enqueue(
-        encoder.encode(
-          `event: content_block_delta\ndata: {"type":"content_block_delta","index":${toolInfo.blockIndex},"delta":{"type":"input_json_delta","partial_json":${JSON.stringify(tc.function.arguments)}}}\n\n`
-        )
+        sseEvent(encoder, "content_block_delta", {
+          type: "content_block_delta",
+          index: toolInfo.blockIndex,
+          delta: { type: "input_json_delta", partial_json: tc.function.arguments },
+        })
       );
     }
   }
@@ -628,19 +710,44 @@ export function createAnthropicStreamTransformer(model: string): TransformStream
     accumulatedOutputTokens: 0,
     activeToolMap: new Map<number, ActiveToolInfo>(),
     openBlockIndices: new Set<number>(),
+    pendingStopReason: null,
   };
   let buffer = "";
 
-  const processLine = (line: string, controller: TransformStreamDefaultController<Uint8Array>) => {
-    if (!line.startsWith("data: ") || line.includes("[DONE]")) {
+  const processLine = (rawLine: string, controller: TransformStreamDefaultController<Uint8Array>) => {
+    const line = rawLine.trim();
+    if (!line || line.startsWith(":")) {
       return;
     }
-    const rawData = line.slice(6).trim();
+    const dataMatch = line.match(/^data:\s*(.*)$/);
+    if (!dataMatch || dataMatch[1] === undefined) {
+      return;
+    }
+    const rawData = dataMatch[1].trim();
+    if (!rawData || rawData === "[DONE]") {
+      return;
+    }
 
     let parsed: Record<string, unknown>;
     try {
       parsed = JSON.parse(rawData) as Record<string, unknown>;
     } catch {
+      return;
+    }
+
+    if (parsed.error && typeof parsed.error === "object") {
+      const errObj = parsed.error as Record<string, unknown>;
+      const errMsg = typeof errObj.message === "string" ? errObj.message : JSON.stringify(errObj);
+      const errType = typeof errObj.type === "string" ? errObj.type : "api_error";
+      controller.enqueue(
+        sseEvent(encoder, "error", {
+          type: "error",
+          error: {
+            type: errType,
+            message: errMsg,
+          },
+        })
+      );
       return;
     }
 
@@ -673,6 +780,16 @@ export function createAnthropicStreamTransformer(model: string): TransformStream
 
     const choice = choices?.[0];
     if (!choice) {
+      if (state.pendingStopReason && !state.messageDeltaSent && parsed.usage) {
+        state.messageDeltaSent = true;
+        controller.enqueue(
+          sseEvent(encoder, "message_delta", {
+            type: "message_delta",
+            delta: { stop_reason: state.pendingStopReason, stop_sequence: null },
+            usage: { output_tokens: state.accumulatedOutputTokens },
+          })
+        );
+      }
       return;
     }
 
@@ -691,21 +808,14 @@ export function createAnthropicStreamTransformer(model: string): TransformStream
 
     if (choice.finish_reason) {
       closeAllOpenBlocks(state, controller, encoder);
-      const stopReason = mapOpenAIToAnthropicStopReason(choice.finish_reason, state.activeToolMap.size > 0);
-      if (!state.messageDeltaSent) {
-        state.messageDeltaSent = true;
-        controller.enqueue(
-          encoder.encode(
-            `event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"${stopReason}","stop_sequence":null},"usage":{"output_tokens":${state.accumulatedOutputTokens}}}\n\n`
-          )
-        );
-      }
+      state.pendingStopReason = mapOpenAIToAnthropicStopReason(choice.finish_reason, state.activeToolMap.size > 0);
     }
   };
 
   return new TransformStream<Uint8Array, Uint8Array>({
     transform(chunk, controller) {
       buffer += decoder.decode(chunk, { stream: true });
+      buffer = buffer.replace(/\r\n/g, "\n");
       const lines = buffer.split("\n");
       buffer = lines.pop() ?? "";
 
@@ -720,13 +830,16 @@ export function createAnthropicStreamTransformer(model: string): TransformStream
       closeAllOpenBlocks(state, controller, encoder);
       if (!state.messageDeltaSent) {
         state.messageDeltaSent = true;
+        const finalStopReason = state.pendingStopReason || "end_turn";
         controller.enqueue(
-          encoder.encode(
-            `event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":${state.accumulatedOutputTokens}}}\n\n`
-          )
+          sseEvent(encoder, "message_delta", {
+            type: "message_delta",
+            delta: { stop_reason: finalStopReason, stop_sequence: null },
+            usage: { output_tokens: state.accumulatedOutputTokens },
+          })
         );
       }
-      controller.enqueue(encoder.encode('event: message_stop\ndata: {"type":"message_stop"}\n\n'));
+      controller.enqueue(sseEvent(encoder, "message_stop", { type: "message_stop" }));
     },
   });
 }
@@ -1145,6 +1258,11 @@ export async function handleAnthropicCompat(
     return createAnthropicErrorResponse(400, "Malformed JSON", "invalid_request_error");
   }
 
+  const validationError = validateAnthropicPayload(anthropicBody);
+  if (validationError) {
+    return createAnthropicErrorResponse(400, validationError, "invalid_request_error");
+  }
+
   const clientAgent = req.headers.get("user-agent") || "unknown";
   const endpoint = directive.type === "direct"
     ? resolveUpstreamEndpoint(directive.provider, directive.completion, anthropicBody.model)
@@ -1177,6 +1295,7 @@ export async function handleAnthropicCompat(
   const openAiPayload = translateAnthropicToOpenAI(anthropicBody);
 
   const cleanHeaders = new Headers(req.headers);
+  cleanHeaders.delete("authorization");
   cleanHeaders.delete("content-length");
   cleanHeaders.delete("anthropic-version");
   cleanHeaders.delete("anthropic-beta");

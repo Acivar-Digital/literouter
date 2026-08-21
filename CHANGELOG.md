@@ -5,26 +5,22 @@ All notable changes to LiteRouter will be documented in this file.
 ## [Unreleased]
 
 ### Fixed / Anthropic Compatibility Protocol & 1-to-1 Schema Translation Hardening
-- **Complete Bidirectional Multimodal & Thinking Block Translation (`src/handlers/anthropic_compat.ts`)**:
-  - Implemented multimodal user message translation: Anthropic `{ type: "image", source: { type: "base64" | "url" } }` now maps to OpenAI `{ type: "image_url", image_url: { url: ... } }`.
-  - Fixed thinking block extraction in multi-turn history by inspecting `block.thinking` (instead of `block.text`).
-  - Preserved tool result failure status by prefixing `Error: ` when `block.is_error === true`.
-  - Added dual `max_tokens` and `max_completion_tokens` mapping for modern reasoning models, and auto-injected `stream_options: { include_usage: true }` on streaming requests.
-  - Mapped `tool_choice.disable_parallel_tool_use: true` to `parallel_tool_calls: false`.
-- **Finish Reason & Token Usage Bidirectional Mapping**:
-  - Implemented `mapOpenAIToAnthropicStopReason` (`length` $\to$ `max_tokens`, `tool_calls` $\to$ `tool_use`, `content_filter` $\to$ `refusal`, `stop` $\to$ `end_turn`).
-  - Implemented `mapOpenAIToAnthropicUsage` (`prompt_tokens` $\to$ `input_tokens`, `completion_tokens` $\to$ `output_tokens`, `cached_tokens` $\to$ `cache_read_input_tokens`).
-  - Mapped upstream reasoning content (`reasoning_content` / `reasoning`) to Anthropic `{ type: "thinking", text }` blocks.
-- **Robust SSE Stream Transformer (`createAnthropicStreamTransformer`)**:
-  - Streamed thinking deltas (`thinking_delta`) from upstream reasoning deltas.
-  - Fixed multi-tool interleaving race conditions by tracking active tool block indices per tool call index without state desync.
-  - Fixed usage chunk retention when OpenAI emits final usage chunks with empty `choices: []`.
-  - Preserved native Anthropic SSE events cleanly through pass-through filters without corrupted delta wrapping.
-- **Datacenter Transport & Synthetic Request Sanitization**:
-  - Stripped stale `Content-Length`, `anthropic-version`, `anthropic-beta`, and `x-api-key` headers when dispatching synthetic requests to avoid socket hangs and byte length mismatch errors.
-  - Wrapped all gateway, quota, load-shedding, and upstream error responses in compliant Anthropic error envelopes (`{ type: "error", error: { type, message } }`).
-- **Comprehensive Unit Testing (`tests/unit/anthropic_openai_compat.test.ts`)**:
-  - Added 15 comprehensive unit tests covering all forward and reverse schema mappings, multimodal formats, reasoning deltas, tool interleaving, and error envelopes.
+- **P0 Truncated Tool Call Stop Reason Guard (`src/handlers/anthropic_compat.ts`)**:
+  - Fixed safety vulnerability in `mapOpenAIToAnthropicStopReason`: `finish_reason === "length"` now strictly takes precedence over `hasToolUse`, ensuring incomplete tool calls return `"max_tokens"` instead of `"tool_use"` to prevent agents from executing truncated shell or file commands.
+- **Strict Outbound Request Parameter Whitelisting (`src/handlers/anthropic_compat.ts`)**:
+  - Replaced open pass-through with strict OpenAI key allowlist (`ALLOWED_OPENAI_KEYS`), stripping unsupported Anthropic-specific parameters (`anthropic_version`, `anthropic_beta`, `cache_control`, `mcp_servers`, `container`) that cause 400 Bad Request on strict upstream providers.
+- **Inbound Payload Validation & Document Block Rejection (`validateAnthropicPayload`)**:
+  - Validated inbound payload structure and cleanly rejected unsupported Anthropic PDF/document blocks with clear 400 errors instead of silently dropping content turns.
+- **Assistant History Thinking Block Separation**:
+  - Separated `thinking` blocks into `reasoning_content` instead of concatenating into visible `content` text in multi-turn history translation, preventing chain-of-thought pollution in subsequent dialogue.
+- **SSE Stream Robustness & JSON Injection Safety (`createAnthropicStreamTransformer`)**:
+  - Standardized all SSE frame emission via `sseEvent` using native `JSON.stringify()`, eliminating JSON escaping vulnerabilities in model and tool names.
+  - Hardened SSE chunk parser to normalize CRLF (`\r\n`), ignore comments (`: keep-alive`), support spaceless `data:`, and handle in-stream error payloads emitted over HTTP 200 streams.
+  - Implemented `pendingStopReason` state to delay `message_delta` until the final usage chunk arrives in streaming mode, ensuring full token metrics delivery.
+- **Header Sanitization**:
+  - Stripped client `Authorization` headers alongside `x-api-key`, `anthropic-version`, `anthropic-beta`, and `content-length` when constructing synthetic OpenAI requests.
+- **Unit Test Suite Expansion (`tests/unit/anthropic_openai_compat.test.ts`)**:
+  - Expanded test suite to 20 comprehensive unit tests verifying truncated tool safety, request whitelisting, document validation, array content translation, CRLF handling, and in-stream error events.
 
 ### Added / Anthropic-to-OpenAI Cross-Wire Payload (`ao`) & Bidirectional Tool Translation
 - **New Payload Directive `ao` (`src/directive/parser.ts`, `src/config/schema.ts`)** — Introduced `ao` (Anthropic-to-OpenAI cross-wire translation) payload code, allowing Claude Code and Anthropic Messages clients to seamlessly execute against any OpenAI-compatible backend using directives such as `lr-or-ao-ch-no` or `lr-nv-ao-ch-no`.

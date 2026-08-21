@@ -7,6 +7,7 @@ import {
   mapOpenAIToAnthropicUsage,
   translateAnthropicToOpenAI,
   translateOpenAIToAnthropicResponse,
+  validateAnthropicPayload,
 } from "../../src/handlers/anthropic_compat";
 
 describe("Anthropic -> OpenAI Forward Translation", () => {
@@ -88,7 +89,7 @@ describe("Anthropic -> OpenAI Forward Translation", () => {
     ]);
   });
 
-  it("translates assistant message with thinking block via .thinking property", () => {
+  it("translates assistant message with thinking block via .thinking property into reasoning_content", () => {
     const req: AnthropicMessagesRequest = {
       model: "test-model",
       messages: [
@@ -105,8 +106,9 @@ describe("Anthropic -> OpenAI Forward Translation", () => {
     const openAi = translateAnthropicToOpenAI(req);
     expect(openAi.messages[0]).toEqual({
       role: "assistant",
-      content: "Step 1: calculate sum.The sum is 42.",
-    });
+      content: "The sum is 42.",
+      reasoning_content: "Step 1: calculate sum.",
+    } as unknown as typeof openAi.messages[0]);
   });
 
   it("translates multimodal user messages with image base64 and url", () => {
@@ -204,11 +206,61 @@ describe("Anthropic -> OpenAI Forward Translation", () => {
     expect(openAi.tool_choice).toBe("auto");
     expect(openAi.parallel_tool_calls).toBe(false);
   });
+
+  it("strips unwhitelisted Anthropic-only keys from outbound OpenAI request", () => {
+    const req: AnthropicMessagesRequest = {
+      model: "test-model",
+      messages: [{ role: "user", content: "Hi" }],
+      anthropic_version: "2023-06-01",
+      anthropic_beta: ["prompt-caching-2024-07-25"],
+      container: "sandbox-1",
+      mcp_servers: [{ name: "local" }],
+    };
+
+    const openAi = translateAnthropicToOpenAI(req) as Record<string, unknown>;
+    expect(openAi.anthropic_version).toBeUndefined();
+    expect(openAi.anthropic_beta).toBeUndefined();
+    expect(openAi.container).toBeUndefined();
+    expect(openAi.mcp_servers).toBeUndefined();
+  });
+});
+
+describe("Inbound Payload Validation", () => {
+  it("rejects document content blocks with clean descriptive message", () => {
+    const req: AnthropicMessagesRequest = {
+      model: "test-model",
+      messages: [
+        {
+          role: "user",
+          content: [
+            {
+              type: "document",
+              source: { type: "base64", media_type: "application/pdf", data: "JVBERi0xLjQK" },
+            },
+          ],
+        },
+      ],
+    };
+
+    const error = validateAnthropicPayload(req);
+    expect(error).toContain("Document content blocks");
+  });
+
+  it("accepts valid text, image, and tool_use requests", () => {
+    const req: AnthropicMessagesRequest = {
+      model: "test-model",
+      messages: [{ role: "user", content: "Hello" }],
+    };
+
+    const error = validateAnthropicPayload(req);
+    expect(error).toBeNull();
+  });
 });
 
 describe("OpenAI -> Anthropic Response Translation (Non-Streaming)", () => {
-  it("maps finish_reason and usage correctly", () => {
+  it("maps finish_reason length to max_tokens even when tool calls exist", () => {
     expect(mapOpenAIToAnthropicStopReason("length")).toBe("max_tokens");
+    expect(mapOpenAIToAnthropicStopReason("length", true)).toBe("max_tokens");
     expect(mapOpenAIToAnthropicStopReason("content_filter")).toBe("refusal");
     expect(mapOpenAIToAnthropicStopReason("tool_calls")).toBe("tool_use");
     expect(mapOpenAIToAnthropicStopReason("stop")).toBe("end_turn");
@@ -246,11 +298,35 @@ describe("OpenAI -> Anthropic Response Translation (Non-Streaming)", () => {
     expect(anthropic.type).toBe("message");
     expect(anthropic.role).toBe("assistant");
     expect(anthropic.content).toEqual([
-      { type: "thinking", text: "Let us verify step by step." },
+      { type: "thinking", thinking: "Let us verify step by step." },
       { type: "text", text: "The answer is 42." },
     ]);
     expect(anthropic.stop_reason).toBe("end_turn");
     expect(anthropic.usage).toEqual({ input_tokens: 30, output_tokens: 20 });
+  });
+
+  it("translates array message.content from OpenAI response properly", () => {
+    const openAiRes = {
+      id: "chatcmpl-array01",
+      choices: [
+        {
+          message: {
+            role: "assistant",
+            content: [
+              { type: "text", text: "Part 1. " },
+              { type: "text", text: "Part 2." },
+            ],
+          },
+          finish_reason: "stop",
+        },
+      ],
+      usage: { prompt_tokens: 10, completion_tokens: 5 },
+    };
+
+    const anthropic = translateOpenAIToAnthropicResponse(openAiRes, "test-model");
+    expect(anthropic.content).toEqual([
+      { type: "text", text: "Part 1. Part 2." },
+    ]);
   });
 
   it("translates tool_calls in OpenAI response to Anthropic tool_use content blocks", () => {
@@ -294,10 +370,11 @@ describe("OpenAI -> Anthropic Response Translation (Non-Streaming)", () => {
 });
 
 describe("OpenAI -> Anthropic SSE Stream Transformation", () => {
-  it("transforms text chunks and captures final token usage on empty choices", async () => {
+  it("transforms text chunks and captures final token usage on empty choices with CRLF and comments", async () => {
     const transformer = createAnthropicStreamTransformer("test-model");
     const openAiChunks = [
-      'data: {"id":"c1","choices":[{"delta":{"role":"assistant","content":"Hello "}}]}\n\n',
+      ': keep-alive\r\n',
+      'data: {"id":"c1","choices":[{"delta":{"role":"assistant","content":"Hello "}}]}\r\n\r\n',
       'data: {"id":"c1","choices":[{"delta":{"content":"world!"}}]}\n\n',
       'data: {"id":"c1","choices":[{"delta":{},"finish_reason":"length"}]}\n\n',
       'data: {"id":"c1","choices":[],"usage":{"prompt_tokens":10,"completion_tokens":25}}\n\n',
@@ -330,8 +407,40 @@ describe("OpenAI -> Anthropic SSE Stream Transformation", () => {
     expect(fullOutput).toContain('{"type":"text_delta","text":"Hello "}');
     expect(fullOutput).toContain('{"type":"text_delta","text":"world!"}');
     expect(fullOutput).toContain("event: content_block_stop");
-    expect(fullOutput).toContain('event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"max_tokens"');
+    expect(fullOutput).toContain('event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"max_tokens","stop_sequence":null},"usage":{"output_tokens":25}}\n\n');
     expect(fullOutput).toContain("event: message_stop");
+  });
+
+  it("handles upstream in-stream error event on HTTP 200", async () => {
+    const transformer = createAnthropicStreamTransformer("test-model");
+    const openAiChunks = [
+      'data: {"error":{"type":"overloaded_error","message":"Provider is overloaded"}}\n\n',
+    ];
+
+    const inputStream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        const encoder = new TextEncoder();
+        for (const chunk of openAiChunks) {
+          controller.enqueue(encoder.encode(chunk));
+        }
+        controller.close();
+      },
+    });
+
+    const transformedStream = inputStream.pipeThrough(transformer);
+    const reader = transformedStream.getReader();
+    const decoder = new TextDecoder();
+    let fullOutput = "";
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      fullOutput += decoder.decode(value);
+    }
+
+    expect(fullOutput).toContain("event: error");
+    expect(fullOutput).toContain('"type":"overloaded_error"');
+    expect(fullOutput).toContain('"message":"Provider is overloaded"');
   });
 
   it("transforms reasoning stream chunks into thinking_delta events", async () => {
@@ -440,7 +549,6 @@ describe("OpenAI -> Anthropic SSE Stream Transformation", () => {
 
     expect(fullOutput).toContain('event: message_start\ndata: {"type":"message_start"');
     expect(fullOutput).toContain('event: content_block_delta\ndata: {"type":"content_block_delta"');
-    // Ensure it was NOT double-wrapped inside content_block_delta
     expect(fullOutput).not.toContain('event: content_block_delta\ndata: {"type":"message_start"');
   });
 });
