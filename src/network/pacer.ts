@@ -230,34 +230,34 @@ export class RequestPacer {
 }
 
 const PROVIDER_DEFAULT_PACER_CONFIGS: Record<string, Partial<PacerConfig>> = {
-  gg: { maxRpm: 15, minIntervalMs: 2000, maxQueueDepth: 50, maxQueueWaitMs: 30000 },
-  or: { maxRpm: 30, minIntervalMs: 500, maxQueueDepth: 100, maxQueueWaitMs: 15000 },
-  nv: { maxRpm: 40, minIntervalMs: 500, maxQueueDepth: 100, maxQueueWaitMs: 15000 },
-  zn: { maxRpm: 60, minIntervalMs: 500, maxQueueDepth: 100, maxQueueWaitMs: 15000 },
+  gg: { maxRpm: 15, minIntervalMs: 2000, maxQueueDepth: 100, maxQueueWaitMs: 45000 },
+  or: { maxRpm: 30, minIntervalMs: 2000, maxQueueDepth: 100, maxQueueWaitMs: 45000 },
+  nv: { maxRpm: 40, minIntervalMs: 2000, maxQueueDepth: 100, maxQueueWaitMs: 45000 },
+  zn: { maxRpm: 60, minIntervalMs: 2000, maxQueueDepth: 100, maxQueueWaitMs: 45000 },
 };
 
-// Global registry for per-provider/per-key pacers
+// Global registry for per-provider pacers (all keys for a provider share the single pipe)
 const pacerRegistry = new Map<string, RequestPacer>();
 
 export function getPacerForProvider(
   provider: string,
-  keyIndex = 0,
+  _keyIndex = 0,
   config?: Partial<PacerConfig>
 ): RequestPacer {
-  const pacerKey = `${provider}:${keyIndex}`;
+  const pacerKey = provider;
   let pacer = pacerRegistry.get(pacerKey);
   if (!pacer) {
     const defaults = PROVIDER_DEFAULT_PACER_CONFIGS[provider] ?? {
-      maxRpm: 60,
-      minIntervalMs: 500,
+      maxRpm: 30,
+      minIntervalMs: 2000,
       maxQueueDepth: 100,
-      maxQueueWaitMs: 15000,
+      maxQueueWaitMs: 45000,
     };
     pacer = new RequestPacer({
-      maxRpm: config?.maxRpm ?? defaults.maxRpm ?? 60,
-      minIntervalMs: config?.minIntervalMs ?? defaults.minIntervalMs ?? 500,
+      maxRpm: config?.maxRpm ?? defaults.maxRpm ?? 30,
+      minIntervalMs: config?.minIntervalMs ?? defaults.minIntervalMs ?? 2000,
       maxQueueDepth: config?.maxQueueDepth ?? defaults.maxQueueDepth ?? 100,
-      maxQueueWaitMs: config?.maxQueueWaitMs ?? defaults.maxQueueWaitMs ?? 15000,
+      maxQueueWaitMs: config?.maxQueueWaitMs ?? defaults.maxQueueWaitMs ?? 45000,
     });
     pacerRegistry.set(pacerKey, pacer);
   }

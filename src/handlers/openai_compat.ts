@@ -404,6 +404,18 @@ async function executeDirectCall(
           model: payload.model,
         };
 
+        if (env.LITEROUTER_PACER_ENABLED) {
+          const dynamicMaxQueueDepth = globalKeyPool.getDynamicMaxQueueDepth(directive.provider);
+          const maxQueueDepth = env.LITEROUTER_PACER_MAX_QUEUE_DEPTH > 0
+            ? env.LITEROUTER_PACER_MAX_QUEUE_DEPTH
+            : dynamicMaxQueueDepth;
+          const pacer = getPacerForProvider(directive.provider, nextSelected.index, {
+            maxQueueDepth,
+            maxQueueWaitMs: env.LITEROUTER_PACER_MAX_QUEUE_WAIT_MS,
+          });
+          await pacer.acquire(clientSignal);
+        }
+
         try {
           const nextResult = await fetchWithTtftGuard(nextFetchOpts);
           if (nextResult.response.status >= 400) {
