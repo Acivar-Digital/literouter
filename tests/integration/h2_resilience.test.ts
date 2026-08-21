@@ -42,9 +42,8 @@ describe("HTTP/2 & Resiliency End-to-End Integration", () => {
   it("returns clean HTTP 429 when pacer queue is saturated", async () => {
     // Configure a small pacer for the provider
     const pacer = getPacerForProvider("nv", 0, {
-      maxRpm: 1,
+      minIntervalMs: 500,
       maxQueueDepth: 1,
-      maxQueueWaitMs: 50,
     });
 
     // Exhaust pacer tokens

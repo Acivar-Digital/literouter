@@ -206,21 +206,10 @@ export class RequestPacer {
         reject(new Error("Request aborted while queued in LiteRouter pacer"));
       };
 
-      const timeoutTimer = setTimeout(() => {
-        cleanup();
-        reject(
-          new PacerQueueTimeoutError(
-            `Queue wait exceeded limit of ${this.config.maxQueueWaitMs}ms`,
-            Math.ceil(this.config.maxQueueWaitMs / 1000)
-          )
-        );
-      }, this.config.maxQueueWaitMs);
-
+      // Pure Conveyor Belt Entry: Dispatches on FIFO tick with zero artificial wait timeouts
       const entry: QueueEntry = {
         resolve: () => {
           cleanup();
-          clearTimeout(timeoutTimer);
-          this.tokens -= 1;
           const dwellMs = Date.now() - enqueuedAt;
           this.updateEma(dwellMs);
           resolve({ queueDwellMs: dwellMs });

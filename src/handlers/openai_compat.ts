@@ -20,7 +20,7 @@ import type { OpenAIRequestPayload } from "../transformers/nuances";
 import { createDotsStreamTransformer, parseDotsXml } from "../transformers/dots";
 import type { FusionConfig, FusionTier } from "../config/schema";
 import { getEnv } from "../config/env";
-import { getPacerForProvider, PacerQueueOverflowError, PacerQueueTimeoutError } from "../network/pacer";
+import { getPacerForProvider, PacerQueueOverflowError } from "../network/pacer";
 import { getCircuitBreakerForProvider } from "../network/circuit_breaker";
 import {
   logError,
@@ -219,7 +219,6 @@ async function executeDirectCall(
       : dynamicMaxQueueDepth;
     const pacer = getPacerForProvider(directive.provider, selected.index, {
       maxQueueDepth,
-      maxQueueWaitMs: env.LITEROUTER_PACER_MAX_QUEUE_WAIT_MS,
     });
     await pacer.acquire(clientSignal);
   }
@@ -411,7 +410,6 @@ async function executeDirectCall(
             : dynamicMaxQueueDepth;
           const pacer = getPacerForProvider(directive.provider, nextSelected.index, {
             maxQueueDepth,
-            maxQueueWaitMs: env.LITEROUTER_PACER_MAX_QUEUE_WAIT_MS,
           });
           await pacer.acquire(clientSignal);
         }
@@ -475,7 +473,10 @@ async function tryDirectAttempt(
     if (clientSignal?.aborted) {
       return { success: false, error: err, retryable: false };
     }
-    if (err instanceof PacerQueueOverflowError || err instanceof PacerQueueTimeoutError) {
+    if (err instanceof Error && err.message.includes("aborted")) {
+      return { success: false, error: err, retryable: false };
+    }
+    if (err instanceof PacerQueueOverflowError) {
       return {
         success: true,
         response: Response.json(
@@ -553,6 +554,12 @@ async function executeSingleAttemptLoop(
       return outcome.response;
     }
     lastError = outcome.error;
+    if (clientSignal?.aborted || (lastError instanceof Error && lastError.message.includes("aborted"))) {
+      return Response.json(
+        { error: { message: "Request aborted by client", type: "client_closed_request" } },
+        { status: 499 }
+      );
+    }
     if (!outcome.retryable) {
       throw lastError;
     }

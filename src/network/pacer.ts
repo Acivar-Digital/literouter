@@ -9,20 +9,11 @@ export class PacerQueueOverflowError extends Error {
   }
 }
 
-export class PacerQueueTimeoutError extends Error {
-  public readonly retryAfterSec: number;
-  constructor(message: string, retryAfterSec = 5) {
-    super(message);
-    this.name = "PacerQueueTimeoutError";
-    this.retryAfterSec = retryAfterSec;
-  }
-}
-
 interface QueueEntry {
-  resolve: () => void;
-  reject: (err: Error) => void;
-  enqueuedAt: number;
-  timeoutTimer: ReturnType<typeof setTimeout>;
+  readonly signal?: AbortSignal;
+  readonly resolve: (dwellMs: number) => void;
+  readonly reject: (err: Error) => void;
+  readonly enqueuedAt: number;
 }
 
 export interface QueueNode<T> {
@@ -82,49 +73,56 @@ export class FastFifoQueue<T> {
 }
 
 export interface PacerConfig {
-  readonly maxRpm: number;
-  readonly maxQueueDepth: number;
-  readonly maxQueueWaitMs: number; // e.g. 15,000ms
-  readonly minIntervalMs?: number; // Minimum wait between requests (e.g. 2,000ms for Google)
+  readonly minIntervalMs?: number; // Minimum wait between consecutive request dispatches
+  readonly maxRpm?: number; // Optional backwards compatibility / fallback calculation
+  readonly maxQueueDepth?: number; // Optional queue depth limit
 }
 
 export class RequestPacer {
-  private tokens: number;
-  private lastRefillMs: number;
   private lastDispatchTimeMs = 0;
   private readonly queue = new FastFifoQueue<QueueEntry>();
   private drainTimer: ReturnType<typeof setTimeout> | null = null;
   private emaDwellTimeMs = 0;
 
-  constructor(private readonly config: PacerConfig) {
-    this.tokens = config.maxRpm;
-    this.lastRefillMs = Date.now();
-  }
+  constructor(private readonly config: PacerConfig = {}) {}
 
   public getMinInterval(): number {
-    return this.config.minIntervalMs ?? Math.max(10, Math.ceil(60000 / this.config.maxRpm));
+    if (this.config.minIntervalMs !== undefined) {
+      return this.config.minIntervalMs;
+    }
+    if (this.config.maxRpm && this.config.maxRpm > 0) {
+      return Math.max(10, Math.ceil(60000 / this.config.maxRpm));
+    }
+    return 2000;
+  }
+
+  public get maxQueueDepth(): number {
+    return this.config.maxQueueDepth ?? 1000;
   }
 
   public async acquire(signal?: AbortSignal): Promise<{ queueDwellMs: number }> {
-    this.refill();
+    if (signal?.aborted) {
+      throw new Error("Request aborted while queued in LiteRouter pacer");
+    }
+
+    const minInterval = this.getMinInterval();
     const now = Date.now();
     const timeSinceLastDispatch = now - this.lastDispatchTimeMs;
-    const minInterval = this.getMinInterval();
 
-    // Can only dispatch immediately if tokens available, queue is empty, AND minInterval has elapsed
-    if (this.tokens >= 1 && this.queue.size === 0 && timeSinceLastDispatch >= minInterval) {
-      this.tokens -= 1;
+    // If queue is empty AND minInterval has elapsed since last dispatch: dispatch immediately!
+    if (this.queue.size === 0 && timeSinceLastDispatch >= minInterval) {
       this.lastDispatchTimeMs = now;
       this.updateEma(0);
       return { queueDwellMs: 0 };
     }
 
-    if (this.queue.size >= this.config.maxQueueDepth) {
+    // Capacity check
+    if (this.queue.size >= this.maxQueueDepth) {
       const estimatedWaitSec = Math.ceil(
         ((this.queue.size + 1) * minInterval) / 1000
       );
       throw new PacerQueueOverflowError(
-        `LiteRouter rate limit capacity (${this.config.maxQueueDepth}) saturated.`,
+        `LiteRouter rate limit capacity (${this.maxQueueDepth}) saturated.`,
         Math.max(1, estimatedWaitSec)
       );
     }
@@ -133,50 +131,43 @@ export class RequestPacer {
 
     return new Promise<{ queueDwellMs: number }>((resolve, reject) => {
       let node: QueueNode<QueueEntry> | null = null;
-
-      const cleanup = () => {
-        if (node) this.queue.remove(node);
-        signal?.removeEventListener("abort", abortHandler);
-      };
+      let finished = false;
 
       const abortHandler = () => {
-        cleanup();
-        clearTimeout(entry.timeoutTimer);
+        if (finished) return;
+        finished = true;
+        if (node) {
+          this.queue.remove(node);
+          node = null;
+        }
+        signal?.removeEventListener("abort", abortHandler);
         reject(new Error("Request aborted while queued in LiteRouter pacer"));
       };
 
-      const timeoutTimer = setTimeout(() => {
-        cleanup();
-        reject(
-          new PacerQueueTimeoutError(
-            `Queue wait exceeded limit of ${this.config.maxQueueWaitMs}ms`,
-            Math.ceil(this.config.maxQueueWaitMs / 1000)
-          )
-        );
-      }, this.config.maxQueueWaitMs);
-
       const entry: QueueEntry = {
-        resolve: () => {
-          cleanup();
-          clearTimeout(timeoutTimer);
-          this.tokens -= 1;
-          this.lastDispatchTimeMs = Date.now();
-          const dwellMs = Date.now() - enqueuedAt;
-          this.updateEma(dwellMs);
+        signal,
+        resolve: (dwellMs: number) => {
+          if (finished) return;
+          finished = true;
+          node = null;
+          signal?.removeEventListener("abort", abortHandler);
           resolve({ queueDwellMs: dwellMs });
         },
-        reject: (err) => {
-          cleanup();
-          clearTimeout(timeoutTimer);
+        reject: (err: Error) => {
+          if (finished) return;
+          finished = true;
+          if (node) {
+            this.queue.remove(node);
+            node = null;
+          }
+          signal?.removeEventListener("abort", abortHandler);
           reject(err);
         },
         enqueuedAt,
-        timeoutTimer,
       };
 
       if (signal?.aborted) {
-        clearTimeout(timeoutTimer);
-        return reject(new Error("Request already aborted"));
+        return reject(new Error("Request aborted while queued in LiteRouter pacer"));
       }
 
       signal?.addEventListener("abort", abortHandler, { once: true });
@@ -187,7 +178,7 @@ export class RequestPacer {
 
   public getStats(): { currentTokens: number; queueDepth: number; avgDwellTimeMs: number } {
     return {
-      currentTokens: Math.round(this.tokens * 100) / 100,
+      currentTokens: 0,
       queueDepth: this.queue.size,
       avgDwellTimeMs: Math.round(this.emaDwellTimeMs),
     };
@@ -202,32 +193,30 @@ export class RequestPacer {
     }
   }
 
-  private refill(): void {
-    const now = Date.now();
-    const elapsedMs = now - this.lastRefillMs;
-    const tokensToAdd = (elapsedMs / 60000) * this.config.maxRpm;
-    this.tokens = Math.min(this.config.maxRpm, this.tokens + tokensToAdd);
-    this.lastRefillMs = now;
-  }
-
   private scheduleDrain(): void {
-    if (this.drainTimer || this.queue.size === 0) return;
-    const now = Date.now();
+    if (this.drainTimer !== null || this.queue.size === 0) return;
     const minInterval = this.getMinInterval();
-    const elapsed = now - this.lastDispatchTimeMs;
-    const delay = Math.max(10, minInterval - elapsed);
+    const elapsed = Date.now() - this.lastDispatchTimeMs;
+    const waitMs = Math.max(0, minInterval - elapsed);
 
     this.drainTimer = setTimeout(() => {
       this.drainTimer = null;
-      this.refill();
-      if (this.tokens >= 1 && this.queue.size > 0) {
-        const next = this.queue.dequeue();
-        next?.resolve();
+      while (this.queue.size > 0) {
+        const entry = this.queue.dequeue();
+        if (!entry) break;
+        if (entry.signal?.aborted) {
+          continue;
+        }
+        this.lastDispatchTimeMs = Date.now();
+        const dwellMs = Math.max(0, this.lastDispatchTimeMs - entry.enqueuedAt);
+        this.updateEma(dwellMs);
+        entry.resolve(dwellMs);
+        break; // only 1 item dispatched per tick
       }
       if (this.queue.size > 0) {
         this.scheduleDrain();
       }
-    }, delay);
+    }, waitMs);
   }
 }
 
@@ -242,6 +231,8 @@ function getProviderMinDelayFromEnv(provider: string): number {
       return env.ZEN_MIN_DELAY_MS;
     case "gg":
       return env.GOOGLE_MIN_DELAY_MS;
+    case "tp":
+      return env.TEST_PROVIDER_MIN_DELAY_MS;
     default:
       return 2000;
   }
@@ -261,10 +252,9 @@ export function getPacerForProvider(
     const env = getEnv();
     const envDelay = getProviderMinDelayFromEnv(provider);
     pacer = new RequestPacer({
-      maxRpm: config?.maxRpm ?? env.LITEROUTER_PACER_MAX_RPM ?? 30,
       minIntervalMs: config?.minIntervalMs ?? envDelay,
       maxQueueDepth: config?.maxQueueDepth ?? env.LITEROUTER_PACER_MAX_QUEUE_DEPTH ?? 100,
-      maxQueueWaitMs: config?.maxQueueWaitMs ?? env.LITEROUTER_PACER_MAX_QUEUE_WAIT_MS ?? 45000,
+      maxRpm: config?.maxRpm ?? env.LITEROUTER_PACER_MAX_RPM ?? 30,
     });
     pacerRegistry.set(pacerKey, pacer);
   }

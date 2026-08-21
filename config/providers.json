@@ -254,6 +254,24 @@
           "tpm": 1000000
         }
       }
+    },
+    "testprovider": {
+      "code": "tp",
+      "base_url": "http://127.0.0.1:8999",
+      "auth_header": "Bearer",
+      "endpoints": {
+        "ch": "/api/v1/chat/completions",
+        "ms": "/v1/messages",
+        "em": "/v1/embeddings",
+        "md": "/v1/models"
+      },
+      "limits": {
+        "default": {
+          "rpm": 120,
+          "rpd": 100000,
+          "tpm": 10000000
+        }
+      }
     }
   }
 }

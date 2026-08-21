@@ -28,6 +28,7 @@ export const PROVIDER_NAMES: Readonly<Record<string, string>> = Object.freeze({
   ds: "DeepSeek",
   ms: "Mistral",
   tg: "Together",
+  tp: "TestProvider",
 });
 
 export const WIRE_NAMES: Readonly<Record<string, string>> = Object.freeze({

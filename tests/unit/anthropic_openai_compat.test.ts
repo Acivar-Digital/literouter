@@ -1,12 +1,15 @@
 import { describe, expect, it } from "bun:test";
 import {
   type AnthropicMessagesRequest,
+  createAnthropicErrorResponse,
   createAnthropicStreamTransformer,
+  mapOpenAIToAnthropicStopReason,
+  mapOpenAIToAnthropicUsage,
   translateAnthropicToOpenAI,
   translateOpenAIToAnthropicResponse,
 } from "../../src/handlers/anthropic_compat";
 
-describe("Anthropic -> OpenAI Cross-Wire Translation (ao payload)", () => {
+describe("Anthropic -> OpenAI Forward Translation", () => {
   it("translates basic system and user messages", () => {
     const req: AnthropicMessagesRequest = {
       model: "dots-studio/dots-3-note-preview:free",
@@ -20,8 +23,10 @@ describe("Anthropic -> OpenAI Cross-Wire Translation (ao payload)", () => {
     const openAi = translateAnthropicToOpenAI(req);
     expect(openAi.model).toBe("dots-studio/dots-3-note-preview:free");
     expect(openAi.max_tokens).toBe(4096);
+    expect(openAi.max_completion_tokens).toBe(4096);
     expect(openAi.temperature).toBe(0.7);
     expect(openAi.stream).toBe(true);
+    expect(openAi.stream_options).toEqual({ include_usage: true });
     expect(openAi.messages).toEqual([
       { role: "system", content: "You are a helpful coding assistant." },
       { role: "user", content: "Hello world" },
@@ -83,20 +88,15 @@ describe("Anthropic -> OpenAI Cross-Wire Translation (ao payload)", () => {
     ]);
   });
 
-  it("translates assistant message with tool_use into OpenAI tool_calls", () => {
+  it("translates assistant message with thinking block via .thinking property", () => {
     const req: AnthropicMessagesRequest = {
       model: "test-model",
       messages: [
         {
           role: "assistant",
           content: [
-            { type: "text", text: "Running command now..." },
-            {
-              type: "tool_use",
-              id: "call_abc123",
-              name: "Bash",
-              input: { command: "ls -la" },
-            },
+            { type: "thinking", thinking: "Step 1: calculate sum." },
+            { type: "text", text: "The sum is 42." },
           ],
         },
       ],
@@ -105,32 +105,35 @@ describe("Anthropic -> OpenAI Cross-Wire Translation (ao payload)", () => {
     const openAi = translateAnthropicToOpenAI(req);
     expect(openAi.messages[0]).toEqual({
       role: "assistant",
-      content: "Running command now...",
-      tool_calls: [
-        {
-          id: "call_abc123",
-          type: "function",
-          function: {
-            name: "Bash",
-            arguments: '{"command":"ls -la"}',
-          },
-        },
-      ],
+      content: "Step 1: calculate sum.The sum is 42.",
     });
   });
 
-  it("translates assistant message with only tool_use (content: null)", () => {
+  it("translates multimodal user messages with image base64 and url", () => {
     const req: AnthropicMessagesRequest = {
       model: "test-model",
       messages: [
         {
-          role: "assistant",
+          role: "user",
           content: [
             {
-              type: "tool_use",
-              id: "call_only_tool",
-              name: "GlobTool",
-              input: { pattern: "**/*.ts" },
+              type: "image",
+              source: {
+                type: "base64",
+                media_type: "image/png",
+                data: "iVBORw0KGgoAAAANSUhEUgAA",
+              },
+            },
+            {
+              type: "image",
+              source: {
+                type: "url",
+                url: "https://example.com/diagram.png",
+              },
+            },
+            {
+              type: "text",
+              text: "Explain these images",
             },
           ],
         },
@@ -138,23 +141,28 @@ describe("Anthropic -> OpenAI Cross-Wire Translation (ao payload)", () => {
     };
 
     const openAi = translateAnthropicToOpenAI(req);
-    expect(openAi.messages[0]).toEqual({
-      role: "assistant",
-      content: null,
-      tool_calls: [
-        {
-          id: "call_only_tool",
-          type: "function",
-          function: {
-            name: "GlobTool",
-            arguments: '{"pattern":"**/*.ts"}',
+    expect(openAi.messages).toEqual([
+      {
+        role: "user",
+        content: [
+          {
+            type: "image_url",
+            image_url: { url: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAA" },
           },
-        },
-      ],
-    });
+          {
+            type: "image_url",
+            image_url: { url: "https://example.com/diagram.png" },
+          },
+          {
+            type: "text",
+            text: "Explain these images",
+          },
+        ],
+      },
+    ]);
   });
 
-  it("translates user message containing tool_result blocks into OpenAI tool role messages", () => {
+  it("translates user message containing tool_result with is_error flag", () => {
     const req: AnthropicMessagesRequest = {
       model: "test-model",
       messages: [
@@ -164,11 +172,8 @@ describe("Anthropic -> OpenAI Cross-Wire Translation (ao payload)", () => {
             {
               type: "tool_result",
               tool_use_id: "call_abc123",
-              content: "file1.ts\nfile2.ts",
-            },
-            {
-              type: "text",
-              text: "Now check file1.ts",
+              content: "File not found",
+              is_error: true,
             },
           ],
         },
@@ -180,49 +185,82 @@ describe("Anthropic -> OpenAI Cross-Wire Translation (ao payload)", () => {
       {
         role: "tool",
         tool_call_id: "call_abc123",
-        content: "file1.ts\nfile2.ts",
-      },
-      {
-        role: "user",
-        content: "Now check file1.ts",
+        content: "Error: File not found",
       },
     ]);
+  });
+
+  it("translates tool_choice with disable_parallel_tool_use: true to parallel_tool_calls: false", () => {
+    const req: AnthropicMessagesRequest = {
+      model: "test-model",
+      messages: [{ role: "user", content: "Hi" }],
+      tool_choice: {
+        type: "auto",
+        disable_parallel_tool_use: true,
+      },
+    };
+
+    const openAi = translateAnthropicToOpenAI(req);
+    expect(openAi.tool_choice).toBe("auto");
+    expect(openAi.parallel_tool_calls).toBe(false);
   });
 });
 
 describe("OpenAI -> Anthropic Response Translation (Non-Streaming)", () => {
-  it("translates plain text OpenAI response to Anthropic message format", () => {
+  it("maps finish_reason and usage correctly", () => {
+    expect(mapOpenAIToAnthropicStopReason("length")).toBe("max_tokens");
+    expect(mapOpenAIToAnthropicStopReason("content_filter")).toBe("refusal");
+    expect(mapOpenAIToAnthropicStopReason("tool_calls")).toBe("tool_use");
+    expect(mapOpenAIToAnthropicStopReason("stop")).toBe("end_turn");
+
+    const usage = mapOpenAIToAnthropicUsage({
+      prompt_tokens: 120,
+      completion_tokens: 45,
+      prompt_tokens_details: { cached_tokens: 20 },
+    });
+    expect(usage).toEqual({
+      input_tokens: 120,
+      output_tokens: 45,
+      cache_read_input_tokens: 20,
+    });
+  });
+
+  it("translates reasoning_content from upstream model to thinking block", () => {
     const openAiRes = {
-      id: "chatcmpl-test01",
+      id: "chatcmpl-think01",
       choices: [
         {
           message: {
             role: "assistant",
-            content: "Here is the code solution.",
+            reasoning_content: "Let us verify step by step.",
+            content: "The answer is 42.",
           },
           finish_reason: "stop",
         },
       ],
-      usage: { prompt_tokens: 25, completion_tokens: 50, total_tokens: 75 },
+      usage: { prompt_tokens: 30, completion_tokens: 20 },
     };
 
-    const anthropic = translateOpenAIToAnthropicResponse(openAiRes, "dots-3");
-    expect(anthropic.id).toBe("chatcmpl-test01");
+    const anthropic = translateOpenAIToAnthropicResponse(openAiRes, "test-model");
+    expect(anthropic.id).toBe("chatcmpl-think01");
     expect(anthropic.type).toBe("message");
     expect(anthropic.role).toBe("assistant");
-    expect(anthropic.content).toEqual([{ type: "text", text: "Here is the code solution." }]);
+    expect(anthropic.content).toEqual([
+      { type: "thinking", text: "Let us verify step by step." },
+      { type: "text", text: "The answer is 42." },
+    ]);
     expect(anthropic.stop_reason).toBe("end_turn");
-    expect(anthropic.usage).toEqual({ prompt_tokens: 25, completion_tokens: 50, total_tokens: 75 });
+    expect(anthropic.usage).toEqual({ input_tokens: 30, output_tokens: 20 });
   });
 
   it("translates tool_calls in OpenAI response to Anthropic tool_use content blocks", () => {
     const openAiRes = {
-      id: "chatcmpl-test02",
+      id: "chatcmpl-tool01",
       choices: [
         {
           message: {
             role: "assistant",
-            content: "Checking status...",
+            content: "Running tool...",
             tool_calls: [
               {
                 id: "call_987",
@@ -237,11 +275,12 @@ describe("OpenAI -> Anthropic Response Translation (Non-Streaming)", () => {
           finish_reason: "tool_calls",
         },
       ],
+      usage: { prompt_tokens: 15, completion_tokens: 10 },
     };
 
     const anthropic = translateOpenAIToAnthropicResponse(openAiRes, "dots-3");
     expect(anthropic.content).toEqual([
-      { type: "text", text: "Checking status..." },
+      { type: "text", text: "Running tool..." },
       {
         type: "tool_use",
         id: "call_987",
@@ -250,16 +289,18 @@ describe("OpenAI -> Anthropic Response Translation (Non-Streaming)", () => {
       },
     ]);
     expect(anthropic.stop_reason).toBe("tool_use");
+    expect(anthropic.usage).toEqual({ input_tokens: 15, output_tokens: 10 });
   });
 });
 
 describe("OpenAI -> Anthropic SSE Stream Transformation", () => {
-  it("transforms text chunks into Anthropic SSE events", async () => {
+  it("transforms text chunks and captures final token usage on empty choices", async () => {
     const transformer = createAnthropicStreamTransformer("test-model");
     const openAiChunks = [
       'data: {"id":"c1","choices":[{"delta":{"role":"assistant","content":"Hello "}}]}\n\n',
       'data: {"id":"c1","choices":[{"delta":{"content":"world!"}}]}\n\n',
-      'data: {"id":"c1","choices":[{"delta":{},"finish_reason":"stop"}]}\n\n',
+      'data: {"id":"c1","choices":[{"delta":{},"finish_reason":"length"}]}\n\n',
+      'data: {"id":"c1","choices":[],"usage":{"prompt_tokens":10,"completion_tokens":25}}\n\n',
       "data: [DONE]\n\n",
     ];
 
@@ -289,16 +330,16 @@ describe("OpenAI -> Anthropic SSE Stream Transformation", () => {
     expect(fullOutput).toContain('{"type":"text_delta","text":"Hello "}');
     expect(fullOutput).toContain('{"type":"text_delta","text":"world!"}');
     expect(fullOutput).toContain("event: content_block_stop");
-    expect(fullOutput).toContain('event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"end_turn"');
+    expect(fullOutput).toContain('event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"max_tokens"');
     expect(fullOutput).toContain("event: message_stop");
   });
 
-  it("transforms tool_calls chunks into Anthropic tool_use SSE events", async () => {
+  it("transforms reasoning stream chunks into thinking_delta events", async () => {
     const transformer = createAnthropicStreamTransformer("test-model");
     const openAiChunks = [
-      'data: {"id":"c2","choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_test_01","type":"function","function":{"name":"Bash","arguments":""}}]}}]}\n\n',
-      'data: {"id":"c2","choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\\"cmd\\":\\"pwd\\"}"}}]}}]}\n\n',
-      'data: {"id":"c2","choices":[{"delta":{},"finish_reason":"tool_calls"}]}\n\n',
+      'data: {"id":"c2","choices":[{"delta":{"reasoning_content":"Thinking... "}}]}\n\n',
+      'data: {"id":"c2","choices":[{"delta":{"content":"Done!"}}]}\n\n',
+      'data: {"id":"c2","choices":[{"delta":{},"finish_reason":"stop"}]}\n\n',
       "data: [DONE]\n\n",
     ];
 
@@ -323,11 +364,98 @@ describe("OpenAI -> Anthropic SSE Stream Transformation", () => {
       fullOutput += decoder.decode(value);
     }
 
-    expect(fullOutput).toContain("event: message_start");
-    expect(fullOutput).toContain('"type":"tool_use","id":"call_test_01","name":"Bash"');
-    expect(fullOutput).toContain('"type":"input_json_delta","partial_json":"{\\"cmd\\":\\"pwd\\"}"');
-    expect(fullOutput).toContain("event: content_block_stop");
-    expect(fullOutput).toContain('event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"tool_use"');
-    expect(fullOutput).toContain("event: message_stop");
+    expect(fullOutput).toContain('"type":"thinking","thinking":""');
+    expect(fullOutput).toContain('{"type":"thinking_delta","thinking":"Thinking... "}');
+    expect(fullOutput).toContain('{"type":"text_delta","text":"Done!"}');
+    expect(fullOutput).toContain('"stop_reason":"end_turn"');
+  });
+
+  it("handles interleaved multi-tool calls without state desync", async () => {
+    const transformer = createAnthropicStreamTransformer("test-model");
+    const openAiChunks = [
+      'data: {"id":"c3","choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_0","type":"function","function":{"name":"ToolA","arguments":""}}]}}]}\n\n',
+      'data: {"id":"c3","choices":[{"delta":{"tool_calls":[{"index":1,"id":"call_1","type":"function","function":{"name":"ToolB","arguments":""}}]}}]}\n\n',
+      'data: {"id":"c3","choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\\"a\\":1}"}}]}}]}\n\n',
+      'data: {"id":"c3","choices":[{"delta":{"tool_calls":[{"index":1,"function":{"arguments":"{\\"b\\":2}"}}]}}]}\n\n',
+      'data: {"id":"c3","choices":[{"delta":{},"finish_reason":"tool_calls"}]}\n\n',
+      "data: [DONE]\n\n",
+    ];
+
+    const inputStream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        const encoder = new TextEncoder();
+        for (const chunk of openAiChunks) {
+          controller.enqueue(encoder.encode(chunk));
+        }
+        controller.close();
+      },
+    });
+
+    const transformedStream = inputStream.pipeThrough(transformer);
+    const reader = transformedStream.getReader();
+    const decoder = new TextDecoder();
+    let fullOutput = "";
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      fullOutput += decoder.decode(value);
+    }
+
+    expect(fullOutput).toContain('"type":"tool_use","id":"call_0","name":"ToolA"');
+    expect(fullOutput).toContain('"type":"tool_use","id":"call_1","name":"ToolB"');
+    expect(fullOutput).toContain('{"type":"input_json_delta","partial_json":"{\\"a\\":1}"}');
+    expect(fullOutput).toContain('{"type":"input_json_delta","partial_json":"{\\"b\\":2}"}');
+    expect(fullOutput).toContain('"stop_reason":"tool_use"');
+  });
+
+  it("passes through native Anthropic SSE events cleanly without corruption", async () => {
+    const transformer = createAnthropicStreamTransformer("test-model");
+    const anthropicChunks = [
+      'data: {"type":"message_start","message":{"id":"msg_passthrough","role":"assistant"}}\n\n',
+      'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hello"}}\n\n',
+      "data: [DONE]\n\n",
+    ];
+
+    const inputStream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        const encoder = new TextEncoder();
+        for (const chunk of anthropicChunks) {
+          controller.enqueue(encoder.encode(chunk));
+        }
+        controller.close();
+      },
+    });
+
+    const transformedStream = inputStream.pipeThrough(transformer);
+    const reader = transformedStream.getReader();
+    const decoder = new TextDecoder();
+    let fullOutput = "";
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      fullOutput += decoder.decode(value);
+    }
+
+    expect(fullOutput).toContain('event: message_start\ndata: {"type":"message_start"');
+    expect(fullOutput).toContain('event: content_block_delta\ndata: {"type":"content_block_delta"');
+    // Ensure it was NOT double-wrapped inside content_block_delta
+    expect(fullOutput).not.toContain('event: content_block_delta\ndata: {"type":"message_start"');
+  });
+});
+
+describe("Anthropic Error Response Helper", () => {
+  it("creates compliant Anthropic error envelope", async () => {
+    const res = createAnthropicErrorResponse(400, "Invalid JSON payload", "invalid_request_error");
+    expect(res.status).toBe(400);
+    const json = (await res.json()) as Record<string, unknown>;
+    expect(json).toEqual({
+      type: "error",
+      error: {
+        type: "invalid_request_error",
+        message: "Invalid JSON payload",
+      },
+    });
   });
 });

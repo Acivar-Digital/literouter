@@ -28,6 +28,8 @@ const DEFAULT_ENV_RECORD: Record<string, string> = {
   NVIDIA_MIN_DELAY_MS: "2000",
   ZEN_MIN_DELAY_MS: "2000",
   GOOGLE_MIN_DELAY_MS: "2000",
+  TEST_PROVIDER_MIN_DELAY_MS: "0",
+  MOCK_TP_PORT: "8999",
   LOG_LEVEL: "info",
 };
 

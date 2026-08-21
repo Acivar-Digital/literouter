@@ -59,12 +59,22 @@ describe("Directive Parser — Direct Keys", () => {
   });
 
   it("parses all registered 2-letter provider codes", () => {
-    const providers = ["or", "nv", "gg", "oa", "an", "gq", "cb", "ds", "ms", "tg", "zn"] as const;
+    const providers = ["or", "nv", "gg", "oa", "an", "gq", "cb", "ds", "ms", "tg", "zn", "tp"] as const;
     for (const p of providers) {
       const key = `lr-${p}-oa-ch-no`;
       const parsed = parseDirective(key);
       expect(parsed).not.toBeNull();
       expect((parsed as DirectDirective).provider).toBe(p);
+    }
+  });
+
+  it("parses test provider direct keys", () => {
+    const testDirectives = ["lr-tp-ao-ch-no", "lr-tp-cl-ms-no", "lr-tp-oa-ch-no"];
+    for (const td of testDirectives) {
+      const parsed = parseDirective(td);
+      expect(parsed).not.toBeNull();
+      expect(isDirectDirective(parsed!)).toBe(true);
+      expect((parsed as DirectDirective).provider).toBe("tp");
     }
   });
 

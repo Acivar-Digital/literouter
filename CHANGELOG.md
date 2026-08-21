@@ -4,6 +4,28 @@ All notable changes to LiteRouter will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed / Anthropic Compatibility Protocol & 1-to-1 Schema Translation Hardening
+- **Complete Bidirectional Multimodal & Thinking Block Translation (`src/handlers/anthropic_compat.ts`)**:
+  - Implemented multimodal user message translation: Anthropic `{ type: "image", source: { type: "base64" | "url" } }` now maps to OpenAI `{ type: "image_url", image_url: { url: ... } }`.
+  - Fixed thinking block extraction in multi-turn history by inspecting `block.thinking` (instead of `block.text`).
+  - Preserved tool result failure status by prefixing `Error: ` when `block.is_error === true`.
+  - Added dual `max_tokens` and `max_completion_tokens` mapping for modern reasoning models, and auto-injected `stream_options: { include_usage: true }` on streaming requests.
+  - Mapped `tool_choice.disable_parallel_tool_use: true` to `parallel_tool_calls: false`.
+- **Finish Reason & Token Usage Bidirectional Mapping**:
+  - Implemented `mapOpenAIToAnthropicStopReason` (`length` $\to$ `max_tokens`, `tool_calls` $\to$ `tool_use`, `content_filter` $\to$ `refusal`, `stop` $\to$ `end_turn`).
+  - Implemented `mapOpenAIToAnthropicUsage` (`prompt_tokens` $\to$ `input_tokens`, `completion_tokens` $\to$ `output_tokens`, `cached_tokens` $\to$ `cache_read_input_tokens`).
+  - Mapped upstream reasoning content (`reasoning_content` / `reasoning`) to Anthropic `{ type: "thinking", text }` blocks.
+- **Robust SSE Stream Transformer (`createAnthropicStreamTransformer`)**:
+  - Streamed thinking deltas (`thinking_delta`) from upstream reasoning deltas.
+  - Fixed multi-tool interleaving race conditions by tracking active tool block indices per tool call index without state desync.
+  - Fixed usage chunk retention when OpenAI emits final usage chunks with empty `choices: []`.
+  - Preserved native Anthropic SSE events cleanly through pass-through filters without corrupted delta wrapping.
+- **Datacenter Transport & Synthetic Request Sanitization**:
+  - Stripped stale `Content-Length`, `anthropic-version`, `anthropic-beta`, and `x-api-key` headers when dispatching synthetic requests to avoid socket hangs and byte length mismatch errors.
+  - Wrapped all gateway, quota, load-shedding, and upstream error responses in compliant Anthropic error envelopes (`{ type: "error", error: { type, message } }`).
+- **Comprehensive Unit Testing (`tests/unit/anthropic_openai_compat.test.ts`)**:
+  - Added 15 comprehensive unit tests covering all forward and reverse schema mappings, multimodal formats, reasoning deltas, tool interleaving, and error envelopes.
+
 ### Added / Anthropic-to-OpenAI Cross-Wire Payload (`ao`) & Bidirectional Tool Translation
 - **New Payload Directive `ao` (`src/directive/parser.ts`, `src/config/schema.ts`)** — Introduced `ao` (Anthropic-to-OpenAI cross-wire translation) payload code, allowing Claude Code and Anthropic Messages clients to seamlessly execute against any OpenAI-compatible backend using directives such as `lr-or-ao-ch-no` or `lr-nv-ao-ch-no`.
 - **Full Bidirectional Tool Calling & Schema Mapping (`src/handlers/anthropic_compat.ts`)** — Upgraded `translateAnthropicToOpenAI` to fully preserve all agent tools and execution turns:

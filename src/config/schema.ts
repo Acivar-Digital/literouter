@@ -12,6 +12,7 @@ export const ProviderCodeSchema = z.enum([
   "ms",
   "tg",
   "zn",
+  "tp",
 ]);
 
 export const PayloadCodeSchema = z.enum(["oa", "cl", "gg", "rs", "ao"]);
@@ -143,6 +144,8 @@ export const EnvConfigSchema = z.object({
   NVIDIA_MIN_DELAY_MS: z.coerce.number().int().nonnegative().default(2000),
   ZEN_MIN_DELAY_MS: z.coerce.number().int().nonnegative().default(2000),
   GOOGLE_MIN_DELAY_MS: z.coerce.number().int().nonnegative().default(2000),
+  TEST_PROVIDER_MIN_DELAY_MS: z.coerce.number().int().nonnegative().default(0),
+  MOCK_TP_PORT: z.coerce.number().int().positive().default(8999),
   LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("info"),
 });
 
