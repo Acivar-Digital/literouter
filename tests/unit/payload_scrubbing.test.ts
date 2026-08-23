@@ -1,9 +1,16 @@
 import { describe, expect, it } from "bun:test";
 import {
+  cleanOpenAIBody,
   sanitizeAndTransformPayload,
+  scrubReasoningFromMessage,
+  scrubReasoningFromMessages,
   scrubUnsupportedParameters,
 } from "../../src/transformers/payload";
-import type { OpenAIRequestPayload } from "../../src/transformers/nuances";
+import type {
+  OpenAIContentPart,
+  OpenAIMessage,
+  OpenAIRequestPayload,
+} from "../../src/transformers/nuances";
 
 describe("Payload Scrubbing Toggle (LITEROUTER_ENABLE_SCRUBBING)", () => {
   it("preserves thinking, tools, and gemma params when enableScrubbing is false", () => {
@@ -95,5 +102,179 @@ describe("Payload Scrubbing Toggle (LITEROUTER_ENABLE_SCRUBBING)", () => {
     );
     expect((withScrubbing as unknown as Record<string, unknown>).thinking).toBeUndefined();
     expect((withScrubbing as unknown as Record<string, unknown>).tools).toBeUndefined();
+  });
+});
+
+describe("Inbound Request Reasoning Scrubbing (OpenCode2 Inbound Payload)", () => {
+  it("scrubs a message with 375+ reasoning parts down to pure text content", () => {
+    const parts: OpenAIContentPart[] = [];
+    for (let i = 0; i < 400; i++) {
+      parts.push({
+        type: i % 2 === 0 ? "reasoning" : "thought",
+        text: `Internal thought step ${i}`,
+        reasoningDetails: { step: i },
+      });
+    }
+    parts.push({
+      type: "text",
+      text: "Final user question after extended thinking session",
+    });
+
+    const inboundMessage: OpenAIMessage = {
+      role: "user",
+      content: parts,
+      reasoning: "stale message reasoning",
+      reasoning_content: "stale reasoning content",
+      reasoning_details: [{ type: "thought", text: "stale details" }],
+      thought: "stale thought",
+      thinking: "stale thinking",
+    };
+
+    const cleaned = scrubReasoningFromMessage(inboundMessage);
+
+    // Collapsed single remaining text part to string
+    expect(cleaned.content).toBe("Final user question after extended thinking session");
+    expect(cleaned.reasoning).toBeUndefined();
+    expect(cleaned.reasoning_content).toBeUndefined();
+    expect(cleaned.reasoning_details).toBeUndefined();
+    expect(cleaned.thought).toBeUndefined();
+    expect(cleaned.thinking).toBeUndefined();
+  });
+
+  it("normalizes empty message content to empty string when all parts are reasoning", () => {
+    const parts: OpenAIContentPart[] = [
+      { type: "reasoning", text: "step 1" },
+      { type: "thought", text: "step 2" },
+      { type: "thinking", text: "step 3" },
+      { type: "custom", reasoningField: "field" },
+    ];
+
+    const inboundMessage: OpenAIMessage = {
+      role: "assistant",
+      content: parts,
+      tool_calls: [
+        {
+          id: "call_123",
+          type: "function",
+          function: { name: "readFile", arguments: "{}" },
+        },
+      ],
+      reasoning: "assistant thought",
+    };
+
+    const cleaned = scrubReasoningFromMessage(inboundMessage);
+
+    expect(cleaned.content).toBe("");
+    expect(cleaned.tool_calls).toHaveLength(1);
+    expect(cleaned.tool_calls?.[0]?.function.name).toBe("readFile");
+    expect(cleaned.reasoning).toBeUndefined();
+  });
+
+  it("preserves multi-part content arrays if multiple non-reasoning parts remain", () => {
+    const parts: OpenAIContentPart[] = [
+      { type: "reasoning", text: "thought 1" },
+      { type: "text", text: "First paragraph." },
+      { type: "thought", text: "thought 2" },
+      { type: "text", text: "Second paragraph." },
+      { type: "image_url", image_url: { url: "https://example.com/image.png" } },
+    ];
+
+    const inboundMessage: OpenAIMessage = {
+      role: "user",
+      content: parts,
+    };
+
+    const cleaned = scrubReasoningFromMessage(inboundMessage);
+
+    expect(Array.isArray(cleaned.content)).toBe(true);
+    const contentArr = cleaned.content as OpenAIContentPart[];
+    expect(contentArr).toHaveLength(3);
+    expect(contentArr[0]?.type).toBe("text");
+    expect(contentArr[0]?.text).toBe("First paragraph.");
+    expect(contentArr[1]?.type).toBe("text");
+    expect(contentArr[1]?.text).toBe("Second paragraph.");
+    expect(contentArr[2]?.type).toBe("image_url");
+  });
+
+  it("pipeline sanitizeAndTransformPayload / cleanOpenAIBody scrubs full conversation history with 375+ reasoning parts", () => {
+    const heavyHistory: OpenAIMessage[] = [];
+
+    // Turn 1: User
+    heavyHistory.push({ role: "user", content: "Solve this complex puzzle." });
+
+    // Turn 2: Assistant with 375 reasoning parts and tool call
+    const reasoningParts: OpenAIContentPart[] = [];
+    for (let i = 0; i < 375; i++) {
+      reasoningParts.push({
+        type: "reasoning",
+        text: `Hypothesis verification step ${i}`,
+        reasoning_details: { depth: i },
+      });
+    }
+    reasoningParts.push({
+      type: "text",
+      text: "I will check the configuration file first.",
+    });
+
+    heavyHistory.push({
+      role: "assistant",
+      content: reasoningParts,
+      reasoning_content: "Long reasoning content block",
+      reasoning: "Overall reasoning block",
+      tool_calls: [
+        {
+          id: "call_abc",
+          type: "function",
+          function: { name: "cat", arguments: '{"path":"file.txt"}' },
+        },
+      ],
+    });
+
+    // Turn 3: Tool response
+    heavyHistory.push({
+      role: "tool",
+      tool_call_id: "call_abc",
+      content: "file content: verified",
+    });
+
+    // Turn 4: User follow-up with thought parts
+    heavyHistory.push({
+      role: "user",
+      content: [
+        { type: "thought", text: "user thinking" },
+        { type: "text", text: "Proceed to next step." },
+      ],
+    });
+
+    const payload: OpenAIRequestPayload = {
+      model: "openrouter/anthropic/claude-3.7-sonnet",
+      messages: heavyHistory,
+      stream: true,
+    };
+
+    const transformed = cleanOpenAIBody(payload);
+
+    expect(transformed.messages).toHaveLength(4);
+
+    // Verify Turn 1
+    expect(transformed.messages[0]?.content).toBe("Solve this complex puzzle.");
+
+    // Verify Turn 2 (375 reasoning parts completely removed, collapsed to string, top-level fields stripped)
+    const turn2 = transformed.messages[1];
+    expect(turn2?.content).toBe("I will check the configuration file first.");
+    expect(turn2?.reasoning_content).toBeUndefined();
+    expect(turn2?.reasoning).toBeUndefined();
+    expect(turn2?.tool_calls).toHaveLength(1);
+
+    // Verify Turn 3
+    expect(transformed.messages[2]?.content).toBe("file content: verified");
+
+    // Verify Turn 4 (thought part removed, single text part collapsed)
+    expect(transformed.messages[3]?.content).toBe("Proceed to next step.");
+  });
+
+  it("handles undefined or empty messages array gracefully", () => {
+    expect(scrubReasoningFromMessages(undefined)).toEqual([]);
+    expect(scrubReasoningFromMessages([])).toEqual([]);
   });
 });

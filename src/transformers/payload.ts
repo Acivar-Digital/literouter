@@ -47,6 +47,66 @@ const LATEX_REPLACEMENTS: readonly (readonly [RegExp, string])[] = [
   [/\\Omega\b/g, "Ω"],
 ];
 
+function isReasoningContentPart(part: OpenAIContentPart | Record<string, unknown>): boolean {
+  if (typeof part !== "object" || part === null) {
+    return false;
+  }
+  const partType = typeof part.type === "string" ? part.type.toLowerCase() : "";
+  if (partType === "reasoning" || partType === "thought" || partType === "thinking") {
+    return true;
+  }
+  return (
+    part.reasoningDetails !== undefined ||
+    part.reasoning_details !== undefined ||
+    part.reasoningField !== undefined ||
+    part.reasoning_field !== undefined ||
+    part.reasoning !== undefined ||
+    part.thought !== undefined ||
+    part.thinking !== undefined
+  );
+}
+
+function normalizeCleanedParts(
+  parts: readonly OpenAIContentPart[]
+): string | readonly OpenAIContentPart[] {
+  if (parts.length === 0) {
+    return "";
+  }
+  const first = parts[0];
+  if (parts.length === 1 && first && first.type === "text" && typeof first.text === "string") {
+    return first.text;
+  }
+  return parts;
+}
+
+export function scrubReasoningFromMessage(msg: OpenAIMessage): OpenAIMessage {
+  const cleaned: Record<string, unknown> = { ...msg };
+  delete cleaned.reasoning;
+  delete cleaned.reasoning_content;
+  delete cleaned.reasoning_details;
+  delete cleaned.reasoningDetails;
+  delete cleaned.thought;
+  delete cleaned.thinking;
+  delete cleaned.thoughts;
+
+  if (Array.isArray(cleaned.content)) {
+    const rawParts = cleaned.content as readonly OpenAIContentPart[];
+    const nonReasoningParts = rawParts.filter((p) => !isReasoningContentPart(p));
+    cleaned.content = normalizeCleanedParts(nonReasoningParts);
+  }
+
+  return cleaned as unknown as OpenAIMessage;
+}
+
+export function scrubReasoningFromMessages(
+  messages: readonly OpenAIMessage[] | undefined
+): readonly OpenAIMessage[] {
+  if (!Array.isArray(messages)) {
+    return [];
+  }
+  return messages.map(scrubReasoningFromMessage);
+}
+
 export function normalizeLatex(text: string): string {
   let normalized = text;
   for (const [pattern, replacement] of LATEX_REPLACEMENTS) {
@@ -249,7 +309,8 @@ function transformMessages(
   nuances: readonly string[],
   model?: string
 ): readonly OpenAIMessage[] {
-  let res = applyLatexNormalization(messages);
+  let res = scrubReasoningFromMessages(messages);
+  res = applyLatexNormalization(res);
   if (nuances.includes("gm")) {
     res = applyGemmaConstraints(res);
   }
@@ -312,4 +373,11 @@ export function sanitizeAndTransformPayload(
     options.capabilities,
     enableScrubbing
   );
+}
+
+export function cleanOpenAIBody(
+  body: OpenAIRequestPayload,
+  options?: PayloadTransformOptions
+): OpenAIRequestPayload {
+  return sanitizeAndTransformPayload(body, options);
 }

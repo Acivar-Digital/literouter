@@ -20,7 +20,6 @@ import type { OpenAIRequestPayload } from "../transformers/nuances";
 import { createDotsStreamTransformer, parseDotsXml } from "../transformers/dots";
 import {
   createOpenCodeReasoningFilterStreamTransformer,
-  isOpenCodeClient,
 } from "../transformers/thinking";
 import type { FusionConfig, FusionTier } from "../config/schema";
 import { getEnv } from "../config/env";
@@ -198,18 +197,16 @@ function determineShouldFilterReasoning(
   if (clientOptions?.filterReasoning !== undefined) {
     return clientOptions.filterReasoning;
   }
-  if (directive.nuances.includes("ts")) {
-    return false;
-  }
   if (directive.nuances.includes("sb")) {
     return true;
   }
-  return isOpenCodeClient(clientOptions?.userAgent, clientOptions?.headers, directive.nuances);
+  return false;
 }
 
-function stripReasoningFromResponseBody(json: Record<string, unknown>): void {
+export function stripReasoningFromResponseBody(json: Record<string, unknown>): void {
   delete json.reasoning_content;
   delete json.reasoning;
+  delete json.reasoning_details;
   if (!Array.isArray(json.choices)) {
     return;
   }
@@ -219,10 +216,18 @@ function stripReasoningFromResponseBody(json: Record<string, unknown>): void {
     }
     delete rawChoice.reasoning_content;
     delete rawChoice.reasoning;
+    delete rawChoice.reasoning_details;
     if (rawChoice.message && typeof rawChoice.message === "object" && rawChoice.message !== null) {
       const msg = rawChoice.message as Record<string, unknown>;
       delete msg.reasoning_content;
       delete msg.reasoning;
+      delete msg.reasoning_details;
+    }
+    if (rawChoice.delta && typeof rawChoice.delta === "object" && rawChoice.delta !== null) {
+      const delta = rawChoice.delta as Record<string, unknown>;
+      delete delta.reasoning_content;
+      delete delta.reasoning;
+      delete delta.reasoning_details;
     }
   }
 }

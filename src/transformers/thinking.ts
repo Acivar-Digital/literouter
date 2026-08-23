@@ -291,6 +291,7 @@ function sanitizeDelta(rawDelta: unknown): { delta: Record<string, unknown>; has
   const delta: Record<string, unknown> = { ...(rawDelta as Record<string, unknown>) };
   delete delta.reasoning;
   delete delta.reasoning_content;
+  delete delta.reasoning_details;
   return { delta, hasContent: hasMeaningfulDeltaFields(delta) };
 }
 
@@ -301,6 +302,7 @@ function filterReasoningFromChoice(rawChoice: unknown): { choice: Record<string,
   const choice: Record<string, unknown> = { ...(rawChoice as Record<string, unknown>) };
   delete choice.reasoning_content;
   delete choice.reasoning;
+  delete choice.reasoning_details;
 
   let hasData = choice.finish_reason !== null && choice.finish_reason !== undefined;
 
@@ -322,6 +324,7 @@ export function filterReasoningFromChunk(data: Record<string, unknown>): {
   const filtered: Record<string, unknown> = { ...data };
   delete filtered.reasoning_content;
   delete filtered.reasoning;
+  delete filtered.reasoning_details;
 
   let shouldEmit = filtered.usage != null || filtered.error != null;
 

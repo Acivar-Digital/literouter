@@ -4,6 +4,7 @@ import {
   filterReasoningFromChunk,
   isOpenCodeClient,
 } from "../../src/transformers/thinking";
+import { stripReasoningFromResponseBody } from "../../src/handlers/openai_compat";
 
 async function readStreamToString(stream: ReadableStream<Uint8Array>): Promise<string> {
   const reader = stream.getReader();
@@ -70,7 +71,7 @@ describe("OpenCode Reasoning Filter — Client Detection (isOpenCodeClient)", ()
 });
 
 describe("OpenCode Reasoning Filter — Chunk Filter (filterReasoningFromChunk)", () => {
-  it("strips reasoning_content and reasoning from delta and returns shouldEmit: false if only reasoning was present", () => {
+  it("strips reasoning_content, reasoning, and reasoning_details from delta and returns shouldEmit: false if only reasoning was present", () => {
     const chunk = {
       id: "chatcmpl-123",
       object: "chat.completion.chunk",
@@ -82,16 +83,20 @@ describe("OpenCode Reasoning Filter — Chunk Filter (filterReasoningFromChunk)"
           delta: {
             reasoning_content: "Let's first understand the equation.",
             reasoning: "Let's first understand the equation.",
+            reasoning_details: [{ type: "thought", text: "detailed thought" }],
           },
           finish_reason: null,
         },
       ],
+      reasoning_details: [{ type: "thought", text: "top-level detailed thought" }],
     };
 
     const { filteredData, shouldEmit } = filterReasoningFromChunk(chunk);
     expect(shouldEmit).toBe(false);
-    const firstChoice = (filteredData.choices as Array<{ delta?: Record<string, unknown> }>)?.[0];
+    expect(filteredData.reasoning_details).toBeUndefined();
+    const firstChoice = (filteredData.choices as Array<{ delta?: Record<string, unknown>; reasoning_details?: unknown }>)?.[0];
     expect(firstChoice?.delta).toEqual({});
+    expect(firstChoice?.reasoning_details).toBeUndefined();
   });
 
   it("preserves delta and returns shouldEmit: true when delta contains content", () => {
@@ -227,6 +232,7 @@ describe("OpenCode Reasoning Filter — Stream Transformer (createOpenCodeReason
       'data: {"id":"1","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}\n\n',
       'data: {"id":"2","choices":[{"index":0,"delta":{"reasoning_content":"Thinking deeply step 1..."},"finish_reason":null}]}\n\n',
       'data: {"id":"3","choices":[{"index":0,"delta":{"reasoning":"Thinking deeply step 2..."},"finish_reason":null}]}\n\n',
+      'data: {"id":"3b","choices":[{"index":0,"delta":{"reasoning_details":[{"type":"thought","text":"Thinking deeply step 3..."}]},"finish_reason":null}]}\n\n',
       'data: {"id":"4","choices":[{"index":0,"delta":{"content":"Hello! "},"finish_reason":null}]}\n\n',
       'data: {"id":"5","choices":[{"index":0,"delta":{"content":"How can I help you?"},"finish_reason":null}]}\n\n',
       'data: {"id":"6","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}\n\n',
@@ -248,7 +254,9 @@ describe("OpenCode Reasoning Filter — Stream Transformer (createOpenCodeReason
     // Verify reasoning chunks were stripped out
     expect(outputText).not.toContain("Thinking deeply step 1");
     expect(outputText).not.toContain("Thinking deeply step 2");
+    expect(outputText).not.toContain("Thinking deeply step 3");
     expect(outputText).not.toContain("reasoning_content");
+    expect(outputText).not.toContain("reasoning_details");
 
     // Verify valid SSE lines remained
     expect(outputText).toContain(": keepalive");
@@ -292,7 +300,7 @@ describe("OpenCode Reasoning Filter — Stream Transformer (createOpenCodeReason
     expect(isOpencode).toBe(false);
 
     const inputEvents = [
-      'data: {"id":"1","choices":[{"index":0,"delta":{"reasoning_content":"Step 1: Pydantic AI needs this reasoning delta."},"finish_reason":null}]}\n\n',
+      'data: {"id":"1","choices":[{"index":0,"delta":{"reasoning_content":"Step 1: Pydantic AI needs this reasoning delta.","reasoning_details":[{"type":"thought","text":"details"}]},"finish_reason":null}]}\n\n',
       'data: {"id":"2","choices":[{"index":0,"delta":{"content":"Final answer."},"finish_reason":null}]}\n\n',
       'data: [DONE]\n\n',
     ].join("");
@@ -314,6 +322,131 @@ describe("OpenCode Reasoning Filter — Stream Transformer (createOpenCodeReason
 
     expect(outputText).toContain("Pydantic AI needs this reasoning delta.");
     expect(outputText).toContain("reasoning_content");
+    expect(outputText).toContain("reasoning_details");
     expect(outputText).toContain("Final answer.");
+  });
+});
+
+describe("OpenCode Reasoning Filter — Non-Streaming Response Body (stripReasoningFromResponseBody)", () => {
+  it("strips reasoning, reasoning_content, and reasoning_details from json choices and messages", () => {
+    const responseBody: Record<string, unknown> = {
+      id: "chatcmpl-nonstream",
+      object: "chat.completion",
+      created: 1700000000,
+      model: "deepseek-reasoner",
+      reasoning: "Top level reasoning",
+      reasoning_content: "Top level reasoning content",
+      reasoning_details: [{ type: "thought", text: "Top level reasoning details" }],
+      choices: [
+        {
+          index: 0,
+          reasoning: "Choice reasoning",
+          reasoning_content: "Choice reasoning content",
+          reasoning_details: [{ type: "thought", text: "Choice reasoning details" }],
+          message: {
+            role: "assistant",
+            content: "Hello! Here is your answer.",
+            reasoning: "Message reasoning",
+            reasoning_content: "Message reasoning content",
+            reasoning_details: [{ type: "thought", text: "Message reasoning details" }],
+          },
+          finish_reason: "stop",
+        },
+      ],
+      usage: {
+        prompt_tokens: 10,
+        completion_tokens: 20,
+        total_tokens: 30,
+      },
+    };
+
+    stripReasoningFromResponseBody(responseBody);
+
+    expect(responseBody.reasoning).toBeUndefined();
+    expect(responseBody.reasoning_content).toBeUndefined();
+    expect(responseBody.reasoning_details).toBeUndefined();
+
+    const choice = (responseBody.choices as Array<Record<string, unknown>>)[0];
+    expect(choice).toBeDefined();
+    expect(choice?.reasoning).toBeUndefined();
+    expect(choice?.reasoning_content).toBeUndefined();
+    expect(choice?.reasoning_details).toBeUndefined();
+
+    const msg = choice?.message as Record<string, unknown> | undefined;
+    expect(msg).toBeDefined();
+    expect(msg?.content).toBe("Hello! Here is your answer.");
+    expect(msg?.role).toBe("assistant");
+    expect(msg?.reasoning).toBeUndefined();
+    expect(msg?.reasoning_content).toBeUndefined();
+    expect(msg?.reasoning_details).toBeUndefined();
+  });
+});
+
+describe("OpenCode2 Downstream SSE Stream — Live Thinking Delivery", () => {
+  it("delivers reasoning deltas unmodified to OpenCode2 by default so TUI renders thinking", async () => {
+    // Standard directive (no 'sb' nuance)
+    const nuances: string[] = ["no"];
+    const shouldStrip = nuances.includes("sb");
+    expect(shouldStrip).toBe(false);
+
+    const inputEvents = [
+      'data: {"id":"1","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}\n\n',
+      'data: {"id":"2","choices":[{"index":0,"delta":{"reasoning_content":"Step 1: Inspecting AST structure..."},"finish_reason":null}]}\n\n',
+      'data: {"id":"3","choices":[{"index":0,"delta":{"reasoning_content":"Step 2: Checking payload transformer..."},"finish_reason":null}]}\n\n',
+      'data: {"id":"4","choices":[{"index":0,"delta":{"content":"Here is the verified solution."},"finish_reason":null}]}\n\n',
+      'data: [DONE]\n\n',
+    ].join("");
+
+    const encoder = new TextEncoder();
+    const rawStream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encoder.encode(inputEvents));
+        controller.close();
+      },
+    });
+
+    const stream = shouldStrip
+      ? rawStream.pipeThrough(createOpenCodeReasoningFilterStreamTransformer())
+      : rawStream;
+
+    const outputText = await readStreamToString(stream);
+
+    // Verify OpenCode2 TUI receives live reasoning deltas
+    expect(outputText).toContain("Step 1: Inspecting AST structure...");
+    expect(outputText).toContain("Step 2: Checking payload transformer...");
+    expect(outputText).toContain("Here is the verified solution.");
+    expect(outputText).toContain("data: [DONE]");
+  });
+
+  it("strips reasoning deltas when 'sb' (strip budget/reasoning) nuance is explicitly requested", async () => {
+    const nuances: string[] = ["sb"];
+    const shouldStrip = nuances.includes("sb");
+    expect(shouldStrip).toBe(true);
+
+    const inputEvents = [
+      'data: {"id":"1","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}\n\n',
+      'data: {"id":"2","choices":[{"index":0,"delta":{"reasoning_content":"Hidden thinking..."},"finish_reason":null}]}\n\n',
+      'data: {"id":"3","choices":[{"index":0,"delta":{"content":"Direct answer."},"finish_reason":null}]}\n\n',
+      'data: [DONE]\n\n',
+    ].join("");
+
+    const encoder = new TextEncoder();
+    const rawStream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encoder.encode(inputEvents));
+        controller.close();
+      },
+    });
+
+    const stream = shouldStrip
+      ? rawStream.pipeThrough(createOpenCodeReasoningFilterStreamTransformer())
+      : rawStream;
+
+    const outputText = await readStreamToString(stream);
+
+    // Verify thinking was stripped due to 'sb' nuance
+    expect(outputText).not.toContain("Hidden thinking...");
+    expect(outputText).toContain("Direct answer.");
+    expect(outputText).toContain("data: [DONE]");
   });
 });
