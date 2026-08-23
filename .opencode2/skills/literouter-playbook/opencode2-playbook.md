@@ -146,3 +146,23 @@ Use `scripts/test_opencode2_models.sh` to run non-interactive verification acros
 ```bash
 bash scripts/test_opencode2_models.sh
 ```
+
+---
+
+## 4. Reasoning Stream Filter & Context Bloat Shield (Option 1B)
+
+### The Problem: SQLite Reasoning Accumulation
+In OpenCode 2 beta, streaming `delta.reasoning` / `delta.reasoning_content` SSE chunks received from reasoning models (e.g. DeepSeek-R1, Qwen-Thinking, Dots, Gemini) are accumulated into OpenCode's local SQLite session tables. On subsequent agent turns, OpenCode re-injects this raw reasoning history back into the request payload as prior assistant messages. Within a few turns, prompt size balloons from ~40K tokens to over 300K+ tokens, incurring severe latency penalties and hitting model context limits.
+
+### The Solution: Gateway-Level Transparent Stream Stripping
+LiteRouter implements **Option 1B: Gateway-Level Automatic Reasoning Stream Stripping**:
+1. **Automatic Client Detection**: Detects inbound requests with `User-Agent: opencode*`, `x-opencode` header, or `x-client-name: opencode*`.
+2. **SSE Stream Transformer (`createOpenCodeReasoningFilterStreamTransformer`)**: For OpenCode clients, LiteRouter intercepts downstream SSE streams and strips `delta.reasoning` and `delta.reasoning_content` in real time.
+3. **Empty Chunk Suppression**: SSE chunks containing only reasoning deltas are suppressed entirely, preventing unnecessary empty SSE events downstream.
+4. **Preserved Fields**: LiteRouter strictly preserves `delta.content`, `delta.role`, `delta.tool_calls`, `finish_reason`, and final `usage` chunks.
+5. **Non-Streaming Sanitization**: Strips `reasoning` and `reasoning_content` from non-streaming JSON choice bodies and message objects.
+6. **SDK Preservation**: Non-OpenCode clients (such as Pydantic AI, OpenAI Python SDK, curl) receive unmodified reasoning streams, ensuring observability for external orchestration.
+
+### Directive Override Nuance (`ts` vs `sb`)
+- **Enable Thinking for OpenCode (`ts`)**: If you explicitly want thinking output visible in OpenCode, use the `ts` (Thinking Support) directive nuance (e.g., `lr-or-oa-ch-ts`). This disables the OpenCode filter and passes raw reasoning deltas downstream.
+- **Force Strip Reasoning (`sb`)**: If you want to force reasoning stripping regardless of client (e.g. for curl or external scripts), use the `sb` (Strip Budget / Reasoning) nuance (e.g., `lr-or-oa-ch-sb`).

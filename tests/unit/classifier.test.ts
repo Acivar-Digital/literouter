@@ -8,16 +8,16 @@ import {
 
 describe("Error Classifier — classifyUpstreamError & classifyTransportError", () => {
   describe("HTTP 400 - Provider-side retryable vs client-side fail-fast", () => {
-    it("classifies 'Provider returned error' as retry_rotate with 0s quarantine", () => {
+    it("classifies 'Provider returned error' as fail_fast with 0s quarantine", () => {
       const result = classifyUpstreamError({
         provider: "oa",
         status: 400,
         headers: new Headers(),
         bodyText: JSON.stringify({ error: { message: "Provider returned error: upstream timeout" } }),
       });
-      expect(result.action).toBe("retry_rotate");
+      expect(result.action).toBe("fail_fast");
       expect(result.quarantineTtlSec).toBe(0);
-      expect(result.isRetryable).toBe(true);
+      expect(result.isRetryable).toBe(false);
       expect(result.reason).toBeDefined();
     });
 
@@ -50,7 +50,7 @@ describe("Error Classifier — classifyUpstreamError & classifyTransportError", 
         provider: "or",
         status: 400,
         headers: {},
-        bodyText: "PROVIDER RETURNED ERROR",
+        bodyText: "NO AVAILABLE PROVIDER",
       });
       expect(result.action).toBe("retry_rotate");
       expect(result.quarantineTtlSec).toBe(0);
@@ -194,7 +194,7 @@ describe("Error Classifier — classifyUpstreamError & classifyTransportError", 
   });
 
   describe("HTTP 401 & 403 - Authentication and Authorization errors", () => {
-    it("classifies 401 as retry_rotate with 7-day (604800s) quarantine and reason auth_failure_key_quarantined", () => {
+    it("classifies 401 as retry_rotate with tiered quarantine (default/1st failure = 300s)", () => {
       const result = classifyUpstreamError({
         provider: "oa",
         status: 401,
@@ -202,12 +202,12 @@ describe("Error Classifier — classifyUpstreamError & classifyTransportError", 
         bodyText: JSON.stringify({ error: { message: "Incorrect API key provided" } }),
       });
       expect(result.action).toBe("retry_rotate");
-      expect(result.quarantineTtlSec).toBe(604800);
+      expect(result.quarantineTtlSec).toBe(300);
       expect(result.reason).toBe("auth_failure_key_quarantined");
       expect(result.isRetryable).toBe(true);
     });
 
-    it("classifies 403 as retry_rotate with 7-day (604800s) quarantine and reason auth_failure_key_quarantined", () => {
+    it("classifies 403 as retry_rotate with tiered quarantine (default/1st failure = 300s)", () => {
       const result = classifyUpstreamError({
         provider: "gg",
         status: 403,
@@ -215,7 +215,35 @@ describe("Error Classifier — classifyUpstreamError & classifyTransportError", 
         bodyText: JSON.stringify({ error: { message: "The caller does not have permission" } }),
       });
       expect(result.action).toBe("retry_rotate");
-      expect(result.quarantineTtlSec).toBe(604800);
+      expect(result.quarantineTtlSec).toBe(300);
+      expect(result.reason).toBe("auth_failure_key_quarantined");
+      expect(result.isRetryable).toBe(true);
+    });
+
+    it("classifies 401 with consecutiveAuthFailures = 2 as 1800s quarantine", () => {
+      const result = classifyUpstreamError({
+        provider: "oa",
+        status: 401,
+        headers: new Headers(),
+        bodyText: JSON.stringify({ error: { message: "Incorrect API key provided" } }),
+        consecutiveAuthFailures: 2,
+      });
+      expect(result.action).toBe("retry_rotate");
+      expect(result.quarantineTtlSec).toBe(1800);
+      expect(result.reason).toBe("auth_failure_key_quarantined");
+      expect(result.isRetryable).toBe(true);
+    });
+
+    it("classifies 403 with consecutiveAuthFailures >= 3 as 86400s quarantine", () => {
+      const result = classifyUpstreamError({
+        provider: "gg",
+        status: 403,
+        headers: {},
+        bodyText: JSON.stringify({ error: { message: "The caller does not have permission" } }),
+        consecutiveAuthFailures: 3,
+      });
+      expect(result.action).toBe("retry_rotate");
+      expect(result.quarantineTtlSec).toBe(86400);
       expect(result.reason).toBe("auth_failure_key_quarantined");
       expect(result.isRetryable).toBe(true);
     });
@@ -285,15 +313,23 @@ describe("Error Classifier — classifyUpstreamError & classifyTransportError", 
       expect(result.isRetryable).toBe(true);
     });
 
-    it("evaluates TTFT timeout with 60s quarantine", () => {
+    it("evaluates TTFT timeout with 2s transient quarantine", () => {
       const result = classifyTransportError(new Error("TTFT exceeded 5000ms"));
       expect(result.action).toBe("retry_rotate");
-      expect(result.quarantineTtlSec).toBe(60);
+      expect(result.quarantineTtlSec).toBe(2);
       expect(result.reason).toBe("ttft_timeout_exceeded");
       expect(result.isRetryable).toBe(true);
     });
 
-    it("evaluates status 0 TTFT timeout with 60s quarantine", () => {
+    it("evaluates NoResponse / timed out waiting for first chunk with 2s transient quarantine", () => {
+      const result = classifyTransportError(new Error("NoResponse: timed out waiting for first chunk"));
+      expect(result.action).toBe("retry_rotate");
+      expect(result.quarantineTtlSec).toBe(2);
+      expect(result.reason).toBe("ttft_timeout_exceeded");
+      expect(result.isRetryable).toBe(true);
+    });
+
+    it("evaluates status 0 TTFT timeout with 2s transient quarantine", () => {
       const result = classifyUpstreamError({
         provider: "or",
         status: 0,
@@ -301,7 +337,7 @@ describe("Error Classifier — classifyUpstreamError & classifyTransportError", 
         bodyText: "TTFT exceeded 5000ms",
       });
       expect(result.action).toBe("retry_rotate");
-      expect(result.quarantineTtlSec).toBe(60);
+      expect(result.quarantineTtlSec).toBe(2);
       expect(result.reason).toBe("ttft_timeout_exceeded");
       expect(result.isRetryable).toBe(true);
     });
@@ -336,7 +372,7 @@ describe("Error Classifier — classifyUpstreamError & classifyTransportError", 
       const hugeString = "x".repeat(65536);
       const hugeBody = JSON.stringify({
         error: {
-          message: `Provider returned error: ${hugeString}`,
+          message: `no available provider: ${hugeString}`,
         },
       });
 

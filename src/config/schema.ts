@@ -119,9 +119,11 @@ export const BooleanCoerceSchema = z.preprocess(parseBooleanString, z.boolean())
 export const EnvConfigSchema = z.object({
   LITEROUTER_PORT: z.coerce.number().int().positive().default(7766),
   LITEROUTER_HOST: z.string().default("0.0.0.0"),
+  LITEROUTER_AUTH_KEY: z.string().default(""),
   LITEROUTER_TLS_ENABLED: BooleanCoerceSchema.default(false),
   LITEROUTER_HTTP2: BooleanCoerceSchema.default(false),
   LITEROUTER_STRIP_REASONING: BooleanCoerceSchema.default(true),
+  LITEROUTER_ENABLE_SCRUBBING: BooleanCoerceSchema.default(false),
   LITEROUTER_NO_RESPONSE_TIMEOUT_MS: z.coerce.number().int().positive().default(5000),
   LITEROUTER_STREAM_IDLE_TIMEOUT_MS: z.coerce.number().int().positive().default(30000),
   LITEROUTER_HTTP_TIMEOUT_MS: z.coerce.number().int().positive().default(300000),

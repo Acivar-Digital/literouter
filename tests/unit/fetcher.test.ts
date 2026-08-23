@@ -4,6 +4,7 @@ import {
   fetchWithTtftGuard,
   formatMidstreamErrorFrame,
   readFirstChunkWithTimeout,
+  readFirstContentChunkWithTimeout,
   resolveTtftTimeout,
 } from "../../src/network/fetcher";
 
@@ -72,19 +73,19 @@ describe("Fetcher — Transport Error Wrapping", () => {
 });
 
 describe("Dynamic TTFT Resolution (`resolveTtftTimeout`)", () => {
-  it("defaults to 5000ms when model is undefined or empty", () => {
-    expect(resolveTtftTimeout()).toBe(5000);
-    expect(resolveTtftTimeout(undefined, undefined)).toBe(5000);
-    expect(resolveTtftTimeout("", undefined)).toBe(5000);
+  it("defaults to 15000ms when model is undefined or empty", () => {
+    expect(resolveTtftTimeout()).toBe(15000);
+    expect(resolveTtftTimeout(undefined, undefined)).toBe(15000);
+    expect(resolveTtftTimeout("", undefined)).toBe(15000);
   });
 
   it("uses envTimeoutMs for standard non-reasoning models", () => {
     expect(resolveTtftTimeout("gpt-4o", 8000)).toBe(8000);
     expect(resolveTtftTimeout("claude-3-5-sonnet-20241022", 10000)).toBe(10000);
-    expect(resolveTtftTimeout("meta-llama/llama-3.3-70b-instruct")).toBe(5000);
+    expect(resolveTtftTimeout("meta-llama/llama-3.3-70b-instruct")).toBe(15000);
   });
 
-  it("scales to at least 60000ms for reasoning models", () => {
+  it("scales to at least 60000ms for reasoning and preview models", () => {
     const reasoningModels = [
       "o1",
       "o1-mini",
@@ -97,11 +98,16 @@ describe("Dynamic TTFT Resolution (`resolveTtftTimeout`)", () => {
       "claude-3-7-sonnet-thought",
       "claude-3-7-sonnet:thought",
       "custom-thinking-model",
+      "gemini-2.5-flash-preview",
+      "qwen-coder-32b",
+      "dots-ocr-preview",
+      "deepseek-coder",
     ];
 
     for (const model of reasoningModels) {
       expect(resolveTtftTimeout(model)).toBe(60000);
       expect(resolveTtftTimeout(model, 5000)).toBe(60000);
+      expect(resolveTtftTimeout(model, 15000)).toBe(60000);
     }
   });
 
@@ -182,5 +188,49 @@ describe("Stream First Chunk TTFT Timeout (`readFirstChunkWithTimeout`)", () => 
     expect(result.done).toBe(false);
     expect(result.value).toBeDefined();
     expect(decoder.decode(result.value)).toContain("hello");
+  });
+});
+
+describe("Content Chunk Reading with Multi-Packet Buffering (`readFirstContentChunkWithTimeout`)", () => {
+  it("buffers initial empty newlines/preambles until content arrives and returns combined buffer", async () => {
+    const encoder = new TextEncoder();
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encoder.encode("\n\n"));
+        controller.enqueue(encoder.encode("data: {\"choices\":[{\"delta\":{\"content\":\"chunk2\"}}]}\n\n"));
+        controller.close();
+      },
+    });
+
+    const reader = stream.getReader();
+    const result = await readFirstContentChunkWithTimeout(reader, 1000, 200);
+    reader.releaseLock();
+
+    const decoded = decoder.decode(result);
+    expect(decoded).toContain("\n\n");
+    expect(decoded).toContain("chunk2");
+  });
+
+  it("throws NoResponseError when stream closes with 0 content tokens after empty chunks", async () => {
+    const encoder = new TextEncoder();
+    const emptyStream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encoder.encode("   \n\n"));
+        controller.close();
+      },
+    });
+
+    const reader = emptyStream.getReader();
+    let thrownError: unknown;
+    try {
+      await readFirstContentChunkWithTimeout(reader, 1000, 200);
+    } catch (err: unknown) {
+      thrownError = err;
+    } finally {
+      reader.releaseLock();
+    }
+
+    expect(thrownError).toBeInstanceOf(NoResponseError);
+    expect((thrownError as Error).message).toBe("HTTP 200 returned ghost response with 0 content tokens");
   });
 });

@@ -56,7 +56,7 @@ export class StreamStallError extends Error {
   }
 }
 
-export const TTFT_TIMEOUT_MS = 5000;
+export const TTFT_TIMEOUT_MS = 15000;
 export const STREAM_IDLE_TIMEOUT_MS = 30000;
 export const MAX_HTTP_TIMEOUT_MS = 300000;
 export const KEEPALIVE_INTERVAL_MS = 15000;
@@ -142,9 +142,9 @@ function clearTimer(timer: IntervalHandle | null): void {
 type DefaultReadResult = Awaited<ReturnType<ReadableStreamDefaultReader<Uint8Array>["read"]>>;
 
 export function resolveTtftTimeout(model?: string, envTimeoutMs?: number): number {
-  const base = envTimeoutMs && envTimeoutMs > 0 ? envTimeoutMs : 5000;
+  const base = envTimeoutMs && envTimeoutMs > 0 ? envTimeoutMs : 15000;
   if (!model) return base;
-  const isReasoningModel = /o1|o3|deepseek-reasoner|r1|thinking|claude-3-7.*thought/i.test(model);
+  const isReasoningModel = /o1|o3|deepseek|r1|dots|thinking|preview|coder|reasoning|thought/i.test(model);
   if (isReasoningModel) {
     return Math.max(60000, base);
   }
@@ -177,30 +177,57 @@ export async function readFirstChunkWithTimeout(
   }
 }
 
-function isChunkEmpty(firstRead: DefaultReadResult): boolean {
-  return !firstRead.value || firstRead.value.length === 0 || Boolean(firstRead.done);
+function concatUint8Arrays(chunks: readonly Uint8Array[]): Uint8Array {
+  if (chunks.length === 0) {
+    return new Uint8Array(0);
+  }
+  if (chunks.length === 1) {
+    return chunks[0] ?? new Uint8Array(0);
+  }
+  const totalLength = chunks.reduce((acc, c) => acc + c.length, 0);
+  const result = new Uint8Array(totalLength);
+  let offset = 0;
+  for (const chunk of chunks) {
+    result.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return result;
 }
 
-function isGhostResponse(status: number, value: Uint8Array): boolean {
-  if (status !== 200) {
-    return false;
-  }
-  const decoded = new TextDecoder().decode(value);
-  return !hasContentToken(decoded);
-}
+export async function readFirstContentChunkWithTimeout(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  timeoutMs: number = TTFT_TIMEOUT_MS,
+  status: number = 200
+): Promise<Uint8Array> {
+  const startTime = Date.now();
+  const bufferedChunks: Uint8Array[] = [];
+  const decoder = new TextDecoder();
+  let fullBufferedText = "";
 
-function validateFirstChunk(
-  firstRead: DefaultReadResult,
-  status: number
-): Uint8Array {
-  if (isChunkEmpty(firstRead)) {
-    throw new NoResponseError("Upstream emitted 0 bytes before closing");
+  while (true) {
+    const elapsed = Date.now() - startTime;
+    const remainingMs = Math.max(1, timeoutMs - elapsed);
+    const readResult = await readFirstChunkWithTimeout(reader, remainingMs);
+
+    if (readResult.done) {
+      if (bufferedChunks.length === 0) {
+        throw new NoResponseError("Upstream emitted 0 bytes before closing");
+      }
+      const combined = concatUint8Arrays(bufferedChunks);
+      if (status === 200 && !hasContentToken(fullBufferedText)) {
+        throw new NoResponseError("HTTP 200 returned ghost response with 0 content tokens");
+      }
+      return combined;
+    }
+
+    if (readResult.value && readResult.value.length > 0) {
+      bufferedChunks.push(readResult.value);
+      fullBufferedText += decoder.decode(readResult.value, { stream: true });
+      if (hasContentToken(fullBufferedText)) {
+        return concatUint8Arrays(bufferedChunks);
+      }
+    }
   }
-  const val = firstRead.value as Uint8Array;
-  if (isGhostResponse(status, val)) {
-    throw new NoResponseError("HTTP 200 returned ghost response with 0 content tokens");
-  }
-  return val;
 }
 
 export function extractUsageFromChunk(chunk: Uint8Array): UsageCallbackPayload | null {
@@ -364,8 +391,8 @@ export async function executeH2Fetch(
             if (!isClosed) {
               try {
                 controller.enqueue(new Uint8Array(chunk));
-              } catch {
-                // Ignore enqueue on closed stream
+              } catch (_err: unknown) {
+                console.debug("[H2 Fetcher] Enqueue error on closed stream:", _err);
               }
             }
           });
@@ -374,8 +401,8 @@ export async function executeH2Fetch(
               isClosed = true;
               try {
                 controller.close();
-              } catch {
-                // Ignore invalid state
+              } catch (_err: unknown) {
+                console.debug("[H2 Fetcher] Controller close error:", _err);
               }
             }
           });
@@ -384,8 +411,8 @@ export async function executeH2Fetch(
               isClosed = true;
               try {
                 controller.error(err);
-              } catch {
-                // Ignore invalid state
+              } catch (_err: unknown) {
+                console.debug("[H2 Fetcher] Controller error dispatch:", _err);
               }
             }
           });
@@ -394,8 +421,8 @@ export async function executeH2Fetch(
           isClosed = true;
           try {
             stream.destroy();
-          } catch {
-            // Ignore stream destroy error
+          } catch (_err: unknown) {
+            console.debug("[H2 Fetcher] Stream destroy error:", _err);
           }
         },
       });
@@ -500,8 +527,7 @@ export async function fetchWithTtftGuard(
   const ttftTimeoutMs = resolveTtftTimeout(options.model, envTtft);
   let firstChunk: Uint8Array;
   try {
-    const firstRead = await readFirstChunkWithTimeout(reader, ttftTimeoutMs);
-    firstChunk = validateFirstChunk(firstRead, response.status);
+    firstChunk = await readFirstContentChunkWithTimeout(reader, ttftTimeoutMs, response.status);
   } catch (err: unknown) {
     reader.releaseLock();
     throw err;

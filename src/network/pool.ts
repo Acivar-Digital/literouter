@@ -1,3 +1,4 @@
+import { EventEmitter } from "node:events";
 import type { ProviderCode } from "../directive/parser";
 import { CooldownManager, type KeyCooldownState } from "./cooldown";
 
@@ -13,12 +14,15 @@ export interface PoolStatus {
   readonly quarantined: number;
 }
 
-export class KeyPool {
+export class KeyPool extends EventEmitter {
   private readonly pools = new Map<string, readonly string[]>();
   private readonly pointers = new Map<string, number>();
+  private readonly consecutiveAuthFailures = new Map<string, number>();
+  private readonly activeTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly cooldownManager: CooldownManager;
 
   public constructor(cooldownManager?: CooldownManager) {
+    super();
     this.cooldownManager = cooldownManager ?? new CooldownManager();
   }
 
@@ -81,9 +85,45 @@ export class KeyPool {
     return null;
   }
 
+  private scheduleAvailabilityTimer(keyId: string, provider: string, ttlMs: number): void {
+    const existing = this.activeTimers.get(keyId);
+    if (existing) {
+      clearTimeout(existing);
+      this.activeTimers.delete(keyId);
+    }
+    if (ttlMs > 0) {
+      const timer = setTimeout(() => {
+        this.activeTimers.delete(keyId);
+        this.emit(`available:${provider}`, provider);
+        this.emit("available", provider);
+      }, ttlMs);
+      this.activeTimers.set(keyId, timer);
+    }
+  }
+
   public reportSuccess(provider: string, index: number): void {
     const keyId = this.makeKeyId(provider, index);
     this.cooldownManager.clearCooldown(keyId);
+    this.consecutiveAuthFailures.delete(keyId);
+    const existing = this.activeTimers.get(keyId);
+    if (existing) {
+      clearTimeout(existing);
+      this.activeTimers.delete(keyId);
+    }
+    this.emit(`available:${provider}`, provider);
+    this.emit("available", provider);
+  }
+
+  private computeTieredAuthTtl(keyId: string): number {
+    const count = (this.consecutiveAuthFailures.get(keyId) ?? 0) + 1;
+    this.consecutiveAuthFailures.set(keyId, count);
+    if (count === 1) {
+      return 300;
+    }
+    if (count === 2) {
+      return 1800;
+    }
+    return 86400;
   }
 
   public reportFailure(
@@ -96,7 +136,13 @@ export class KeyPool {
     customTtlSec?: number
   ): KeyCooldownState {
     const keyId = this.makeKeyId(provider, index);
-    return this.cooldownManager.quarantineKey(keyId, status, headers, body, now, customTtlSec);
+    let effectiveTtlSec = customTtlSec;
+    if ((status === 401 || status === 403) && customTtlSec === undefined) {
+      effectiveTtlSec = this.computeTieredAuthTtl(keyId);
+    }
+    const state = this.cooldownManager.quarantineKey(keyId, status, headers, body, now, effectiveTtlSec);
+    this.scheduleAvailabilityTimer(keyId, provider, state.quarantinedUntil - now);
+    return state;
   }
 
   public quarantineKey(
@@ -108,7 +154,67 @@ export class KeyPool {
     now: number = Date.now()
   ): KeyCooldownState {
     const keyId = this.makeKeyId(provider, index);
-    return this.cooldownManager.quarantineKeyWithTtl(keyId, ttlSec, reason, status, now);
+    const state = this.cooldownManager.quarantineKeyWithTtl(keyId, ttlSec, reason, status, now);
+    this.scheduleAvailabilityTimer(keyId, provider, state.quarantinedUntil - now);
+    return state;
+  }
+
+  public getConsecutiveAuthFailures(provider: string, index: number): number {
+    const keyId = this.makeKeyId(provider, index);
+    return this.consecutiveAuthFailures.get(keyId) ?? 0;
+  }
+
+  public async waitForKeyAvailable(
+    provider: ProviderCode | string,
+    timeoutMs: number,
+    signal?: AbortSignal,
+    now: number = Date.now()
+  ): Promise<SelectedKey | null> {
+    const immediate = this.selectNextKey(provider, now);
+    if (immediate !== null) {
+      return immediate;
+    }
+    if (timeoutMs <= 0 || signal?.aborted) {
+      return null;
+    }
+    return new Promise<SelectedKey | null>((resolve) => {
+      let timeoutTimer: ReturnType<typeof setTimeout> | null = null;
+      const eventName = `available:${provider}`;
+
+      const cleanup = (): void => {
+        if (timeoutTimer !== null) {
+          clearTimeout(timeoutTimer);
+          timeoutTimer = null;
+        }
+        this.removeListener(eventName, onAvailable);
+        if (signal) {
+          signal.removeEventListener("abort", onAbort);
+        }
+      };
+
+      const onAvailable = (): void => {
+        const selected = this.selectNextKey(provider);
+        if (selected !== null) {
+          cleanup();
+          resolve(selected);
+        }
+      };
+
+      const onAbort = (): void => {
+        cleanup();
+        resolve(null);
+      };
+
+      timeoutTimer = setTimeout(() => {
+        cleanup();
+        resolve(this.selectNextKey(provider));
+      }, timeoutMs);
+
+      this.on(eventName, onAvailable);
+      if (signal) {
+        signal.addEventListener("abort", onAbort, { once: true });
+      }
+    });
   }
 
   public getPoolSize(provider: string): number {
@@ -151,8 +257,40 @@ export class KeyPool {
     return minTtl > remainingWaitMs;
   }
 
-  public reset(): void {
+  private resetProvider(provider: string): void {
+    this.pointers.delete(provider);
+    const prefix = `${provider}:`;
+    for (const [keyId, timer] of this.activeTimers) {
+      if (keyId === provider || keyId.startsWith(prefix)) {
+        clearTimeout(timer);
+        this.activeTimers.delete(keyId);
+      }
+    }
+    for (const keyId of this.consecutiveAuthFailures.keys()) {
+      if (keyId === provider || keyId.startsWith(prefix)) {
+        this.consecutiveAuthFailures.delete(keyId);
+      }
+    }
+    const keys = this.getKeys(provider);
+    for (let i = 0; i < keys.length; i += 1) {
+      this.cooldownManager.clearCooldown(this.makeKeyId(provider, i));
+    }
+    this.emit(`available:${provider}`, provider);
+    this.emit("available", provider);
+  }
+
+  public reset(provider?: string): void {
+    if (provider) {
+      this.resetProvider(provider);
+      return;
+    }
     this.pointers.clear();
+    for (const timer of this.activeTimers.values()) {
+      clearTimeout(timer);
+    }
+    this.activeTimers.clear();
+    this.consecutiveAuthFailures.clear();
     this.cooldownManager.clearAll();
+    this.emit("available");
   }
 }

@@ -3,7 +3,11 @@ import {
   createDotsStreamState,
   parseDotsXml,
   processDotsStreamChunk,
+  serializeDotsToolCalls,
+  serializeDotsToolHistory,
 } from "../../src/transformers/dots";
+import { sanitizeAndTransformPayload } from "../../src/transformers/payload";
+import type { OpenAIMessage, OpenAIRequestPayload } from "../../src/transformers/nuances";
 
 describe("Dots XML Transformer — Static Parsing", () => {
   it("parses single XML function invocation into OpenAI tool_calls structure", () => {
@@ -61,5 +65,191 @@ describe("Dots XML Transformer — Streaming Chunk Handling", () => {
     expect(out2).toContain("get_weather");
     expect(out2).toContain("Berlin");
     expect(out2).toContain("Done!");
+  });
+});
+
+describe("Dots XML Tool History Serialization", () => {
+  it("serializes tool calls to XML invoke blocks inside <tool_calls>", () => {
+    const toolCalls = [
+      {
+        id: "call_1",
+        type: "function" as const,
+        function: {
+          name: "get_weather",
+          arguments: JSON.stringify({ city: "Tokyo", unit: "celsius" }),
+        },
+      },
+      {
+        id: "call_2",
+        type: "function" as const,
+        function: {
+          name: "calculate",
+          arguments: JSON.stringify({ expr: "2 + 2" }),
+        },
+      },
+    ];
+
+    const xml = serializeDotsToolCalls(toolCalls);
+    expect(xml).toContain("<tool_calls>");
+    expect(xml).toContain('</tool_calls>');
+    expect(xml).toContain('<invoke name="get_weather">');
+    expect(xml).toContain('<parameter name="city">Tokyo</parameter>');
+    expect(xml).toContain('<parameter name="unit">celsius</parameter>');
+    expect(xml).toContain('<invoke name="calculate">');
+    expect(xml).toContain('<parameter name="expr">2 + 2</parameter>');
+  });
+
+  it("handles empty or non-JSON arguments in tool call serialization", () => {
+    const emptyXml = serializeDotsToolCalls([]);
+    expect(emptyXml).toBe("");
+
+    const nonJsonToolCall = [
+      {
+        id: "call_raw",
+        type: "function" as const,
+        function: {
+          name: "raw_tool",
+          arguments: "not a json string",
+        },
+      },
+    ];
+    const xml = serializeDotsToolCalls(nonJsonToolCall);
+    expect(xml).toContain('<invoke name="raw_tool">');
+    expect(xml).toContain('<parameter name="input">not a json string</parameter>');
+  });
+
+  it("serializes assistant tool calls and tool messages into XML conversation history", () => {
+    const messages: OpenAIMessage[] = [
+      {
+        role: "user",
+        content: "What is the weather in Tokyo?",
+      },
+      {
+        role: "assistant",
+        content: "Let me check that.",
+        tool_calls: [
+          {
+            id: "call_123",
+            type: "function" as const,
+            function: {
+              name: "get_weather",
+              arguments: JSON.stringify({ location: "Tokyo" }),
+            },
+          },
+        ],
+      },
+      {
+        role: "tool",
+        tool_call_id: "call_123",
+        content: JSON.stringify({ temp: 22, condition: "Sunny" }),
+      },
+      {
+        role: "assistant",
+        content: "It is 22C and Sunny in Tokyo.",
+      },
+    ];
+
+    const serialized = serializeDotsToolHistory(messages);
+
+    expect(serialized.length).toBe(4);
+    expect(serialized[0]?.role).toBe("user");
+    expect(serialized[0]?.content).toBe("What is the weather in Tokyo?");
+
+    expect(serialized[1]?.role).toBe("assistant");
+    expect(serialized[1]?.tool_calls).toBeUndefined();
+    expect(typeof serialized[1]?.content).toBe("string");
+    expect(serialized[1]?.content as string).toContain("Let me check that.");
+    expect(serialized[1]?.content as string).toContain('<invoke name="get_weather">');
+    expect(serialized[1]?.content as string).toContain('<parameter name="location">Tokyo</parameter>');
+
+    expect(serialized[2]?.role).toBe("user");
+    expect(typeof serialized[2]?.content).toBe("string");
+    expect(serialized[2]?.content as string).toContain('<tool_result id="call_123">');
+    expect(serialized[2]?.content as string).toContain('"temp":22');
+
+    expect(serialized[3]?.role).toBe("assistant");
+    expect(serialized[3]?.content).toBe("It is 22C and Sunny in Tokyo.");
+  });
+
+  it("integrates with sanitizeAndTransformPayload via 'tc' nuance and merges consecutive user messages", () => {
+    const payload: OpenAIRequestPayload = {
+      model: "custom-model",
+      messages: [
+        { role: "user", content: "Check status" },
+        {
+          role: "assistant",
+          content: "",
+          tool_calls: [
+            {
+              id: "call_abc",
+              type: "function" as const,
+              function: {
+                name: "check_status",
+                arguments: "{}",
+              },
+            },
+          ],
+        },
+        {
+          role: "tool",
+          tool_call_id: "call_abc",
+          content: "status: ok",
+        },
+        {
+          role: "user",
+          content: "Also check uptime",
+        },
+      ],
+    };
+
+    const transformed = sanitizeAndTransformPayload(payload, {
+      nuances: ["tc"],
+    });
+
+    // In the input: [user, assistant (with tc), tool, user].
+    // After serialization: [user, assistant (with invoke xml), user (<tool_result>), user].
+    // After mergeConsecutiveMessages: [user, assistant, user (tool_result + text)].
+    expect(transformed.messages.length).toBe(3);
+    expect(transformed.messages[0]?.role).toBe("user");
+    expect(transformed.messages[1]?.role).toBe("assistant");
+    expect(transformed.messages[1]?.content).toContain('<invoke name="check_status">');
+    expect(transformed.messages[2]?.role).toBe("user");
+    expect(transformed.messages[2]?.content).toContain('<tool_result id="call_abc">');
+    expect(transformed.messages[2]?.content).toContain("Also check uptime");
+  });
+
+  it("automatically triggers Dots tool history serialization when model name includes 'dots'", () => {
+    const payload: OpenAIRequestPayload = {
+      model: "openrouter/dots-studio/dots-3-note-preview",
+      messages: [
+        {
+          role: "assistant",
+          content: null,
+          tool_calls: [
+            {
+              id: "call_xyz",
+              type: "function" as const,
+              function: {
+                name: "search",
+                arguments: JSON.stringify({ q: "bun test" }),
+              },
+            },
+          ],
+        },
+        {
+          role: "tool",
+          tool_call_id: "call_xyz",
+          content: "found results",
+        },
+      ],
+    };
+
+    const transformed = sanitizeAndTransformPayload(payload, { nuances: [] });
+    expect(transformed.messages.length).toBe(2);
+    expect(transformed.messages[0]?.role).toBe("assistant");
+    expect(transformed.messages[0]?.content).toContain('<invoke name="search">');
+    expect(transformed.messages[1]?.role).toBe("user");
+    expect(transformed.messages[1]?.content).toContain('<tool_result id="call_xyz">');
+    expect(transformed.messages[1]?.content).toContain("found results");
   });
 });

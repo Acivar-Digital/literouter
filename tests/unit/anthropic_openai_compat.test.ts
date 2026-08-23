@@ -19,12 +19,13 @@ describe("Anthropic -> OpenAI Forward Translation", () => {
       max_tokens: 4096,
       temperature: 0.7,
       stream: true,
+      stream_options: { include_usage: true },
     };
 
     const openAi = translateAnthropicToOpenAI(req);
     expect(openAi.model).toBe("dots-studio/dots-3-note-preview:free");
     expect(openAi.max_tokens).toBe(4096);
-    expect(openAi.max_completion_tokens).toBe(4096);
+    expect(openAi.max_completion_tokens).toBeUndefined();
     expect(openAi.temperature).toBe(0.7);
     expect(openAi.stream).toBe(true);
     expect(openAi.stream_options).toEqual({ include_usage: true });
@@ -32,6 +33,20 @@ describe("Anthropic -> OpenAI Forward Translation", () => {
       { role: "system", content: "You are a helpful coding assistant." },
       { role: "user", content: "Hello world" },
     ]);
+  });
+
+  it("does not include stream_options or max_completion_tokens by default when streaming", () => {
+    const req: AnthropicMessagesRequest = {
+      model: "dots-studio/dots-3-note-preview:free",
+      messages: [{ role: "user", content: "Hello world" }],
+      max_tokens: 2048,
+      stream: true,
+    };
+
+    const openAi = translateAnthropicToOpenAI(req);
+    expect(openAi.stream_options).toBeUndefined();
+    expect(openAi.max_tokens).toBe(2048);
+    expect(openAi.max_completion_tokens).toBeUndefined();
   });
 
   it("translates array system prompt with multiple text blocks", () => {

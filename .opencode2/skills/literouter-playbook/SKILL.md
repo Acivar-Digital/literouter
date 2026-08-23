@@ -44,6 +44,9 @@ lr-<provider>-<payload>-<completions>-<nuances>
 | Completion (endpoint) | `ch` (Chat `/v1/chat/completions`), `ms` (Messages `/v1/messages`), `ob` (OpenAI Beta), `gc` (GenerateContent), `em` (Embeddings), `md` (Models discovery) |
 | Nuances | `no`, `dp`, `ts`, `sb`, `gm`, `g3`, `tc` (compound with `+`, e.g. `dp+ts`) |
 
+- `ts` (Thinking Support): Explicitly preserves reasoning chunks for OpenCode clients (overrides automatic reasoning stripping).
+- `sb` (Strip Budget / Reasoning): Explicitly forces reasoning stream stripping regardless of client.
+
 ### Claude Code Routing Rules:
 - **Native Claude models on OpenRouter/Anthropic**: Use `lr-or-cl-ms-no` (payload: `cl`, endpoint: `ms`).
 - **OpenAI-compat / open-weights models on OpenRouter (e.g. `dots-studio/dots-3-note-preview:free`, DeepSeek, Qwen)**: Use `lr-or-ao-ch-no` (payload: `ao`, endpoint: `ch`). This triggers full bidirectional tool calling and SSE streaming translation into OpenAI Chat Completions without triggering OpenRouter's broken `/api/v1/messages` translator.
@@ -76,6 +79,7 @@ Fusion presets: `lr-fse-<preset>` (e.g. `lr-fse-fast`, `lr-fse-smart`, `lr-fse-c
 10. **Outbound HTTP/2 Multiplexed Session Pool (`src/network/h2_pool.ts`)**: Coalesces concurrent outbound requests into persistent HTTP/2 sessions with single-flight mutexes, in-pool `GOAWAY` stream tracking, and zero-stream auto-teardown. Falls back to HTTP/1.1 keep-alive on failure.
 11. **Token-Bucket Rate Pacer (`src/network/pacer.ts`)**: Enforces mandatory `minIntervalMs` (2000ms for Google `gg`, 500ms for others) with an $O(1)$ fast queue, 15s bounded timeout, and local HTTP 429 backpressure.
 12. **Provider Circuit Breaker (`src/network/circuit_breaker.ts`)**: 3-state protection (`CLOSED`, `OPEN`, `HALF_OPEN`) with 60s auto-expiring single-flight canary leases.
+13. **OpenCode Reasoning Stream Filter & Context Bloat Shield (Option 1B)**: OpenCode 2 beta accumulates streaming `delta.reasoning` / `delta.reasoning_content` chunks into SQLite and re-injects them into subsequent request turns, bloating context from ~40K to 300K+ tokens. LiteRouter detects OpenCode (`User-Agent: opencode*`, `x-opencode` header, `x-client-name`) and strips reasoning deltas in flight while preserving `content`, `role`, `tool_calls`, `finish_reason`, and token usage stats. Non-OpenCode clients (Pydantic AI, SDKs) retain full reasoning streams. Overridden via `ts` nuance (to keep thinking in OpenCode) or `sb` (to force-strip for any client).
 
 ## Connection Diagnostics & Protocol Inspection
 

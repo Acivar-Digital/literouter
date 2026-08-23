@@ -1,14 +1,17 @@
 import type { OpenAIMessage, OpenAIRequestPayload } from "../transformers/nuances";
 import { validateDirective } from "../directive/validator";
 import {
+  acquireProviderPacer,
   globalKeyPool,
   handleOpenAICompat,
   resolveUpstreamEndpoint,
   UpstreamRetryableError,
+  waitAndSelectKey,
 } from "./openai_compat";
 import { classifyUpstreamError } from "../network/classifier";
 import {
   logError,
+  logExhausted,
   logInbound,
   logLimit,
   logRotate,
@@ -61,6 +64,7 @@ export interface AnthropicMessagesRequest {
   readonly system?: string | readonly unknown[];
   readonly max_tokens?: number;
   readonly stream?: boolean;
+  readonly stream_options?: unknown;
   readonly temperature?: number;
   readonly top_p?: number;
   readonly top_k?: number;
@@ -75,7 +79,8 @@ export interface AnthropicMessagesRequest {
 export function createAnthropicErrorResponse(
   status: number,
   message: string,
-  errorType = "invalid_request_error"
+  errorType = "invalid_request_error",
+  headers?: Record<string, string>
 ): Response {
   return Response.json(
     {
@@ -87,7 +92,7 @@ export function createAnthropicErrorResponse(
     },
     {
       status,
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...(headers || {}) },
     }
   );
 }
@@ -382,13 +387,12 @@ export function translateAnthropicToOpenAI(req: AnthropicMessagesRequest): OpenA
     stream: req.stream,
   };
 
-  if (req.stream) {
-    result.stream_options = { include_usage: true };
+  if (req.stream_options !== undefined) {
+    result.stream_options = req.stream_options;
   }
 
   if (req.max_tokens !== undefined) {
     result.max_tokens = req.max_tokens;
-    result.max_completion_tokens = req.max_tokens;
   }
   if (req.temperature !== undefined) result.temperature = req.temperature;
   if (req.top_p !== undefined) result.top_p = req.top_p;
@@ -930,17 +934,6 @@ async function executeAnthropicDirectCall(
     );
   }
 
-  if (env.LITEROUTER_PACER_ENABLED) {
-    const dynamicMaxQueueDepth = globalKeyPool.getDynamicMaxQueueDepth(directive.provider);
-    const maxQueueDepth = env.LITEROUTER_PACER_MAX_QUEUE_DEPTH > 0
-      ? env.LITEROUTER_PACER_MAX_QUEUE_DEPTH
-      : dynamicMaxQueueDepth;
-    const pacer = getPacerForProvider(directive.provider, selected.index, {
-      maxQueueDepth,
-    });
-    await pacer.acquire(clientSignal);
-  }
-
   const endpoint = resolveUpstreamEndpoint(directive.provider, directive.completion, payload.model);
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
@@ -1176,17 +1169,50 @@ async function executeAnthropicDirectLoop(
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     const dwellMs = Date.now() - startTime;
     if (globalKeyPool.shouldLoadShed(directive.provider, dwellMs, maxWaitMs)) {
-      logLimit(reqId, directive.provider, 0, 503, 60, poolSize);
+      const minTtl = globalKeyPool.getMinQuarantineTtlMs(directive.provider);
+      const retryAfterSec = Math.max(1, Math.ceil(minTtl / 1000));
       return createAnthropicErrorResponse(
         503,
         `Provider '${directive.provider}' unavailable: all keys in cooldown exceed wait budget.`,
-        "api_error"
+        "api_error",
+        { "Retry-After": String(retryAfterSec) }
       );
     }
 
-    const selected = globalKeyPool.selectNextKey(directive.provider);
+    try {
+      await acquireProviderPacer(directive.provider, clientSignal);
+    } catch (err: unknown) {
+      if (clientSignal?.aborted || (err instanceof Error && err.message.includes("aborted"))) {
+        return createAnthropicErrorResponse(499, "Request aborted by client", "invalid_request_error");
+      }
+      if (err instanceof PacerQueueOverflowError) {
+        return Response.json(
+          {
+            type: "error",
+            error: {
+              type: "rate_limit_error",
+              message: err.message,
+            },
+          },
+          {
+            status: 429,
+            headers: {
+              "Retry-After": String(err.retryAfterSec),
+              "Content-Type": "application/json",
+            },
+          }
+        );
+      }
+      throw err;
+    }
+
+    const selected = await waitAndSelectKey(directive.provider, startTime, maxWaitMs, clientSignal);
     if (!selected) {
-      logLimit(reqId, directive.provider, 0, 429, 60, poolSize);
+      if (clientSignal?.aborted) {
+        return createAnthropicErrorResponse(499, "Request aborted by client", "invalid_request_error");
+      }
+      const minTtl = globalKeyPool.getMinQuarantineTtlMs(directive.provider);
+      logExhausted(reqId, directive.provider, minTtl);
       return createAnthropicErrorResponse(
         429,
         `All API keys for provider '${directive.provider}' are cooling down.`,
@@ -1228,8 +1254,7 @@ async function executeAnthropicDirectLoop(
         continue;
       }
       if (err instanceof NoResponseError) {
-        globalKeyPool.reportFailure(directive.provider, selected.index, 429);
-        logLimit(reqId, directive.provider, selected.index, 429, 60, selected.totalKeys);
+        globalKeyPool.reportFailure(directive.provider, selected.index, 0, undefined, err.message, Date.now(), 2);
         continue;
       }
       logError(reqId, "Direct request error", err);
@@ -1287,7 +1312,9 @@ export async function handleAnthropicCompat(
 
   if (directive.type === "direct" && directive.payload === "cl" && directive.completion === "ms") {
     const payload = scrubUnsupportedParameters(
-      anthropicBody as unknown as OpenAIRequestPayload
+      anthropicBody as unknown as OpenAIRequestPayload,
+      undefined,
+      getEnv().LITEROUTER_ENABLE_SCRUBBING
     ) as unknown as AnthropicMessagesRequest;
     return executeAnthropicDirectLoop(directive, payload, req.signal, reqId);
   }

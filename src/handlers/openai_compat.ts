@@ -18,12 +18,17 @@ import { KeyPool, type SelectedKey } from "../network/pool";
 import { sanitizeAndTransformPayload } from "../transformers/payload";
 import type { OpenAIRequestPayload } from "../transformers/nuances";
 import { createDotsStreamTransformer, parseDotsXml } from "../transformers/dots";
+import {
+  createOpenCodeReasoningFilterStreamTransformer,
+  isOpenCodeClient,
+} from "../transformers/thinking";
 import type { FusionConfig, FusionTier } from "../config/schema";
 import { getEnv } from "../config/env";
 import { getPacerForProvider, PacerQueueOverflowError } from "../network/pacer";
 import { getCircuitBreakerForProvider } from "../network/circuit_breaker";
 import {
   logError,
+  logExhausted,
   logInbound,
   logLimit,
   logRotate,
@@ -180,6 +185,48 @@ export class UpstreamRetryableError extends Error {
   }
 }
 
+export interface RequestClientOptions {
+  readonly userAgent?: string;
+  readonly headers?: Headers | Record<string, string | string[] | undefined>;
+  readonly filterReasoning?: boolean;
+}
+
+function determineShouldFilterReasoning(
+  directive: DirectDirective,
+  clientOptions?: RequestClientOptions
+): boolean {
+  if (clientOptions?.filterReasoning !== undefined) {
+    return clientOptions.filterReasoning;
+  }
+  if (directive.nuances.includes("ts")) {
+    return false;
+  }
+  if (directive.nuances.includes("sb")) {
+    return true;
+  }
+  return isOpenCodeClient(clientOptions?.userAgent, clientOptions?.headers, directive.nuances);
+}
+
+function stripReasoningFromResponseBody(json: Record<string, unknown>): void {
+  delete json.reasoning_content;
+  delete json.reasoning;
+  if (!Array.isArray(json.choices)) {
+    return;
+  }
+  for (const rawChoice of json.choices as Array<Record<string, unknown>>) {
+    if (typeof rawChoice !== "object" || rawChoice === null) {
+      continue;
+    }
+    delete rawChoice.reasoning_content;
+    delete rawChoice.reasoning;
+    if (rawChoice.message && typeof rawChoice.message === "object" && rawChoice.message !== null) {
+      const msg = rawChoice.message as Record<string, unknown>;
+      delete msg.reasoning_content;
+      delete msg.reasoning;
+    }
+  }
+}
+
 export function parseRetryAfterHeader(headers: Headers): number | undefined {
   const ra = headers.get("retry-after");
   if (!ra) {
@@ -196,7 +243,8 @@ async function executeDirectCall(
   selected: SelectedKey,
   reqId: string,
   attempt: number,
-  maxAttempts: number
+  maxAttempts: number,
+  clientOptions?: RequestClientOptions
 ): Promise<Response> {
   const env = getEnv();
   const breaker = env.LITEROUTER_CIRCUIT_BREAKER
@@ -210,17 +258,6 @@ async function executeDirectCall(
       503,
       { action: "retry_rotate", reason: "circuit_breaker_open", quarantineTtlSec: 60 }
     );
-  }
-
-  if (env.LITEROUTER_PACER_ENABLED) {
-    const dynamicMaxQueueDepth = globalKeyPool.getDynamicMaxQueueDepth(directive.provider);
-    const maxQueueDepth = env.LITEROUTER_PACER_MAX_QUEUE_DEPTH > 0
-      ? env.LITEROUTER_PACER_MAX_QUEUE_DEPTH
-      : dynamicMaxQueueDepth;
-    const pacer = getPacerForProvider(directive.provider, selected.index, {
-      maxQueueDepth,
-    });
-    await pacer.acquire(clientSignal);
   }
 
   const endpoint = resolveUpstreamEndpoint(directive.provider, directive.completion, payload.model);
@@ -297,6 +334,8 @@ async function executeDirectCall(
   globalKeyPool.reportSuccess(directive.provider, selected.index);
   logTtft(reqId, ttftMs, isStream ? "Stream established" : "First chunk streamed downstream", protocol);
 
+  const shouldFilterReasoning = determineShouldFilterReasoning(directive, clientOptions);
+
   if (!isStream) {
     const fullBody = await collectFullBody(firstChunk, rawReader);
     let finalBody: Uint8Array = fullBody;
@@ -315,6 +354,11 @@ async function executeDirectCall(
             finalBody = new TextEncoder().encode(JSON.stringify(json));
           }
         }
+      }
+
+      if (shouldFilterReasoning) {
+        stripReasoningFromResponseBody(json);
+        finalBody = new TextEncoder().encode(JSON.stringify(json));
       }
 
       if (json.usage && typeof json.usage === "object") {
@@ -440,6 +484,10 @@ async function executeDirectCall(
     resilientStream = resilientStream.pipeThrough(createDotsStreamTransformer());
   }
 
+  if (shouldFilterReasoning) {
+    resilientStream = resilientStream.pipeThrough(createOpenCodeReasoningFilterStreamTransformer());
+  }
+
   return new Response(resilientStream, {
     status: response.status,
     headers: {
@@ -448,6 +496,32 @@ async function executeDirectCall(
       Connection: "keep-alive",
     },
   });
+}
+
+export async function acquireProviderPacer(
+  provider: string,
+  clientSignal?: AbortSignal
+): Promise<void> {
+  const env = getEnv();
+  if (!env.LITEROUTER_PACER_ENABLED) {
+    return;
+  }
+  const dynamicMaxQueueDepth = globalKeyPool.getDynamicMaxQueueDepth(provider);
+  const maxQueueDepth = env.LITEROUTER_PACER_MAX_QUEUE_DEPTH > 0
+    ? env.LITEROUTER_PACER_MAX_QUEUE_DEPTH
+    : dynamicMaxQueueDepth;
+  const pacer = getPacerForProvider(provider, 0, { maxQueueDepth });
+  await pacer.acquire(clientSignal);
+}
+
+export async function waitAndSelectKey(
+  provider: string,
+  startTime: number,
+  maxWaitMs: number,
+  clientSignal?: AbortSignal
+): Promise<SelectedKey | null> {
+  const remainingWait = Math.max(0, maxWaitMs - (Date.now() - startTime));
+  return globalKeyPool.waitForKeyAvailable(provider, remainingWait, clientSignal);
 }
 
 interface AttemptExecutionResult {
@@ -464,10 +538,11 @@ async function tryDirectAttempt(
   selected: SelectedKey,
   reqId: string,
   attempt: number,
-  maxAttempts: number
+  maxAttempts: number,
+  clientOptions?: RequestClientOptions
 ): Promise<AttemptExecutionResult> {
   try {
-    const res = await executeDirectCall(directive, transformed, clientSignal, selected, reqId, attempt, maxAttempts);
+    const res = await executeDirectCall(directive, transformed, clientSignal, selected, reqId, attempt, maxAttempts, clientOptions);
     return { success: true, response: res, retryable: false };
   } catch (err: unknown) {
     if (clientSignal?.aborted) {
@@ -502,8 +577,7 @@ async function tryDirectAttempt(
       return { success: false, error: err, retryable: true };
     }
     if (err instanceof NoResponseError) {
-      globalKeyPool.reportFailure(directive.provider, selected.index, 429);
-      logLimit(reqId, directive.provider, selected.index, 429, 60, selected.totalKeys);
+      globalKeyPool.reportFailure(directive.provider, selected.index, 0, undefined, err.message, Date.now(), 2);
       return { success: false, error: err, retryable: true };
     }
     logError(reqId, "Direct request error", err);
@@ -515,7 +589,8 @@ async function executeSingleAttemptLoop(
   directive: DirectDirective,
   transformed: OpenAIRequestPayload,
   clientSignal: AbortSignal | undefined,
-  reqId: string
+  reqId: string,
+  clientOptions?: RequestClientOptions
 ): Promise<Response> {
   const poolSize = globalKeyPool.getPoolSize(directive.provider);
   const maxAttempts = Math.min(3, Math.max(1, poolSize));
@@ -528,16 +603,59 @@ async function executeSingleAttemptLoop(
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     const dwellMs = Date.now() - startTime;
     if (globalKeyPool.shouldLoadShed(directive.provider, dwellMs, maxWaitMs)) {
-      logLimit(reqId, directive.provider, 0, 503, 60, poolSize);
+      const minTtl = globalKeyPool.getMinQuarantineTtlMs(directive.provider);
+      const retryAfterSec = Math.max(1, Math.ceil(minTtl / 1000));
       return Response.json(
         { error: { message: `Provider '${directive.provider}' unavailable: all keys in cooldown exceed wait budget.`, type: "service_unavailable" } },
-        { status: 503 }
+        {
+          status: 503,
+          headers: {
+            "Retry-After": String(retryAfterSec),
+          },
+        }
       );
     }
 
-    const selected = globalKeyPool.selectNextKey(directive.provider);
+    try {
+      await acquireProviderPacer(directive.provider, clientSignal);
+    } catch (err: unknown) {
+      if (clientSignal?.aborted || (err instanceof Error && err.message.includes("aborted"))) {
+        return Response.json(
+          { error: { message: "Request aborted by client", type: "client_closed_request" } },
+          { status: 499 }
+        );
+      }
+      if (err instanceof PacerQueueOverflowError) {
+        return Response.json(
+          {
+            error: {
+              message: err.message,
+              type: "rate_limit_exceeded",
+              code: "rate_limit_exceeded",
+            },
+          },
+          {
+            status: 429,
+            headers: {
+              "Retry-After": String(err.retryAfterSec),
+              "Content-Type": "application/json",
+            },
+          }
+        );
+      }
+      throw err;
+    }
+
+    const selected = await waitAndSelectKey(directive.provider, startTime, maxWaitMs, clientSignal);
     if (!selected) {
-      logLimit(reqId, directive.provider, 0, 429, 60, poolSize);
+      if (clientSignal?.aborted) {
+        return Response.json(
+          { error: { message: "Request aborted by client", type: "client_closed_request" } },
+          { status: 499 }
+        );
+      }
+      const minTtl = globalKeyPool.getMinQuarantineTtlMs(directive.provider);
+      logExhausted(reqId, directive.provider, minTtl);
       return Response.json(
         { error: { message: `All API keys for provider '${directive.provider}' are cooling down.`, type: "insufficient_quota" } },
         { status: 429 }
@@ -549,7 +667,7 @@ async function executeSingleAttemptLoop(
     }
     prevKeyIndex = selected.index;
 
-    const outcome = await tryDirectAttempt(directive, transformed, clientSignal, selected, reqId, attempt + 1, maxAttempts);
+    const outcome = await tryDirectAttempt(directive, transformed, clientSignal, selected, reqId, attempt + 1, maxAttempts, clientOptions);
     if (outcome.response) {
       return outcome.response;
     }
@@ -577,13 +695,15 @@ export async function executeDirectRequest(
   directive: DirectDirective,
   body: OpenAIRequestPayload,
   clientSignal: AbortSignal | undefined,
-  reqId: string
+  reqId: string,
+  clientOptions?: RequestClientOptions
 ): Promise<Response> {
   const transformed = sanitizeAndTransformPayload(body, {
     nuances: directive.nuances,
     targetWire: directive.payload,
+    enableScrubbing: getEnv().LITEROUTER_ENABLE_SCRUBBING,
   });
-  return executeSingleAttemptLoop(directive, transformed, clientSignal, reqId);
+  return executeSingleAttemptLoop(directive, transformed, clientSignal, reqId, clientOptions);
 }
 
 function loadFusionConfig(): FusionConfig {
@@ -602,7 +722,8 @@ async function tryExecuteTier(
   tier: FusionTier,
   body: OpenAIRequestPayload,
   clientSignal: AbortSignal | undefined,
-  reqId: string
+  reqId: string,
+  clientOptions?: RequestClientOptions
 ): Promise<Response | null> {
   const tierDirective = parseDirective(tier.apikey);
   if (!tierDirective || tierDirective.type !== "direct") {
@@ -617,7 +738,7 @@ async function tryExecuteTier(
   }
   const tierBody: OpenAIRequestPayload = { ...body, model: tier.model };
   try {
-    const res = await executeDirectRequest(tierDirective, tierBody, clientSignal, reqId);
+    const res = await executeDirectRequest(tierDirective, tierBody, clientSignal, reqId, clientOptions);
     return res.status < 400 ? res : null;
   } catch {
     return null;
@@ -628,7 +749,8 @@ export async function executeFusionFlow(
   presetName: string,
   body: OpenAIRequestPayload,
   clientSignal: AbortSignal | undefined,
-  reqId: string
+  reqId: string,
+  clientOptions?: RequestClientOptions
 ): Promise<Response> {
   const fusionCfg = loadFusionConfig();
   const engine = new FusionEngine(fusionCfg);
@@ -642,7 +764,7 @@ export async function executeFusionFlow(
   }
 
   for (const tier of plan.orderedTiers) {
-    const res = await tryExecuteTier(tier, body, clientSignal, reqId);
+    const res = await tryExecuteTier(tier, body, clientSignal, reqId, clientOptions);
     if (res !== null) {
       engine.handleTierSuccess(presetName, body.model, tier);
       return res;
@@ -707,9 +829,14 @@ export async function handleOpenAICompat(
     });
   }
 
+  const clientOptions: RequestClientOptions = {
+    userAgent: req.headers.get("user-agent") || undefined,
+    headers: req.headers,
+  };
+
   if (directive.type === "fusion") {
-    return executeFusionFlow(directive.preset, body, req.signal, reqId);
+    return executeFusionFlow(directive.preset, body, req.signal, reqId, clientOptions);
   }
 
-  return executeDirectRequest(directive, body, req.signal, reqId);
+  return executeDirectRequest(directive, body, req.signal, reqId, clientOptions);
 }

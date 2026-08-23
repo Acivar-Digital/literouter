@@ -112,3 +112,8 @@ curl -sk -X POST https://localhost:7766/reset
 ### Pattern 10: Mid-Stream In-Band Server Errors (`Server error mid-response. The response above may be incomplete.` / Socket Drops)
 - **Symptom**: Upstream provider emits an in-band SSE error payload mid-stream (e.g. `data: {"error": {"message": "Server error mid-response..."}}`) or drops the TCP socket during token generation.
 - **Handling**: `isInBandErrorChunk` in `src/network/fetcher.ts` detects server error payloads and suppresses them from leaking to the downstream client. `createResilientStream` invokes `retryProvider`, which isolates the failing key (10s), rotates to the next active key in the pool, re-fetches the request, and transparently streams the response into the open client connection without terminating the IDE/agent session.
+
+### Pattern 11: Rapid Context Window Bloat in OpenCode (300K+ Tokens)
+- **Symptom**: Multi-turn sessions in OpenCode2 rapidly consume massive token counts, causing latency degradation or context length exhaustion.
+- **Cause**: OpenCode2 beta captures streaming `delta.reasoning` SSE chunks and saves them in SQLite history, re-sending full thinking traces in every subsequent prompt.
+- **Handling / Solution**: LiteRouter automatically identifies OpenCode (`isOpenCodeClient`) and strips `delta.reasoning` / `delta.reasoning_content` from SSE streams in flight. If thinking chunks are explicitly desired, append the `ts` nuance to the directive (e.g. `lr-or-oa-ch-ts`). For other clients, reasoning chunks are preserved unmodified by default.

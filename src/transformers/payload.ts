@@ -4,6 +4,7 @@ import type {
   OpenAIRequestPayload,
 } from "./nuances";
 import { applyNuanceModifiers } from "./nuances";
+import { serializeDotsToolHistory } from "./dots";
 import {
   injectThoughtSignatures,
   shouldStripReasoning,
@@ -22,6 +23,7 @@ export interface PayloadTransformOptions {
   readonly targetWire?: "oa" | "cl" | "gg" | "rs" | "ao";
   readonly globalStripReasoning?: boolean;
   readonly capabilities?: ModelCapabilities;
+  readonly enableScrubbing?: boolean;
 }
 
 const LATEX_REPLACEMENTS: readonly (readonly [RegExp, string])[] = [
@@ -213,7 +215,8 @@ function scrubGemmaParameters(
 
 export function scrubUnsupportedParameters(
   payload: OpenAIRequestPayload,
-  capabilities?: ModelCapabilities
+  capabilities?: ModelCapabilities,
+  enableScrubbing = false
 ): OpenAIRequestPayload {
   const cleaned: Record<string, unknown> = { ...payload };
   delete cleaned.prompt_cache_key;
@@ -222,6 +225,10 @@ export function scrubUnsupportedParameters(
 
   if (typeof cleaned.max_tokens === "number" && cleaned.max_tokens > 65536) {
     cleaned.max_tokens = 65536;
+  }
+
+  if (!enableScrubbing) {
+    return cleaned as unknown as OpenAIRequestPayload;
   }
 
   if (capabilities && !capabilities.supportsThinking) {
@@ -239,7 +246,8 @@ export function scrubUnsupportedParameters(
 
 function transformMessages(
   messages: readonly OpenAIMessage[],
-  nuances: readonly string[]
+  nuances: readonly string[],
+  model?: string
 ): readonly OpenAIMessage[] {
   let res = applyLatexNormalization(messages);
   if (nuances.includes("gm")) {
@@ -247,6 +255,10 @@ function transformMessages(
   }
   if (nuances.includes("ts")) {
     res = injectThoughtSignatures(res);
+  }
+  if (nuances.includes("tc") || (model && model.toLowerCase().includes("dots"))) {
+    res = serializeDotsToolHistory(res);
+    res = mergeConsecutiveMessages(res);
   }
   return res;
 }
@@ -269,11 +281,16 @@ export function sanitizeAndTransformPayload(
   const nuances = options.nuances ?? [];
   const targetWire = options.targetWire ?? "oa";
   const globalStrip = options.globalStripReasoning ?? false;
+  const enableScrubbing = options.enableScrubbing ?? false;
 
-  const transformedMessages = transformMessages(payload.messages, nuances);
+  const transformedMessages = transformMessages(
+    payload.messages,
+    nuances,
+    payload.model
+  );
   let transformed: Record<string, unknown> = { ...payload, messages: transformedMessages };
 
-  if (nuances.includes("gm")) {
+  if (enableScrubbing && nuances.includes("gm")) {
     transformed = scrubGemmaParameters(transformed);
   }
 
@@ -282,14 +299,17 @@ export function sanitizeAndTransformPayload(
     nuances,
     targetWire
   );
-  const finalPayload = applyReasoningStripIfNeeded(
-    withModifiers as unknown as Record<string, unknown>,
-    globalStrip,
-    nuances
-  );
+  const finalPayload = enableScrubbing
+    ? applyReasoningStripIfNeeded(
+        withModifiers as unknown as Record<string, unknown>,
+        globalStrip,
+        nuances
+      )
+    : withModifiers;
 
   return scrubUnsupportedParameters(
     finalPayload as unknown as OpenAIRequestPayload,
-    options.capabilities
+    options.capabilities,
+    enableScrubbing
   );
 }

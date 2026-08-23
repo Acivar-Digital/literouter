@@ -55,7 +55,7 @@ describe("In-Flight Retry & Rotation Loop", () => {
     });
   }
 
-  it("retries on Key 2 when Key 1 returns 400 'Provider returned error' and succeeds with 200", async () => {
+  it("retries on Key 2 when Key 1 returns 400 'no available provider' and succeeds with 200", async () => {
     const fetchCalls: { url: string; authHeader: string | null }[] = [];
 
     globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
@@ -67,7 +67,7 @@ describe("In-Flight Retry & Rotation Loop", () => {
       if (authHeader?.includes("sk-mock-key-1")) {
         return new Response(
           JSON.stringify({
-            error: { message: "Provider returned error: upstream gateway timeout" },
+            error: { message: "No available provider for the requested model" },
           }),
           {
             status: 400,
@@ -167,7 +167,7 @@ describe("In-Flight Retry & Rotation Loop", () => {
     expect(fetchCalls[1]?.authHeader).toContain("sk-mock-key-2");
   });
 
-  it("quarantines Key 1 for 7 days on 401 and succeeds with Key 2", async () => {
+  it("quarantines Key 1 on 401 (tiered quarantine: 300s for 1st failure) and succeeds with Key 2", async () => {
     const fetchCalls: { url: string; authHeader: string | null }[] = [];
 
     globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
@@ -207,11 +207,11 @@ describe("In-Flight Retry & Rotation Loop", () => {
     expect(fetchCalls[0]?.authHeader).toContain("sk-mock-key-1");
     expect(fetchCalls[1]?.authHeader).toContain("sk-mock-key-2");
 
-    // Key 1 (index 0 of "oa") should be quarantined for ~7 days (604800s = 604,800,000ms)
+    // Key 1 (index 0 of "oa") should be quarantined for 300s (300,000ms) on 1st auth failure
     expect(globalCooldownManager.isQuarantined("oa:0")).toBe(true);
     const remainingMs = globalCooldownManager.getRemainingMs("oa:0");
-    expect(remainingMs).toBeGreaterThan(604000 * 1000);
-    expect(remainingMs).toBeLessThanOrEqual(604800 * 1000);
+    expect(remainingMs).toBeGreaterThan(290 * 1000);
+    expect(remainingMs).toBeLessThanOrEqual(300 * 1000);
   });
 
   it("retries on Key 2 when Key 1 encounters a raw socket transport error (e.g. 'The connection was closed') and succeeds with 200", async () => {

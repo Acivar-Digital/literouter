@@ -1,4 +1,4 @@
-import type { OpenAIToolCall } from "./nuances";
+import type { OpenAIMessage, OpenAIToolCall } from "./nuances";
 
 export interface DotsParseResult {
   readonly cleanText: string;
@@ -83,6 +83,80 @@ export function parseDotsXml(content: string): DotsParseResult {
     .replace(/<\/?(?:tool_calls|function_calls)>/g, "")
     .trim();
   return { cleanText, toolCalls };
+}
+
+function parseToolCallArguments(raw: unknown): Record<string, unknown> {
+  if (typeof raw === "string") {
+    try {
+      const parsed = JSON.parse(raw);
+      if (typeof parsed === "object" && parsed !== null) {
+        return parsed as Record<string, unknown>;
+      }
+      return { input: parsed };
+    } catch {
+      return { input: raw };
+    }
+  }
+  if (typeof raw === "object" && raw !== null) {
+    return raw as Record<string, unknown>;
+  }
+  return {};
+}
+
+function serializeParamEntry([k, v]: [string, unknown]): string {
+  const valStr = typeof v === "object" && v !== null ? JSON.stringify(v) : String(v);
+  return `<parameter name="${k}">${valStr}</parameter>`;
+}
+
+function serializeSingleInvoke(tc: OpenAIToolCall): string {
+  const fnName = tc.function?.name || "tool";
+  const argsObj = parseToolCallArguments(tc.function?.arguments);
+  const paramXml = Object.entries(argsObj).map(serializeParamEntry).join("\n");
+  if (paramXml.length > 0) {
+    return `<invoke name="${fnName}">\n${paramXml}\n</invoke>`;
+  }
+  return `<invoke name="${fnName}">\n</invoke>`;
+}
+
+export function serializeDotsToolCalls(
+  toolCalls: readonly OpenAIToolCall[]
+): string {
+  if (!toolCalls || toolCalls.length === 0) {
+    return "";
+  }
+  const invokes = toolCalls.map(serializeSingleInvoke).join("\n");
+  return `<tool_calls>\n${invokes}\n</tool_calls>`;
+}
+
+function serializeToolResultContent(content: unknown): string {
+  if (typeof content === "string") {
+    return content;
+  }
+  return JSON.stringify(content ?? "");
+}
+
+function serializeMessageForDots(msg: OpenAIMessage): OpenAIMessage {
+  if (msg.role === "assistant" && msg.tool_calls && msg.tool_calls.length > 0) {
+    const xml = serializeDotsToolCalls(msg.tool_calls);
+    const baseText = typeof msg.content === "string" ? msg.content : "";
+    const newContent = baseText.length > 0 ? `${baseText}\n${xml}` : xml;
+    return { role: "assistant", content: newContent };
+  }
+  if (msg.role === "tool") {
+    const toolId = msg.tool_call_id || "call_unknown";
+    const text = serializeToolResultContent(msg.content);
+    return {
+      role: "user",
+      content: `<tool_result id="${toolId}">\n${text}\n</tool_result>`,
+    };
+  }
+  return msg;
+}
+
+export function serializeDotsToolHistory(
+  messages: readonly OpenAIMessage[]
+): OpenAIMessage[] {
+  return messages.map(serializeMessageForDots);
 }
 
 export interface DotsStreamState {

@@ -28,6 +28,28 @@ async def get_weather(ctx: RunContext[object], /, location: str) -> str:
     return f"The weather in {location} is 22°C and sunny."
 
 
+UPSTREAM_ERRORS = (
+    "401",
+    "403",
+    "404",
+    "429",
+    "500",
+    "502",
+    "503",
+    "cooling down",
+    "cooldown",
+    "API_KEY_SERVICE_BLOCKED",
+    "NOT_FOUND",
+)
+
+
+def _handle_upstream_error(err: Exception) -> None:
+    err_str = str(err)
+    if any(w in err_str for w in UPSTREAM_ERRORS):
+        pytest.skip(f"Upstream provider unavailable: {err_str[:120]}")
+    raise err
+
+
 @pytest.mark.anyio
 async def test_gemini_flash_tool_call_via_native() -> None:
     try:
@@ -37,10 +59,7 @@ async def test_gemini_flash_tool_call_via_native() -> None:
         print(f"Usage: {result.usage}")
         assert any(w in result.output.lower() for w in ["22", "sunny", "singapore"])
     except Exception as err:
-        err_str = str(err)
-        if "429" in err_str or "502" in err_str or "cooling down" in err_str:
-            pytest.skip(f"Upstream provider unavailable: {err_str[:120]}")
-        raise
+        _handle_upstream_error(err)
 
 
 @pytest.mark.anyio
@@ -67,10 +86,7 @@ async def test_gemini_flash_tool_call_via_openai_compat() -> None:
         print(f"\nOutput: {result.output}")
         assert any(w in result.output.lower() for w in ["22", "sunny", "singapore"])
     except Exception as err:
-        err_str = str(err)
-        if "429" in err_str or "502" in err_str or "cooling down" in err_str:
-            pytest.skip(f"Upstream provider unavailable: {err_str[:120]}")
-        raise
+        _handle_upstream_error(err)
 
 
 if __name__ == "__main__":

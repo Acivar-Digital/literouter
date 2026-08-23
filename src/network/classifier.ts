@@ -5,6 +5,7 @@ export interface UpstreamErrorInfo {
   readonly status: number;
   readonly headers?: Headers | Record<string, string>;
   readonly bodyText?: string;
+  readonly consecutiveAuthFailures?: number;
 }
 
 export interface ErrorDisposition {
@@ -21,7 +22,6 @@ const SEVEN_DAYS_SEC = 604800;
 
 function isRetryable400(text: string): boolean {
   return (
-    text.includes("provider returned error") ||
     text.includes("no available provider") ||
     text.includes("temporarily unavailable")
   );
@@ -39,10 +39,14 @@ export function classifyTransportError(error: unknown): ErrorDisposition {
   const message = error instanceof Error ? error.message : String(error ?? "");
   const lower = message.toLowerCase();
 
-  if (lower.includes("ttft") || lower.includes("timed out waiting for first chunk")) {
+  if (
+    lower.includes("ttft") ||
+    lower.includes("timed out waiting for first chunk") ||
+    lower.includes("noresponse")
+  ) {
     return {
       action: "retry_rotate",
-      quarantineTtlSec: 60,
+      quarantineTtlSec: 2,
       reason: "ttft_timeout_exceeded",
       isRetryable: true,
     };
@@ -63,10 +67,10 @@ export function classifyUpstreamError(input: UpstreamErrorInfo): ErrorDispositio
 
   // 0. Status 0: Network / transport error before response headers
   if (status === 0) {
-    if (text.includes("ttft") || text.includes("timeout")) {
+    if (text.includes("ttft") || text.includes("timeout") || text.includes("noresponse")) {
       return {
         action: "retry_rotate",
-        quarantineTtlSec: 60,
+        quarantineTtlSec: 2,
         reason: "ttft_timeout_exceeded",
         isRetryable: true,
       };
@@ -118,11 +122,16 @@ export function classifyUpstreamError(input: UpstreamErrorInfo): ErrorDispositio
     };
   }
 
-  // 3. Status 401 & 403: Auth errors (7 days quarantine)
+  // 3. Status 401 & 403: Auth errors (tiered quarantine: 300s -> 1800s -> 86400s)
   if (status === 401 || status === 403) {
+    const authCount = input.consecutiveAuthFailures ?? 1;
+    let ttlSec = 300;
+    if (authCount === 2) ttlSec = 1800;
+    else if (authCount >= 3) ttlSec = 86400;
+
     return {
       action: "retry_rotate",
-      quarantineTtlSec: SEVEN_DAYS_SEC,
+      quarantineTtlSec: ttlSec,
       reason: "auth_failure_key_quarantined",
       isRetryable: true,
     };

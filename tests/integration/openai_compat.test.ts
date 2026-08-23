@@ -117,6 +117,7 @@ async function readAllStream(stream: ReadableStream<Uint8Array>): Promise<string
 
 describe("OpenAI Compatibility Handler Integration", () => {
   beforeEach(() => {
+    state.statusOverride = undefined;
     process.env.MOCK_OR_PORT = "19801";
     resetAllState();
     startMockServer();
@@ -253,5 +254,40 @@ describe("OpenAI Compatibility Handler Integration", () => {
     expect(res.status).toBe(503);
     const data = (await res.json()) as Record<string, unknown>;
     expect(data.error).toBeDefined();
+  });
+
+  it("handles transient cooldown with dwell and does not emit phantom logLimit", async () => {
+    const { globalKeyPool } = await import("../../src/handlers/openai_compat");
+    globalKeyPool.reset();
+    globalKeyPool.setPool("or", ["sk-mock-key-1"]);
+    // Quarantine with a short TTL (100ms)
+    globalKeyPool.reportFailure("or", 0, 0, undefined, "transport timeout", Date.now(), 0.1);
+
+    const warnSpy = spyOn(console, "warn").mockImplementation(() => {});
+    const errorSpy = spyOn(console, "error").mockImplementation(() => {});
+
+    const req = new Request("http://localhost:7766/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer lr-or-oa-ch-no",
+      },
+      body: JSON.stringify({
+        model: "openai/gpt-4o",
+        messages: [{ role: "user", content: "Dwell test" }],
+      }),
+    });
+
+    const res = await handleAppRequest(req);
+    // After dwell wait, key became available and mock handler was called
+    expect(res.status).toBe(200);
+
+    const warnCalls = warnSpy.mock.calls.map((c) => String(c[0]));
+    // Ensure NO phantom 429 was logged
+    expect(warnCalls.some((c) => c.includes("[LIMIT") && c.includes("429"))).toBe(false);
+
+    warnSpy.mockRestore();
+    errorSpy.mockRestore();
+    globalKeyPool.reset();
   });
 });

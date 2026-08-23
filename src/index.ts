@@ -58,6 +58,51 @@ function handleHardReset(): Response {
   );
 }
 
+async function handleAdminPoolReset(req: Request, rawKey: string): Promise<Response> {
+  const token = rawKey || extractDirectiveToken(req) || "";
+  const authKey = getEnv().LITEROUTER_AUTH_KEY;
+  const isValid = (authKey && token === authKey) || parseDirective(token) !== null;
+
+  if (!isValid) {
+    return Response.json(
+      { error: { message: "Unauthorized admin access", type: "authentication_error" } },
+      { status: 401 }
+    );
+  }
+
+  const url = new URL(req.url);
+  let provider = url.searchParams.get("provider")?.toLowerCase().trim();
+
+  if (!provider && (req.method === "POST" || req.method === "PUT")) {
+    const contentType = req.headers.get("content-type") || "";
+    if (contentType.includes("application/json")) {
+      try {
+        const body = (await req.json()) as { provider?: unknown };
+        if (typeof body?.provider === "string") {
+          provider = body.provider.toLowerCase().trim();
+        }
+      } catch (err: unknown) {
+        logAmber("ADMIN", `Failed to parse body JSON for pool reset: ${String(err)}`);
+      }
+    }
+  }
+
+  if (provider) {
+    globalKeyPool.reset(provider);
+    return Response.json(
+      {
+        status: "ok",
+        message: `Reset pool for provider '${provider}'. Cooldowns and timers cleared.`,
+        provider,
+        timestamp: new Date().toISOString(),
+      },
+      { status: 200 }
+    );
+  }
+
+  return handleHardReset();
+}
+
 function handleHealthCheck(): Response {
   const circuitStats: Record<string, unknown> = {};
   for (const [provider, breaker] of getAllCircuitBreakers().entries()) {
@@ -143,6 +188,10 @@ function dispatchGoogleBeta(path: string, req: Request, rawKey: string, reqId: s
 async function dispatchRoute(req: Request, rawKey: string, reqId: string): Promise<Response> {
   const url = new URL(req.url);
   const path = url.pathname;
+
+  if (path === "/admin/pool/reset") {
+    return handleAdminPoolReset(req, rawKey);
+  }
 
   const sysHandler = SYSTEM_MAP[path];
   if (sysHandler) {

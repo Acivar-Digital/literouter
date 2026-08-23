@@ -4,6 +4,47 @@ All notable changes to LiteRouter will be documented in this file.
 
 ## [Unreleased]
 
+### Added / OpenCode Reasoning Stream Filter & Context Bloat Elimination (Option 1B)
+- **Automatic OpenCode Client Detection & Reasoning Stream Stripping (`src/transformers/thinking.ts`, `src/handlers/openai_compat.ts`)**:
+  - OpenCode2 beta accumulates all streaming `delta.reasoning` / `delta.reasoning_content` SSE chunks into local SQLite session tables and injects them back into subsequent request contexts as historical assistant messages, rapidly ballooning conversation prompt size from ~40K to 300K+ tokens.
+  - Implemented automatic client detection (`isOpenCodeClient`) inspecting `User-Agent: opencode*`, `x-opencode` header, and `x-client-name: opencode*`.
+  - For OpenCode clients, LiteRouter attaches `createOpenCodeReasoningFilterStreamTransformer()` to downstream SSE streams, cleanly stripping `delta.reasoning` and `delta.reasoning_content` in flight and suppressing empty intermediate chunks, while preserving `delta.content`, `role`, `tool_calls`, `finish_reason`, and token usage stats.
+  - Non-streaming responses for OpenCode similarly have `reasoning` and `reasoning_content` stripped from choices and assistant messages via `stripReasoningFromResponseBody()`.
+- **SDK & Client Preservation (Pydantic AI / External SDKs)**:
+  - Preserves full un-stripped reasoning deltas for non-OpenCode clients (Pydantic AI, OpenAI SDK, curl, Python requests) ensuring chain-of-thought observability for agentic SDK workflows.
+- **Directive Nuance Override (`ts` vs `sb`)**:
+  - Directive nuance `ts` (Thinking Support, e.g. `lr-or-oa-ch-ts`) explicitly overrides client detection and forces LiteRouter to preserve reasoning chunks for OpenCode if thinking output is desired.
+  - Directive nuance `sb` (Strip Budget / Strip Reasoning, e.g. `lr-or-oa-ch-sb`) forces reasoning stripping across any client.
+- **Unit Test Coverage (`tests/unit/opencode_reasoning_filter.test.ts`)**:
+  - Added 16 unit tests asserting User-Agent detection, header inspection, chunk filtering, stream transformer fragmentation handling, and Pydantic AI raw stream preservation.
+
+### Added / Event-Driven Key Availability, Tiered Auth Backoff & Backpressure Architecture
+- **Event-Driven KeyPool Notifier with Zero-Polling Dwell (`src/network/pool.ts`, `src/handlers/openai_compat.ts`)**:
+  - Upgraded `KeyPool` to extend `EventEmitter`, emitting targeted `available:${provider}` events when keys exit cooldowns.
+  - Implemented `waitForKeyAvailable(provider, timeoutMs, signal)` for zero-CPU-polling key acquisition, with deterministic listener and timer cleanup on client abort or timeout.
+  - Protected against thundering-herd concurrency: waiters remain subscribed until a key is successfully acquired or timeout/abort occurs.
+- **Tiered 401/403 Exponential Auth Backoff (`src/network/classifier.ts`, `src/network/pool.ts`)**:
+  - Replaced static 7-day auth lockouts with progressive backoff per key: 1st failure = 5 minutes (300s), 2nd failure = 30 minutes (1800s), 3+ consecutive failures = 24 hours (86400s).
+  - Successful responses (`reportSuccess`) reset consecutive auth failure counters to 0.
+- **Authenticated Zero-Downtime Operator Reset API (`src/index.ts`)**:
+  - Added authenticated `POST /admin/pool/reset` (and query `?provider=<prov>`) secured by `LITEROUTER_AUTH_KEY` or valid directive tokens, allowing zero-downtime cooldown clearing for single providers or the entire gateway.
+- **Standard HTTP Backpressure on Capacity Exhaustion (`src/handlers/openai_compat.ts`, `src/handlers/anthropic_compat.ts`)**:
+  - Added standard `Retry-After: <seconds>` headers to HTTP 503 load-shedding responses, allowing downstream AI clients (Claude Code, OpenCode, Cursor) to back off accurately.
+
+### Fixed / Pacer FIFO Inversion, Cooldown Dwell & Error Classification Hardening
+- **Pacer FIFO Queue & Cooldown Dwell Integration (`src/handlers/openai_compat.ts`, `src/handlers/anthropic_compat.ts`)**:
+  - Fixed Pacer control-flow inversion: requests now acquire the FIFO pacer and dwell in the conveyor belt queue when keys are in transient cooldowns (up to `maxWaitMs` / 20s), rather than fast-failing with 429.
+  - Implemented `waitAndSelectKey` to cleanly poll and pick available keys as cooldowns clear within the wait budget.
+- **Eradicated Phantom Upstream 429 Telemetry (`src/handlers/openai_compat.ts`, `src/ui/logger.ts`)**:
+  - Eliminated fabricated `logLimit(..., 429)` calls when local key pools are depleted. The gateway now accurately logs local pool exhaustion via `logExhausted` without claiming that an upstream vendor returned 429.
+- **Transport Error & NoResponse 2-Second Quarantine (`src/network/classifier.ts`, `src/handlers/openai_compat.ts`)**:
+  - Decoupled network transport timeouts, TTFT timeouts, and `NoResponseError` from rate-limit policies: transient connection drops are assigned a 2-second retry quarantine (`quarantineTtlSec: 2`) instead of a 60-second 429 rate-limit penalty.
+- **Expanded TTFT Timeouts for Reasoning & Preview Models (`src/network/fetcher.ts`)**:
+  - Raised default base TTFT timeout from 5s to 15s.
+  - Automatically detected thinking, reasoning, coder, preview, and dots models (`/o1|o3|deepseek|r1|dots|thinking|preview|coder|reasoning|thought/i`) and extended their TTFT ceiling to 60s.
+- **Automated Integration & Regression Test Suite (`tests/unit/pacer_cooldown_integration.test.ts`)**:
+  - Added comprehensive tests verifying FIFO queue cooldown dwelling, 503 load shedding on long budget overruns, and 2s transport error classification.
+
 ### Fixed / Anthropic Compatibility Protocol & 1-to-1 Schema Translation Hardening
 - **P0 Truncated Tool Call Stop Reason Guard (`src/handlers/anthropic_compat.ts`)**:
   - Fixed safety vulnerability in `mapOpenAIToAnthropicStopReason`: `finish_reason === "length"` now strictly takes precedence over `hasToolUse`, ensuring incomplete tool calls return `"max_tokens"` instead of `"tool_use"` to prevent agents from executing truncated shell or file commands.

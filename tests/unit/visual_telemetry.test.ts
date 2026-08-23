@@ -124,6 +124,15 @@ describe("Visual Telemetry & Terminal UI", () => {
     warnSpy.mockRestore();
   });
 
+  it("logs exhausted error with provider name and backoff ms", () => {
+    const errorSpy = spyOn(console, "error").mockImplementation(() => {});
+    logExhausted("REQ-89f2f", "or", 2500);
+    expect(errorSpy).toHaveBeenCalled();
+    const calls = errorSpy.mock.calls.map((c) => c[0]);
+    expect(calls.some((c) => c.includes("🔴") && c.includes("[EXHAUSTED REQ-89f2f] All keys in OpenRouter cooling down. Applying backoff: 2500ms"))).toBe(true);
+    errorSpy.mockRestore();
+  });
+
   it("logs separator line", () => {
     const logSpy = spyOn(console, "log").mockImplementation(() => {});
     logSeparator();

@@ -243,3 +243,157 @@ export function processThinkingDelta(
   }
   return formatDefaultDelta(chunk, state, preserveThinking);
 }
+
+export function isOpenCodeClient(
+  userAgent?: string | null,
+  headers?: Headers | Record<string, string | string[] | undefined> | null,
+  nuances?: readonly string[]
+): boolean {
+  if (nuances && nuances.includes("ts")) {
+    return false;
+  }
+  if (nuances && nuances.includes("sb")) {
+    return true;
+  }
+  if (userAgent && userAgent.toLowerCase().includes("opencode")) {
+    return true;
+  }
+  if (!headers) {
+    return false;
+  }
+  if (headers instanceof Headers) {
+    if (headers.has("x-opencode")) {
+      return true;
+    }
+    const clientName = headers.get("x-client-name");
+    return Boolean(clientName && clientName.toLowerCase().includes("opencode"));
+  }
+  if (headers["x-opencode"] !== undefined) {
+    return true;
+  }
+  const clientName = headers["x-client-name"];
+  return typeof clientName === "string" && clientName.toLowerCase().includes("opencode");
+}
+
+function hasMeaningfulDeltaFields(delta: Record<string, unknown>): boolean {
+  return (
+    delta.content !== undefined ||
+    delta.tool_calls !== undefined ||
+    delta.role !== undefined ||
+    delta.refusal !== undefined
+  );
+}
+
+function sanitizeDelta(rawDelta: unknown): { delta: Record<string, unknown>; hasContent: boolean } {
+  if (typeof rawDelta !== "object" || rawDelta === null) {
+    return { delta: {}, hasContent: false };
+  }
+  const delta: Record<string, unknown> = { ...(rawDelta as Record<string, unknown>) };
+  delete delta.reasoning;
+  delete delta.reasoning_content;
+  return { delta, hasContent: hasMeaningfulDeltaFields(delta) };
+}
+
+function filterReasoningFromChoice(rawChoice: unknown): { choice: Record<string, unknown>; hasData: boolean } {
+  if (typeof rawChoice !== "object" || rawChoice === null) {
+    return { choice: {}, hasData: false };
+  }
+  const choice: Record<string, unknown> = { ...(rawChoice as Record<string, unknown>) };
+  delete choice.reasoning_content;
+  delete choice.reasoning;
+
+  let hasData = choice.finish_reason !== null && choice.finish_reason !== undefined;
+
+  if (choice.delta) {
+    const { delta, hasContent } = sanitizeDelta(choice.delta);
+    choice.delta = delta;
+    if (hasContent) {
+      hasData = true;
+    }
+  }
+
+  return { choice, hasData };
+}
+
+export function filterReasoningFromChunk(data: Record<string, unknown>): {
+  filteredData: Record<string, unknown>;
+  shouldEmit: boolean;
+} {
+  const filtered: Record<string, unknown> = { ...data };
+  delete filtered.reasoning_content;
+  delete filtered.reasoning;
+
+  let shouldEmit = filtered.usage != null || filtered.error != null;
+
+  if (Array.isArray(filtered.choices)) {
+    const newChoices: Record<string, unknown>[] = [];
+    for (const rawChoice of filtered.choices) {
+      const { choice, hasData } = filterReasoningFromChoice(rawChoice);
+      if (hasData) {
+        shouldEmit = true;
+      }
+      newChoices.push(choice);
+    }
+    filtered.choices = newChoices;
+  }
+
+  return { filteredData: filtered, shouldEmit };
+}
+
+function processSseDataLine(line: string): string | null {
+  const jsonStr = line.slice(6);
+  try {
+    const data = JSON.parse(jsonStr) as Record<string, unknown>;
+    const { filteredData, shouldEmit } = filterReasoningFromChunk(data);
+    if (!shouldEmit) {
+      return null;
+    }
+    return `data: ${JSON.stringify(filteredData)}\n`;
+  } catch (err: unknown) {
+    void err;
+    return line + "\n";
+  }
+}
+
+export function createOpenCodeReasoningFilterStreamTransformer(): TransformStream<Uint8Array, Uint8Array> {
+  const decoder = new TextDecoder();
+  const encoder = new TextEncoder();
+  let lineBuffer = "";
+
+  return new TransformStream<Uint8Array, Uint8Array>({
+    transform(chunk, controller) {
+      lineBuffer += decoder.decode(chunk, { stream: true });
+      const lines = lineBuffer.split("\n");
+      lineBuffer = lines.pop() ?? "";
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith(":") || trimmed === "data: [DONE]") {
+          controller.enqueue(encoder.encode(line + "\n"));
+          continue;
+        }
+        if (trimmed.startsWith("data: ")) {
+          const transformed = processSseDataLine(trimmed);
+          if (transformed) {
+            controller.enqueue(encoder.encode(transformed));
+          }
+        } else {
+          controller.enqueue(encoder.encode(line + "\n"));
+        }
+      }
+    },
+    flush(controller) {
+      if (lineBuffer.length > 0) {
+        const trimmed = lineBuffer.trim();
+        if (trimmed.startsWith("data: ") && trimmed !== "data: [DONE]") {
+          const transformed = processSseDataLine(trimmed);
+          if (transformed) {
+            controller.enqueue(encoder.encode(transformed));
+          }
+        } else {
+          controller.enqueue(encoder.encode(lineBuffer));
+        }
+      }
+    },
+  });
+}
