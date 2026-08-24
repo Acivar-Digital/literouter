@@ -126,7 +126,7 @@ export const EnvConfigSchema = z.object({
   LITEROUTER_ENABLE_SCRUBBING: BooleanCoerceSchema.default(false),
   LITEROUTER_TTFT_TIMEOUT_MS: z.coerce.number().int().positive().default(120000),
   LITEROUTER_NO_RESPONSE_TIMEOUT_MS: z.coerce.number().int().positive().default(120000),
-  LITEROUTER_STREAM_IDLE_TIMEOUT_MS: z.coerce.number().int().positive().default(30000),
+  LITEROUTER_STREAM_IDLE_TIMEOUT_MS: z.coerce.number().int().positive().default(120000),
   LITEROUTER_HTTP_TIMEOUT_MS: z.coerce.number().int().positive().default(300000),
   LITEROUTER_IDLE_TIMEOUT_SEC: z.coerce.number().int().positive().default(60),
   COOLDOWN_RATE_LIMIT_TTL_SEC: z.coerce.number().int().positive().default(65),

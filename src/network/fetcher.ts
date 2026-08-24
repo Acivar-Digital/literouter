@@ -57,7 +57,7 @@ export class StreamStallError extends Error {
 }
 
 export const TTFT_TIMEOUT_MS = 120000;
-export const STREAM_IDLE_TIMEOUT_MS = 30000;
+export const STREAM_IDLE_TIMEOUT_MS = 120000;
 export const MAX_HTTP_TIMEOUT_MS = 300000;
 export const KEEPALIVE_INTERVAL_MS = 15000;
 export const STREAM_STALL_MAX_RESENDS = 2;

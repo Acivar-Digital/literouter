@@ -449,4 +449,32 @@ describe("OpenCode2 Downstream SSE Stream — Live Thinking Delivery", () => {
     expect(outputText).toContain("Direct answer.");
     expect(outputText).toContain("data: [DONE]");
   });
+
+  it("safely drops reasoning chunks where content is null without emitting invalid null content to OpenCode", async () => {
+    const inputEvents = [
+      'data: {"id":"1","choices":[{"index":0,"delta":{"role":"assistant","content":null,"reasoning":"Starting to analyze..."},"finish_reason":null}]}\n\n',
+      'data: {"id":"2","choices":[{"index":0,"delta":{"content":null,"reasoning":"Thinking step 2..."},"finish_reason":null}]}\n\n',
+      'data: {"id":"3","choices":[{"index":0,"delta":{"content":null,"reasoning":"Thinking step 3..."},"finish_reason":null}]}\n\n',
+      'data: {"id":"4","choices":[{"index":0,"delta":{"content":"Final verified answer."},"finish_reason":null}]}\n\n',
+      'data: [DONE]\n\n',
+    ].join("");
+
+    const encoder = new TextEncoder();
+    const rawStream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encoder.encode(inputEvents));
+        controller.close();
+      },
+    });
+
+    const stream = rawStream.pipeThrough(createOpenCodeReasoningFilterStreamTransformer());
+    const outputText = await readStreamToString(stream);
+
+    // Chunks 2 & 3 must be completely dropped
+    expect(outputText).not.toContain("Thinking step");
+    expect(outputText).not.toContain('"content":null');
+    expect(outputText).toContain('{"id":"1","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}');
+    expect(outputText).toContain('{"id":"4","choices":[{"index":0,"delta":{"content":"Final verified answer."},"finish_reason":null}]}');
+    expect(outputText).toContain("data: [DONE]");
+  });
 });

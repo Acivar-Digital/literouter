@@ -119,7 +119,7 @@ describe("Zod Schema — Environment Variables Auto-Coercion & Defaults", () => 
     expect(parsed.LITEROUTER_PORT).toBe(7766);
     expect(parsed.LITEROUTER_TTFT_TIMEOUT_MS).toBe(120000);
     expect(parsed.LITEROUTER_NO_RESPONSE_TIMEOUT_MS).toBe(120000);
-    expect(parsed.LITEROUTER_STREAM_IDLE_TIMEOUT_MS).toBe(30000);
+    expect(parsed.LITEROUTER_STREAM_IDLE_TIMEOUT_MS).toBe(120000);
     expect(parsed.COOLDOWN_RATE_LIMIT_TTL_SEC).toBe(65);
     expect(parsed.LITEROUTER_STRIP_REASONING).toBe(true);
   });

@@ -20,6 +20,7 @@ import type { OpenAIRequestPayload } from "../transformers/nuances";
 import { createDotsStreamTransformer, parseDotsXml } from "../transformers/dots";
 import {
   createOpenCodeReasoningFilterStreamTransformer,
+  isOpenCodeClient,
 } from "../transformers/thinking";
 import type { FusionConfig, FusionTier } from "../config/schema";
 import { getEnv } from "../config/env";
@@ -197,10 +198,13 @@ function determineShouldFilterReasoning(
   if (clientOptions?.filterReasoning !== undefined) {
     return clientOptions.filterReasoning;
   }
+  if (directive.nuances.includes("ts")) {
+    return false;
+  }
   if (directive.nuances.includes("sb")) {
     return true;
   }
-  return false;
+  return isOpenCodeClient(clientOptions?.userAgent, clientOptions?.headers, directive.nuances);
 }
 
 export function stripReasoningFromResponseBody(json: Record<string, unknown>): void {

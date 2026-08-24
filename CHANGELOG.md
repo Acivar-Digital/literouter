@@ -4,6 +4,20 @@ All notable changes to LiteRouter will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed / Stream Idle Timeout Unification & OpenCode Stream Healing (`docs/Stream_Idle_Timeouts.md`)
+- **Unified Stream Idle Timeout (120s / 2 Minutes) (`src/network/fetcher.ts`, `src/config/schema.ts`, `src/config/env.ts`)**:
+  - Unified `STREAM_IDLE_TIMEOUT_MS` and `LITEROUTER_STREAM_IDLE_TIMEOUT_MS` from 30s to 120s (2 minutes), aligning inter-chunk stall detection with TTFT budgets to support deep reasoning models (`stealth/ox-alpha`) on large contexts (40k+ tokens).
+- **Upstream Raw Control Character Sanitization (`src/transformers/thinking.ts`)**:
+  - Implemented `sanitizeRawControlChars` in `processSseDataLine` to escape unescaped carriage returns (`0x0D` / `\r`) emitted inside string literals by upstream providers before calling `JSON.parse`.
+  - Prevents engine-level `JSON Parse error: Unterminated string` in downstream client parsers (Vercel AI SDK in OpenCode) that previously caused instant 21ms aborts with `rawFinish: "network_error"`.
+- **OpenCode Reasoning Filter Handler Wiring (`src/handlers/openai_compat.ts`)**:
+  - Fixed `determineShouldFilterReasoning` to properly invoke `isOpenCodeClient`, ensuring `createOpenCodeReasoningFilterStreamTransformer` is correctly attached for OpenCode sessions under default directives (e.g. `lr-or-oa-ch-no`).
+- **Strict Delta Content Sanitization (`src/transformers/thinking.ts`)**:
+  - Updated `sanitizeDelta` to automatically delete `content` if it is `null` or `undefined`, ensuring streaming deltas conform with strict downstream client Zod schemas (`content: z.string().optional()`).
+  - Completely drops pure reasoning frames without emitting orphaned newline characters, preventing SSE parser desynchronization.
+- **Forensic Documentation & Diagnostic Playbook (`docs/Stream_Idle_Timeouts.md`)**:
+  - Published comprehensive root cause analysis and Section 7 Diagnostic Playbook covering the 5 primary agent stall vectors (output token exhaustion, bash quoting deadlocks, UI permission gates, edge H2 resets, and SQLite WAL contention).
+
 ### Added / OpenCode2 Auto-Patcher & Self-Healing Launcher (`scripts/opencode2_autopatch.sh`)
 - **Standalone Auto-Patcher Script (`scripts/opencode2_autopatch.sh`)**:
   - Implemented an idempotent, standalone bash script verifying the installed `@opencode-ai/cli` in Node/NVM directory.

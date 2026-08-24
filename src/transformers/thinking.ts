@@ -276,12 +276,11 @@ export function isOpenCodeClient(
 }
 
 function hasMeaningfulDeltaFields(delta: Record<string, unknown>): boolean {
-  return (
-    delta.content !== undefined ||
-    delta.tool_calls !== undefined ||
-    delta.role !== undefined ||
-    delta.refusal !== undefined
-  );
+  const hasContent = typeof delta.content === "string" && delta.content.length > 0;
+  const hasToolCalls = Array.isArray(delta.tool_calls) && delta.tool_calls.length > 0;
+  const hasRole = typeof delta.role === "string" && delta.role.length > 0;
+  const hasRefusal = typeof delta.refusal === "string" && delta.refusal.length > 0;
+  return hasContent || hasToolCalls || hasRole || hasRefusal;
 }
 
 function sanitizeDelta(rawDelta: unknown): { delta: Record<string, unknown>; hasContent: boolean } {
@@ -292,6 +291,18 @@ function sanitizeDelta(rawDelta: unknown): { delta: Record<string, unknown>; has
   delete delta.reasoning;
   delete delta.reasoning_content;
   delete delta.reasoning_details;
+  delete delta.reasoningDetails;
+  delete delta.thought;
+  delete delta.thinking;
+  delete delta.thoughts;
+
+  if (delta.content === null || delta.content === undefined) {
+    delete delta.content;
+  }
+  if (Array.isArray(delta.tool_calls) && delta.tool_calls.length === 0) {
+    delete delta.tool_calls;
+  }
+
   return { delta, hasContent: hasMeaningfulDeltaFields(delta) };
 }
 
@@ -343,18 +354,23 @@ export function filterReasoningFromChunk(data: Record<string, unknown>): {
   return { filteredData: filtered, shouldEmit };
 }
 
+function sanitizeRawControlChars(rawJsonStr: string): string {
+  return rawJsonStr.replace(/\r/g, "\\r");
+}
+
 function processSseDataLine(line: string): string | null {
-  const jsonStr = line.slice(6);
+  const jsonStr = line.slice(6).trim();
   try {
-    const data = JSON.parse(jsonStr) as Record<string, unknown>;
+    const sanitized = sanitizeRawControlChars(jsonStr);
+    const data = JSON.parse(sanitized) as Record<string, unknown>;
     const { filteredData, shouldEmit } = filterReasoningFromChunk(data);
     if (!shouldEmit) {
       return null;
     }
-    return `data: ${JSON.stringify(filteredData)}\n`;
+    return `data: ${JSON.stringify(filteredData)}`;
   } catch (err: unknown) {
     void err;
-    return line + "\n";
+    return line;
   }
 }
 
@@ -371,17 +387,20 @@ export function createOpenCodeReasoningFilterStreamTransformer(): TransformStrea
 
       for (const line of lines) {
         const trimmed = line.trim();
-        if (!trimmed || trimmed.startsWith(":") || trimmed === "data: [DONE]") {
-          controller.enqueue(encoder.encode(line + "\n"));
+        if (!trimmed) {
+          continue;
+        }
+        if (trimmed.startsWith(":") || trimmed === "data: [DONE]") {
+          controller.enqueue(encoder.encode(trimmed + "\n\n"));
           continue;
         }
         if (trimmed.startsWith("data: ")) {
           const transformed = processSseDataLine(trimmed);
           if (transformed) {
-            controller.enqueue(encoder.encode(transformed));
+            controller.enqueue(encoder.encode(transformed + "\n\n"));
           }
         } else {
-          controller.enqueue(encoder.encode(line + "\n"));
+          controller.enqueue(encoder.encode(trimmed + "\n\n"));
         }
       }
     },
@@ -391,10 +410,10 @@ export function createOpenCodeReasoningFilterStreamTransformer(): TransformStrea
         if (trimmed.startsWith("data: ") && trimmed !== "data: [DONE]") {
           const transformed = processSseDataLine(trimmed);
           if (transformed) {
-            controller.enqueue(encoder.encode(transformed));
+            controller.enqueue(encoder.encode(transformed + "\n\n"));
           }
-        } else {
-          controller.enqueue(encoder.encode(lineBuffer));
+        } else if (trimmed) {
+          controller.enqueue(encoder.encode(trimmed + "\n\n"));
         }
       }
     },
