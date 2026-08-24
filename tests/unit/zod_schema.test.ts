@@ -117,7 +117,8 @@ describe("Zod Schema — Environment Variables Auto-Coercion & Defaults", () => 
   it("applies resilient defaults when optional env vars are omitted", () => {
     const parsed = EnvConfigSchema.parse({});
     expect(parsed.LITEROUTER_PORT).toBe(7766);
-    expect(parsed.LITEROUTER_NO_RESPONSE_TIMEOUT_MS).toBe(5000);
+    expect(parsed.LITEROUTER_TTFT_TIMEOUT_MS).toBe(120000);
+    expect(parsed.LITEROUTER_NO_RESPONSE_TIMEOUT_MS).toBe(120000);
     expect(parsed.LITEROUTER_STREAM_IDLE_TIMEOUT_MS).toBe(30000);
     expect(parsed.COOLDOWN_RATE_LIMIT_TTL_SEC).toBe(65);
     expect(parsed.LITEROUTER_STRIP_REASONING).toBe(true);
@@ -126,12 +127,14 @@ describe("Zod Schema — Environment Variables Auto-Coercion & Defaults", () => 
   it("coerces string numbers and booleans properly", () => {
     const envInput = {
       LITEROUTER_PORT: "8080",
+      LITEROUTER_TTFT_TIMEOUT_MS: "60000",
       LITEROUTER_NO_RESPONSE_TIMEOUT_MS: "3000",
       LITEROUTER_STRIP_REASONING: "false",
     };
 
     const parsed = EnvConfigSchema.parse(envInput);
     expect(parsed.LITEROUTER_PORT).toBe(8080);
+    expect(parsed.LITEROUTER_TTFT_TIMEOUT_MS).toBe(60000);
     expect(parsed.LITEROUTER_NO_RESPONSE_TIMEOUT_MS).toBe(3000);
     expect(parsed.LITEROUTER_STRIP_REASONING).toBe(false);
   });

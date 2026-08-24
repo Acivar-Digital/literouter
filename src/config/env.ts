@@ -8,7 +8,8 @@ const DEFAULT_ENV_RECORD: Record<string, string> = {
   LITEROUTER_HTTP2: "true",
   LITEROUTER_STRIP_REASONING: "true",
   LITEROUTER_ENABLE_SCRUBBING: "false",
-  LITEROUTER_NO_RESPONSE_TIMEOUT_MS: "5000",
+  LITEROUTER_TTFT_TIMEOUT_MS: "120000",
+  LITEROUTER_NO_RESPONSE_TIMEOUT_MS: "120000",
   LITEROUTER_STREAM_IDLE_TIMEOUT_MS: "30000",
   LITEROUTER_HTTP_TIMEOUT_MS: "300000",
   LITEROUTER_IDLE_TIMEOUT_SEC: "60",
@@ -48,9 +49,19 @@ function parseSafeEnv(source: Record<string, string | undefined>): EnvConfig {
     const val = Number(normalized.LITEROUTER_HTTP_TIMEOUT);
     normalized.LITEROUTER_HTTP_TIMEOUT_MS = String(val < 1000 ? val * 1000 : val);
   }
+  if (!normalized.LITEROUTER_TTFT_TIMEOUT_MS && normalized.LITEROUTER_TTFT_TIMEOUT) {
+    const val = Number(normalized.LITEROUTER_TTFT_TIMEOUT);
+    normalized.LITEROUTER_TTFT_TIMEOUT_MS = String(val < 1000 ? val * 1000 : val);
+  }
   if (!normalized.LITEROUTER_NO_RESPONSE_TIMEOUT_MS && normalized.LITEROUTER_NO_RESPONSE_TIMEOUT) {
     const val = Number(normalized.LITEROUTER_NO_RESPONSE_TIMEOUT);
     normalized.LITEROUTER_NO_RESPONSE_TIMEOUT_MS = String(val < 1000 ? val * 1000 : val);
+  }
+  if (!normalized.LITEROUTER_TTFT_TIMEOUT_MS && normalized.LITEROUTER_NO_RESPONSE_TIMEOUT_MS) {
+    normalized.LITEROUTER_TTFT_TIMEOUT_MS = normalized.LITEROUTER_NO_RESPONSE_TIMEOUT_MS;
+  }
+  if (!normalized.LITEROUTER_NO_RESPONSE_TIMEOUT_MS && normalized.LITEROUTER_TTFT_TIMEOUT_MS) {
+    normalized.LITEROUTER_NO_RESPONSE_TIMEOUT_MS = normalized.LITEROUTER_TTFT_TIMEOUT_MS;
   }
   if (normalized.LITEROUTER_HTTP2 === undefined && normalized.LITEROUTER_ENFORCE_HTTP2 !== undefined) {
     normalized.LITEROUTER_HTTP2 = normalized.LITEROUTER_ENFORCE_HTTP2;

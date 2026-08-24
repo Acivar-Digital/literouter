@@ -56,7 +56,7 @@ export class StreamStallError extends Error {
   }
 }
 
-export const TTFT_TIMEOUT_MS = 15000;
+export const TTFT_TIMEOUT_MS = 120000;
 export const STREAM_IDLE_TIMEOUT_MS = 30000;
 export const MAX_HTTP_TIMEOUT_MS = 300000;
 export const KEEPALIVE_INTERVAL_MS = 15000;
@@ -142,13 +142,8 @@ function clearTimer(timer: IntervalHandle | null): void {
 type DefaultReadResult = Awaited<ReturnType<ReadableStreamDefaultReader<Uint8Array>["read"]>>;
 
 export function resolveTtftTimeout(model?: string, envTimeoutMs?: number): number {
-  const base = envTimeoutMs && envTimeoutMs > 0 ? envTimeoutMs : 15000;
-  if (!model) return base;
-  const isReasoningModel = /o1|o3|deepseek|r1|dots|thinking|preview|coder|reasoning|thought/i.test(model);
-  if (isReasoningModel) {
-    return Math.max(60000, base);
-  }
-  return base;
+  void model;
+  return envTimeoutMs && envTimeoutMs > 0 ? envTimeoutMs : TTFT_TIMEOUT_MS;
 }
 
 export function formatMidstreamErrorFrame(protocol: "anthropic" | "openai" | string, message: string): Uint8Array {
@@ -523,7 +518,7 @@ export async function fetchWithTtftGuard(
   }
 
   const reader = response.body.getReader();
-  const envTtft = getEnv().LITEROUTER_NO_RESPONSE_TIMEOUT_MS;
+  const envTtft = getEnv().LITEROUTER_TTFT_TIMEOUT_MS || getEnv().LITEROUTER_NO_RESPONSE_TIMEOUT_MS;
   const ttftTimeoutMs = resolveTtftTimeout(options.model, envTtft);
   let firstChunk: Uint8Array;
   try {

@@ -73,20 +73,21 @@ describe("Fetcher — Transport Error Wrapping", () => {
 });
 
 describe("Dynamic TTFT Resolution (`resolveTtftTimeout`)", () => {
-  it("defaults to 15000ms when model is undefined or empty", () => {
-    expect(resolveTtftTimeout()).toBe(15000);
-    expect(resolveTtftTimeout(undefined, undefined)).toBe(15000);
-    expect(resolveTtftTimeout("", undefined)).toBe(15000);
+  it("defaults to 120000ms (120s) when model is undefined or empty", () => {
+    expect(resolveTtftTimeout()).toBe(120000);
+    expect(resolveTtftTimeout(undefined, undefined)).toBe(120000);
+    expect(resolveTtftTimeout("", undefined)).toBe(120000);
   });
 
-  it("uses envTimeoutMs for standard non-reasoning models", () => {
+  it("uses envTimeoutMs when provided for all models", () => {
     expect(resolveTtftTimeout("gpt-4o", 8000)).toBe(8000);
     expect(resolveTtftTimeout("claude-3-5-sonnet-20241022", 10000)).toBe(10000);
-    expect(resolveTtftTimeout("meta-llama/llama-3.3-70b-instruct")).toBe(15000);
+    expect(resolveTtftTimeout("meta-llama/llama-3.3-70b-instruct")).toBe(120000);
+    expect(resolveTtftTimeout("meta-llama/llama-3.3-70b-instruct", 50000)).toBe(50000);
   });
 
-  it("scales to at least 60000ms for reasoning and preview models", () => {
-    const reasoningModels = [
+  it("unifies TTFT timeout to 120000ms across all models including reasoning and preview models", () => {
+    const models = [
       "o1",
       "o1-mini",
       "o1-preview",
@@ -102,18 +103,13 @@ describe("Dynamic TTFT Resolution (`resolveTtftTimeout`)", () => {
       "qwen-coder-32b",
       "dots-ocr-preview",
       "deepseek-coder",
+      "gpt-4o",
     ];
 
-    for (const model of reasoningModels) {
-      expect(resolveTtftTimeout(model)).toBe(60000);
-      expect(resolveTtftTimeout(model, 5000)).toBe(60000);
-      expect(resolveTtftTimeout(model, 15000)).toBe(60000);
+    for (const model of models) {
+      expect(resolveTtftTimeout(model)).toBe(120000);
+      expect(resolveTtftTimeout(model, 30000)).toBe(30000);
     }
-  });
-
-  it("respects envTimeoutMs if larger than 60000ms for reasoning models", () => {
-    expect(resolveTtftTimeout("deepseek-reasoner", 90000)).toBe(90000);
-    expect(resolveTtftTimeout("o1-mini", 75000)).toBe(75000);
   });
 });
 
