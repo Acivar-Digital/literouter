@@ -20,6 +20,7 @@ import type { OpenAIRequestPayload } from "../transformers/nuances";
 import { createDotsStreamTransformer, parseDotsXml } from "../transformers/dots";
 import {
   createOpenCodeReasoningFilterStreamTransformer,
+  deleteReasoningKeys,
   isOpenCodeClient,
 } from "../transformers/thinking";
 import type { FusionConfig, FusionTier } from "../config/schema";
@@ -207,31 +208,24 @@ function determineShouldFilterReasoning(
   return isOpenCodeClient(clientOptions?.userAgent, clientOptions?.headers, directive.nuances);
 }
 
+function stripReasoningFromChoiceObject(choice: Record<string, unknown>): void {
+  deleteReasoningKeys(choice);
+  if (choice.message && typeof choice.message === "object" && choice.message !== null) {
+    deleteReasoningKeys(choice.message as Record<string, unknown>);
+  }
+  if (choice.delta && typeof choice.delta === "object" && choice.delta !== null) {
+    deleteReasoningKeys(choice.delta as Record<string, unknown>);
+  }
+}
+
 export function stripReasoningFromResponseBody(json: Record<string, unknown>): void {
-  delete json.reasoning_content;
-  delete json.reasoning;
-  delete json.reasoning_details;
+  deleteReasoningKeys(json);
   if (!Array.isArray(json.choices)) {
     return;
   }
   for (const rawChoice of json.choices as Array<Record<string, unknown>>) {
-    if (typeof rawChoice !== "object" || rawChoice === null) {
-      continue;
-    }
-    delete rawChoice.reasoning_content;
-    delete rawChoice.reasoning;
-    delete rawChoice.reasoning_details;
-    if (rawChoice.message && typeof rawChoice.message === "object" && rawChoice.message !== null) {
-      const msg = rawChoice.message as Record<string, unknown>;
-      delete msg.reasoning_content;
-      delete msg.reasoning;
-      delete msg.reasoning_details;
-    }
-    if (rawChoice.delta && typeof rawChoice.delta === "object" && rawChoice.delta !== null) {
-      const delta = rawChoice.delta as Record<string, unknown>;
-      delete delta.reasoning_content;
-      delete delta.reasoning;
-      delete delta.reasoning_details;
+    if (typeof rawChoice === "object" && rawChoice !== null) {
+      stripReasoningFromChoiceObject(rawChoice);
     }
   }
 }

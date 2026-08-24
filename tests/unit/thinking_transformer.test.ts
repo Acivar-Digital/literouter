@@ -73,3 +73,72 @@ describe("Thinking Transformer — Payload Parameter Scrubber", () => {
     expect(cleaned.model).toBe("deepseek/deepseek-r1");
   });
 });
+
+describe("Thinking Transformer — OpenCode Stream Filter & Throttled Heartbeat", () => {
+  it("passes real content deltas and strips reasoning-only deltas", async () => {
+    const { createOpenCodeReasoningFilterStreamTransformer } = await import(
+      "../../src/transformers/thinking"
+    );
+    const transformer = createOpenCodeReasoningFilterStreamTransformer();
+    const encoder = new TextEncoder();
+    const decoder = new TextDecoder();
+
+    const inputChunks = [
+      'data: {"choices":[{"index":0,"delta":{"reasoning":"thinking step 1"}}]}\n\n',
+      'data: {"choices":[{"index":0,"delta":{"content":"Hello world"}}]}\n\n',
+      "data: [DONE]\n\n",
+    ];
+
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (const chunk of inputChunks) {
+          controller.enqueue(encoder.encode(chunk));
+        }
+        controller.close();
+      },
+    });
+
+    const transformedStream = stream.pipeThrough(transformer);
+    const reader = transformedStream.getReader();
+    let accumulated = "";
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      accumulated += decoder.decode(value);
+    }
+
+    expect(accumulated).toContain("Hello world");
+    expect(accumulated).not.toContain("thinking step 1");
+    expect(accumulated).toContain("[DONE]");
+  });
+
+  it("emits synthetic heartbeat on keep-alive comments", async () => {
+    const { createOpenCodeReasoningFilterStreamTransformer } = await import(
+      "../../src/transformers/thinking"
+    );
+    const transformer = createOpenCodeReasoningFilterStreamTransformer();
+    const encoder = new TextEncoder();
+    const decoder = new TextDecoder();
+
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encoder.encode(": keep-alive\n\n"));
+        controller.close();
+      },
+    });
+
+    const transformedStream = stream.pipeThrough(transformer);
+    const reader = transformedStream.getReader();
+    let accumulated = "";
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      accumulated += decoder.decode(value);
+    }
+
+    expect(accumulated).toContain(": keep-alive");
+    expect(accumulated).toContain("chatcmpl-heartbeat");
+  });
+});

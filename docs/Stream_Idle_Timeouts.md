@@ -131,13 +131,15 @@ When `stealth/ox-alpha` processes large prompts (35k–40k tokens) on OpenRouter
 - Implemented `sanitizeRawControlChars` in `src/transformers/thinking.ts` to escape unescaped carriage returns (`0x0D`) emitted inside string literals by upstream providers (`">\r<br> "`).
 - Prevents engine-level `JSON Parse error: Unterminated string` in downstream parsers before schema validation is reached.
 
-### C. Active Empty Delta Heartbeats for SSE Comments
-- In `src/transformers/thinking.ts`, whenever an upstream keepalive comment (`: keep-alive` or `: OPENROUTER PROCESSING`) is received, LiteRouter forwards the comment AND emits a standard OpenAI empty delta frame:
-  ```sse
-  data: {"choices":[{"index":0,"delta":{}}]}
-  ```
+### C. Active Empty Delta Heartbeats for SSE Comments & Suppressed Reasoning Deltas
+- In `src/transformers/thinking.ts`:
+  1. **On SSE Comments**: Whenever an upstream keepalive comment (`: keep-alive` or `: OPENROUTER PROCESSING`) is received, LiteRouter forwards the comment AND emits a standard OpenAI empty delta frame:
+     ```sse
+     data: {"choices":[{"index":0,"delta":{}}]}
+     ```
+  2. **During Continuous Reasoning Suppression (`FILTER_HEARTBEAT_INTERVAL_MS = 5000`)**: When models stream raw `reasoning` chunks that are stripped by LiteRouter, LiteRouter tracks `lastEmittedTime` and emits a synthetic empty delta frame every 5 seconds of continuous reasoning silence.
 - **Zero text impact**: `delta: {}` contains no content or tool calls, so it produces no UI visual artifacts.
-- **Resets client stream timer**: `eventsource-parser` in `@ai-sdk/openai` dispatches the event, resetting OpenCode's 55s inactivity timer every 10–15s throughout extended 60s+ thinking turns.
+- **Resets client stream timer**: `eventsource-parser` in `@ai-sdk/openai` dispatches the event, resetting OpenCode's 55s inactivity timer every 5s throughout extended 60s+ thinking turns, preventing mid-turn freezes and eliminating manual "continue" stalls.
 
 ### D. Unified Stream Idle Timeout (120s / 2 Minutes)
 `LITEROUTER_STREAM_IDLE_TIMEOUT_MS` is unified to **120000 ms (2 minutes)** across all configuration files and runtime defaults:

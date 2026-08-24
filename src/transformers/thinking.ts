@@ -46,11 +46,7 @@ export function extractThoughtSignature(responseObj: unknown): string | undefine
     return undefined;
   }
   const obj = responseObj as Record<string, unknown>;
-  const directSig = extractFromExtraContent(obj);
-  if (directSig) {
-    return directSig;
-  }
-  return extractFromCandidates(obj);
+  return extractFromExtraContent(obj) ?? extractFromCandidates(obj);
 }
 
 function patchToolCallWithSignature(toolCall: OpenAIToolCall): OpenAIToolCall {
@@ -415,8 +411,42 @@ export function processSseDataLine(line: string): string | null {
   }
 }
 
+export const FILTER_HEARTBEAT_INTERVAL_MS = 5000;
+
+export interface FilterTransformerState {
+  lastEmittedTime: number;
+}
+
+function handleSuppressedChunk(
+  state: FilterTransformerState,
+  controller: TransformStreamDefaultController<Uint8Array>,
+  encoder: TextEncoder
+): void {
+  const now = Date.now();
+  if (now - state.lastEmittedTime >= FILTER_HEARTBEAT_INTERVAL_MS) {
+    controller.enqueue(encoder.encode(createSyntheticHeartbeatChunk()));
+    state.lastEmittedTime = now;
+  }
+}
+
+function handleDataLine(
+  trimmed: string,
+  state: FilterTransformerState,
+  controller: TransformStreamDefaultController<Uint8Array>,
+  encoder: TextEncoder
+): void {
+  const transformed = processSseDataLine(trimmed);
+  if (transformed) {
+    controller.enqueue(encoder.encode(transformed + "\n\n"));
+    state.lastEmittedTime = Date.now();
+  } else {
+    handleSuppressedChunk(state, controller, encoder);
+  }
+}
+
 function handleSseLine(
   line: string,
+  state: FilterTransformerState,
   controller: TransformStreamDefaultController<Uint8Array>,
   encoder: TextEncoder
 ): void {
@@ -428,27 +458,28 @@ function handleSseLine(
   if (trimmed.startsWith(":")) {
     controller.enqueue(encoder.encode(trimmed + "\n\n"));
     controller.enqueue(encoder.encode(createSyntheticHeartbeatChunk()));
+    state.lastEmittedTime = Date.now();
     return;
   }
 
   if (trimmed === "data: [DONE]" || trimmed === "data:[DONE]") {
     controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+    state.lastEmittedTime = Date.now();
     return;
   }
 
   if (trimmed.startsWith("data:")) {
-    const transformed = processSseDataLine(trimmed);
-    if (transformed) {
-      controller.enqueue(encoder.encode(transformed + "\n\n"));
-    }
+    handleDataLine(trimmed, state, controller, encoder);
     return;
   }
 
   controller.enqueue(encoder.encode(trimmed + "\n\n"));
+  state.lastEmittedTime = Date.now();
 }
 
 function flushRemainingBuffer(
   lineBuffer: string,
+  state: FilterTransformerState,
   controller: TransformStreamDefaultController<Uint8Array>,
   encoder: TextEncoder
 ): void {
@@ -460,16 +491,21 @@ function flushRemainingBuffer(
     const transformed = processSseDataLine(trimmed);
     if (transformed) {
       controller.enqueue(encoder.encode(transformed + "\n\n"));
+      state.lastEmittedTime = Date.now();
     }
     return;
   }
   controller.enqueue(encoder.encode(trimmed + "\n\n"));
+  state.lastEmittedTime = Date.now();
 }
 
 export function createOpenCodeReasoningFilterStreamTransformer(): TransformStream<Uint8Array, Uint8Array> {
   const decoder = new TextDecoder("utf-8", { fatal: false });
   const encoder = new TextEncoder();
   let lineBuffer = "";
+  const state: FilterTransformerState = {
+    lastEmittedTime: Date.now(),
+  };
 
   return new TransformStream<Uint8Array, Uint8Array>({
     transform(chunk, controller) {
@@ -478,12 +514,12 @@ export function createOpenCodeReasoningFilterStreamTransformer(): TransformStrea
       lineBuffer = lines.pop() ?? "";
 
       for (const line of lines) {
-        handleSseLine(line, controller, encoder);
+        handleSseLine(line, state, controller, encoder);
       }
     },
     flush(controller) {
       if (lineBuffer.length > 0) {
-        flushRemainingBuffer(lineBuffer, controller, encoder);
+        flushRemainingBuffer(lineBuffer, state, controller, encoder);
         lineBuffer = "";
       }
     },

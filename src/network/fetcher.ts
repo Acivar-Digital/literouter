@@ -114,7 +114,7 @@ function tryEnqueueKeepAlive(controller: ReadableStreamDefaultController<Uint8Ar
     controller.enqueue(createKeepAliveChunk());
   } catch (err: unknown) {
     if (err instanceof Error) {
-      console.error(`[KeepAlive] Enqueue error: ${err.message}`);
+      console.debug(`[KeepAlive] Suppressed enqueue on closed stream: ${err.message}`);
     }
   }
 }

@@ -4,6 +4,15 @@ All notable changes to LiteRouter will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed / Throttled Synthetic Heartbeats for Extended Reasoning Streams (`src/transformers/thinking.ts`, `src/handlers/openai_compat.ts`)
+- **Throttled 5s Empty Delta Heartbeats (`FILTER_HEARTBEAT_INTERVAL_MS = 5000`)**:
+  - Implemented stateful heartbeat tracking in `createOpenCodeReasoningFilterStreamTransformer`: whenever deep reasoning models (e.g. `stealth/ox-alpha`) stream continuous reasoning deltas that are stripped by the OpenCode filter, LiteRouter emits a standard empty delta frame `data: {"id":"chatcmpl-heartbeat", ... "choices":[{"index":0,"delta":{}}]}` at 5-second intervals.
+  - Prevents client-side 55-second stream inactivity timeouts in OpenCode (Vercel AI SDK / `eventsource-parser`), permanently eliminating the mid-turn freeze and manual "continue" stall on long reasoning prompts.
+- **Unified Reasoning Key Stripping for Non-Streaming Responses (`src/handlers/openai_compat.ts`)**:
+  - Reused `deleteReasoningKeys` in `stripReasoningFromResponseBody`, ensuring all 9 reasoning key variants (`thought`, `thoughts`, `thinking`, `thinking_content`, `reasoningDetails`, `think`, `reasoning`, `reasoning_content`, `reasoning_details`) are sanitized across non-streaming responses.
+- **Suppressed KeepAlive Logging on Disconnected Sockets (`src/network/fetcher.ts`)**:
+  - Downgraded `tryEnqueueKeepAlive` logging on closed downstream controllers from `error` to `debug`.
+
 ### Fixed / Stream Idle Timeout Unification & OpenCode Stream Healing (`docs/Stream_Idle_Timeouts.md`)
 - **Unified Stream Idle Timeout (120s / 2 Minutes) (`src/network/fetcher.ts`, `src/config/schema.ts`, `src/config/env.ts`)**:
   - Unified `STREAM_IDLE_TIMEOUT_MS` and `LITEROUTER_STREAM_IDLE_TIMEOUT_MS` from 30s to 120s (2 minutes), aligning inter-chunk stall detection with TTFT budgets to support deep reasoning models (`stealth/ox-alpha`) on large contexts (40k+ tokens).
