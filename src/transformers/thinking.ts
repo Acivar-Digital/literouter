@@ -244,6 +244,24 @@ export function processThinkingDelta(
   return formatDefaultDelta(chunk, state, preserveThinking);
 }
 
+const REASONING_KEYS: readonly string[] = Object.freeze([
+  "reasoning",
+  "reasoning_content",
+  "reasoning_details",
+  "reasoningDetails",
+  "thought",
+  "thoughts",
+  "thinking",
+  "thinking_content",
+  "think",
+]);
+
+export function deleteReasoningKeys(target: Record<string, unknown>): void {
+  for (const key of REASONING_KEYS) {
+    delete target[key];
+  }
+}
+
 export function isOpenCodeClient(
   userAgent?: string | null,
   headers?: Headers | Record<string, string | string[] | undefined> | null,
@@ -275,26 +293,21 @@ export function isOpenCodeClient(
   return typeof clientName === "string" && clientName.toLowerCase().includes("opencode");
 }
 
-function hasMeaningfulDeltaFields(delta: Record<string, unknown>): boolean {
+export function hasMeaningfulDeltaFields(delta: Record<string, unknown>): boolean {
   const hasContent = typeof delta.content === "string" && delta.content.length > 0;
   const hasToolCalls = Array.isArray(delta.tool_calls) && delta.tool_calls.length > 0;
   const hasRole = typeof delta.role === "string" && delta.role.length > 0;
   const hasRefusal = typeof delta.refusal === "string" && delta.refusal.length > 0;
-  return hasContent || hasToolCalls || hasRole || hasRefusal;
+  const hasFunctionCall = typeof delta.function_call === "object" && delta.function_call !== null;
+  return hasContent || hasToolCalls || hasRole || hasRefusal || hasFunctionCall;
 }
 
-function sanitizeDelta(rawDelta: unknown): { delta: Record<string, unknown>; hasContent: boolean } {
+export function sanitizeDelta(rawDelta: unknown): { delta: Record<string, unknown>; hasContent: boolean } {
   if (typeof rawDelta !== "object" || rawDelta === null) {
     return { delta: {}, hasContent: false };
   }
   const delta: Record<string, unknown> = { ...(rawDelta as Record<string, unknown>) };
-  delete delta.reasoning;
-  delete delta.reasoning_content;
-  delete delta.reasoning_details;
-  delete delta.reasoningDetails;
-  delete delta.thought;
-  delete delta.thinking;
-  delete delta.thoughts;
+  deleteReasoningKeys(delta);
 
   if (delta.content === null || delta.content === undefined) {
     delete delta.content;
@@ -306,14 +319,12 @@ function sanitizeDelta(rawDelta: unknown): { delta: Record<string, unknown>; has
   return { delta, hasContent: hasMeaningfulDeltaFields(delta) };
 }
 
-function filterReasoningFromChoice(rawChoice: unknown): { choice: Record<string, unknown>; hasData: boolean } {
+export function filterReasoningFromChoice(rawChoice: unknown): { choice: Record<string, unknown>; hasData: boolean } {
   if (typeof rawChoice !== "object" || rawChoice === null) {
     return { choice: {}, hasData: false };
   }
   const choice: Record<string, unknown> = { ...(rawChoice as Record<string, unknown>) };
-  delete choice.reasoning_content;
-  delete choice.reasoning;
-  delete choice.reasoning_details;
+  deleteReasoningKeys(choice);
 
   let hasData = choice.finish_reason !== null && choice.finish_reason !== undefined;
 
@@ -328,38 +339,68 @@ function filterReasoningFromChoice(rawChoice: unknown): { choice: Record<string,
   return { choice, hasData };
 }
 
+function processChoices(
+  rawChoices: readonly unknown[]
+): { choices: Record<string, unknown>[]; hasChoiceData: boolean } {
+  const choices: Record<string, unknown>[] = [];
+  let hasChoiceData = false;
+  for (const rawChoice of rawChoices) {
+    const { choice, hasData } = filterReasoningFromChoice(rawChoice);
+    if (hasData) {
+      hasChoiceData = true;
+    }
+    choices.push(choice);
+  }
+  return { choices, hasChoiceData };
+}
+
 export function filterReasoningFromChunk(data: Record<string, unknown>): {
   filteredData: Record<string, unknown>;
   shouldEmit: boolean;
 } {
   const filtered: Record<string, unknown> = { ...data };
-  delete filtered.reasoning_content;
-  delete filtered.reasoning;
-  delete filtered.reasoning_details;
+  deleteReasoningKeys(filtered);
 
   let shouldEmit = filtered.usage != null || filtered.error != null;
 
   if (Array.isArray(filtered.choices)) {
-    const newChoices: Record<string, unknown>[] = [];
-    for (const rawChoice of filtered.choices) {
-      const { choice, hasData } = filterReasoningFromChoice(rawChoice);
-      if (hasData) {
-        shouldEmit = true;
-      }
-      newChoices.push(choice);
+    const { choices, hasChoiceData } = processChoices(filtered.choices);
+    filtered.choices = choices;
+    if (hasChoiceData) {
+      shouldEmit = true;
     }
-    filtered.choices = newChoices;
   }
 
   return { filteredData: filtered, shouldEmit };
 }
 
-function sanitizeRawControlChars(rawJsonStr: string): string {
+export function sanitizeRawControlChars(rawJsonStr: string): string {
   return rawJsonStr.replace(/\r/g, "\\r");
 }
 
-function processSseDataLine(line: string): string | null {
-  const jsonStr = line.slice(6).trim();
+export function createSyntheticHeartbeatChunk(): string {
+  const heartbeatPayload = {
+    id: "chatcmpl-heartbeat",
+    object: "chat.completion.chunk",
+    created: Math.floor(Date.now() / 1000),
+    model: "heartbeat",
+    choices: [
+      {
+        index: 0,
+        delta: {},
+        finish_reason: null,
+      },
+    ],
+  };
+  return `data: ${JSON.stringify(heartbeatPayload)}\n\n`;
+}
+
+function extractJsonFromSseLine(trimmed: string): string {
+  return trimmed.slice(5).trim();
+}
+
+export function processSseDataLine(line: string): string | null {
+  const jsonStr = extractJsonFromSseLine(line);
   try {
     const sanitized = sanitizeRawControlChars(jsonStr);
     const data = JSON.parse(sanitized) as Record<string, unknown>;
@@ -368,14 +409,65 @@ function processSseDataLine(line: string): string | null {
       return null;
     }
     return `data: ${JSON.stringify(filteredData)}`;
-  } catch (err: unknown) {
-    void err;
+  } catch (_err: unknown) {
+    void _err;
     return line;
   }
 }
 
+function handleSseLine(
+  line: string,
+  controller: TransformStreamDefaultController<Uint8Array>,
+  encoder: TextEncoder
+): void {
+  const trimmed = line.trim();
+  if (!trimmed) {
+    return;
+  }
+
+  if (trimmed.startsWith(":")) {
+    controller.enqueue(encoder.encode(trimmed + "\n\n"));
+    controller.enqueue(encoder.encode(createSyntheticHeartbeatChunk()));
+    return;
+  }
+
+  if (trimmed === "data: [DONE]" || trimmed === "data:[DONE]") {
+    controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+    return;
+  }
+
+  if (trimmed.startsWith("data:")) {
+    const transformed = processSseDataLine(trimmed);
+    if (transformed) {
+      controller.enqueue(encoder.encode(transformed + "\n\n"));
+    }
+    return;
+  }
+
+  controller.enqueue(encoder.encode(trimmed + "\n\n"));
+}
+
+function flushRemainingBuffer(
+  lineBuffer: string,
+  controller: TransformStreamDefaultController<Uint8Array>,
+  encoder: TextEncoder
+): void {
+  const trimmed = lineBuffer.trim();
+  if (!trimmed) {
+    return;
+  }
+  if (trimmed.startsWith("data:") && trimmed !== "data: [DONE]" && trimmed !== "data:[DONE]") {
+    const transformed = processSseDataLine(trimmed);
+    if (transformed) {
+      controller.enqueue(encoder.encode(transformed + "\n\n"));
+    }
+    return;
+  }
+  controller.enqueue(encoder.encode(trimmed + "\n\n"));
+}
+
 export function createOpenCodeReasoningFilterStreamTransformer(): TransformStream<Uint8Array, Uint8Array> {
-  const decoder = new TextDecoder();
+  const decoder = new TextDecoder("utf-8", { fatal: false });
   const encoder = new TextEncoder();
   let lineBuffer = "";
 
@@ -386,42 +478,13 @@ export function createOpenCodeReasoningFilterStreamTransformer(): TransformStrea
       lineBuffer = lines.pop() ?? "";
 
       for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed) {
-          continue;
-        }
-        if (trimmed.startsWith(":") || trimmed === "data: [DONE]") {
-          if (trimmed.startsWith(":")) {
-            controller.enqueue(encoder.encode(trimmed + "\n\n"));
-            // Emit an active empty delta heartbeat so downstream client parsers (like Vercel AI SDK)
-            // that discard comment lines still receive activity events and do not idle-timeout
-            controller.enqueue(encoder.encode('data: {"choices":[{"index":0,"delta":{}}]}\n\n'));
-          } else {
-            controller.enqueue(encoder.encode(trimmed + "\n\n"));
-          }
-          continue;
-        }
-        if (trimmed.startsWith("data: ")) {
-          const transformed = processSseDataLine(trimmed);
-          if (transformed) {
-            controller.enqueue(encoder.encode(transformed + "\n\n"));
-          }
-        } else {
-          controller.enqueue(encoder.encode(trimmed + "\n\n"));
-        }
+        handleSseLine(line, controller, encoder);
       }
     },
     flush(controller) {
       if (lineBuffer.length > 0) {
-        const trimmed = lineBuffer.trim();
-        if (trimmed.startsWith("data: ") && trimmed !== "data: [DONE]") {
-          const transformed = processSseDataLine(trimmed);
-          if (transformed) {
-            controller.enqueue(encoder.encode(transformed + "\n\n"));
-          }
-        } else if (trimmed) {
-          controller.enqueue(encoder.encode(trimmed + "\n\n"));
-        }
+        flushRemainingBuffer(lineBuffer, controller, encoder);
+        lineBuffer = "";
       }
     },
   });
