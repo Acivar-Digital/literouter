@@ -1,4 +1,4 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, spyOn } from "bun:test";
 import {
   createOpenCodeReasoningFilterStreamTransformer,
   filterReasoningFromChunk,
@@ -476,5 +476,34 @@ describe("OpenCode2 Downstream SSE Stream — Live Thinking Delivery", () => {
     expect(outputText).toContain('{"id":"1","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}');
     expect(outputText).toContain('{"id":"4","choices":[{"index":0,"delta":{"content":"Final verified answer."},"finish_reason":null}]}');
     expect(outputText).toContain("data: [DONE]");
+  });
+
+  it("emits telemetry and token truncation warning when finish_reason arrives in stream", async () => {
+    const logSpy = spyOn(console, "log").mockImplementation(() => {});
+    const warnSpy = spyOn(console, "warn").mockImplementation(() => {});
+
+    const inputEvents = [
+      'data: {"id":"1","choices":[{"index":0,"delta":{"content":"Partial content"},"finish_reason":null}]}\n\n',
+      'data: {"id":"2","choices":[{"index":0,"delta":{},"finish_reason":"length"}]}\n\n',
+      'data: [DONE]\n\n',
+    ].join("");
+
+    const encoder = new TextEncoder();
+    const rawStream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encoder.encode(inputEvents));
+        controller.close();
+      },
+    });
+
+    const stream = rawStream.pipeThrough(createOpenCodeReasoningFilterStreamTransformer("REQ-trunc-test"));
+    await readStreamToString(stream);
+
+    expect(warnSpy).toHaveBeenCalled();
+    const warnCalls = (warnSpy.mock.calls as unknown[][]).map((c) => String(c[0]));
+    expect(warnCalls.some((c) => c.includes("[FINISH REQ-trunc-test]") && c.includes("Upstream token truncation occurred (finish_reason=length)"))).toBe(true);
+
+    logSpy.mockRestore();
+    warnSpy.mockRestore();
   });
 });

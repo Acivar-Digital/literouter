@@ -27,6 +27,7 @@ export interface UsageCallbackPayload {
 
 export interface StreamCallbacks {
   readonly onUsage?: (usage: UsageCallbackPayload) => void;
+  readonly onFinishReason?: (finishReason: string) => void;
   readonly retryProvider?: RetryProvider;
   readonly nextAttemptProvider?: RetryProvider;
   readonly protocol?: "anthropic" | "openai" | string;
@@ -276,6 +277,36 @@ export function extractUsageFromChunk(chunk: Uint8Array | string): UsageCallback
         const completionTokens = typeof u.candidatesTokenCount === "number" ? u.candidatesTokenCount : 0;
         const totalTokens = typeof u.totalTokenCount === "number" ? u.totalTokenCount : promptTokens + completionTokens;
         return { promptTokens, completionTokens, totalTokens };
+      }
+    } catch (_err: unknown) {
+      void _err;
+    }
+  }
+  return null;
+}
+
+export function extractFinishReasonFromChunk(chunk: Uint8Array | string): string | null {
+  const text = typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk);
+  if (!text.includes("finish_reason") && !text.includes("finishReason") && !text.includes("stop_reason")) {
+    return null;
+  }
+  const lines = text.split("\n");
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith("data:") || trimmed === "data: [DONE]" || trimmed === "data:[DONE]") {
+      continue;
+    }
+    const jsonStr = trimmed.slice(5).trim();
+    try {
+      const data = JSON.parse(jsonStr) as Record<string, unknown>;
+      if (Array.isArray(data.choices) && data.choices.length > 0) {
+        const choice = data.choices[0] as Record<string, unknown>;
+        if (typeof choice.finish_reason === "string" && choice.finish_reason.length > 0) {
+          return choice.finish_reason;
+        }
+      }
+      if (typeof data.stop_reason === "string" && data.stop_reason.length > 0) {
+        return data.stop_reason;
       }
     } catch (_err: unknown) {
       void _err;
@@ -829,6 +860,12 @@ async function processBufferedText(
   }
 
   inspectChunkMarkers(text, ctx.tokenState);
+  if (ctx.callbacks?.onFinishReason) {
+    const finishReason = extractFinishReasonFromChunk(text);
+    if (finishReason) {
+      ctx.callbacks.onFinishReason(finishReason);
+    }
+  }
   if (!ctx.usageState.usageEmitted && ctx.callbacks?.onUsage) {
     const usage = extractUsageFromChunk(text);
     if (usage) {

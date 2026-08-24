@@ -1,4 +1,5 @@
 import type { OpenAIMessage, OpenAIRequestPayload, OpenAIToolCall } from "./nuances";
+import { logFinishReason } from "../ui/logger";
 
 const THOUGHT_SIGNATURE_STORE = new Map<string, string>();
 
@@ -315,7 +316,10 @@ export function sanitizeDelta(rawDelta: unknown): { delta: Record<string, unknow
   return { delta, hasContent: hasMeaningfulDeltaFields(delta) };
 }
 
-export function filterReasoningFromChoice(rawChoice: unknown): { choice: Record<string, unknown>; hasData: boolean } {
+export function filterReasoningFromChoice(
+  rawChoice: unknown,
+  reqId?: string
+): { choice: Record<string, unknown>; hasData: boolean } {
   if (typeof rawChoice !== "object" || rawChoice === null) {
     return { choice: {}, hasData: false };
   }
@@ -323,6 +327,9 @@ export function filterReasoningFromChoice(rawChoice: unknown): { choice: Record<
   deleteReasoningKeys(choice);
 
   let hasData = choice.finish_reason !== null && choice.finish_reason !== undefined;
+  if (typeof choice.finish_reason === "string" && choice.finish_reason.length > 0) {
+    logFinishReason(reqId ?? "stream", choice.finish_reason);
+  }
 
   if (choice.delta) {
     const { delta, hasContent } = sanitizeDelta(choice.delta);
@@ -336,12 +343,13 @@ export function filterReasoningFromChoice(rawChoice: unknown): { choice: Record<
 }
 
 function processChoices(
-  rawChoices: readonly unknown[]
+  rawChoices: readonly unknown[],
+  reqId?: string
 ): { choices: Record<string, unknown>[]; hasChoiceData: boolean } {
   const choices: Record<string, unknown>[] = [];
   let hasChoiceData = false;
   for (const rawChoice of rawChoices) {
-    const { choice, hasData } = filterReasoningFromChoice(rawChoice);
+    const { choice, hasData } = filterReasoningFromChoice(rawChoice, reqId);
     if (hasData) {
       hasChoiceData = true;
     }
@@ -350,7 +358,10 @@ function processChoices(
   return { choices, hasChoiceData };
 }
 
-export function filterReasoningFromChunk(data: Record<string, unknown>): {
+export function filterReasoningFromChunk(
+  data: Record<string, unknown>,
+  reqId?: string
+): {
   filteredData: Record<string, unknown>;
   shouldEmit: boolean;
 } {
@@ -360,7 +371,7 @@ export function filterReasoningFromChunk(data: Record<string, unknown>): {
   let shouldEmit = filtered.usage != null || filtered.error != null;
 
   if (Array.isArray(filtered.choices)) {
-    const { choices, hasChoiceData } = processChoices(filtered.choices);
+    const { choices, hasChoiceData } = processChoices(filtered.choices, reqId);
     filtered.choices = choices;
     if (hasChoiceData) {
       shouldEmit = true;
@@ -395,12 +406,12 @@ function extractJsonFromSseLine(trimmed: string): string {
   return trimmed.slice(5).trim();
 }
 
-export function processSseDataLine(line: string): string | null {
+export function processSseDataLine(line: string, reqId?: string): string | null {
   const jsonStr = extractJsonFromSseLine(line);
   try {
     const sanitized = sanitizeRawControlChars(jsonStr);
     const data = JSON.parse(sanitized) as Record<string, unknown>;
-    const { filteredData, shouldEmit } = filterReasoningFromChunk(data);
+    const { filteredData, shouldEmit } = filterReasoningFromChunk(data, reqId);
     if (!shouldEmit) {
       return null;
     }
@@ -415,6 +426,7 @@ export const FILTER_HEARTBEAT_INTERVAL_MS = 5000;
 
 export interface FilterTransformerState {
   lastEmittedTime: number;
+  readonly reqId?: string;
 }
 
 function handleSuppressedChunk(
@@ -435,7 +447,7 @@ function handleDataLine(
   controller: TransformStreamDefaultController<Uint8Array>,
   encoder: TextEncoder
 ): void {
-  const transformed = processSseDataLine(trimmed);
+  const transformed = processSseDataLine(trimmed, state.reqId);
   if (transformed) {
     controller.enqueue(encoder.encode(transformed + "\n\n"));
     state.lastEmittedTime = Date.now();
@@ -488,7 +500,7 @@ function flushRemainingBuffer(
     return;
   }
   if (trimmed.startsWith("data:") && trimmed !== "data: [DONE]" && trimmed !== "data:[DONE]") {
-    const transformed = processSseDataLine(trimmed);
+    const transformed = processSseDataLine(trimmed, state.reqId);
     if (transformed) {
       controller.enqueue(encoder.encode(transformed + "\n\n"));
       state.lastEmittedTime = Date.now();
@@ -499,12 +511,15 @@ function flushRemainingBuffer(
   state.lastEmittedTime = Date.now();
 }
 
-export function createOpenCodeReasoningFilterStreamTransformer(): TransformStream<Uint8Array, Uint8Array> {
+export function createOpenCodeReasoningFilterStreamTransformer(
+  reqId?: string
+): TransformStream<Uint8Array, Uint8Array> {
   const decoder = new TextDecoder("utf-8", { fatal: false });
   const encoder = new TextEncoder();
   let lineBuffer = "";
   const state: FilterTransformerState = {
     lastEmittedTime: Date.now(),
+    reqId,
   };
 
   return new TransformStream<Uint8Array, Uint8Array>({

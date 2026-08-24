@@ -6,8 +6,10 @@ import {
   getWireDisplayName,
   logAmber,
   logExhausted,
+  logFinishReason,
   logFusion,
   logInbound,
+  logInfo,
   logLimit,
   logRetry,
   logRotate,
@@ -16,6 +18,7 @@ import {
   logTrace,
   logTtft,
   logUsage,
+  logWarn,
 } from "../../src/ui/logger";
 
 describe("Visual Telemetry & Terminal UI", () => {
@@ -138,5 +141,52 @@ describe("Visual Telemetry & Terminal UI", () => {
     logSeparator();
     expect(logSpy).toHaveBeenCalledWith("────────────────────────────────────────────────────────────────────────────────");
     logSpy.mockRestore();
+  });
+
+  it("logs finish_reason telemetry for normal completion", () => {
+    const logSpy = spyOn(console, "log").mockImplementation(() => {});
+    logFinishReason("REQ-89f2g", "stop");
+    logFinishReason("REQ-89f2h", "tool_calls");
+    expect(logSpy).toHaveBeenCalledTimes(2);
+    const calls = logSpy.mock.calls.map((c) => c[0]);
+    expect(calls.some((c) => c.includes("🏁") && c.includes("[FINISH REQ-89f2g] Stream finished: finish_reason=stop"))).toBe(true);
+    expect(calls.some((c) => c.includes("🏁") && c.includes("[FINISH REQ-89f2h] Stream finished: finish_reason=tool_calls"))).toBe(true);
+    logSpy.mockRestore();
+  });
+
+  it("logs warning telemetry on token truncation (finish_reason=length)", () => {
+    const warnSpy = spyOn(console, "warn").mockImplementation(() => {});
+    logFinishReason("REQ-89f2i", "length");
+    expect(warnSpy).toHaveBeenCalled();
+    const calls = warnSpy.mock.calls.map((c) => c[0]);
+    expect(calls.some((c) => c.includes("⚠️") && c.includes("[FINISH REQ-89f2i] Upstream token truncation occurred (finish_reason=length)"))).toBe(true);
+    warnSpy.mockRestore();
+  });
+
+  it("safely guards against null and undefined finish_reason", () => {
+    const logSpy = spyOn(console, "log").mockImplementation(() => {});
+    const warnSpy = spyOn(console, "warn").mockImplementation(() => {});
+    logFinishReason("REQ-89f2j", null);
+    logFinishReason("REQ-89f2k", undefined);
+    logFinishReason("REQ-89f2l", "" as any);
+    expect(logSpy).not.toHaveBeenCalled();
+    expect(warnSpy).not.toHaveBeenCalled();
+    logSpy.mockRestore();
+    warnSpy.mockRestore();
+  });
+
+  it("logs custom info and warning messages with logInfo and logWarn", () => {
+    const logSpy = spyOn(console, "log").mockImplementation(() => {});
+    const warnSpy = spyOn(console, "warn").mockImplementation(() => {});
+    logInfo("ℹ️", "Test info message");
+    logWarn("⚠️", "Test warning message");
+    expect(logSpy).toHaveBeenCalled();
+    expect(warnSpy).toHaveBeenCalled();
+    const logCalls = logSpy.mock.calls.map((c) => c[0]);
+    const warnCalls = warnSpy.mock.calls.map((c) => c[0]);
+    expect(logCalls.some((c) => c.includes("ℹ️") && c.includes("Test info message"))).toBe(true);
+    expect(warnCalls.some((c) => c.includes("⚠️") && c.includes("Test warning message"))).toBe(true);
+    logSpy.mockRestore();
+    warnSpy.mockRestore();
   });
 });

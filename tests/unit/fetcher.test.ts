@@ -1,6 +1,8 @@
 import { describe, expect, it, spyOn } from "bun:test";
 import {
   NoResponseError,
+  createResilientStream,
+  extractFinishReasonFromChunk,
   fetchWithTtftGuard,
   formatMidstreamErrorFrame,
   readFirstChunkWithTimeout,
@@ -228,5 +230,42 @@ describe("Content Chunk Reading with Multi-Packet Buffering (`readFirstContentCh
 
     expect(thrownError).toBeInstanceOf(NoResponseError);
     expect((thrownError as Error).message).toBe("HTTP 200 returned ghost response with 0 content tokens");
+  });
+
+  it("extracts finish_reason from SSE chunks", () => {
+    expect(extractFinishReasonFromChunk('data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n')).toBe("stop");
+    expect(extractFinishReasonFromChunk('data: {"choices":[{"delta":{},"finish_reason":"length"}]}\n\n')).toBe("length");
+    expect(extractFinishReasonFromChunk('data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}\n\n')).toBe("tool_calls");
+    expect(extractFinishReasonFromChunk('data: {"choices":[{"delta":{"content":"hi"},"finish_reason":null}]}\n\n')).toBe(null);
+    expect(extractFinishReasonFromChunk('data: [DONE]\n\n')).toBe(null);
+  });
+
+  it("calls onFinishReason callback when resilient stream processes chunk with finish_reason", async () => {
+    const encoder = new TextEncoder();
+    let capturedReason = "";
+
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encoder.encode('data: {"choices":[{"delta":{"content":"hello"},"finish_reason":null}]}\n\n'));
+        controller.enqueue(encoder.encode('data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n'));
+        controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+        controller.close();
+      },
+    });
+
+    const reader = stream.getReader();
+    const resilient = createResilientStream(new Uint8Array(0), reader, {
+      onFinishReason: (reason) => {
+        capturedReason = reason;
+      },
+    });
+
+    const resilientReader = resilient.getReader();
+    while (true) {
+      const { done } = await resilientReader.read();
+      if (done) break;
+    }
+
+    expect(capturedReason).toBe("stop");
   });
 });

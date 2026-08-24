@@ -258,6 +258,30 @@ export function logFusion(
   console.log(`🔗 ${ts} [FUSION ${reqId}] Preset: ${preset} | Model: ${model} -> Tier ${tier} (${provName})`);
 }
 
+export function logInfo(emoji: string, message: string): void {
+  const ts = formatTimestamp();
+  console.log(`${emoji} ${ts} ${message}`);
+}
+
+export function logWarn(emoji: string, message: string): void {
+  const ts = formatTimestamp();
+  console.warn(`${emoji} ${ts} ${message}`);
+}
+
+export function logFinishReason(
+  reqId: string,
+  finishReason?: string | null
+): void {
+  if (!finishReason || typeof finishReason !== "string") {
+    return;
+  }
+  if (finishReason === "length") {
+    logWarn("⚠️", `[FINISH ${reqId}] Upstream token truncation occurred (finish_reason=length)`);
+  } else {
+    logInfo("🏁", `[FINISH ${reqId}] Stream finished: finish_reason=${finishReason}`);
+  }
+}
+
 export function logTrace(reqId: string, tracePath: string): void {
   const ts = formatTimestamp();
   console.log(`📝 ${ts} [TRACE ${reqId}] Saved audit trace -> ${tracePath}`);

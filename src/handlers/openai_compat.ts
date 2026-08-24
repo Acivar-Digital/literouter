@@ -30,6 +30,7 @@ import { getCircuitBreakerForProvider } from "../network/circuit_breaker";
 import {
   logError,
   logExhausted,
+  logFinishReason,
   logInbound,
   logLimit,
   logRotate,
@@ -367,6 +368,11 @@ async function executeDirectCall(
         }
       }
 
+      const choiceForFinish = (json.choices as Array<{ finish_reason?: string | null }>)?.[0];
+      if (choiceForFinish?.finish_reason) {
+        logFinishReason(reqId, choiceForFinish.finish_reason);
+      }
+
       if (shouldFilterReasoning) {
         stripReasoningFromResponseBody(json);
         finalBody = new TextEncoder().encode(JSON.stringify(json));
@@ -429,6 +435,9 @@ async function executeDirectCall(
       });
       logServed(reqId, streamDuration, response.status, currentAttempt, maxAttempts);
       logSeparator();
+    },
+    onFinishReason: (finishReason) => {
+      logFinishReason(reqId, finishReason);
     },
     retryProvider: async (reason: string) => {
       globalKeyPool.reportFailure(directive.provider, currentKeyIndex, 500, undefined, reason, Date.now(), 60);
@@ -496,7 +505,7 @@ async function executeDirectCall(
   }
 
   if (shouldFilterReasoning) {
-    resilientStream = resilientStream.pipeThrough(createOpenCodeReasoningFilterStreamTransformer());
+    resilientStream = resilientStream.pipeThrough(createOpenCodeReasoningFilterStreamTransformer(reqId));
   }
 
   return new Response(resilientStream, {
