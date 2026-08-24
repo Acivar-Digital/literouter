@@ -603,6 +603,146 @@ export function isInBandErrorChunk(chunk: Uint8Array): { isError: boolean; messa
   return { isError: false };
 }
 
+export interface StreamTokenState {
+  hasSeenDoneMarker: boolean;
+  hasSeenDataToken: boolean;
+}
+
+export function inspectChunkMarkers(
+  chunk: Uint8Array,
+  state: StreamTokenState
+): void {
+  if (chunk.length === 0) {
+    return;
+  }
+  const chunkText = new TextDecoder().decode(chunk);
+  if (chunkText.includes("[DONE]") || chunkText.includes('"finish_reason":')) {
+    state.hasSeenDoneMarker = true;
+  }
+  if (
+    chunkText.includes('"content":') ||
+    chunkText.includes('"reasoning":') ||
+    chunkText.includes('"tool_calls":')
+  ) {
+    state.hasSeenDataToken = true;
+  }
+}
+
+export async function readWithChunkTimeout(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  timeoutMs: number = STREAM_IDLE_TIMEOUT_MS
+): Promise<DefaultReadResult> {
+  let timerId: ReturnType<typeof setTimeout> | undefined;
+  const readPromise = reader.read();
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timerId = setTimeout(
+      () => reject(new StreamStallError(`Stream idle timeout exceeded ${timeoutMs}ms`)),
+      timeoutMs
+    );
+  });
+  try {
+    return await Promise.race([readPromise, timeoutPromise]);
+  } finally {
+    if (timerId !== undefined) {
+      clearTimeout(timerId);
+    }
+  }
+}
+
+function emitStreamError(
+  controller: ReadableStreamDefaultController<Uint8Array>,
+  reason: string,
+  rawError: unknown,
+  callbacks?: StreamCallbacks
+): void {
+  if (callbacks?.protocol) {
+    controller.enqueue(formatMidstreamErrorFrame(callbacks.protocol, reason));
+    controller.close();
+    return;
+  }
+  controller.error(rawError instanceof Error ? rawError : new Error(reason));
+}
+
+function applyNextAttempt(
+  next: NextAttemptResult,
+  controller: ReadableStreamDefaultController<Uint8Array>,
+  state: StreamTokenState,
+  callbacks?: StreamCallbacks,
+  usageState?: { usageEmitted: boolean }
+): ReadableStreamDefaultReader<Uint8Array> | undefined {
+  const nextReader = next.rawReader ?? next.reader;
+  if (next.firstChunk && next.firstChunk.length > 0) {
+    inspectChunkMarkers(next.firstChunk, state);
+    if (usageState && !usageState.usageEmitted && callbacks?.onUsage) {
+      const usage = extractUsageFromChunk(next.firstChunk);
+      if (usage) {
+        usageState.usageEmitted = true;
+        callbacks.onUsage(usage);
+      }
+    }
+    controller.enqueue(next.firstChunk);
+  }
+  return nextReader;
+}
+
+export async function handlePrematureEof(
+  state: StreamTokenState,
+  callbacks?: StreamCallbacks
+): Promise<NextAttemptResult | null> {
+  if (state.hasSeenDoneMarker || state.hasSeenDataToken) {
+    return null;
+  }
+  const provider = callbacks?.retryProvider ?? callbacks?.nextAttemptProvider;
+  if (!provider) {
+    return null;
+  }
+  return await provider("Upstream terminated stream prematurely with 0 tokens and no [DONE] marker");
+}
+
+async function handleInBandErrorIfPresent(
+  value: Uint8Array,
+  controller: ReadableStreamDefaultController<Uint8Array>,
+  callbacks?: StreamCallbacks
+): Promise<{ isHandled: boolean; next: NextAttemptResult | null }> {
+  const errCheck = isInBandErrorChunk(value);
+  if (!errCheck.isError) {
+    return { isHandled: false, next: null };
+  }
+  const reason = errCheck.message ?? "In-band error detected";
+  const provider = callbacks?.retryProvider ?? callbacks?.nextAttemptProvider;
+  if (provider) {
+    const next = await provider(reason);
+    if (next) {
+      return { isHandled: true, next };
+    }
+  }
+  emitStreamError(controller, reason, new Error(reason), callbacks);
+  return { isHandled: true, next: null };
+}
+
+export async function handleStreamFailure(
+  err: unknown,
+  controller: ReadableStreamDefaultController<Uint8Array>,
+  callbacks?: StreamCallbacks
+): Promise<NextAttemptResult | null> {
+  const provider = callbacks?.retryProvider ?? callbacks?.nextAttemptProvider;
+  const reason = err instanceof Error ? err.message : String(err);
+  if (provider) {
+    try {
+      const next = await provider(reason);
+      if (next) {
+        return next;
+      }
+    } catch (retryErr: unknown) {
+      const retryReason = retryErr instanceof Error ? retryErr.message : String(retryErr);
+      emitStreamError(controller, retryReason, retryErr, callbacks);
+      return null;
+    }
+  }
+  emitStreamError(controller, reason, err, callbacks);
+  return null;
+}
+
 export function createResilientStream(
   firstChunk: Uint8Array,
   reader: ReadableStreamDefaultReader<Uint8Array>,
@@ -610,13 +750,20 @@ export function createResilientStream(
 ): ReadableStream<Uint8Array> {
   let currentReader = reader;
   let keepAliveTimer: IntervalHandle | null = null;
-  let usageEmitted = false;
+  const usageState = { usageEmitted: false };
+  const tokenState: StreamTokenState = {
+    hasSeenDoneMarker: false,
+    hasSeenDataToken: false,
+  };
 
+  inspectChunkMarkers(firstChunk, tokenState);
   const initialUsage = extractUsageFromChunk(firstChunk);
   if (initialUsage && callbacks?.onUsage) {
-    usageEmitted = true;
+    usageState.usageEmitted = true;
     callbacks.onUsage(initialUsage);
   }
+
+  const idleTimeoutMs = getEnv().LITEROUTER_STREAM_IDLE_TIMEOUT_MS || STREAM_IDLE_TIMEOUT_MS;
 
   return new ReadableStream<Uint8Array>({
     start(controller) {
@@ -625,118 +772,56 @@ export function createResilientStream(
     },
     async pull(controller) {
       try {
-        const { done, value } = await currentReader.read();
+        const { done, value } = await readWithChunkTimeout(currentReader, idleTimeoutMs);
         if (done) {
           clearTimer(keepAliveTimer);
+          const next = await handlePrematureEof(tokenState, callbacks);
+          if (next) {
+            const nextReader = applyNextAttempt(next, controller, tokenState, callbacks, usageState);
+            if (nextReader) {
+              currentReader = nextReader;
+            }
+            keepAliveTimer = startKeepAliveTimer(controller);
+            return;
+          }
           controller.close();
           return;
         }
+
         if (value && value.length > 0) {
-          const errCheck = isInBandErrorChunk(value);
-          if (errCheck.isError) {
-            const provider = callbacks?.retryProvider ?? callbacks?.nextAttemptProvider;
-            if (provider) {
-              const reason = errCheck.message ?? "In-band error detected";
-              const next = await provider(reason);
-              if (next) {
-                const nextReader = next.rawReader ?? next.reader;
-                if (nextReader) {
-                  currentReader = nextReader;
-                }
-                if (next.firstChunk && next.firstChunk.length > 0) {
-                  if (!usageEmitted && callbacks?.onUsage) {
-                    const usage = extractUsageFromChunk(next.firstChunk);
-                    if (usage) {
-                      usageEmitted = true;
-                      callbacks.onUsage(usage);
-                    }
-                  }
-                  controller.enqueue(next.firstChunk);
-                }
-                return;
-              } else {
-                clearTimer(keepAliveTimer);
-                if (callbacks?.protocol) {
-                  controller.enqueue(formatMidstreamErrorFrame(callbacks.protocol, reason));
-                  controller.close();
-                  return;
-                }
-                controller.error(new Error(reason));
-                return;
+          const inBandResult = await handleInBandErrorIfPresent(value, controller, callbacks);
+          if (inBandResult.isHandled) {
+            clearTimer(keepAliveTimer);
+            if (inBandResult.next) {
+              const nextReader = applyNextAttempt(inBandResult.next, controller, tokenState, callbacks, usageState);
+              if (nextReader) {
+                currentReader = nextReader;
               }
-            } else {
-              clearTimer(keepAliveTimer);
-              if (callbacks?.protocol) {
-                controller.enqueue(formatMidstreamErrorFrame(callbacks.protocol, errCheck.message ?? "In-band upstream error"));
-                controller.close();
-                return;
-              }
-              controller.error(new Error(errCheck.message ?? "In-band upstream error"));
-              return;
+              keepAliveTimer = startKeepAliveTimer(controller);
             }
+            return;
           }
 
-          if (!usageEmitted && callbacks?.onUsage) {
+          inspectChunkMarkers(value, tokenState);
+          if (!usageState.usageEmitted && callbacks?.onUsage) {
             const usage = extractUsageFromChunk(value);
             if (usage) {
-              usageEmitted = true;
+              usageState.usageEmitted = true;
               callbacks.onUsage(usage);
             }
           }
           controller.enqueue(value);
         }
       } catch (err: unknown) {
-        const provider = callbacks?.retryProvider ?? callbacks?.nextAttemptProvider;
-        if (provider) {
-          try {
-            const reason = err instanceof Error ? err.message : String(err);
-            const next = await provider(reason);
-            if (next) {
-              const nextReader = next.rawReader ?? next.reader;
-              if (nextReader) {
-                currentReader = nextReader;
-              }
-              if (next.firstChunk && next.firstChunk.length > 0) {
-                if (!usageEmitted && callbacks?.onUsage) {
-                  const usage = extractUsageFromChunk(next.firstChunk);
-                  if (usage) {
-                    usageEmitted = true;
-                    callbacks.onUsage(usage);
-                  }
-                }
-                controller.enqueue(next.firstChunk);
-              }
-              return;
-            } else {
-              clearTimer(keepAliveTimer);
-              if (callbacks?.protocol) {
-                controller.enqueue(formatMidstreamErrorFrame(callbacks.protocol, reason));
-                controller.close();
-                return;
-              }
-              controller.error(err);
-              return;
-            }
-          } catch (retryErr: unknown) {
-            clearTimer(keepAliveTimer);
-            if (callbacks?.protocol) {
-              const reason = retryErr instanceof Error ? retryErr.message : String(retryErr);
-              controller.enqueue(formatMidstreamErrorFrame(callbacks.protocol, reason));
-              controller.close();
-              return;
-            }
-            controller.error(retryErr);
-            return;
-          }
-        }
         clearTimer(keepAliveTimer);
-        if (callbacks?.protocol) {
-          const reason = err instanceof Error ? err.message : String(err);
-          controller.enqueue(formatMidstreamErrorFrame(callbacks.protocol, reason));
-          controller.close();
-          return;
+        const next = await handleStreamFailure(err, controller, callbacks);
+        if (next) {
+          const nextReader = applyNextAttempt(next, controller, tokenState, callbacks, usageState);
+          if (nextReader) {
+            currentReader = nextReader;
+          }
+          keepAliveTimer = startKeepAliveTimer(controller);
         }
-        controller.error(err);
       }
     },
     cancel() {

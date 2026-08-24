@@ -1,8 +1,15 @@
 import { describe, expect, it } from "bun:test";
+import { resetEnvCache } from "../../src/config/env";
 import {
   createResilientStream,
+  formatMidstreamErrorFrame,
+  handlePrematureEof,
+  inspectChunkMarkers,
   isInBandErrorChunk,
+  readWithChunkTimeout,
+  StreamStallError,
   type StreamCallbacks,
+  type StreamTokenState,
 } from "../../src/network/fetcher";
 
 const encoder = new TextEncoder();
@@ -48,6 +55,25 @@ async function readAllChunks(stream: ReadableStream<Uint8Array>): Promise<{
   text += decoder.decode();
   return { text, chunks };
 }
+
+describe("formatMidstreamErrorFrame", () => {
+  it("formats OpenAI error frame with JSON error payload and data: [DONE] delimiter", () => {
+    const frame = formatMidstreamErrorFrame("openai", "Connection terminated mid-stream");
+    const decoded = decoder.decode(frame);
+
+    expect(decoded).toContain('data: {"error":{"message":"Connection terminated mid-stream","type":"server_error"}}\n\n');
+    expect(decoded).toContain("data: [DONE]\n\n");
+  });
+
+  it("formats Anthropic error frame with SSE event error format", () => {
+    const frame = formatMidstreamErrorFrame("anthropic", "Upstream stall timeout");
+    const decoded = decoder.decode(frame);
+
+    expect(decoded).toContain("event: error\n");
+    expect(decoded).toContain('"type":"api_error"');
+    expect(decoded).toContain('"message":"Upstream stall timeout"');
+  });
+});
 
 describe("isInBandErrorChunk", () => {
   it("detects in-band server error chunk containing 'Server error mid-response. The response above may be incomplete.' and returns { isError: true }", () => {
@@ -104,6 +130,51 @@ describe("isInBandErrorChunk", () => {
     const emptyChunk = new Uint8Array(0);
     const result = isInBandErrorChunk(emptyChunk);
     expect(result.isError).toBe(false);
+  });
+});
+
+describe("handlePrematureEof", () => {
+  it("returns null if hasSeenDoneMarker is true", async () => {
+    let retryCalled = false;
+    const callbacks: StreamCallbacks = {
+      retryProvider: async () => {
+        retryCalled = true;
+        return null;
+      },
+    };
+    const state: StreamTokenState = { hasSeenDoneMarker: true, hasSeenDataToken: false };
+    const result = await handlePrematureEof(state, callbacks);
+    expect(result).toBeNull();
+    expect(retryCalled).toBe(false);
+  });
+
+  it("returns null if hasSeenDataToken is true", async () => {
+    let retryCalled = false;
+    const callbacks: StreamCallbacks = {
+      retryProvider: async () => {
+        retryCalled = true;
+        return null;
+      },
+    };
+    const state: StreamTokenState = { hasSeenDoneMarker: false, hasSeenDataToken: true };
+    const result = await handlePrematureEof(state, callbacks);
+    expect(result).toBeNull();
+    expect(retryCalled).toBe(false);
+  });
+
+  it("calls retryProvider when neither token nor done marker seen", async () => {
+    const retryChunk = encoder.encode('data: {"choices":[{"delta":{"content":"ok"}}]}\n\n');
+    const dummyReader = createMockReader([]);
+    const callbacks: StreamCallbacks = {
+      retryProvider: async (reason) => {
+        expect(reason).toContain("prematurely with 0 tokens");
+        return { firstChunk: retryChunk, reader: dummyReader };
+      },
+    };
+    const state: StreamTokenState = { hasSeenDoneMarker: false, hasSeenDataToken: false };
+    const result = await handlePrematureEof(state, callbacks);
+    expect(result).toBeDefined();
+    expect(result?.firstChunk).toBe(retryChunk);
   });
 });
 
@@ -242,5 +313,238 @@ describe("createResilientStream — Mid-Stream Error Recovery", () => {
 
     expect(errorThrown).toBeDefined();
     expect((errorThrown as Error).message).toContain("Network transport failure");
+  });
+
+  it("premature EOF with 0 data tokens triggers retryProvider and seamlessly yields chunks from 2nd provider", async () => {
+    const firstChunk = encoder.encode("\n\n");
+    const emptyReader = createMockReader([]);
+
+    const retryFirstChunk = encoder.encode('data: {"choices":[{"delta":{"content":"provider2 start"}}]}\n\n');
+    const retryChunk2 = encoder.encode('data: {"choices":[{"delta":{"content":" provider2 mid"}}]}\n\n');
+    const retryDoneChunk = encoder.encode("data: [DONE]\n\n");
+    const recoveredReader = createMockReader([retryChunk2, retryDoneChunk]);
+
+    let retryReason = "";
+    const callbacks: StreamCallbacks = {
+      retryProvider: async (reason: string) => {
+        retryReason = reason;
+        return {
+          firstChunk: retryFirstChunk,
+          reader: recoveredReader,
+        };
+      },
+    };
+
+    const stream = createResilientStream(firstChunk, emptyReader, callbacks);
+    const { text, chunks } = await readAllChunks(stream);
+
+    expect(retryReason).toBe("Upstream terminated stream prematurely with 0 tokens and no [DONE] marker");
+    expect(text).toContain("provider2 start");
+    expect(text).toContain(" provider2 mid");
+    expect(text).toContain("[DONE]");
+    expect(chunks.length).toBeGreaterThanOrEqual(3);
+  });
+
+  it("clean EOF after data tokens does NOT trigger retry and closes cleanly", async () => {
+    const firstChunk = encoder.encode('data: {"choices":[{"delta":{"content":"Hello"}}]}\n\n');
+    const chunk2 = encoder.encode('data: {"choices":[{"delta":{"content":" world"}}]}\n\n');
+    const normalReader = createMockReader([chunk2]);
+
+    let retryCalled = false;
+    const callbacks: StreamCallbacks = {
+      retryProvider: async () => {
+        retryCalled = true;
+        return null;
+      },
+    };
+
+    const stream = createResilientStream(firstChunk, normalReader, callbacks);
+    const { text } = await readAllChunks(stream);
+
+    expect(retryCalled).toBe(false);
+    expect(text).toContain("Hello");
+    expect(text).toContain(" world");
+  });
+
+  it("clean EOF after [DONE] marker does NOT trigger retry and closes cleanly", async () => {
+    const firstChunk = encoder.encode('data: {"choices":[{"delta":{"content":"Result"}}]}\n\n');
+    const doneChunk = encoder.encode("data: [DONE]\n\n");
+    const normalReader = createMockReader([doneChunk]);
+
+    let retryCalled = false;
+    const callbacks: StreamCallbacks = {
+      retryProvider: async () => {
+        retryCalled = true;
+        return null;
+      },
+    };
+
+    const stream = createResilientStream(firstChunk, normalReader, callbacks);
+    const { text } = await readAllChunks(stream);
+
+    expect(retryCalled).toBe(false);
+    expect(text).toContain("Result");
+    expect(text).toContain("[DONE]");
+  });
+
+  it("inspectChunkMarkers accurately tracks [DONE], finish_reason, and content tokens", () => {
+    const state: StreamTokenState = { hasSeenDoneMarker: false, hasSeenDataToken: false };
+
+    inspectChunkMarkers(encoder.encode(": keep-alive\n\n"), state);
+    expect(state.hasSeenDoneMarker).toBe(false);
+    expect(state.hasSeenDataToken).toBe(false);
+
+    inspectChunkMarkers(encoder.encode('data: {"choices":[{"delta":{"content":"hi"}}]}\n\n'), state);
+    expect(state.hasSeenDataToken).toBe(true);
+    expect(state.hasSeenDoneMarker).toBe(false);
+
+    inspectChunkMarkers(encoder.encode('data: {"choices":[{"finish_reason":"stop"}]}\n\n'), state);
+    expect(state.hasSeenDoneMarker).toBe(true);
+
+    const doneState: StreamTokenState = { hasSeenDoneMarker: false, hasSeenDataToken: false };
+    inspectChunkMarkers(encoder.encode("data: [DONE]\n\n"), doneState);
+    expect(doneState.hasSeenDoneMarker).toBe(true);
+  });
+
+  it("readWithChunkTimeout throws StreamStallError when reading times out", async () => {
+    const stalledReader = {
+      read: () => new Promise<never>(() => {}),
+      releaseLock: () => {},
+      cancel: async () => {},
+      closed: Promise.resolve(undefined),
+    } as unknown as ReadableStreamDefaultReader<Uint8Array>;
+
+    let errorThrown: unknown;
+    try {
+      await readWithChunkTimeout(stalledReader, 25);
+    } catch (err: unknown) {
+      errorThrown = err;
+    }
+
+    expect(errorThrown).toBeInstanceOf(StreamStallError);
+    expect((errorThrown as Error).message).toContain("Stream idle timeout exceeded 25ms");
+  });
+
+  it("inter-chunk stall timeout triggers retryProvider and resumes streaming from 2nd provider", async () => {
+    const originalTimeout = process.env.LITEROUTER_STREAM_IDLE_TIMEOUT_MS;
+    process.env.LITEROUTER_STREAM_IDLE_TIMEOUT_MS = "25";
+    resetEnvCache();
+
+    try {
+      const firstChunk = encoder.encode('data: {"choices":[{"delta":{"content":"pre-stall"}}]}\n\n');
+      const stalledReader = {
+        read: () => new Promise<never>(() => {}),
+        releaseLock: () => {},
+        cancel: async () => {},
+        closed: Promise.resolve(undefined),
+      } as unknown as ReadableStreamDefaultReader<Uint8Array>;
+
+      const retryFirstChunk = encoder.encode('data: {"choices":[{"delta":{"content":"post-stall resumed"}}]}\n\n');
+      const retryDoneChunk = encoder.encode("data: [DONE]\n\n");
+      const recoveredReader = createMockReader([retryDoneChunk]);
+
+      let retryReason = "";
+      const callbacks: StreamCallbacks = {
+        retryProvider: async (reason: string) => {
+          retryReason = reason;
+          return {
+            firstChunk: retryFirstChunk,
+            reader: recoveredReader,
+          };
+        },
+      };
+
+      const stream = createResilientStream(firstChunk, stalledReader, callbacks);
+      const { text } = await readAllChunks(stream);
+
+      expect(retryReason).toContain("Stream idle timeout exceeded 25ms");
+      expect(text).toContain("pre-stall");
+      expect(text).toContain("post-stall resumed");
+      expect(text).toContain("[DONE]");
+    } finally {
+      if (originalTimeout !== undefined) {
+        process.env.LITEROUTER_STREAM_IDLE_TIMEOUT_MS = originalTimeout;
+      } else {
+        delete process.env.LITEROUTER_STREAM_IDLE_TIMEOUT_MS;
+      }
+      resetEnvCache();
+    }
+  });
+
+  it("retryProvider exhaustion formats downstream OpenAI error frame and terminates cleanly", async () => {
+    const firstChunk = encoder.encode('data: {"choices":[{"delta":{"content":"initial"}}]}\n\n');
+    const socketError = new Error("Connection reset by peer");
+    const failingReader = createMockReader([socketError]);
+
+    let retryCalled = false;
+    const callbacks: StreamCallbacks = {
+      protocol: "openai",
+      retryProvider: async () => {
+        retryCalled = true;
+        return null;
+      },
+    };
+
+    const stream = createResilientStream(firstChunk, failingReader, callbacks);
+    const { text } = await readAllChunks(stream);
+
+    expect(retryCalled).toBe(true);
+    expect(text).toContain("initial");
+    expect(text).toContain('data: {"error":{"message":"Connection reset by peer","type":"server_error"}}\n\ndata: [DONE]\n\n');
+  });
+
+  it("retryProvider exhaustion formats downstream Anthropic error frame and terminates cleanly", async () => {
+    const firstChunk = encoder.encode("event: message_start\ndata: {}\n\n");
+    const socketError = new Error("Anthropic upstream failure");
+    const failingReader = createMockReader([socketError]);
+
+    let retryCalled = false;
+    const callbacks: StreamCallbacks = {
+      protocol: "anthropic",
+      retryProvider: async () => {
+        retryCalled = true;
+        return null;
+      },
+    };
+
+    const stream = createResilientStream(firstChunk, failingReader, callbacks);
+    const { text } = await readAllChunks(stream);
+
+    expect(retryCalled).toBe(true);
+    expect(text).toContain("event: message_start");
+    expect(text).toContain("event: error\ndata: ");
+    expect(text).toContain('"type":"api_error"');
+    expect(text).toContain('"message":"Anthropic upstream failure"');
+  });
+
+  it("keepalive comment frames do not count as data tokens, so premature EOF still triggers retry", async () => {
+    const firstChunk = encoder.encode(": keep-alive\n\n");
+    const commentChunk1 = encoder.encode(": keep-alive\n\n");
+    const commentChunk2 = encoder.encode(": ping\n\n");
+    const commentsThenEofReader = createMockReader([commentChunk1, commentChunk2]);
+
+    const retryFirstChunk = encoder.encode('data: {"choices":[{"delta":{"content":"recovered after keepalive EOF"}}]}\n\n');
+    const retryDoneChunk = encoder.encode("data: [DONE]\n\n");
+    const recoveredReader = createMockReader([retryDoneChunk]);
+
+    let retryReason = "";
+    const callbacks: StreamCallbacks = {
+      retryProvider: async (reason: string) => {
+        retryReason = reason;
+        return {
+          firstChunk: retryFirstChunk,
+          reader: recoveredReader,
+        };
+      },
+    };
+
+    const stream = createResilientStream(firstChunk, commentsThenEofReader, callbacks);
+    const { text } = await readAllChunks(stream);
+
+    expect(retryReason).toBe("Upstream terminated stream prematurely with 0 tokens and no [DONE] marker");
+    expect(text).toContain(": keep-alive");
+    expect(text).toContain(": ping");
+    expect(text).toContain("recovered after keepalive EOF");
+    expect(text).toContain("[DONE]");
   });
 });
