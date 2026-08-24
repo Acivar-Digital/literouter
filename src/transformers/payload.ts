@@ -79,6 +79,66 @@ function normalizeCleanedParts(
   return parts;
 }
 
+function extractToolPartText(part: unknown): string {
+  if (typeof part === "string") {
+    return part;
+  }
+  if (typeof part === "object" && part !== null) {
+    const textVal = (part as Record<string, unknown>).text;
+    if (typeof textVal === "string" && textVal.length > 0) {
+      return textVal;
+    }
+    return JSON.stringify(part);
+  }
+  return String(part ?? "");
+}
+
+function normalizeToolContent(content: unknown): string {
+  if (Array.isArray(content)) {
+    return content.map(extractToolPartText).join("\n");
+  }
+  if (typeof content === "string") {
+    return content;
+  }
+  if (content === null || content === undefined) {
+    return "";
+  }
+  return String(content);
+}
+
+function stripToolMetadata(cleaned: Record<string, unknown>): void {
+  delete cleaned.id;
+  delete cleaned.name;
+  delete cleaned.providerState;
+  delete cleaned.state;
+  delete cleaned.createdAt;
+}
+
+function stripClientMetadata(cleaned: Record<string, unknown>): void {
+  delete cleaned.id;
+  delete cleaned.providerState;
+  delete cleaned.state;
+  delete cleaned.reasoning_details;
+}
+
+function scrubMessageContent(cleaned: Record<string, unknown>): void {
+  if (cleaned.role === "tool") {
+    cleaned.content = normalizeToolContent(cleaned.content);
+    stripToolMetadata(cleaned);
+    return;
+  }
+
+  if (cleaned.role === "assistant" || cleaned.role === "user") {
+    stripClientMetadata(cleaned);
+  }
+
+  if (Array.isArray(cleaned.content)) {
+    const rawParts = cleaned.content as readonly OpenAIContentPart[];
+    const nonReasoningParts = rawParts.filter((p) => !isReasoningContentPart(p));
+    cleaned.content = normalizeCleanedParts(nonReasoningParts);
+  }
+}
+
 export function scrubReasoningFromMessage(msg: OpenAIMessage): OpenAIMessage {
   const cleaned: Record<string, unknown> = { ...msg };
   delete cleaned.reasoning;
@@ -89,11 +149,7 @@ export function scrubReasoningFromMessage(msg: OpenAIMessage): OpenAIMessage {
   delete cleaned.thinking;
   delete cleaned.thoughts;
 
-  if (Array.isArray(cleaned.content)) {
-    const rawParts = cleaned.content as readonly OpenAIContentPart[];
-    const nonReasoningParts = rawParts.filter((p) => !isReasoningContentPart(p));
-    cleaned.content = normalizeCleanedParts(nonReasoningParts);
-  }
+  scrubMessageContent(cleaned);
 
   return cleaned as unknown as OpenAIMessage;
 }

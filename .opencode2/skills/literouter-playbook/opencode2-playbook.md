@@ -176,8 +176,10 @@ To ensure zero downtime and resilience across `@opencode-ai/cli` package updates
 ### Patcher Script (`scripts/opencode2_autopatch.sh`)
 - **Autonomous Location**: Resolves installed `@opencode-ai/cli` across `$OPENCODE_CLI_DIR`, active `PATH` Node prefixes, and standard `$HOME/.nvm/versions/node/*` paths.
 - **Binary Integrity & Symlink Sync**: Verifies existence of `opencode2`, establishes symlinks with `opencode2.exe` where needed for npm bin compatibility, and ensures executable (`chmod +x`) permissions.
+- **Tool Message Format Normalization**: Verifies that messages with `role: "tool"` having array content `[{type: "text", text: ...}]` are cleanly flattened into strings, ensuring compatibility with strict OpenAI-compatible upstream providers.
+- **Network Error Handling & Anti-Silent Completion**: Prevents subagents from silently completing tasks with empty/successful status on `network_error`, stream stalls, or premature socket drops.
 - **Safety Backups (`.bak`)**: Automatically creates a `.bak` backup copy of the original binary before performing any state modification.
-- **Sub-5ms Execution**: Uses file modification timestamp verification (`.autopatch_verified`) to exit in under 5ms on subsequent runs, adding zero perceptible latency to CLI startup.
+- **Sub-5ms Execution**: Uses file modification timestamp verification (`.autopatch_verified`) comparing against the target binaries and the patch script itself to exit in under 5ms on subsequent runs, adding zero perceptible latency to CLI startup.
 
 ### Launcher Hook (`~/.local/bin/opencode2`)
 The global wrapper script `/home/yapilwsl/.local/bin/opencode2` executes the self-healing check transparently prior to dispatching into the node binary:

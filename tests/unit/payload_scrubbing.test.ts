@@ -278,3 +278,96 @@ describe("Inbound Request Reasoning Scrubbing (OpenCode2 Inbound Payload)", () =
     expect(scrubReasoningFromMessages([])).toEqual([]);
   });
 });
+
+describe("Strict Tool Payload Normalization & Client Metadata Stripping", () => {
+  it("normalizes role: 'tool' content array into a single newline-separated string", () => {
+    const toolMessage = {
+      role: "tool",
+      tool_call_id: "call_abc123",
+      content: [
+        { type: "text", text: "Output from tool part 1" },
+        "Raw string part 2",
+        { jsonResult: { success: true } },
+      ],
+      id: "msg_client_tool_id",
+      name: "run_command",
+      providerState: { cached: true },
+      state: "completed",
+      createdAt: 1720000000,
+    } as unknown as OpenAIMessage;
+
+    const scrubbed = scrubReasoningFromMessage(toolMessage);
+
+    expect(typeof scrubbed.content).toBe("string");
+    expect(scrubbed.content).toBe(
+      'Output from tool part 1\nRaw string part 2\n{"jsonResult":{"success":true}}'
+    );
+    expect(scrubbed.role).toBe("tool");
+    expect(scrubbed.tool_call_id).toBe("call_abc123");
+
+    // Verify non-standard client properties are stripped
+    const record = scrubbed as Record<string, unknown>;
+    expect(record.id).toBeUndefined();
+    expect(record.name).toBeUndefined();
+    expect(record.providerState).toBeUndefined();
+    expect(record.state).toBeUndefined();
+    expect(record.createdAt).toBeUndefined();
+  });
+
+  it("ensures role: 'tool' content is always a string even if null or undefined", () => {
+    const nullContentTool = {
+      role: "tool",
+      tool_call_id: "call_empty",
+      content: null as unknown as string,
+    } as OpenAIMessage;
+
+    const scrubbed = scrubReasoningFromMessage(nullContentTool);
+    expect(typeof scrubbed.content).toBe("string");
+    expect(scrubbed.content).toBe("");
+  });
+
+  it("strips client metadata from role: 'user' and role: 'assistant' messages while preserving standard fields", () => {
+    const userMessage = {
+      role: "user",
+      content: "Hello",
+      id: "client_user_1",
+      providerState: { status: "active" },
+      state: "pending",
+      reasoning_details: [{ step: 1 }],
+    } as unknown as OpenAIMessage;
+
+    const assistantMessage = {
+      role: "assistant",
+      content: "Here is the result",
+      tool_calls: [
+        {
+          id: "call_xyz",
+          type: "function",
+          function: { name: "readFile", arguments: '{"path":"a.txt"}' },
+        },
+      ],
+      id: "client_asst_1",
+      providerState: { cached: false },
+      state: "stream_done",
+      reasoning_details: [{ step: 2 }],
+    } as unknown as OpenAIMessage;
+
+    const scrubbedUser = scrubReasoningFromMessage(userMessage);
+    const scrubbedAsst = scrubReasoningFromMessage(assistantMessage);
+
+    const userRecord = scrubbedUser as Record<string, unknown>;
+    expect(userRecord.content).toBe("Hello");
+    expect(userRecord.id).toBeUndefined();
+    expect(userRecord.providerState).toBeUndefined();
+    expect(userRecord.state).toBeUndefined();
+    expect(userRecord.reasoning_details).toBeUndefined();
+
+    const asstRecord = scrubbedAsst as Record<string, unknown>;
+    expect(asstRecord.content).toBe("Here is the result");
+    expect(asstRecord.tool_calls).toHaveLength(1);
+    expect(asstRecord.id).toBeUndefined();
+    expect(asstRecord.providerState).toBeUndefined();
+    expect(asstRecord.state).toBeUndefined();
+    expect(asstRecord.reasoning_details).toBeUndefined();
+  });
+});

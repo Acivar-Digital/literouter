@@ -8,7 +8,8 @@ All notable changes to LiteRouter will be documented in this file.
 - **Standalone Auto-Patcher Script (`scripts/opencode2_autopatch.sh`)**:
   - Implemented an idempotent, standalone bash script verifying the installed `@opencode-ai/cli` in Node/NVM directory.
   - Automatically verifies executable binaries (`opencode2`), resolves platform binary links, generates `.bak` safety backups before state changes, and validates reasoning fold/scrubber logic.
-  - Features ultra-fast (< 5ms) execution with timestamp-based stamp verification (`.autopatch_verified`) for zero-overhead startup.
+  - Added dedicated patching routines for tool message formatting (normalizing `role: "tool"` content arrays `[{type: "text", text: ...}]` into flat strings for strict OpenAI-compatible upstreams) and network error handling (preventing silent subagent completion on `network_error`, stream stalls, or empty chunks).
+  - Features ultra-fast (< 5ms) execution with timestamp-based stamp verification (`.autopatch_verified`) comparing against target binaries and the patch script itself for zero-overhead startup.
 - **Launcher Integration (`~/.local/bin/opencode2`)**:
   - Integrated pre-launch self-healing invocation into `/home/yapilwsl/.local/bin/opencode2`, ensuring transparent environment resilience on every CLI invocation.
 

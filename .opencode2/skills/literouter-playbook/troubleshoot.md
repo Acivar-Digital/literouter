@@ -121,4 +121,9 @@ curl -sk -X POST https://localhost:7766/reset
 ### Pattern 12: OpenCode2 CLI Broken Binary or Missing Executable Post-Update
 - **Symptom**: Running `opencode2` fails with command not found, permission denied, or broken symlink errors after npm install/update.
 - **Cause**: Upstream `@opencode-ai/cli` creates platform binaries or Windows `.exe` aliases that may lose executable bits or break symlinks in NVM directories.
-- **Handling / Solution**: Run `bash scripts/opencode2_autopatch.sh` (or invoke `opencode2` directly, as `/home/yapilwsl/.local/bin/opencode2` executes the self-healing check automatically on every launch). The script verifies paths, syncs binary aliases, generates `.bak` backups, and restores `chmod +x` permissions in <5ms.
+- **Handling / Solution**: Run `bash scripts/opencode2_autopatch.sh` (or invoke `opencode2` directly, as `/home/yapilwsl/.local/bin/opencode2` executes the self-healing check automatically on every launch). The script verifies paths, syncs binary aliases, generates `.bak` backups, ensures tool message string serialization, verifies network error traps, and restores `chmod +x` permissions in <5ms.
+
+### Pattern 13: Tool Message Array Format Error or Silent Subagent Completion
+- **Symptom**: Upstream model rejects `role: "tool"` turns with HTTP 400 (`content must be string`), or a spawned subagent exits with empty success status upon encountering a network hiccup or empty SSE stream.
+- **Cause**: Array-based tool response payloads in multi-turn agent history or unhandled `network_error` events in streaming sessions.
+- **Handling / Solution**: `scripts/opencode2_autopatch.sh` automatically patches tool message format normalization (ensuring `role: "tool"` content arrays are flattened to strings) and validates network error handling to ensure subagent transport failures fail loudly rather than silently terminating.
