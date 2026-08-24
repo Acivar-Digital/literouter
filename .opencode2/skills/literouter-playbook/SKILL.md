@@ -19,6 +19,7 @@ description: LiteRouter API Gateway operational guide for Bun/TypeScript proxy o
 | Hard key reset | `curl -sk -X POST https://localhost:7766/reset` |
 | Unit tests | `bun test` |
 | Diagnostics | `bun run scripts/doctor.ts` (JSON schema + live upstream key probes for Google, NVIDIA, OpenRouter, Zen) |
+| OpenCode2 Auto-Patch | `bash scripts/opencode2_autopatch.sh` (fast <5ms self-heal & binary verification) |
 | Typecheck & lint | `bun x tsc --noEmit && uv run ruff check .` |
 
 ## ⛔ Critical: Zero Key Redaction
@@ -80,6 +81,7 @@ Fusion presets: `lr-fse-<preset>` (e.g. `lr-fse-fast`, `lr-fse-smart`, `lr-fse-c
 11. **Token-Bucket Rate Pacer (`src/network/pacer.ts`)**: Enforces mandatory `minIntervalMs` (2000ms for Google `gg`, 500ms for others) with an $O(1)$ fast queue, 15s bounded timeout, and local HTTP 429 backpressure.
 12. **Provider Circuit Breaker (`src/network/circuit_breaker.ts`)**: 3-state protection (`CLOSED`, `OPEN`, `HALF_OPEN`) with 60s auto-expiring single-flight canary leases.
 13. **OpenCode Reasoning Stream Filter & Context Bloat Shield (Option 1B)**: OpenCode 2 beta accumulates streaming `delta.reasoning` / `delta.reasoning_content` chunks into SQLite and re-injects them into subsequent request turns, bloating context from ~40K to 300K+ tokens. LiteRouter detects OpenCode (`User-Agent: opencode*`, `x-opencode` header, `x-client-name`) and strips reasoning deltas in flight while preserving `content`, `role`, `tool_calls`, `finish_reason`, and token usage stats. Non-OpenCode clients (Pydantic AI, SDKs) retain full reasoning streams. Overridden via `ts` nuance (to keep thinking in OpenCode) or `sb` (to force-strip for any client).
+14. **OpenCode2 Auto-Patcher & Self-Healing Hook (`scripts/opencode2_autopatch.sh`)**: Standalone, idempotent, sub-5ms verifier ensuring `@opencode-ai/cli` in Node/NVM paths has intact permissions, valid binary symlinks, and automatic `.bak` backups. Integrated directly into `~/.local/bin/opencode2`.
 
 ## Connection Diagnostics & Protocol Inspection
 

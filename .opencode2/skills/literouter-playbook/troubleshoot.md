@@ -117,3 +117,8 @@ curl -sk -X POST https://localhost:7766/reset
 - **Symptom**: Multi-turn sessions in OpenCode2 rapidly consume massive token counts, causing latency degradation or context length exhaustion.
 - **Cause**: OpenCode2 beta captures streaming `delta.reasoning` SSE chunks and saves them in SQLite history, re-sending full thinking traces in every subsequent prompt.
 - **Handling / Solution**: LiteRouter automatically identifies OpenCode (`isOpenCodeClient`) and strips `delta.reasoning` / `delta.reasoning_content` from SSE streams in flight. If thinking chunks are explicitly desired, append the `ts` nuance to the directive (e.g. `lr-or-oa-ch-ts`). For other clients, reasoning chunks are preserved unmodified by default.
+
+### Pattern 12: OpenCode2 CLI Broken Binary or Missing Executable Post-Update
+- **Symptom**: Running `opencode2` fails with command not found, permission denied, or broken symlink errors after npm install/update.
+- **Cause**: Upstream `@opencode-ai/cli` creates platform binaries or Windows `.exe` aliases that may lose executable bits or break symlinks in NVM directories.
+- **Handling / Solution**: Run `bash scripts/opencode2_autopatch.sh` (or invoke `opencode2` directly, as `/home/yapilwsl/.local/bin/opencode2` executes the self-healing check automatically on every launch). The script verifies paths, syncs binary aliases, generates `.bak` backups, and restores `chmod +x` permissions in <5ms.

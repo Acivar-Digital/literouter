@@ -4,6 +4,14 @@ All notable changes to LiteRouter will be documented in this file.
 
 ## [Unreleased]
 
+### Added / OpenCode2 Auto-Patcher & Self-Healing Launcher (`scripts/opencode2_autopatch.sh`)
+- **Standalone Auto-Patcher Script (`scripts/opencode2_autopatch.sh`)**:
+  - Implemented an idempotent, standalone bash script verifying the installed `@opencode-ai/cli` in Node/NVM directory.
+  - Automatically verifies executable binaries (`opencode2`), resolves platform binary links, generates `.bak` safety backups before state changes, and validates reasoning fold/scrubber logic.
+  - Features ultra-fast (< 5ms) execution with timestamp-based stamp verification (`.autopatch_verified`) for zero-overhead startup.
+- **Launcher Integration (`~/.local/bin/opencode2`)**:
+  - Integrated pre-launch self-healing invocation into `/home/yapilwsl/.local/bin/opencode2`, ensuring transparent environment resilience on every CLI invocation.
+
 ### Added / OpenCode Reasoning Stream Filter & Context Bloat Elimination (Option 1B)
 - **Automatic OpenCode Client Detection & Reasoning Stream Stripping (`src/transformers/thinking.ts`, `src/handlers/openai_compat.ts`)**:
   - OpenCode2 beta accumulates all streaming `delta.reasoning` / `delta.reasoning_content` SSE chunks into local SQLite session tables and injects them back into subsequent request contexts as historical assistant messages, rapidly ballooning conversation prompt size from ~40K to 300K+ tokens.
