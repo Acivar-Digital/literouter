@@ -905,10 +905,12 @@ export function createResilientStream(
       return false;
     }
 
-    try {
-      controller.close();
-    } catch (_err: unknown) {
-      console.debug("[ResilientStream] Controller close on EOF:", _err);
+    if (controller.desiredSize !== null) {
+      try {
+        controller.close();
+      } catch (_err: unknown) {
+        console.debug("[ResilientStream] Controller close on EOF:", _err);
+      }
     }
     return false;
   }

@@ -4,6 +4,19 @@ All notable changes to LiteRouter will be documented in this file.
 
 ## [Unreleased]
 
+### Added / Streaming Diagnostic Kit 2.0 & Tool Calling Resilience (`docs/Stream_Idle_Timeouts_2.0.md`, `tests/e2e/streaming_kit/`)
+- **Automated Diagnostic & Verification Harness (`tests/e2e/streaming_kit/run_diagnostics.py`)**:
+  - Implemented 4-stage automated diagnostic kit: SQLite turn extractor & replay (`extract_and_replay.py`), strict Vercel AI SDK Zod validator probe (`vercel_zod_probe.ts`), inter-chunk cadence & synthetic heartbeat auditor (`test_heartbeat_cadence.py`), and master test runner (`run_diagnostics.py`).
+  - Proves zero `content: null` frames, zero Zod `TypeError` schema violations, inter-chunk silence $\le 5500\text{ms}$, and clean byte stream sanitization across deep reasoning models (`stealth/ox-alpha`).
+- **OpenRouter Model Namespace Sanitizer (`src/handlers/openai_compat.ts`)**:
+  - Automatically strips redundant `openrouter/` prefix from `payload.model` when targeting OpenRouter directly (e.g. `openrouter/openai/...` $\to$ `openai/...`), eliminating upstream `HTTP 400 Bad Request` errors caused by client-side provider prefixes.
+- **Resilient Stream EOF Controller Guard (`src/network/fetcher.ts`)**:
+  - Guarded `controller.close()` in `handleEof` with `if (controller.desiredSize !== null)`, eliminating noisy `ERR_INVALID_STATE` stack traces on client-side aborts/disconnects.
+- **Tool Message Wire Formatting & Multi-Turn Chaining Regression Suite (`tests/unit/tool_call_stream_regression.test.ts`)**:
+  - Added unit test coverage verifying `role: "tool"` array content normalization into valid flat strings, stripping OpenCode metadata fields, and preserving incremental `tool_calls` argument deltas during reasoning streams.
+- **OpenCode2 Autonomous Tool Chaining Configuration (`~/.config/opencode2/agents/build.md`, `~/.config/opencode2/config.json`)**:
+  - Configured OpenCode2 Build agent with `steps: 100`, `maxSteps: 100`, auto-allowed permissions, and continuous tool chaining prompts to eliminate intermediate conversational turn-pauses ("continue" stalls) between tool invocations.
+
 ### Fixed / Throttled Synthetic Heartbeats for Extended Reasoning Streams (`src/transformers/thinking.ts`, `src/handlers/openai_compat.ts`)
 - **Throttled 5s Empty Delta Heartbeats (`FILTER_HEARTBEAT_INTERVAL_MS = 5000`)**:
   - Implemented stateful heartbeat tracking in `createOpenCodeReasoningFilterStreamTransformer`: whenever deep reasoning models (e.g. `stealth/ox-alpha`) stream continuous reasoning deltas that are stripped by the OpenCode filter, LiteRouter emits a standard empty delta frame `data: {"id":"chatcmpl-heartbeat", ... "choices":[{"index":0,"delta":{}}]}` at 5-second intervals.

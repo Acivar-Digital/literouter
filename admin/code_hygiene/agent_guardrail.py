@@ -1100,9 +1100,11 @@ def _check_result_exit(result: CheckResult) -> int:
 def _result_to_exit(result: CheckResult | int | str | None) -> int:
     if isinstance(result, CheckResult):
         return _check_result_exit(result)
-    if isinstance(result, str | None):
-        return 0 if result else 1
-    return 0 if result else 1
+    if isinstance(result, int):
+        return result
+    if isinstance(result, str):
+        return 0
+    return 1
 
 
 def _dispatch(command: str, file_path: str) -> int:

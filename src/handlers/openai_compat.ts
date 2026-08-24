@@ -263,17 +263,25 @@ async function executeDirectCall(
     );
   }
 
-  const endpoint = resolveUpstreamEndpoint(directive.provider, directive.completion, payload.model);
+  let activePayload = payload;
+  if ((directive.provider === "or" || (directive.provider as string) === "openrouter") && payload.model.startsWith("openrouter/")) {
+    activePayload = {
+      ...payload,
+      model: payload.model.slice("openrouter/".length),
+    };
+  }
+
+  const endpoint = resolveUpstreamEndpoint(directive.provider, directive.completion, activePayload.model);
   const headers = buildAuthHeaders(endpoint.authHeader, selected.key, directive.provider);
   const fetchOpts: FetcherOptions = {
     url: endpoint.url,
     method: "POST",
     headers,
-    body: JSON.stringify(payload),
+    body: JSON.stringify(activePayload),
     clientSignal,
     provider: directive.provider,
     keyIndex: selected.index,
-    model: payload.model,
+    model: activePayload.model,
   };
 
   const startTime = Date.now();
@@ -346,7 +354,7 @@ async function executeDirectCall(
       const decoded = new TextDecoder().decode(fullBody);
       const json = JSON.parse(decoded) as Record<string, unknown>;
 
-      if (directive.nuances.includes("tc") || payload.model.toLowerCase().includes("dots")) {
+      if (directive.nuances.includes("tc") || activePayload.model.toLowerCase().includes("dots")) {
         const choice = (json.choices as Array<{ message?: { content?: string | null; tool_calls?: unknown }; finish_reason?: string }>)?.[0];
         if (choice?.message?.content && typeof choice.message.content === "string") {
           const { cleanText, toolCalls } = parseDotsXml(choice.message.content);
@@ -443,11 +451,11 @@ async function executeDirectCall(
           url: endpoint.url,
           method: "POST",
           headers: nextHeaders,
-          body: JSON.stringify(payload),
+          body: JSON.stringify(activePayload),
           clientSignal,
           provider: directive.provider,
           keyIndex: nextSelected.index,
-          model: payload.model,
+          model: activePayload.model,
         };
 
         if (env.LITEROUTER_PACER_ENABLED) {
@@ -483,7 +491,7 @@ async function executeDirectCall(
     },
   });
 
-  if (directive.nuances.includes("tc") || payload.model.toLowerCase().includes("dots")) {
+  if (directive.nuances.includes("tc") || activePayload.model.toLowerCase().includes("dots")) {
     resilientStream = resilientStream.pipeThrough(createDotsStreamTransformer());
   }
 
@@ -701,7 +709,14 @@ export async function executeDirectRequest(
   reqId: string,
   clientOptions?: RequestClientOptions
 ): Promise<Response> {
-  const transformed = sanitizeAndTransformPayload(body, {
+  let targetBody = body;
+  if ((directive.provider === "or" || (directive.provider as string) === "openrouter") && body.model.startsWith("openrouter/")) {
+    targetBody = {
+      ...body,
+      model: body.model.slice("openrouter/".length),
+    };
+  }
+  const transformed = sanitizeAndTransformPayload(targetBody, {
     nuances: directive.nuances,
     targetWire: directive.payload,
     enableScrubbing: getEnv().LITEROUTER_ENABLE_SCRUBBING,
