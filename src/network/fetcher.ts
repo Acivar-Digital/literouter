@@ -146,12 +146,16 @@ export function resolveTtftTimeout(model?: string, envTimeoutMs?: number): numbe
   return envTimeoutMs && envTimeoutMs > 0 ? envTimeoutMs : TTFT_TIMEOUT_MS;
 }
 
-export function formatMidstreamErrorFrame(protocol: "anthropic" | "openai" | string, message: string): Uint8Array {
+export function formatMidstreamErrorFrame(
+  protocol: "anthropic" | "openai" | string = "openai",
+  message: string,
+  errorType: string = "server_error"
+): Uint8Array {
   const encoder = new TextEncoder();
   if (protocol === "anthropic" || protocol === "cl") {
     return encoder.encode(`event: error\ndata: ${JSON.stringify({ type: "error", error: { type: "api_error", message } })}\n\n`);
   }
-  return encoder.encode(`data: ${JSON.stringify({ error: { message, type: "server_error" } })}\n\ndata: [DONE]\n\n`);
+  return encoder.encode(`data: ${JSON.stringify({ error: { message, type: errorType } })}\n\ndata: [DONE]\n\n`);
 }
 
 export async function readFirstChunkWithTimeout(
@@ -225,8 +229,8 @@ export async function readFirstContentChunkWithTimeout(
   }
 }
 
-export function extractUsageFromChunk(chunk: Uint8Array): UsageCallbackPayload | null {
-  const text = new TextDecoder().decode(chunk);
+export function extractUsageFromChunk(chunk: Uint8Array | string): UsageCallbackPayload | null {
+  const text = typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk);
   if (!text.includes("usage") && !text.includes("usageMetadata")) {
     return null;
   }
@@ -273,8 +277,8 @@ export function extractUsageFromChunk(chunk: Uint8Array): UsageCallbackPayload |
         const totalTokens = typeof u.totalTokenCount === "number" ? u.totalTokenCount : promptTokens + completionTokens;
         return { promptTokens, completionTokens, totalTokens };
       }
-    } catch (err: unknown) {
-      void err;
+    } catch (_err: unknown) {
+      void _err;
     }
   }
   return null;
@@ -532,11 +536,11 @@ export async function fetchWithTtftGuard(
   return { response, ttftMs, firstChunk, rawReader: reader, protocol };
 }
 
-export function isInBandErrorChunk(chunk: Uint8Array): { isError: boolean; message?: string } {
-  if (!chunk || chunk.length === 0) {
+export function isInBandErrorChunk(chunk: Uint8Array | string): { isError: boolean; message?: string } {
+  if (!chunk || (typeof chunk !== "string" && chunk.length === 0)) {
     return { isError: false };
   }
-  const text = new TextDecoder().decode(chunk).trim();
+  const text = typeof chunk === "string" ? chunk.trim() : new TextDecoder().decode(chunk).trim();
   if (!text) {
     return { isError: false };
   }
@@ -544,6 +548,15 @@ export function isInBandErrorChunk(chunk: Uint8Array): { isError: boolean; messa
   // Fast check for explicit mid-response server error strings
   if (text.includes("Server error mid-response")) {
     return { isError: true, message: "Server error mid-response" };
+  }
+
+  if (
+    text.includes('"finish_reason":"network_error"') ||
+    text.includes('"finish_reason": "network_error"') ||
+    text.includes('"finish_reason":"error"') ||
+    text.includes('"finish_reason": "error"')
+  ) {
+    return { isError: true, message: "Upstream emitted finish_reason: network_error chunk" };
   }
 
   // Check JSON / SSE error payloads line by line
@@ -576,8 +589,8 @@ export function isInBandErrorChunk(chunk: Uint8Array): { isError: boolean; messa
           const msg = typeof parsed.message === "string" ? parsed.message : "In-band upstream error";
           return { isError: true, message: msg };
         }
-      } catch (err: unknown) {
-        void err;
+      } catch (_err: unknown) {
+        void _err;
       }
     }
   }
@@ -608,20 +621,38 @@ export interface StreamTokenState {
   hasSeenDataToken: boolean;
 }
 
+export function isLikelySSEDoneMarker(chunkText: string): boolean {
+  if (chunkText.includes("[DONE]")) return true;
+  if (
+    chunkText.includes('"finish_reason":"stop"') ||
+    chunkText.includes('"finish_reason":"tool_calls"') ||
+    chunkText.includes('"finish_reason":"length"') ||
+    chunkText.includes('"finish_reason":"content_filter"') ||
+    chunkText.includes('"finish_reason": "stop"') ||
+    chunkText.includes('"finish_reason": "tool_calls"') ||
+    chunkText.includes('"finish_reason": "length"') ||
+    chunkText.includes('"finish_reason": "content_filter"')
+  ) {
+    return true;
+  }
+  return false;
+}
+
 export function inspectChunkMarkers(
-  chunk: Uint8Array,
+  chunk: Uint8Array | string,
   state: StreamTokenState
 ): void {
-  if (chunk.length === 0) {
+  if (!chunk || (typeof chunk !== "string" && chunk.length === 0)) {
     return;
   }
-  const chunkText = new TextDecoder().decode(chunk);
-  if (chunkText.includes("[DONE]") || chunkText.includes('"finish_reason":')) {
+  const chunkText = typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk);
+  if (isLikelySSEDoneMarker(chunkText)) {
     state.hasSeenDoneMarker = true;
   }
   if (
     chunkText.includes('"content":') ||
     chunkText.includes('"reasoning":') ||
+    chunkText.includes('"reasoning_content":') ||
     chunkText.includes('"tool_calls":')
   ) {
     state.hasSeenDataToken = true;
@@ -652,15 +683,30 @@ export async function readWithChunkTimeout(
 function emitStreamError(
   controller: ReadableStreamDefaultController<Uint8Array>,
   reason: string,
-  rawError: unknown,
-  callbacks?: StreamCallbacks
+  rawError?: unknown,
+  callbacks?: StreamCallbacks,
+  hasEmittedTokens: boolean = false
 ): void {
-  if (callbacks?.protocol) {
-    controller.enqueue(formatMidstreamErrorFrame(callbacks.protocol, reason));
-    controller.close();
+  if (callbacks?.protocol || hasEmittedTokens) {
+    const protocol = callbacks?.protocol || "openai";
+    const errorType = hasEmittedTokens ? "stream_error" : "server_error";
+    try {
+      controller.enqueue(formatMidstreamErrorFrame(protocol, reason, errorType));
+    } catch (_err: unknown) {
+      console.debug("[StreamError] Enqueue error frame failed:", _err);
+    }
+    try {
+      controller.close();
+    } catch (_err: unknown) {
+      console.debug("[StreamError] Controller close failed:", _err);
+    }
     return;
   }
-  controller.error(rawError instanceof Error ? rawError : new Error(reason));
+  try {
+    controller.error(rawError instanceof Error ? rawError : new Error(reason));
+  } catch (_err: unknown) {
+    console.debug("[StreamError] Controller error dispatch failed:", _err);
+  }
 }
 
 function applyNextAttempt(
@@ -700,32 +746,40 @@ export async function handlePrematureEof(
 }
 
 async function handleInBandErrorIfPresent(
-  value: Uint8Array,
+  text: string,
   controller: ReadableStreamDefaultController<Uint8Array>,
-  callbacks?: StreamCallbacks
+  callbacks?: StreamCallbacks,
+  hasEmittedTokens: boolean = false
 ): Promise<{ isHandled: boolean; next: NextAttemptResult | null }> {
-  const errCheck = isInBandErrorChunk(value);
+  const errCheck = isInBandErrorChunk(text);
   if (!errCheck.isError) {
     return { isHandled: false, next: null };
   }
   const reason = errCheck.message ?? "In-band error detected";
-  const provider = callbacks?.retryProvider ?? callbacks?.nextAttemptProvider;
+  const provider = callbacks?.nextAttemptProvider ?? callbacks?.retryProvider;
   if (provider) {
-    const next = await provider(reason);
-    if (next) {
-      return { isHandled: true, next };
+    try {
+      const next = await provider(reason);
+      if (next) {
+        return { isHandled: true, next };
+      }
+    } catch (retryErr: unknown) {
+      const retryReason = retryErr instanceof Error ? retryErr.message : String(retryErr);
+      emitStreamError(controller, retryReason, retryErr, callbacks, hasEmittedTokens);
+      return { isHandled: true, next: null };
     }
   }
-  emitStreamError(controller, reason, new Error(reason), callbacks);
+  emitStreamError(controller, reason, new Error(reason), callbacks, hasEmittedTokens);
   return { isHandled: true, next: null };
 }
 
 export async function handleStreamFailure(
   err: unknown,
   controller: ReadableStreamDefaultController<Uint8Array>,
-  callbacks?: StreamCallbacks
+  callbacks?: StreamCallbacks,
+  hasEmittedTokens: boolean = false
 ): Promise<NextAttemptResult | null> {
-  const provider = callbacks?.retryProvider ?? callbacks?.nextAttemptProvider;
+  const provider = callbacks?.nextAttemptProvider ?? callbacks?.retryProvider;
   const reason = err instanceof Error ? err.message : String(err);
   if (provider) {
     try {
@@ -735,12 +789,56 @@ export async function handleStreamFailure(
       }
     } catch (retryErr: unknown) {
       const retryReason = retryErr instanceof Error ? retryErr.message : String(retryErr);
-      emitStreamError(controller, retryReason, retryErr, callbacks);
+      emitStreamError(controller, retryReason, retryErr, callbacks, hasEmittedTokens);
       return null;
     }
   }
-  emitStreamError(controller, reason, err, callbacks);
+  emitStreamError(controller, reason, err, callbacks, hasEmittedTokens);
   return null;
+}
+
+interface ProcessChunkContext {
+  controller: ReadableStreamDefaultController<Uint8Array>;
+  tokenState: StreamTokenState;
+  callbacks?: StreamCallbacks;
+  usageState: { usageEmitted: boolean };
+}
+
+async function processBufferedText(
+  text: string,
+  ctx: ProcessChunkContext
+): Promise<{ isHandled: boolean; nextReader?: ReadableStreamDefaultReader<Uint8Array> }> {
+  const inBandResult = await handleInBandErrorIfPresent(
+    text,
+    ctx.controller,
+    ctx.callbacks,
+    ctx.tokenState.hasSeenDataToken
+  );
+  if (inBandResult.isHandled) {
+    if (inBandResult.next) {
+      const nextReader = applyNextAttempt(
+        inBandResult.next,
+        ctx.controller,
+        ctx.tokenState,
+        ctx.callbacks,
+        ctx.usageState
+      );
+      return { isHandled: true, nextReader };
+    }
+    return { isHandled: true };
+  }
+
+  inspectChunkMarkers(text, ctx.tokenState);
+  if (!ctx.usageState.usageEmitted && ctx.callbacks?.onUsage) {
+    const usage = extractUsageFromChunk(text);
+    if (usage) {
+      ctx.usageState.usageEmitted = true;
+      ctx.callbacks.onUsage(usage);
+    }
+  }
+  const encoder = new TextEncoder();
+  ctx.controller.enqueue(encoder.encode(text));
+  return { isHandled: false };
 }
 
 export function createResilientStream(
@@ -750,72 +848,141 @@ export function createResilientStream(
 ): ReadableStream<Uint8Array> {
   let currentReader = reader;
   let keepAliveTimer: IntervalHandle | null = null;
+  let pendingFirstChunk: Uint8Array | null = firstChunk;
+  let lineBuffer = "";
+  const decoder = new TextDecoder("utf-8", { fatal: false });
   const usageState = { usageEmitted: false };
   const tokenState: StreamTokenState = {
     hasSeenDoneMarker: false,
     hasSeenDataToken: false,
   };
 
-  inspectChunkMarkers(firstChunk, tokenState);
-  const initialUsage = extractUsageFromChunk(firstChunk);
-  if (initialUsage && callbacks?.onUsage) {
-    usageState.usageEmitted = true;
-    callbacks.onUsage(initialUsage);
+  const idleTimeoutMs = getEnv().LITEROUTER_STREAM_IDLE_TIMEOUT_MS || STREAM_IDLE_TIMEOUT_MS;
+
+  async function handleEof(
+    controller: ReadableStreamDefaultController<Uint8Array>
+  ): Promise<boolean> {
+    clearTimer(keepAliveTimer);
+    if (lineBuffer.length > 0) {
+      const remaining = lineBuffer;
+      lineBuffer = "";
+      const flushCtx: ProcessChunkContext = {
+        controller,
+        tokenState,
+        callbacks,
+        usageState,
+      };
+      const res = await processBufferedText(remaining, flushCtx);
+      if (res.isHandled) {
+        if (res.nextReader) {
+          currentReader = res.nextReader;
+          keepAliveTimer = startKeepAliveTimer(controller);
+          return true;
+        }
+        return false;
+      }
+    }
+
+    const next = await handlePrematureEof(tokenState, callbacks);
+    if (next) {
+      lineBuffer = "";
+      const nextReader = applyNextAttempt(next, controller, tokenState, callbacks, usageState);
+      if (nextReader) {
+        currentReader = nextReader;
+      }
+      keepAliveTimer = startKeepAliveTimer(controller);
+      return true;
+    }
+
+    if (tokenState.hasSeenDataToken && !tokenState.hasSeenDoneMarker) {
+      emitStreamError(
+        controller,
+        "Upstream stream dropped mid-generation",
+        new Error("Upstream stream dropped mid-generation"),
+        callbacks,
+        true
+      );
+      return false;
+    }
+
+    try {
+      controller.close();
+    } catch (_err: unknown) {
+      console.debug("[ResilientStream] Controller close on EOF:", _err);
+    }
+    return false;
   }
 
-  const idleTimeoutMs = getEnv().LITEROUTER_STREAM_IDLE_TIMEOUT_MS || STREAM_IDLE_TIMEOUT_MS;
+  async function ingestBytes(
+    rawBytes: Uint8Array,
+    ctx: ProcessChunkContext
+  ): Promise<{ isHandled: boolean; enqueued: boolean; nextReader?: ReadableStreamDefaultReader<Uint8Array> }> {
+    lineBuffer += decoder.decode(rawBytes, { stream: true });
+    const lastNewlineIdx = lineBuffer.lastIndexOf("\n");
+    if (lastNewlineIdx === -1) {
+      return { isHandled: false, enqueued: false };
+    }
+    const completeText = lineBuffer.slice(0, lastNewlineIdx + 1);
+    lineBuffer = lineBuffer.slice(lastNewlineIdx + 1);
+    const res = await processBufferedText(completeText, ctx);
+    return { isHandled: res.isHandled, enqueued: !res.isHandled, nextReader: res.nextReader };
+  }
 
   return new ReadableStream<Uint8Array>({
     start(controller) {
-      controller.enqueue(firstChunk);
       keepAliveTimer = startKeepAliveTimer(controller);
     },
     async pull(controller) {
+      const chunkCtx: ProcessChunkContext = {
+        controller,
+        tokenState,
+        callbacks,
+        usageState,
+      };
+
       try {
+        if (pendingFirstChunk !== null) {
+          const chunk = pendingFirstChunk;
+          pendingFirstChunk = null;
+          if (chunk.length > 0) {
+            const result = await ingestBytes(chunk, chunkCtx);
+            if (result.isHandled) {
+              clearTimer(keepAliveTimer);
+              if (result.nextReader) {
+                lineBuffer = "";
+                currentReader = result.nextReader;
+                keepAliveTimer = startKeepAliveTimer(controller);
+              }
+              return;
+            }
+            if (result.enqueued) {
+              return;
+            }
+          }
+        }
+
         const { done, value } = await readWithChunkTimeout(currentReader, idleTimeoutMs);
         if (done) {
-          clearTimer(keepAliveTimer);
-          const next = await handlePrematureEof(tokenState, callbacks);
-          if (next) {
-            const nextReader = applyNextAttempt(next, controller, tokenState, callbacks, usageState);
-            if (nextReader) {
-              currentReader = nextReader;
-            }
-            keepAliveTimer = startKeepAliveTimer(controller);
-            return;
-          }
-          controller.close();
+          await handleEof(controller);
           return;
         }
 
         if (value && value.length > 0) {
-          const inBandResult = await handleInBandErrorIfPresent(value, controller, callbacks);
-          if (inBandResult.isHandled) {
+          const result = await ingestBytes(value, chunkCtx);
+          if (result.isHandled) {
             clearTimer(keepAliveTimer);
-            if (inBandResult.next) {
-              const nextReader = applyNextAttempt(inBandResult.next, controller, tokenState, callbacks, usageState);
-              if (nextReader) {
-                currentReader = nextReader;
-              }
+            if (result.nextReader) {
+              lineBuffer = "";
+              currentReader = result.nextReader;
               keepAliveTimer = startKeepAliveTimer(controller);
             }
-            return;
           }
-
-          inspectChunkMarkers(value, tokenState);
-          if (!usageState.usageEmitted && callbacks?.onUsage) {
-            const usage = extractUsageFromChunk(value);
-            if (usage) {
-              usageState.usageEmitted = true;
-              callbacks.onUsage(usage);
-            }
-          }
-          controller.enqueue(value);
         }
       } catch (err: unknown) {
         clearTimer(keepAliveTimer);
-        const next = await handleStreamFailure(err, controller, callbacks);
+        const next = await handleStreamFailure(err, controller, callbacks, tokenState.hasSeenDataToken);
         if (next) {
+          lineBuffer = "";
           const nextReader = applyNextAttempt(next, controller, tokenState, callbacks, usageState);
           if (nextReader) {
             currentReader = nextReader;

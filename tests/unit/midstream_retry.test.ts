@@ -6,6 +6,7 @@ import {
   handlePrematureEof,
   inspectChunkMarkers,
   isInBandErrorChunk,
+  isLikelySSEDoneMarker,
   readWithChunkTimeout,
   StreamStallError,
   type StreamCallbacks,
@@ -126,10 +127,44 @@ describe("isInBandErrorChunk", () => {
     }
   });
 
+  it("detects finish_reason: network_error and finish_reason: error chunks as errors", () => {
+    const errorChunks = [
+      'data: {"choices":[{"index":0,"delta":{},"finish_reason":"network_error"}]}\n\n',
+      'data: {"choices":[{"index":0,"delta":{},"finish_reason": "network_error"}]}\n\n',
+      'data: {"choices":[{"finish_reason":"error"}]}\n\n',
+      'data: {"choices":[{"finish_reason": "error"}]}\n\n',
+    ];
+
+    for (const chunkStr of errorChunks) {
+      const chunk = encoder.encode(chunkStr);
+      const result = isInBandErrorChunk(chunk);
+      expect(result.isError).toBe(true);
+      expect(result.message).toContain("network_error");
+    }
+  });
+
   it("returns { isError: false } for empty byte chunks", () => {
     const emptyChunk = new Uint8Array(0);
     const result = isInBandErrorChunk(emptyChunk);
     expect(result.isError).toBe(false);
+  });
+});
+
+describe("isLikelySSEDoneMarker", () => {
+  it("returns true for [DONE] and valid terminal finish_reasons", () => {
+    expect(isLikelySSEDoneMarker("data: [DONE]\n\n")).toBe(true);
+    expect(isLikelySSEDoneMarker('data: {"choices":[{"finish_reason":"stop"}]}\n\n')).toBe(true);
+    expect(isLikelySSEDoneMarker('data: {"choices":[{"finish_reason":"tool_calls"}]}\n\n')).toBe(true);
+    expect(isLikelySSEDoneMarker('data: {"choices":[{"finish_reason":"length"}]}\n\n')).toBe(true);
+    expect(isLikelySSEDoneMarker('data: {"choices":[{"finish_reason":"content_filter"}]}\n\n')).toBe(true);
+    expect(isLikelySSEDoneMarker('data: {"choices":[{"finish_reason": "stop"}]}\n\n')).toBe(true);
+  });
+
+  it("returns false for network_error, error, or non-terminal chunks", () => {
+    expect(isLikelySSEDoneMarker('data: {"choices":[{"finish_reason":"network_error"}]}\n\n')).toBe(false);
+    expect(isLikelySSEDoneMarker('data: {"choices":[{"finish_reason":"error"}]}\n\n')).toBe(false);
+    expect(isLikelySSEDoneMarker('data: {"choices":[{"delta":{"content":"hello"}}]}\n\n')).toBe(false);
+    expect(isLikelySSEDoneMarker(": keep-alive\n\n")).toBe(false);
   });
 });
 
@@ -246,7 +281,7 @@ describe("createResilientStream — Mid-Stream Error Recovery", () => {
     expect(text).toContain("[DONE]");
   });
 
-  it("errors downstream controller if retries fail or nextAttemptProvider throws", async () => {
+  it("seals downstream with SSE error frame when midstream retries fail or nextAttemptProvider throws after tokens", async () => {
     const firstChunk = encoder.encode('data: {"choices":[{"delta":{"content":"Start"}}]}\n\n');
     const socketError = new Error("Connection terminated unexpectedly");
 
@@ -259,19 +294,15 @@ describe("createResilientStream — Mid-Stream Error Recovery", () => {
     };
 
     const stream = createResilientStream(firstChunk, failingReader, callbacks);
+    const { text } = await readAllChunks(stream);
 
-    let errorThrown: unknown;
-    try {
-      await readAllChunks(stream);
-    } catch (err: unknown) {
-      errorThrown = err;
-    }
-
-    expect(errorThrown).toBeDefined();
-    expect((errorThrown as Error).message).toContain("All retry keys exhausted");
+    expect(text).toContain("Start");
+    expect(text).toContain('"type":"stream_error"');
+    expect(text).toContain("All retry keys exhausted");
+    expect(text).toContain("data: [DONE]\n\n");
   });
 
-  it("errors downstream controller if nextAttemptProvider returns null / no further attempts", async () => {
+  it("seals downstream with SSE error frame when nextAttemptProvider returns null / no further attempts after tokens", async () => {
     const firstChunk = encoder.encode('data: {"choices":[{"delta":{"content":"Start"}}]}\n\n');
     const socketError = new Error("Connection reset");
 
@@ -284,21 +315,32 @@ describe("createResilientStream — Mid-Stream Error Recovery", () => {
     };
 
     const stream = createResilientStream(firstChunk, failingReader, callbacks);
+    const { text } = await readAllChunks(stream);
 
-    let errorThrown: unknown;
-    try {
-      await readAllChunks(stream);
-    } catch (err: unknown) {
-      errorThrown = err;
-    }
-
-    expect(errorThrown).toBeDefined();
-    expect((errorThrown as Error).message).toContain("Connection reset");
+    expect(text).toContain("Start");
+    expect(text).toContain('"type":"stream_error"');
+    expect(text).toContain("Connection reset");
+    expect(text).toContain("data: [DONE]\n\n");
   });
 
-  it("errors downstream controller if upstream fails and no nextAttemptProvider is provided", async () => {
+  it("seals downstream with SSE error frame when upstream fails midstream and no nextAttemptProvider is provided", async () => {
     const firstChunk = encoder.encode('data: {"choices":[{"delta":{"content":"Start"}}]}\n\n');
     const socketError = new Error("Network transport failure");
+
+    const failingReader = createMockReader([socketError]);
+
+    const stream = createResilientStream(firstChunk, failingReader);
+    const { text } = await readAllChunks(stream);
+
+    expect(text).toContain("Start");
+    expect(text).toContain('"type":"stream_error"');
+    expect(text).toContain("Network transport failure");
+    expect(text).toContain("data: [DONE]\n\n");
+  });
+
+  it("errors downstream controller when upstream fails with 0 tokens and no nextAttemptProvider is provided", async () => {
+    const firstChunk = encoder.encode("\n\n");
+    const socketError = new Error("Network transport failure before tokens");
 
     const failingReader = createMockReader([socketError]);
 
@@ -312,7 +354,7 @@ describe("createResilientStream — Mid-Stream Error Recovery", () => {
     }
 
     expect(errorThrown).toBeDefined();
-    expect((errorThrown as Error).message).toContain("Network transport failure");
+    expect((errorThrown as Error).message).toContain("Network transport failure before tokens");
   });
 
   it("premature EOF with 0 data tokens triggers retryProvider and seamlessly yields chunks from 2nd provider", async () => {
@@ -490,7 +532,7 @@ describe("createResilientStream — Mid-Stream Error Recovery", () => {
 
     expect(retryCalled).toBe(true);
     expect(text).toContain("initial");
-    expect(text).toContain('data: {"error":{"message":"Connection reset by peer","type":"server_error"}}\n\ndata: [DONE]\n\n');
+    expect(text).toContain('data: {"error":{"message":"Connection reset by peer","type":"stream_error"}}\n\ndata: [DONE]\n\n');
   });
 
   it("retryProvider exhaustion formats downstream Anthropic error frame and terminates cleanly", async () => {
@@ -546,5 +588,126 @@ describe("createResilientStream — Mid-Stream Error Recovery", () => {
     expect(text).toContain(": ping");
     expect(text).toContain("recovered after keepalive EOF");
     expect(text).toContain("[DONE]");
+  });
+
+  it("recovers seamlessly when upstream emits finish_reason: network_error on first chunk before tokens", async () => {
+    const errorFirstChunk = encoder.encode(
+      'data: {"choices":[{"index":0,"delta":{},"finish_reason":"network_error"}]}\n\n'
+    );
+    const emptyReader = createMockReader([]);
+
+    const retryFirstChunk = encoder.encode('data: {"choices":[{"delta":{"content":"seamless recovery after failure"}}]}\n\n');
+    const retryDoneChunk = encoder.encode("data: [DONE]\n\n");
+    const recoveredReader = createMockReader([retryDoneChunk]);
+
+    let retryReason = "";
+    const callbacks: StreamCallbacks = {
+      retryProvider: async (reason: string) => {
+        retryReason = reason;
+        return {
+          firstChunk: retryFirstChunk,
+          reader: recoveredReader,
+        };
+      },
+    };
+
+    const stream = createResilientStream(errorFirstChunk, emptyReader, callbacks);
+    const { text, chunks } = await readAllChunks(stream);
+
+    expect(retryReason).toContain("finish_reason: network_error");
+    expect(text).not.toContain('"finish_reason":"network_error"');
+    expect(text).toContain("seamless recovery after failure");
+    expect(text).toContain("[DONE]");
+    expect(chunks.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("detects fragmented TCP packet with finish_reason: network_error split across 2 chunks and retries cleanly", async () => {
+    const chunkPart1 = encoder.encode('data: {"choices":[{"index":0,"delta":{},"finish_');
+    const chunkPart2 = encoder.encode('reason":"network_error"}]}\n\n');
+    const failingReader = createMockReader([chunkPart2]);
+
+    const retryFirstChunk = encoder.encode('data: {"choices":[{"delta":{"content":"recovered from split packet"}}]}\n\n');
+    const retryDoneChunk = encoder.encode("data: [DONE]\n\n");
+    const recoveredReader = createMockReader([retryDoneChunk]);
+
+    let retryCalled = false;
+    let retryReason = "";
+    const callbacks: StreamCallbacks = {
+      retryProvider: async (reason: string) => {
+        retryCalled = true;
+        retryReason = reason;
+        return {
+          firstChunk: retryFirstChunk,
+          reader: recoveredReader,
+        };
+      },
+    };
+
+    const stream = createResilientStream(chunkPart1, failingReader, callbacks);
+    const { text } = await readAllChunks(stream);
+
+    expect(retryCalled).toBe(true);
+    expect(retryReason).toContain("finish_reason: network_error");
+    expect(text).not.toContain("network_error");
+    expect(text).toContain("recovered from split packet");
+    expect(text).toContain("[DONE]");
+  });
+
+  it("midstream drop after tokens outputs clean OpenAI SSE error block and closes without throwing uncaught controller exceptions", async () => {
+    const firstChunk = encoder.encode('data: {"choices":[{"delta":{"content":"Hello world"}}]}\n\n');
+    const emptyReader = createMockReader([]);
+
+    const stream = createResilientStream(firstChunk, emptyReader);
+    const { text } = await readAllChunks(stream);
+
+    expect(text).toContain("Hello world");
+    expect(text).toContain('data: {"error":{"message":"Upstream stream dropped mid-generation","type":"stream_error"}}\n\ndata: [DONE]\n\n');
+  });
+
+  it("midstream stall after tokens outputs clean SSE error block and closes cleanly without throwing", async () => {
+    const originalTimeout = process.env.LITEROUTER_STREAM_IDLE_TIMEOUT_MS;
+    process.env.LITEROUTER_STREAM_IDLE_TIMEOUT_MS = "20";
+    resetEnvCache();
+
+    try {
+      const firstChunk = encoder.encode('data: {"choices":[{"delta":{"content":"Stream start"}}]}\n\n');
+      const stalledReader = {
+        read: () => new Promise<never>(() => {}),
+        releaseLock: () => {},
+        cancel: async () => {},
+        closed: Promise.resolve(undefined),
+      } as unknown as ReadableStreamDefaultReader<Uint8Array>;
+
+      const stream = createResilientStream(firstChunk, stalledReader);
+      const { text } = await readAllChunks(stream);
+
+      expect(text).toContain("Stream start");
+      expect(text).toContain('"type":"stream_error"');
+      expect(text).toContain("Stream idle timeout exceeded");
+      expect(text).toContain("data: [DONE]\n\n");
+    } finally {
+      if (originalTimeout !== undefined) {
+        process.env.LITEROUTER_STREAM_IDLE_TIMEOUT_MS = originalTimeout;
+      } else {
+        delete process.env.LITEROUTER_STREAM_IDLE_TIMEOUT_MS;
+      }
+      resetEnvCache();
+    }
+  });
+
+  it("midstream in-band error after tokens outputs clean SSE error block and closes cleanly", async () => {
+    const firstChunk = encoder.encode('data: {"choices":[{"delta":{"content":"Initial part"}}]}\n\n');
+    const inBandErrorChunk = encoder.encode(
+      'data: {"error":{"message":"Server error mid-response","code":500}}\n\n'
+    );
+    const failingReader = createMockReader([inBandErrorChunk]);
+
+    const stream = createResilientStream(firstChunk, failingReader);
+    const { text } = await readAllChunks(stream);
+
+    expect(text).toContain("Initial part");
+    expect(text).toContain('"type":"stream_error"');
+    expect(text).toContain("Server error mid-response");
+    expect(text).toContain("data: [DONE]\n\n");
   });
 });

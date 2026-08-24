@@ -69,12 +69,65 @@ describe("Error Classifier — classifyUpstreamError & classifyTransportError", 
       expect(result.isRetryable).toBe(false);
     });
 
-    it("classifies 'context_length' as fail_fast with 0s quarantine", () => {
+    it("classifies 'context_length_exceeded' as fail_fast with 0s quarantine", () => {
       const result = classifyUpstreamError({
         provider: "ds",
         status: 400,
         headers: {},
         bodyText: JSON.stringify({ error: { code: "context_length_exceeded", message: "Prompt too long" } }),
+      });
+      expect(result.action).toBe("fail_fast");
+      expect(result.quarantineTtlSec).toBe(0);
+      expect(result.isRetryable).toBe(false);
+    });
+
+    it("classifies 'prompt is too long' / context overflow as fail_fast with 0s quarantine", () => {
+      const result = classifyUpstreamError({
+        provider: "an",
+        status: 400,
+        headers: new Headers(),
+        bodyText: JSON.stringify({
+          type: "error",
+          error: {
+            type: "invalid_request_error",
+            message: "prompt is too long: 205000 tokens > 200000 maximum context length",
+          },
+        }),
+      });
+      expect(result.action).toBe("fail_fast");
+      expect(result.quarantineTtlSec).toBe(0);
+      expect(result.isRetryable).toBe(false);
+    });
+
+    it("classifies Anthropic context window overflow error as fail_fast with 0s quarantine", () => {
+      const result = classifyUpstreamError({
+        provider: "an",
+        status: 400,
+        headers: {},
+        bodyText: JSON.stringify({
+          error: {
+            type: "invalid_request_error",
+            message: "Request exceeds the maximum context length of 200000 tokens",
+          },
+        }),
+      });
+      expect(result.action).toBe("fail_fast");
+      expect(result.quarantineTtlSec).toBe(0);
+      expect(result.isRetryable).toBe(false);
+    });
+
+    it("classifies Google Gemini token limit exceeded 400 as fail_fast with 0s quarantine", () => {
+      const result = classifyUpstreamError({
+        provider: "gg",
+        status: 400,
+        headers: {},
+        bodyText: JSON.stringify({
+          error: {
+            code: 400,
+            message: "Request contains 1048577 tokens, which exceeds the maximum limit of 1048576 tokens",
+            status: "INVALID_ARGUMENT",
+          },
+        }),
       });
       expect(result.action).toBe("fail_fast");
       expect(result.quarantineTtlSec).toBe(0);
