@@ -100,6 +100,12 @@ When LiteRouter stripped `reasoning`, it left `{"delta": {"content": null}}`. Be
 #### Failure Mode B: Stream Idle Timeout & Orphaned Newlines
 When chunks contained only `reasoning` without `content`, LiteRouter suppressed the event line but emitted trailing `\n` characters for each double-newline, sending hundreds of orphaned newlines downstream. Simultaneously, on turns where the model reasoned for >30s on 42k context, the 30s stream idle timeout severed the connection.
 
+#### Failure Mode C: Client-Side 55s Activity Inactivity & Discarded SSE Comments
+When `stealth/ox-alpha` processes large prompts (35k–40k tokens) on OpenRouter, OpenRouter emits SSE comment frames (`: OPENROUTER PROCESSING\n\n` and `: keep-alive\n\n`) for ~45–55 seconds while thinking before generating the first text token.
+- **The parser disconnect**: In standard SSE specifications and OpenCode's Vercel AI SDK (`eventsource-parser`), comment lines starting with `:` are **discarded/ignored** and do not dispatch data events to the stream listener.
+- **The timeout**: Because LiteRouter's reasoning filter stripped intermediate reasoning chunks and the AI SDK discarded comment lines, downstream OpenCode received **0 valid SSE data events** for 56 seconds.
+- **The abort**: OpenCode's client-side stream inactivity timer (set to ~55s) fired, threw an `AbortError: The operation was aborted`, marked `rawFinish: "network_error"`, and aborted the connection at **56.3s**.
+
 ---
 
 ## 4. Comparison: AGY vs OpenCode
@@ -108,9 +114,9 @@ When chunks contained only `reasoning` without `content`, LiteRouter suppressed 
 |---|---|---|
 | **Client Detection** | `isOpenCodeClient` = `true` | `isOpenCodeClient` = `false` |
 | **Reasoning Stream Filter** | Enabled (strips all thinking deltas) | Bypassed (passes raw thinking deltas) |
-| **Downstream Token Flow** | Receives clean string deltas | Receives continuous thinking tokens every ~50ms |
-| **Idle Timeout Risk** | High (socket starved for 30–80s during 42k thinking) | Zero (constant stream of tokens keeps socket active) |
-| **UI Experience** | Appears frozen at tool output | Renders live thinking progress in real time |
+| **Downstream Token Flow** | Receives clean string deltas + empty delta heartbeats | Receives continuous thinking tokens every ~50ms |
+| **Idle Timeout Risk** | Eliminated (empty delta heartbeats reset client timer) | Zero (constant stream of tokens keeps socket active) |
+| **UI Experience** | Renders tool outputs and assistant responses cleanly | Renders live thinking progress in real time |
 
 ---
 
@@ -121,7 +127,19 @@ When chunks contained only `reasoning` without `content`, LiteRouter suppressed 
 - `hasMeaningfulDeltaFields` now strictly requires `typeof delta.content === "string" && delta.content.length > 0` (or non-empty `tool_calls`/`role`/`refusal`).
 - Chunks containing only reasoning are completely dropped without emitting orphaned `\n` characters, preventing AI SDK parser corruption.
 
-### B. Unified Stream Idle Timeout (120s / 2 Minutes)
+### B. Upstream Raw Control Character Sanitization (`\r` / `0x0D` Escaping)
+- Implemented `sanitizeRawControlChars` in `src/transformers/thinking.ts` to escape unescaped carriage returns (`0x0D`) emitted inside string literals by upstream providers (`">\r<br> "`).
+- Prevents engine-level `JSON Parse error: Unterminated string` in downstream parsers before schema validation is reached.
+
+### C. Active Empty Delta Heartbeats for SSE Comments
+- In `src/transformers/thinking.ts`, whenever an upstream keepalive comment (`: keep-alive` or `: OPENROUTER PROCESSING`) is received, LiteRouter forwards the comment AND emits a standard OpenAI empty delta frame:
+  ```sse
+  data: {"choices":[{"index":0,"delta":{}}]}
+  ```
+- **Zero text impact**: `delta: {}` contains no content or tool calls, so it produces no UI visual artifacts.
+- **Resets client stream timer**: `eventsource-parser` in `@ai-sdk/openai` dispatches the event, resetting OpenCode's 55s inactivity timer every 10–15s throughout extended 60s+ thinking turns.
+
+### D. Unified Stream Idle Timeout (120s / 2 Minutes)
 `LITEROUTER_STREAM_IDLE_TIMEOUT_MS` is unified to **120000 ms (2 minutes)** across all configuration files and runtime defaults:
 - `src/network/fetcher.ts`: `STREAM_IDLE_TIMEOUT_MS = 120000`
 - `src/config/schema.ts`: `LITEROUTER_STREAM_IDLE_TIMEOUT_MS.default(120000)`
@@ -129,7 +147,7 @@ When chunks contained only `reasoning` without `content`, LiteRouter suppressed 
 
 This aligns the inter-chunk stall threshold with `LITEROUTER_TTFT_TIMEOUT_MS` (120s), ensuring that deep reasoning models running on large context (40k–128k tokens) have sufficient time to complete their thinking phase without being severed.
 
-### B. Thinking Support Nuance (`ts` vs `sb`)
+### E. Thinking Support Nuance (`ts` vs `sb`)
 
 LiteRouter provides explicit directive nuances to control reasoning streaming:
 
