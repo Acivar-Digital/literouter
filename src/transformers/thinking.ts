@@ -391,7 +391,14 @@ export function createOpenCodeReasoningFilterStreamTransformer(): TransformStrea
           continue;
         }
         if (trimmed.startsWith(":") || trimmed === "data: [DONE]") {
-          controller.enqueue(encoder.encode(trimmed + "\n\n"));
+          if (trimmed.startsWith(":")) {
+            controller.enqueue(encoder.encode(trimmed + "\n\n"));
+            // Emit an active empty delta heartbeat so downstream client parsers (like Vercel AI SDK)
+            // that discard comment lines still receive activity events and do not idle-timeout
+            controller.enqueue(encoder.encode('data: {"choices":[{"index":0,"delta":{}}]}\n\n'));
+          } else {
+            controller.enqueue(encoder.encode(trimmed + "\n\n"));
+          }
           continue;
         }
         if (trimmed.startsWith("data: ")) {
