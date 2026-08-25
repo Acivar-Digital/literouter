@@ -93,7 +93,7 @@ export class RequestPacer {
     if (this.config.maxRpm && this.config.maxRpm > 0) {
       return Math.max(10, Math.ceil(60000 / this.config.maxRpm));
     }
-    return 2000;
+    return 200;
   }
 
   public get maxQueueDepth(): number {
@@ -234,7 +234,7 @@ function getProviderMinDelayFromEnv(provider: string): number {
     case "tp":
       return env.TEST_PROVIDER_MIN_DELAY_MS;
     default:
-      return 2000;
+      return 200;
   }
 }
 

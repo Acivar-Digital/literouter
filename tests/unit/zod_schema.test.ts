@@ -121,7 +121,7 @@ describe("Zod Schema — Environment Variables Auto-Coercion & Defaults", () => 
     expect(parsed.LITEROUTER_NO_RESPONSE_TIMEOUT_MS).toBe(120000);
     expect(parsed.LITEROUTER_STREAM_IDLE_TIMEOUT_MS).toBe(120000);
     expect(parsed.COOLDOWN_RATE_LIMIT_TTL_SEC).toBe(65);
-    expect(parsed.LITEROUTER_STRIP_REASONING).toBe(true);
+    expect(parsed.LITEROUTER_STRIP_REASONING).toBe(false);
   });
 
   it("coerces string numbers and booleans properly", () => {

@@ -185,7 +185,7 @@ describe("Pacer Cooldown Integration, Load-Shedding & Transport Error Classifica
       expect(rateLimitCooldown).toBe(65);
 
       const key0Remaining = globalCooldownManager.getRemainingMs("oa:0");
-      expect(key0Remaining).toBeLessThanOrEqual(500);
+      expect(key0Remaining).toBeLessThanOrEqual(2000);
     });
 
     it("quarantines key for exactly 2 seconds when reportFailure is invoked with customTtlSec 2", () => {

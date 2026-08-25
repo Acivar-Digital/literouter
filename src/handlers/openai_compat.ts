@@ -207,7 +207,7 @@ function determineShouldFilterReasoning(
   if (directive.nuances.includes("sb")) {
     return true;
   }
-  return isOpenCodeClient(clientOptions?.userAgent, clientOptions?.headers, directive.nuances);
+  return false;
 }
 
 export { stripReasoningFromResponseBody };
