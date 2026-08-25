@@ -88,13 +88,18 @@ export function logInbound(
 
     if (d.model) {
       const provLabel = d.targetProvider ? getProviderDisplayName(d.targetProvider) : "Provider";
-      const keyIdx = d.keyIndex !== undefined ? d.keyIndex + 1 : 1;
-      const keyTotal = d.totalKeys !== undefined ? `/${d.totalKeys}` : "";
-      const keyInfo = `Key: ${provLabel} [Key #${keyIdx}${keyTotal}]`;
+      let keyInfo = "";
+      if (d.keyIndex !== undefined) {
+        const keyIdx = d.keyIndex + 1;
+        const keyTotal = d.totalKeys !== undefined ? `/${d.totalKeys}` : "";
+        keyInfo = ` | Key: ${provLabel} [Key #${keyIdx}${keyTotal}]`;
+      } else if (d.totalKeys !== undefined) {
+        keyInfo = ` | Pool: ${provLabel} (${d.totalKeys} ${d.totalKeys === 1 ? "key" : "keys"})`;
+      }
       const nuanceInfo = d.nuances && d.nuances.length > 0 && d.nuances[0] !== "no"
         ? ` | Nuances: [${d.nuances.join(", ")}]`
         : "";
-      console.log(`    Model     : ${d.model} | ${keyInfo}${nuanceInfo}`);
+      console.log(`    Model     : ${d.model}${keyInfo}${nuanceInfo}`);
     }
     return;
   }
@@ -169,20 +174,70 @@ export function logRotate(
   console.log(`🔄 ${ts} [ROTATE ${reqId}] Advancing to ${provName} [Key #${newIdx + 1}/${total}] -> Retrying immediately${attemptStr}`);
 }
 
+export function getHttpStatusText(status: number): string {
+  switch (status) {
+    case 429:
+      return "429 Too Many Requests";
+    case 500:
+      return "500 Internal Server Error";
+    case 502:
+      return "502 Bad Gateway";
+    case 503:
+      return "503 Service Unavailable";
+    case 504:
+      return "504 Gateway Timeout";
+    default:
+      return `HTTP ${status}`;
+  }
+}
+
+export function extractErrorMessage(bodyText?: string): string | undefined {
+  if (!bodyText || !bodyText.trim()) {
+    return undefined;
+  }
+  const trimmed = bodyText.trim();
+  try {
+    const json = JSON.parse(trimmed) as Record<string, unknown>;
+    if (json.error && typeof json.error === "object") {
+      const errObj = json.error as Record<string, unknown>;
+      if (typeof errObj.message === "string" && errObj.message) {
+        return errObj.message;
+      }
+    }
+    if (typeof json.error === "string" && json.error) {
+      return json.error;
+    }
+    if (typeof json.message === "string" && json.message) {
+      return json.message;
+    }
+    if (typeof json.detail === "string" && json.detail) {
+      return json.detail;
+    }
+  } catch (parseErr) {
+    void parseErr;
+  }
+  return trimmed;
+}
+
 export function logLimit(
   reqId: string,
   provider: string,
   keyIdx: number,
   status = 429,
   retryAfterSec?: number,
-  totalKeys?: number
+  totalKeys?: number,
+  rawMessage?: string
 ): void {
   const ts = formatTimestamp();
   const provName = getProviderDisplayName(provider);
   const keyTotal = totalKeys !== undefined ? `/${totalKeys}` : "";
-  console.warn(`⚠️ ${ts} [LIMIT ${reqId}] ${provName} [Key #${keyIdx + 1}${keyTotal}] returned ${status} Too Many Requests`);
+  const statusText = getHttpStatusText(status);
+  console.warn(`⚠️ ${ts} [LIMIT ${reqId}] ${provName} [Key #${keyIdx + 1}${keyTotal}] returned ${statusText}`);
   if (retryAfterSec) {
     console.warn(`    Parsed Retry-After: ${retryAfterSec}s -> Quarantined Key #${keyIdx + 1} for ${retryAfterSec}s`);
+  }
+  if (rawMessage) {
+    console.warn(`    Upstream Error: "${rawMessage.slice(0, 300)}"`);
   }
 }
 

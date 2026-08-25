@@ -10,6 +10,21 @@ import {
   shouldStripReasoning,
   stripReasoningParameters,
 } from "./thinking";
+import {
+  normalizeToolContent,
+  stripClientMetadata,
+  stripToolMetadata,
+  scrubReasoningFromMessage,
+  scrubReasoningFromMessages,
+} from "./opencode_adapter";
+
+export {
+  normalizeToolContent,
+  stripClientMetadata,
+  stripToolMetadata,
+  scrubReasoningFromMessage,
+  scrubReasoningFromMessages,
+};
 
 export interface ModelCapabilities {
   readonly supportsThinking?: boolean;
@@ -46,122 +61,6 @@ const LATEX_REPLACEMENTS: readonly (readonly [RegExp, string])[] = [
   [/\\Delta\b/g, "Δ"],
   [/\\Omega\b/g, "Ω"],
 ];
-
-function isReasoningContentPart(part: OpenAIContentPart | Record<string, unknown>): boolean {
-  if (typeof part !== "object" || part === null) {
-    return false;
-  }
-  const partType = typeof part.type === "string" ? part.type.toLowerCase() : "";
-  if (partType === "reasoning" || partType === "thought" || partType === "thinking") {
-    return true;
-  }
-  return (
-    part.reasoningDetails !== undefined ||
-    part.reasoning_details !== undefined ||
-    part.reasoningField !== undefined ||
-    part.reasoning_field !== undefined ||
-    part.reasoning !== undefined ||
-    part.thought !== undefined ||
-    part.thinking !== undefined
-  );
-}
-
-function normalizeCleanedParts(
-  parts: readonly OpenAIContentPart[]
-): string | readonly OpenAIContentPart[] {
-  if (parts.length === 0) {
-    return "";
-  }
-  const first = parts[0];
-  if (parts.length === 1 && first && first.type === "text" && typeof first.text === "string") {
-    return first.text;
-  }
-  return parts;
-}
-
-function extractToolPartText(part: unknown): string {
-  if (typeof part === "string") {
-    return part;
-  }
-  if (typeof part === "object" && part !== null) {
-    const textVal = (part as Record<string, unknown>).text;
-    if (typeof textVal === "string" && textVal.length > 0) {
-      return textVal;
-    }
-    return JSON.stringify(part);
-  }
-  return String(part ?? "");
-}
-
-function normalizeToolContent(content: unknown): string {
-  if (Array.isArray(content)) {
-    return content.map(extractToolPartText).join("\n");
-  }
-  if (typeof content === "string") {
-    return content;
-  }
-  if (content === null || content === undefined) {
-    return "";
-  }
-  return String(content);
-}
-
-function stripToolMetadata(cleaned: Record<string, unknown>): void {
-  delete cleaned.id;
-  delete cleaned.name;
-  delete cleaned.providerState;
-  delete cleaned.state;
-  delete cleaned.createdAt;
-}
-
-function stripClientMetadata(cleaned: Record<string, unknown>): void {
-  delete cleaned.id;
-  delete cleaned.providerState;
-  delete cleaned.state;
-  delete cleaned.reasoning_details;
-}
-
-function scrubMessageContent(cleaned: Record<string, unknown>): void {
-  if (cleaned.role === "tool") {
-    cleaned.content = normalizeToolContent(cleaned.content);
-    stripToolMetadata(cleaned);
-    return;
-  }
-
-  if (cleaned.role === "assistant" || cleaned.role === "user") {
-    stripClientMetadata(cleaned);
-  }
-
-  if (Array.isArray(cleaned.content)) {
-    const rawParts = cleaned.content as readonly OpenAIContentPart[];
-    const nonReasoningParts = rawParts.filter((p) => !isReasoningContentPart(p));
-    cleaned.content = normalizeCleanedParts(nonReasoningParts);
-  }
-}
-
-export function scrubReasoningFromMessage(msg: OpenAIMessage): OpenAIMessage {
-  const cleaned: Record<string, unknown> = { ...msg };
-  delete cleaned.reasoning;
-  delete cleaned.reasoning_content;
-  delete cleaned.reasoning_details;
-  delete cleaned.reasoningDetails;
-  delete cleaned.thought;
-  delete cleaned.thinking;
-  delete cleaned.thoughts;
-
-  scrubMessageContent(cleaned);
-
-  return cleaned as unknown as OpenAIMessage;
-}
-
-export function scrubReasoningFromMessages(
-  messages: readonly OpenAIMessage[] | undefined
-): readonly OpenAIMessage[] {
-  if (!Array.isArray(messages)) {
-    return [];
-  }
-  return messages.map(scrubReasoningFromMessage);
-}
 
 export function normalizeLatex(text: string): string {
   let normalized = text;

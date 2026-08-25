@@ -40,7 +40,8 @@ export interface NextAttemptResult {
 }
 
 export type RetryProvider = (
-  reason: string
+  reason: string,
+  hasEmittedTokens?: boolean
 ) => Promise<NextAttemptResult | null>;
 
 export class NoResponseError extends Error {
@@ -110,22 +111,81 @@ function createKeepAliveChunk(): Uint8Array {
 
 type IntervalHandle = ReturnType<typeof setInterval>;
 
-function tryEnqueueKeepAlive(controller: ReadableStreamDefaultController<Uint8Array>): void {
+export function safeEnqueue(
+  controller: ReadableStreamDefaultController<Uint8Array>,
+  chunk: Uint8Array,
+  isClosedRef?: { isClosed: boolean }
+): boolean {
+  if (isClosedRef?.isClosed || controller.desiredSize === null) {
+    return false;
+  }
   try {
-    controller.enqueue(createKeepAliveChunk());
+    controller.enqueue(chunk);
+    return true;
   } catch (err: unknown) {
-    if (err instanceof Error) {
-      console.debug(`[KeepAlive] Suppressed enqueue on closed stream: ${err.message}`);
+    if (isClosedRef) {
+      isClosedRef.isClosed = true;
     }
+    console.debug("[Stream] Suppressed enqueue on closed stream:", err);
+    return false;
   }
 }
 
+export function safeClose(
+  controller: ReadableStreamDefaultController<Uint8Array>,
+  isClosedRef?: { isClosed: boolean }
+): void {
+  if (isClosedRef?.isClosed || controller.desiredSize === null) {
+    if (isClosedRef) {
+      isClosedRef.isClosed = true;
+    }
+    return;
+  }
+  if (isClosedRef) {
+    isClosedRef.isClosed = true;
+  }
+  try {
+    controller.close();
+  } catch (err: unknown) {
+    console.debug("[Stream] Suppressed controller close error:", err);
+  }
+}
+
+export function safeError(
+  controller: ReadableStreamDefaultController<Uint8Array>,
+  err: unknown,
+  isClosedRef?: { isClosed: boolean }
+): void {
+  if (isClosedRef?.isClosed || controller.desiredSize === null) {
+    if (isClosedRef) {
+      isClosedRef.isClosed = true;
+    }
+    return;
+  }
+  if (isClosedRef) {
+    isClosedRef.isClosed = true;
+  }
+  try {
+    controller.error(err instanceof Error ? err : new Error(String(err)));
+  } catch (e: unknown) {
+    console.debug("[Stream] Suppressed controller error dispatch:", e);
+  }
+}
+
+function tryEnqueueKeepAlive(
+  controller: ReadableStreamDefaultController<Uint8Array>,
+  isClosedRef?: { isClosed: boolean }
+): void {
+  safeEnqueue(controller, createKeepAliveChunk(), isClosedRef);
+}
+
 function startKeepAliveTimer(
-  controller: ReadableStreamDefaultController<Uint8Array>
+  controller: ReadableStreamDefaultController<Uint8Array>,
+  isClosedRef?: { isClosed: boolean }
 ): IntervalHandle | null {
   const interval = getEnv().KEEPALIVE_INTERVAL_MS || KEEPALIVE_INTERVAL_MS;
   try {
-    return setInterval(() => tryEnqueueKeepAlive(controller), interval);
+    return setInterval(() => tryEnqueueKeepAlive(controller, isClosedRef), interval);
   } catch (err: unknown) {
     if (err instanceof Error) {
       console.error(`[KeepAlive] Timer error: ${err.message}`);
@@ -415,40 +475,21 @@ export async function executeH2Fetch(
       }
 
       let isClosed = false;
+      const isClosedRef = { isClosed: false };
       const webStream = new ReadableStream<Uint8Array>({
         start(controller) {
           stream.on("data", (chunk: Buffer | Uint8Array) => {
-            if (!isClosed) {
-              try {
-                controller.enqueue(new Uint8Array(chunk));
-              } catch (_err: unknown) {
-                console.debug("[H2 Fetcher] Enqueue error on closed stream:", _err);
-              }
-            }
+            safeEnqueue(controller, new Uint8Array(chunk), isClosedRef);
           });
           stream.on("end", () => {
-            if (!isClosed) {
-              isClosed = true;
-              try {
-                controller.close();
-              } catch (_err: unknown) {
-                console.debug("[H2 Fetcher] Controller close error:", _err);
-              }
-            }
+            safeClose(controller, isClosedRef);
           });
           stream.on("error", (err) => {
-            if (!isClosed) {
-              isClosed = true;
-              try {
-                controller.error(err);
-              } catch (_err: unknown) {
-                console.debug("[H2 Fetcher] Controller error dispatch:", _err);
-              }
-            }
+            safeError(controller, err, isClosedRef);
           });
         },
         cancel() {
-          isClosed = true;
+          isClosedRef.isClosed = true;
           try {
             stream.destroy();
           } catch (_err: unknown) {
@@ -711,33 +752,28 @@ export async function readWithChunkTimeout(
   }
 }
 
-function emitStreamError(
+export function emitStreamError(
   controller: ReadableStreamDefaultController<Uint8Array>,
   reason: string,
   rawError?: unknown,
   callbacks?: StreamCallbacks,
-  hasEmittedTokens: boolean = false
+  hasEmittedTokens: boolean = false,
+  isClosedRef?: { isClosed: boolean }
 ): void {
-  if (callbacks?.protocol || hasEmittedTokens) {
-    const protocol = callbacks?.protocol || "openai";
-    const errorType = hasEmittedTokens ? "stream_error" : "server_error";
-    try {
-      controller.enqueue(formatMidstreamErrorFrame(protocol, reason, errorType));
-    } catch (_err: unknown) {
-      console.debug("[StreamError] Enqueue error frame failed:", _err);
-    }
-    try {
-      controller.close();
-    } catch (_err: unknown) {
-      console.debug("[StreamError] Controller close failed:", _err);
+  if (isClosedRef?.isClosed || controller.desiredSize === null) {
+    if (isClosedRef) {
+      isClosedRef.isClosed = true;
     }
     return;
   }
-  try {
-    controller.error(rawError instanceof Error ? rawError : new Error(reason));
-  } catch (_err: unknown) {
-    console.debug("[StreamError] Controller error dispatch failed:", _err);
+  if (callbacks?.protocol || hasEmittedTokens) {
+    const protocol = callbacks?.protocol || "openai";
+    const errorType = hasEmittedTokens ? "stream_error" : "server_error";
+    safeEnqueue(controller, formatMidstreamErrorFrame(protocol, reason, errorType), isClosedRef);
+    safeClose(controller, isClosedRef);
+    return;
   }
+  safeError(controller, rawError instanceof Error ? rawError : new Error(reason), isClosedRef);
 }
 
 function applyNextAttempt(
@@ -745,8 +781,12 @@ function applyNextAttempt(
   controller: ReadableStreamDefaultController<Uint8Array>,
   state: StreamTokenState,
   callbacks?: StreamCallbacks,
-  usageState?: { usageEmitted: boolean }
+  usageState?: { usageEmitted: boolean },
+  isClosedRef?: { isClosed: boolean }
 ): ReadableStreamDefaultReader<Uint8Array> | undefined {
+  if (isClosedRef?.isClosed || controller.desiredSize === null) {
+    return undefined;
+  }
   const nextReader = next.rawReader ?? next.reader;
   if (next.firstChunk && next.firstChunk.length > 0) {
     inspectChunkMarkers(next.firstChunk, state);
@@ -757,50 +797,56 @@ function applyNextAttempt(
         callbacks.onUsage(usage);
       }
     }
-    controller.enqueue(next.firstChunk);
+    safeEnqueue(controller, next.firstChunk, isClosedRef);
   }
   return nextReader;
 }
 
 export async function handlePrematureEof(
   state: StreamTokenState,
-  callbacks?: StreamCallbacks
+  callbacks?: StreamCallbacks,
+  hasEmittedTokens: boolean = false
 ): Promise<NextAttemptResult | null> {
-  if (state.hasSeenDoneMarker || state.hasSeenDataToken) {
+  if (state.hasSeenDoneMarker || state.hasSeenDataToken || hasEmittedTokens) {
     return null;
   }
   const provider = callbacks?.retryProvider ?? callbacks?.nextAttemptProvider;
   if (!provider) {
     return null;
   }
-  return await provider("Upstream terminated stream prematurely with 0 tokens and no [DONE] marker");
+  return await provider("Upstream terminated stream prematurely with 0 tokens and no [DONE] marker", false);
 }
 
 async function handleInBandErrorIfPresent(
   text: string,
   controller: ReadableStreamDefaultController<Uint8Array>,
   callbacks?: StreamCallbacks,
-  hasEmittedTokens: boolean = false
+  hasEmittedTokens: boolean = false,
+  isClosedRef?: { isClosed: boolean }
 ): Promise<{ isHandled: boolean; next: NextAttemptResult | null }> {
   const errCheck = isInBandErrorChunk(text);
   if (!errCheck.isError) {
     return { isHandled: false, next: null };
   }
   const reason = errCheck.message ?? "In-band error detected";
+  if (hasEmittedTokens) {
+    emitStreamError(controller, reason, new Error(reason), callbacks, true, isClosedRef);
+    return { isHandled: true, next: null };
+  }
   const provider = callbacks?.nextAttemptProvider ?? callbacks?.retryProvider;
   if (provider) {
     try {
-      const next = await provider(reason);
+      const next = await provider(reason, false);
       if (next) {
         return { isHandled: true, next };
       }
     } catch (retryErr: unknown) {
       const retryReason = retryErr instanceof Error ? retryErr.message : String(retryErr);
-      emitStreamError(controller, retryReason, retryErr, callbacks, hasEmittedTokens);
+      emitStreamError(controller, retryReason, retryErr, callbacks, hasEmittedTokens, isClosedRef);
       return { isHandled: true, next: null };
     }
   }
-  emitStreamError(controller, reason, new Error(reason), callbacks, hasEmittedTokens);
+  emitStreamError(controller, reason, new Error(reason), callbacks, hasEmittedTokens, isClosedRef);
   return { isHandled: true, next: null };
 }
 
@@ -808,23 +854,28 @@ export async function handleStreamFailure(
   err: unknown,
   controller: ReadableStreamDefaultController<Uint8Array>,
   callbacks?: StreamCallbacks,
-  hasEmittedTokens: boolean = false
+  hasEmittedTokens: boolean = false,
+  isClosedRef?: { isClosed: boolean }
 ): Promise<NextAttemptResult | null> {
-  const provider = callbacks?.nextAttemptProvider ?? callbacks?.retryProvider;
   const reason = err instanceof Error ? err.message : String(err);
+  if (hasEmittedTokens) {
+    emitStreamError(controller, reason, err, callbacks, true, isClosedRef);
+    return null;
+  }
+  const provider = callbacks?.nextAttemptProvider ?? callbacks?.retryProvider;
   if (provider) {
     try {
-      const next = await provider(reason);
+      const next = await provider(reason, false);
       if (next) {
         return next;
       }
     } catch (retryErr: unknown) {
       const retryReason = retryErr instanceof Error ? retryErr.message : String(retryErr);
-      emitStreamError(controller, retryReason, retryErr, callbacks, hasEmittedTokens);
+      emitStreamError(controller, retryReason, retryErr, callbacks, hasEmittedTokens, isClosedRef);
       return null;
     }
   }
-  emitStreamError(controller, reason, err, callbacks, hasEmittedTokens);
+  emitStreamError(controller, reason, err, callbacks, hasEmittedTokens, isClosedRef);
   return null;
 }
 
@@ -833,26 +884,32 @@ interface ProcessChunkContext {
   tokenState: StreamTokenState;
   callbacks?: StreamCallbacks;
   usageState: { usageEmitted: boolean };
+  isClosedRef: { isClosed: boolean };
 }
 
 async function processBufferedText(
   text: string,
   ctx: ProcessChunkContext
 ): Promise<{ isHandled: boolean; nextReader?: ReadableStreamDefaultReader<Uint8Array> }> {
+  if (ctx.isClosedRef.isClosed) {
+    return { isHandled: true };
+  }
   const inBandResult = await handleInBandErrorIfPresent(
     text,
     ctx.controller,
     ctx.callbacks,
-    ctx.tokenState.hasSeenDataToken
+    ctx.tokenState.hasSeenDataToken,
+    ctx.isClosedRef
   );
   if (inBandResult.isHandled) {
-    if (inBandResult.next) {
+    if (inBandResult.next && !ctx.isClosedRef.isClosed) {
       const nextReader = applyNextAttempt(
         inBandResult.next,
         ctx.controller,
         ctx.tokenState,
         ctx.callbacks,
-        ctx.usageState
+        ctx.usageState,
+        ctx.isClosedRef
       );
       return { isHandled: true, nextReader };
     }
@@ -874,7 +931,7 @@ async function processBufferedText(
     }
   }
   const encoder = new TextEncoder();
-  ctx.controller.enqueue(encoder.encode(text));
+  safeEnqueue(ctx.controller, encoder.encode(text), ctx.isClosedRef);
   return { isHandled: false };
 }
 
@@ -887,6 +944,7 @@ export function createResilientStream(
   let keepAliveTimer: IntervalHandle | null = null;
   let pendingFirstChunk: Uint8Array | null = firstChunk;
   let lineBuffer = "";
+  const isClosedRef = { isClosed: false };
   const decoder = new TextDecoder("utf-8", { fatal: false });
   const usageState = { usageEmitted: false };
   const tokenState: StreamTokenState = {
@@ -896,9 +954,17 @@ export function createResilientStream(
 
   const idleTimeoutMs = getEnv().LITEROUTER_STREAM_IDLE_TIMEOUT_MS || STREAM_IDLE_TIMEOUT_MS;
 
+  function safeCloseController(controller: ReadableStreamDefaultController<Uint8Array>): void {
+    clearTimer(keepAliveTimer);
+    safeClose(controller, isClosedRef);
+  }
+
   async function handleEof(
     controller: ReadableStreamDefaultController<Uint8Array>
   ): Promise<boolean> {
+    if (isClosedRef.isClosed) {
+      return false;
+    }
     clearTimer(keepAliveTimer);
     if (lineBuffer.length > 0) {
       const remaining = lineBuffer;
@@ -908,47 +974,47 @@ export function createResilientStream(
         tokenState,
         callbacks,
         usageState,
+        isClosedRef,
       };
       const res = await processBufferedText(remaining, flushCtx);
       if (res.isHandled) {
-        if (res.nextReader) {
+        if (res.nextReader && !isClosedRef.isClosed) {
           currentReader = res.nextReader;
-          keepAliveTimer = startKeepAliveTimer(controller);
+          keepAliveTimer = startKeepAliveTimer(controller, isClosedRef);
           return true;
         }
         return false;
       }
     }
 
+    if (isClosedRef.isClosed) {
+      return false;
+    }
+
     const next = await handlePrematureEof(tokenState, callbacks);
-    if (next) {
+    if (next && !isClosedRef.isClosed) {
       lineBuffer = "";
-      const nextReader = applyNextAttempt(next, controller, tokenState, callbacks, usageState);
+      const nextReader = applyNextAttempt(next, controller, tokenState, callbacks, usageState, isClosedRef);
       if (nextReader) {
         currentReader = nextReader;
       }
-      keepAliveTimer = startKeepAliveTimer(controller);
+      keepAliveTimer = startKeepAliveTimer(controller, isClosedRef);
       return true;
     }
 
-    if (tokenState.hasSeenDataToken && !tokenState.hasSeenDoneMarker) {
+    if (tokenState.hasSeenDataToken && !tokenState.hasSeenDoneMarker && !isClosedRef.isClosed) {
       emitStreamError(
         controller,
         "Upstream stream dropped mid-generation",
         new Error("Upstream stream dropped mid-generation"),
         callbacks,
-        true
+        true,
+        isClosedRef
       );
       return false;
     }
 
-    if (controller.desiredSize !== null) {
-      try {
-        controller.close();
-      } catch (_err: unknown) {
-        console.debug("[ResilientStream] Controller close on EOF:", _err);
-      }
-    }
+    safeCloseController(controller);
     return false;
   }
 
@@ -969,14 +1035,18 @@ export function createResilientStream(
 
   return new ReadableStream<Uint8Array>({
     start(controller) {
-      keepAliveTimer = startKeepAliveTimer(controller);
+      keepAliveTimer = startKeepAliveTimer(controller, isClosedRef);
     },
     async pull(controller) {
+      if (isClosedRef.isClosed || controller.desiredSize === null) {
+        return;
+      }
       const chunkCtx: ProcessChunkContext = {
         controller,
         tokenState,
         callbacks,
         usageState,
+        isClosedRef,
       };
 
       try {
@@ -987,10 +1057,10 @@ export function createResilientStream(
             const result = await ingestBytes(chunk, chunkCtx);
             if (result.isHandled) {
               clearTimer(keepAliveTimer);
-              if (result.nextReader) {
+              if (result.nextReader && !isClosedRef.isClosed) {
                 lineBuffer = "";
                 currentReader = result.nextReader;
-                keepAliveTimer = startKeepAliveTimer(controller);
+                keepAliveTimer = startKeepAliveTimer(controller, isClosedRef);
               }
               return;
             }
@@ -1001,6 +1071,9 @@ export function createResilientStream(
         }
 
         const { done, value } = await readWithChunkTimeout(currentReader, idleTimeoutMs);
+        if (isClosedRef.isClosed) {
+          return;
+        }
         if (done) {
           await handleEof(controller);
           return;
@@ -1010,27 +1083,37 @@ export function createResilientStream(
           const result = await ingestBytes(value, chunkCtx);
           if (result.isHandled) {
             clearTimer(keepAliveTimer);
-            if (result.nextReader) {
+            if (result.nextReader && !isClosedRef.isClosed) {
               lineBuffer = "";
               currentReader = result.nextReader;
-              keepAliveTimer = startKeepAliveTimer(controller);
+              keepAliveTimer = startKeepAliveTimer(controller, isClosedRef);
             }
           }
         }
       } catch (err: unknown) {
         clearTimer(keepAliveTimer);
-        const next = await handleStreamFailure(err, controller, callbacks, tokenState.hasSeenDataToken);
-        if (next) {
+        if (isClosedRef.isClosed) {
+          return;
+        }
+        const next = await handleStreamFailure(
+          err,
+          controller,
+          callbacks,
+          tokenState.hasSeenDataToken,
+          isClosedRef
+        );
+        if (next && !isClosedRef.isClosed) {
           lineBuffer = "";
-          const nextReader = applyNextAttempt(next, controller, tokenState, callbacks, usageState);
+          const nextReader = applyNextAttempt(next, controller, tokenState, callbacks, usageState, isClosedRef);
           if (nextReader) {
             currentReader = nextReader;
           }
-          keepAliveTimer = startKeepAliveTimer(controller);
+          keepAliveTimer = startKeepAliveTimer(controller, isClosedRef);
         }
       }
     },
     cancel() {
+      isClosedRef.isClosed = true;
       clearTimer(keepAliveTimer);
       currentReader.cancel().catch((err: unknown) => {
         if (err instanceof Error) {

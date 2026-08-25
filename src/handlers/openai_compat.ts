@@ -20,14 +20,15 @@ import type { OpenAIRequestPayload } from "../transformers/nuances";
 import { createDotsStreamTransformer, parseDotsXml } from "../transformers/dots";
 import {
   createOpenCodeReasoningFilterStreamTransformer,
-  deleteReasoningKeys,
   isOpenCodeClient,
-} from "../transformers/thinking";
+  stripReasoningFromResponseBody,
+} from "../transformers/opencode_adapter";
 import type { FusionConfig, FusionTier } from "../config/schema";
 import { getEnv } from "../config/env";
 import { getPacerForProvider, PacerQueueOverflowError } from "../network/pacer";
 import { getCircuitBreakerForProvider } from "../network/circuit_breaker";
 import {
+  extractErrorMessage,
   logError,
   logExhausted,
   logFinishReason,
@@ -209,27 +210,7 @@ function determineShouldFilterReasoning(
   return isOpenCodeClient(clientOptions?.userAgent, clientOptions?.headers, directive.nuances);
 }
 
-function stripReasoningFromChoiceObject(choice: Record<string, unknown>): void {
-  deleteReasoningKeys(choice);
-  if (choice.message && typeof choice.message === "object" && choice.message !== null) {
-    deleteReasoningKeys(choice.message as Record<string, unknown>);
-  }
-  if (choice.delta && typeof choice.delta === "object" && choice.delta !== null) {
-    deleteReasoningKeys(choice.delta as Record<string, unknown>);
-  }
-}
-
-export function stripReasoningFromResponseBody(json: Record<string, unknown>): void {
-  deleteReasoningKeys(json);
-  if (!Array.isArray(json.choices)) {
-    return;
-  }
-  for (const rawChoice of json.choices as Array<Record<string, unknown>>) {
-    if (typeof rawChoice === "object" && rawChoice !== null) {
-      stripReasoningFromChoiceObject(rawChoice);
-    }
-  }
-}
+export { stripReasoningFromResponseBody };
 
 export function parseRetryAfterHeader(headers: Headers): number | undefined {
   const ra = headers.get("retry-after");
@@ -319,10 +300,9 @@ async function executeDirectCall(
       );
     }
 
-    if (response.status === 429 || classification.quarantineTtlSec > 0) {
-      const ttlSec = classification.quarantineTtlSec > 0 ? classification.quarantineTtlSec : 60;
-      logLimit(reqId, directive.provider, selected.index, response.status, ttlSec, selected.totalKeys);
-    }
+    const rawErrorMsg = extractErrorMessage(bodyText);
+    const ttlSec = classification.quarantineTtlSec > 0 ? classification.quarantineTtlSec : (response.status === 429 ? 60 : undefined);
+    logLimit(reqId, directive.provider, selected.index, response.status, ttlSec, selected.totalKeys, rawErrorMsg);
 
     const canRetry = classification.action === "retry_rotate" && attempt < maxAttempts && !clientSignal?.aborted;
     if (canRetry) {
@@ -439,9 +419,12 @@ async function executeDirectCall(
     onFinishReason: (finishReason) => {
       logFinishReason(reqId, finishReason);
     },
-    retryProvider: async (reason: string) => {
+    retryProvider: async (reason: string, hasEmittedTokens?: boolean) => {
+      if (hasEmittedTokens) {
+        return null;
+      }
       globalKeyPool.reportFailure(directive.provider, currentKeyIndex, 500, undefined, reason, Date.now(), 60);
-      logLimit(reqId, directive.provider, currentKeyIndex, 500, 60, selected.totalKeys);
+      logLimit(reqId, directive.provider, currentKeyIndex, 500, 60, selected.totalKeys, reason);
 
       while (currentAttempt < maxAttempts) {
         currentAttempt++;
@@ -850,7 +833,6 @@ export async function handleOpenAICompat(
       wireFormat: directive.type === "direct" ? directive.payload : "oa",
       endpoint: endpoint?.rawPath,
       model: body.model,
-      keyIndex: 0,
       totalKeys: poolSize,
       nuances: directive.type === "direct" ? directive.nuances : undefined,
     });

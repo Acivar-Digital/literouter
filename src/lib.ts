@@ -38,6 +38,7 @@ export * from "./network/pool";
 export * from "./network/zdist";
 export * from "./transformers/dots";
 export * from "./transformers/nuances";
+export * from "./transformers/opencode_adapter";
 export * from "./transformers/payload";
 export * from "./transformers/thinking";
 export * from "./ui/banner";

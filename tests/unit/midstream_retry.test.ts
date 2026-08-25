@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { resetEnvCache } from "../../src/config/env";
 import {
   createResilientStream,
+  emitStreamError,
   formatMidstreamErrorFrame,
   handlePrematureEof,
   inspectChunkMarkers,
@@ -214,9 +215,8 @@ describe("handlePrematureEof", () => {
 });
 
 describe("createResilientStream — Mid-Stream Error Recovery", () => {
-  it("suppresses in-band error chunk, calls nextAttemptProvider, and continues streaming downstream until done", async () => {
-    const firstChunk = encoder.encode('data: {"choices":[{"delta":{"content":"First"}}]}\n\n');
-    const normalChunk = encoder.encode('data: {"choices":[{"delta":{"content":" chunk"}}]}\n\n');
+  it("suppresses in-band error chunk before tokens, calls nextAttemptProvider, and continues streaming downstream until done", async () => {
+    const firstChunk = encoder.encode(": keep-alive\n\n");
     const inBandErrorChunk = encoder.encode(
       'data: {"error":{"message":"Server error mid-response. The response above may be incomplete.","code":500}}\n\n'
     );
@@ -224,7 +224,7 @@ describe("createResilientStream — Mid-Stream Error Recovery", () => {
     const retryFirstChunk = encoder.encode('data: {"choices":[{"delta":{"content":" recovered"}}]}\n\n');
     const retryDoneChunk = encoder.encode("data: [DONE]\n\n");
 
-    const failingReader = createMockReader([normalChunk, inBandErrorChunk]);
+    const failingReader = createMockReader([inBandErrorChunk]);
     const recoveredReader = createMockReader([retryDoneChunk]);
 
     let providerCalled = false;
@@ -242,22 +242,45 @@ describe("createResilientStream — Mid-Stream Error Recovery", () => {
     const { text } = await readAllChunks(stream);
 
     expect(providerCalled).toBe(true);
-    expect(text).toContain("First");
-    expect(text).toContain(" chunk");
     expect(text).toContain(" recovered");
     expect(text).toContain("[DONE]");
     expect(text).not.toContain("Server error mid-response");
   });
 
-  it("recovers when upstream reader throws mid-stream (e.g. socket reset) via nextAttemptProvider", async () => {
-    const firstChunk = encoder.encode('data: {"choices":[{"delta":{"content":"Start"}}]}\n\n');
-    const chunk1 = encoder.encode('data: {"choices":[{"delta":{"content":" mid"}}]}\n\n');
+  it("in-band error chunk after tokens does not call nextAttemptProvider and emits SSE error frame", async () => {
+    const firstChunk = encoder.encode('data: {"choices":[{"delta":{"content":"First"}}]}\n\n');
+    const inBandErrorChunk = encoder.encode(
+      'data: {"error":{"message":"Server error mid-response","code":500}}\n\n'
+    );
+
+    const failingReader = createMockReader([inBandErrorChunk]);
+
+    let providerCalled = false;
+    const callbacks: StreamCallbacks = {
+      nextAttemptProvider: async () => {
+        providerCalled = true;
+        return null;
+      },
+    };
+
+    const stream = createResilientStream(firstChunk, failingReader, callbacks);
+    const { text } = await readAllChunks(stream);
+
+    expect(providerCalled).toBe(false);
+    expect(text).toContain("First");
+    expect(text).toContain('"type":"stream_error"');
+    expect(text).toContain("Server error mid-response");
+    expect(text).toContain("[DONE]");
+  });
+
+  it("recovers when upstream reader throws before tokens (e.g. socket reset) via nextAttemptProvider", async () => {
+    const firstChunk = encoder.encode(": keep-alive\n\n");
     const socketResetError = new Error("socket reset: connection reset by peer");
 
     const retryFirstChunk = encoder.encode('data: {"choices":[{"delta":{"content":" finish"}}]}\n\n');
     const retryDoneChunk = encoder.encode("data: [DONE]\n\n");
 
-    const failingReader = createMockReader([chunk1, socketResetError]);
+    const failingReader = createMockReader([socketResetError]);
     const recoveredReader = createMockReader([retryDoneChunk]);
 
     let providerCalled = false;
@@ -275,20 +298,20 @@ describe("createResilientStream — Mid-Stream Error Recovery", () => {
     const { text } = await readAllChunks(stream);
 
     expect(providerCalled).toBe(true);
-    expect(text).toContain("Start");
-    expect(text).toContain(" mid");
     expect(text).toContain(" finish");
     expect(text).toContain("[DONE]");
   });
 
-  it("seals downstream with SSE error frame when midstream retries fail or nextAttemptProvider throws after tokens", async () => {
+  it("seals downstream with SSE error frame when upstream throws after tokens without calling nextAttemptProvider", async () => {
     const firstChunk = encoder.encode('data: {"choices":[{"delta":{"content":"Start"}}]}\n\n');
     const socketError = new Error("Connection terminated unexpectedly");
 
     const failingReader = createMockReader([socketError]);
 
+    let providerCalled = false;
     const callbacks: StreamCallbacks = {
       nextAttemptProvider: async () => {
+        providerCalled = true;
         throw new Error("All retry keys exhausted");
       },
     };
@@ -296,9 +319,10 @@ describe("createResilientStream — Mid-Stream Error Recovery", () => {
     const stream = createResilientStream(firstChunk, failingReader, callbacks);
     const { text } = await readAllChunks(stream);
 
+    expect(providerCalled).toBe(false);
     expect(text).toContain("Start");
     expect(text).toContain('"type":"stream_error"');
-    expect(text).toContain("All retry keys exhausted");
+    expect(text).toContain("Connection terminated unexpectedly");
     expect(text).toContain("data: [DONE]\n\n");
   });
 
@@ -467,13 +491,13 @@ describe("createResilientStream — Mid-Stream Error Recovery", () => {
     expect((errorThrown as Error).message).toContain("Stream idle timeout exceeded 25ms");
   });
 
-  it("inter-chunk stall timeout triggers retryProvider and resumes streaming from 2nd provider", async () => {
+  it("inter-chunk stall timeout before tokens triggers retryProvider and resumes streaming from 2nd provider", async () => {
     const originalTimeout = process.env.LITEROUTER_STREAM_IDLE_TIMEOUT_MS;
     process.env.LITEROUTER_STREAM_IDLE_TIMEOUT_MS = "25";
     resetEnvCache();
 
     try {
-      const firstChunk = encoder.encode('data: {"choices":[{"delta":{"content":"pre-stall"}}]}\n\n');
+      const firstChunk = encoder.encode(": keep-alive\n\n");
       const stalledReader = {
         read: () => new Promise<never>(() => {}),
         releaseLock: () => {},
@@ -500,7 +524,6 @@ describe("createResilientStream — Mid-Stream Error Recovery", () => {
       const { text } = await readAllChunks(stream);
 
       expect(retryReason).toContain("Stream idle timeout exceeded 25ms");
-      expect(text).toContain("pre-stall");
       expect(text).toContain("post-stall resumed");
       expect(text).toContain("[DONE]");
     } finally {
@@ -513,8 +536,8 @@ describe("createResilientStream — Mid-Stream Error Recovery", () => {
     }
   });
 
-  it("retryProvider exhaustion formats downstream OpenAI error frame and terminates cleanly", async () => {
-    const firstChunk = encoder.encode('data: {"choices":[{"delta":{"content":"initial"}}]}\n\n');
+  it("retryProvider exhaustion before tokens formats downstream OpenAI error frame and terminates cleanly", async () => {
+    const firstChunk = encoder.encode(": keep-alive\n\n");
     const socketError = new Error("Connection reset by peer");
     const failingReader = createMockReader([socketError]);
 
@@ -531,12 +554,11 @@ describe("createResilientStream — Mid-Stream Error Recovery", () => {
     const { text } = await readAllChunks(stream);
 
     expect(retryCalled).toBe(true);
-    expect(text).toContain("initial");
-    expect(text).toContain('data: {"error":{"message":"Connection reset by peer","type":"stream_error"}}\n\ndata: [DONE]\n\n');
+    expect(text).toContain('data: {"error":{"message":"Connection reset by peer","type":"server_error"}}\n\ndata: [DONE]\n\n');
   });
 
-  it("retryProvider exhaustion formats downstream Anthropic error frame and terminates cleanly", async () => {
-    const firstChunk = encoder.encode("event: message_start\ndata: {}\n\n");
+  it("retryProvider exhaustion before tokens formats downstream Anthropic error frame and terminates cleanly", async () => {
+    const firstChunk = encoder.encode(": keep-alive\n\n");
     const socketError = new Error("Anthropic upstream failure");
     const failingReader = createMockReader([socketError]);
 
@@ -553,7 +575,6 @@ describe("createResilientStream — Mid-Stream Error Recovery", () => {
     const { text } = await readAllChunks(stream);
 
     expect(retryCalled).toBe(true);
-    expect(text).toContain("event: message_start");
     expect(text).toContain("event: error\ndata: ");
     expect(text).toContain('"type":"api_error"');
     expect(text).toContain('"message":"Anthropic upstream failure"');
@@ -709,5 +730,63 @@ describe("createResilientStream — Mid-Stream Error Recovery", () => {
     expect(text).toContain('"type":"stream_error"');
     expect(text).toContain("Server error mid-response");
     expect(text).toContain("data: [DONE]\n\n");
+  });
+
+  it("emitStreamError is idempotent and never throws ERR_INVALID_STATE when invoked on already closed controller", () => {
+    let closeCount = 0;
+    let enqueueCount = 0;
+    const isClosedRef = { isClosed: false };
+
+    let desiredSize: number | null = 1;
+    const mockController = {
+      get desiredSize() {
+        return desiredSize;
+      },
+      enqueue: () => {
+        enqueueCount++;
+      },
+      close: () => {
+        closeCount++;
+        desiredSize = null;
+      },
+      error: () => {},
+    } as unknown as ReadableStreamDefaultController<Uint8Array>;
+
+    emitStreamError(mockController, "First error", undefined, { protocol: "openai" }, true, isClosedRef);
+    expect(closeCount).toBe(1);
+    expect(enqueueCount).toBe(1);
+    expect(isClosedRef.isClosed).toBe(true);
+
+    // Second call should be a clean no-op and not throw
+    expect(() => {
+      emitStreamError(mockController, "Second error", undefined, { protocol: "openai" }, true, isClosedRef);
+    }).not.toThrow();
+    expect(closeCount).toBe(1);
+  });
+
+  it("cancelling downstream resilient stream does not throw ERR_INVALID_STATE during subsequent pull or EOF", async () => {
+    const firstChunk = encoder.encode('data: {"choices":[{"delta":{"content":"Chunk 1"}}]}\n\n');
+    const slowReader = {
+      read: async () => {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        return { done: true, value: undefined };
+      },
+      releaseLock: () => {},
+      cancel: async () => {},
+      closed: Promise.resolve(undefined),
+    } as unknown as ReadableStreamDefaultReader<Uint8Array>;
+
+    const stream = createResilientStream(firstChunk, slowReader);
+    const reader = stream.getReader();
+
+    // Read first chunk
+    const firstRead = await reader.read();
+    expect(firstRead.done).toBe(false);
+
+    // Cancel downstream stream immediately
+    await reader.cancel();
+
+    // Wait for any pending async operations to finish; no errors should throw
+    await new Promise((resolve) => setTimeout(resolve, 80));
   });
 });

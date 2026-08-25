@@ -1,5 +1,5 @@
 # Stream Idle Timeouts & OpenCode 2 Agentic Resilience 3.0
-## *The Comprehensive Forensic Investigation, Automated Diagnostic Harness, and Gateway Architecture*
+## *The Comprehensive Forensic Investigation, Zen-Modelled Gateway Architecture, and Testing Kit*
 
 ---
 
@@ -9,7 +9,12 @@ When running long-context agentic workflows in **OpenCode 2** via **LiteRouter**
 1. **The Mid-Stream Network Error Crash**: OpenCode's TUI froze at the end of the tool output preview (e.g. `return {'g…`), recording `rawFinish: "network_error"` in local SQLite (`opencode.db`) within 8.8 to 11.2 seconds.
 2. **The Turn-Pausing "Continue" Stall**: After completing a tool execution, the model outputted a partial conversational observation and emitted `finish_reason: "stop"`, forcing the user to manually type "continue" into the terminal.
 
-In contrast, other client architectures (such as **Antigravity IDE** or raw **Python / Pydantic AI**) execute identically configured turns without stalling.
+In contrast, first-party providers (such as **Zen / `opencode.ai/zen`**) or non-OpenCode SDKs (such as **Pydantic AI** or **Antigravity IDE**) execute identically configured turns without stalling.
+
+### The Zen Emulation Principle (OpenCode-Only Adaptation)
+LiteRouter models its OpenCode handling after the **Zen provider** (`opencode.ai/zen`):
+- **For OpenCode Clients**: Emulate Zen's clean wire semantics (Zod-safe schemas, SSE data heartbeats, tool message flattening, SQLite reasoning bloat prevention).
+- **For Non-OpenCode Clients (Pydantic AI, Python SDK, raw cURL)**: Zero interference. Pydantic AI receives raw reasoning streams and standard OpenAI chunks in pure pass-through mode.
 
 This document merges the entire body of forensic discoveries, empirical data, the automated diagnostic testing kit, and gateway implementations into **one definitive reference**.
 
@@ -44,15 +49,14 @@ Direct extraction of message records from `/home/yapilwsl/.local/share/opencode2
 ```
 ┌──────────────────────────────────────────────────────────────────────────────────────────────────┐
 │                                 THE 4 FAILURE VECTORS IN OPENCODE 2                              │
-├────────────────────────────────┬─────────────────────────────────────────────────────────────────┤
-│ Vector 1: Schema Violation     │ delta.content: null triggers Zod TypeError in @ai-sdk/openai    │
-├────────────────────────────────┼─────────────────────────────────────────────────────────────────┤
-│ Vector 2: Silence & Discard    │ SSE comments (: keep-alive) ignored by parser; 55s timer fires  │
-├────────────────────────────────┼─────────────────────────────────────────────────────────────────┤
-│ Vector 3: Wire Incompatibility │ role: "tool" array content rejected with 400 by OpenRouter      │
-├────────────────────────────────┼─────────────────────────────────────────────────────────────────┤
-│ Vector 4: Turn Boundary Halt   │ Model emits conversational text + finish_reason: "stop"         │
-└────────────────────────────────┴─────────────────────────────────────────────────────────────────┘
+├──────────────────────────────┬─────────────────────────────────┬─────────────────────────────────┤
+│ Vector                       │ OpenRouter (Struggles)          │ Zen / OpenCode Backend (Works)  │
+├──────────────────────────────┼─────────────────────────────────┼─────────────────────────────────┤
+│ Vector 1: Schema Violation   │ delta.content: null (Zod error) │ Omits key or emits content: ""  │
+│ Vector 2: Silence & Discard  │ SSE comments (: keep-alive)     │ Standard SSE data: frames       │
+│ Vector 3: Wire Incompat.     │ role: "tool" array rejected 400 │ Natively normalizes array/string│
+│ Vector 4: Turn Boundary Halt │ Model emits conversational text │ Agentic loop chaining           │
+└──────────────────────────────┴─────────────────────────────────┴─────────────────────────────────┘
 ```
 
 ### Vector 1: The `delta.content: null` Schema Violation
@@ -81,9 +85,9 @@ Direct extraction of message records from `/home/yapilwsl/.local/share/opencode2
 
 ---
 
-## 4. The 4-Layer Gateway Defense Architecture ("The Mandalorian Way")
+## 4. The 4-Layer Gateway Defense Architecture ("The Zen Emulation Shield")
 
-All streaming normalization and resilience logic is centralized at the **LiteRouter gateway layer** (`localhost:7766`), requiring zero client forks or custom wrappers:
+All streaming normalization and resilience logic is centralized at the **LiteRouter gateway layer** (`localhost:7766`), selectively applied **only to OpenCode clients**:
 
 ```
                   ┌──────────────────────────────────────────────┐
@@ -96,6 +100,7 @@ All streaming normalization and resilience logic is centralized at the **LiteRou
                   │ LAYER 1: Request & Namespace Sanitizer       │
                   │ - Strips openrouter/ model prefix            │
                   │ - Flattens role: "tool" content array->string│
+                  │ - Scrubs historical reasoning for OpenCode   │
                   └──────────────────────┬───────────────────────┘
                                          │
                                          ▼
@@ -107,11 +112,10 @@ All streaming normalization and resilience logic is centralized at the **LiteRou
                                          │
                                          ▼
                   ┌──────────────────────────────────────────────┐
-                  │ LAYER 3: Reasoning & Schema Transformer      │
-                  │ - Strips reasoning tokens for OpenCode       │
-                  │ - sanitizeDelta: deletes content if null     │
-                  │ - Injects 5s Synthetic Empty-Delta Heartbeat │
-                  │   data: {"choices":[{"index":0,"delta":{}}]} │
+                  │ LAYER 3: Client Filter & Schema Transformer  │
+                  │ - isOpenCodeClient check:                    │
+                  │   * OpenCode: sanitizeDelta + 5s heartbeats  │
+                  │   * Pydantic AI / SDK: Raw Pass-Through      │
                   └──────────────────────┬───────────────────────┘
                                          │
                                          ▼
@@ -145,7 +149,16 @@ All streaming normalization and resilience logic is centralized at the **LiteRou
      payload.model = payload.model.slice("openrouter/".length);
    }
    ```
-4. **Stream Teardown Guard (`src/network/fetcher.ts`)**:
+4. **Pydantic AI & Non-OpenCode Isolation**:
+   ```typescript
+   function determineShouldFilterReasoning(directive: DirectDirective, clientOptions?: RequestClientOptions): boolean {
+     if (clientOptions?.filterReasoning !== undefined) return clientOptions.filterReasoning;
+     if (directive.nuances.includes("ts")) return false; // Force Thinking Stream
+     if (directive.nuances.includes("sb")) return true;  // Force Strip Both
+     return isOpenCodeClient(clientOptions?.userAgent, clientOptions?.headers, directive.nuances);
+   }
+   ```
+5. **Stream Teardown Guard (`src/network/fetcher.ts`)**:
    ```typescript
    if (controller.desiredSize !== null) {
      try {
@@ -158,7 +171,26 @@ All streaming normalization and resilience logic is centralized at the **LiteRou
 
 ---
 
-## 5. Client-Side Autonomous Agent Configuration (OpenCode 2)
+## 5. Architectural Proposal: Dedicated `OpenCodeAdapter` Module
+
+To cleanly separate general gateway routing from OpenCode-specific wire adaptations, we propose consolidating all OpenCode logic into a dedicated module `src/transformers/opencode_adapter.ts`:
+
+### Responsibilities of `OpenCodeAdapter`:
+1. **Inbound Message Normalization**:
+   - Flatten `role: "tool"` array content (`[{type: "text", text: "..."}]` -> `string`).
+   - Strip client-specific SQLite metadata (`providerState`, `reasoning_details`).
+   - Scrub multi-turn reasoning traces to prevent SQLite context explosion.
+2. **Outbound Stream Transformation**:
+   - `sanitizeDelta`: Remove `content: null` to satisfy Vercel Zod parser.
+   - Inject 5-second synthetic data heartbeats (`data: {"choices":[{"delta":{}}]}`) during deep-reasoning phases.
+   - Strip `delta.reasoning` SSE chunks unless overridden by `ts` nuance.
+3. **Strict Client Guard (`isOpenCodeClient`)**:
+   - Inspect `User-Agent: @opencode-ai/cli*` and `x-opencode` headers.
+   - Ensure 100% bypass for Pydantic AI, Python SDK, Claude Code, and raw API consumers.
+
+---
+
+## 6. Client-Side Autonomous Agent Configuration (OpenCode 2)
 
 To prevent `ox-alpha` from pausing to chat between tool reads, the OpenCode2 Build agent is configured for continuous multi-step autonomy:
 
@@ -200,7 +232,7 @@ When executing multi-step tasks, investigations, or code changes:
 
 ---
 
-## 6. The Automated Testing & Diagnostic Kit (`tests/e2e/streaming_kit/`)
+## 7. The Automated Testing & Diagnostic Kit (`tests/e2e/streaming_kit/`)
 
 A standalone, zero-restart test harness is implemented in the repository to continuously verify streaming resilience against live gateway traffic:
 
@@ -221,7 +253,7 @@ uv run python tests/e2e/streaming_kit/run_diagnostics.py
 
 ---
 
-## 7. Empirical Verification & GoLive Evidence
+## 8. Empirical Verification & GoLive Evidence
 
 ### A. Live Replay of Failing SQLite Turn (`msg_0328eded4001jk816m46dSoid2`)
 The exact **71,678-character, 11-message multi-tool conversation turn** that originally crashed at 8.8s was replayed live against the updated LiteRouter instance on `localhost:7766`:

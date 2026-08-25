@@ -4,6 +4,23 @@ All notable changes to LiteRouter will be documented in this file.
 
 ## [Unreleased]
 
+### Added / Consolidated OpenCode Adapter, Resilient Stream Teardown & Telemetry Hardening
+- **Dedicated OpenCode Adapter (`src/transformers/opencode_adapter.ts`)**:
+  - Consolidated all Zen-parity OpenCode streaming and history transformations into a unified adapter module.
+  - Features automatic client detection (`isOpenCodeClient`) with explicit nuance overrides (`ts` to preserve reasoning, `sb` to force stripping), strict delta sanitization (`sanitizeDelta`) dropping `null`/`undefined` content and empty `tool_calls` to satisfy strict downstream Zod schemas (`content: z.string().optional()`).
+  - Implements multi-modal tool message array flattening (`normalizeToolContent`), metadata scrubbing (`stripToolMetadata`, `stripClientMetadata`), in-flight SQLite history scrubbing (`scrubReasoningFromMessages`), and throttled 5s synthetic data heartbeats (`FILTER_HEARTBEAT_INTERVAL_MS = 5000`) emitting empty delta frames (`data: {"choices":[{"index":0,"delta":{}}]}`) during deep-reasoning streams (e.g. `stealth/ox-alpha`).
+  - Maintains 100% untouched raw pass-through isolation for Pydantic AI, OpenAI/Anthropic SDKs, and standard API clients.
+- **Resilient Stream Teardown & Idempotent Controller (`src/network/fetcher.ts`)**:
+  - Introduced `safeEnqueue`, `safeClose`, and `safeError` controller helpers wrapping stream operations with `isClosedRef` guards and `controller.desiredSize === null` checks.
+  - Completely eliminates Bun runtime crashes and noisy `ERR_INVALID_STATE: Controller is already closed` errors during client aborts, socket resets, or upstream disconnects.
+- **Post-TTFT Stream Drop Safety & Quarantine Protection (`src/network/fetcher.ts`, `src/handlers/openai_compat.ts`)**:
+  - Halted mid-stream key rotation and eliminated false 60s rate-limit key pool quarantines once Time-To-First-Token (TTFT) content tokens have started streaming downstream to the client.
+  - Prevents corrupting downstream response streams with disjointed key failover fragments while shielding active API key pools from unwarranted rate-limit penalties during client-side network interruptions.
+- **Accurate Telemetry & Raw Upstream Error Logging (`src/ui/logger.ts`)**:
+  - Fixed hardcoded `"Too Many Requests"` log string in `getHttpStatusText`, ensuring HTTP 500 (`Internal Server Error`), 502 (`Bad Gateway`), 503 (`Service Unavailable`), and 504 (`Gateway Timeout`) render accurate HTTP status names in gateway logs.
+  - Added `extractErrorMessage` parser to extract and format structured error messages from upstream error bodies (supporting `.error.message`, `.error`, `.message`, and `.detail`), logging raw upstream error JSON directly to the console for rapid debugging.
+
+
 ### Added / Streaming Diagnostic Kit 2.0 & Tool Calling Resilience (`docs/Stream_Idle_Timeouts_2.0.md`, `tests/e2e/streaming_kit/`)
 - **Automated Diagnostic & Verification Harness (`tests/e2e/streaming_kit/run_diagnostics.py`)**:
   - Implemented 4-stage automated diagnostic kit: SQLite turn extractor & replay (`extract_and_replay.py`), strict Vercel AI SDK Zod validator probe (`vercel_zod_probe.ts`), inter-chunk cadence & synthetic heartbeat auditor (`test_heartbeat_cadence.py`), and master test runner (`run_diagnostics.py`).

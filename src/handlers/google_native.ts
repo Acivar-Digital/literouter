@@ -92,7 +92,6 @@ export async function handleGoogleNative(
     wireFormat: directive.type === "direct" ? directive.payload : "gg",
     endpoint: endpoint?.rawPath,
     model,
-    keyIndex: 0,
     totalKeys: poolSize,
     nuances: directive.type === "direct" ? directive.nuances : undefined,
   });

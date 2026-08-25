@@ -10,6 +10,7 @@ import {
 } from "./openai_compat";
 import { classifyUpstreamError } from "../network/classifier";
 import {
+  extractErrorMessage,
   logError,
   logExhausted,
   logInbound,
@@ -985,10 +986,9 @@ async function executeAnthropicDirectCall(
       );
     }
 
-    if (response.status === 429 || classification.quarantineTtlSec > 0) {
-      const ttlSec = classification.quarantineTtlSec > 0 ? classification.quarantineTtlSec : 60;
-      logLimit(reqId, directive.provider, selected.index, response.status, ttlSec, selected.totalKeys);
-    }
+    const rawErrorMsg = extractErrorMessage(bodyText);
+    const ttlSec = classification.quarantineTtlSec > 0 ? classification.quarantineTtlSec : (response.status === 429 ? 60 : undefined);
+    logLimit(reqId, directive.provider, selected.index, response.status, ttlSec, selected.totalKeys, rawErrorMsg);
 
     const canRetry = classification.action === "retry_rotate" && attempt < maxAttempts && !clientSignal?.aborted;
     if (canRetry) {
@@ -1076,9 +1076,12 @@ async function executeAnthropicDirectCall(
       logServed(reqId, streamDuration, response.status, currentAttempt, maxAttempts);
       logSeparator();
     },
-    retryProvider: async (reason: string) => {
+    retryProvider: async (reason: string, hasEmittedTokens?: boolean) => {
+      if (hasEmittedTokens) {
+        return null;
+      }
       globalKeyPool.reportFailure(directive.provider, currentKeyIndex, 500, undefined, reason, Date.now(), 60);
-      logLimit(reqId, directive.provider, currentKeyIndex, 500, 60, selected.totalKeys);
+      logLimit(reqId, directive.provider, currentKeyIndex, 500, 60, selected.totalKeys, reason);
 
       while (currentAttempt < maxAttempts) {
         currentAttempt++;
@@ -1305,7 +1308,6 @@ export async function handleAnthropicCompat(
     wireFormat: directive.type === "direct" ? directive.payload : "cl",
     endpoint: endpoint?.rawPath,
     model: anthropicBody.model,
-    keyIndex: 0,
     totalKeys: poolSize,
     nuances: directive.type === "direct" ? directive.nuances : undefined,
   });

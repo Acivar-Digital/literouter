@@ -1,7 +1,9 @@
 import { describe, expect, it, spyOn } from "bun:test";
 import {
+  extractErrorMessage,
   formatTimestamp,
   formatTokenNumber,
+  getHttpStatusText,
   getProviderDisplayName,
   getWireDisplayName,
   logAmber,
@@ -52,7 +54,6 @@ describe("Visual Telemetry & Terminal UI", () => {
       wireFormat: "cl",
       endpoint: "/api/v1/messages",
       model: "anthropic/claude-3.7-sonnet",
-      keyIndex: 0,
       totalKeys: 5,
       nuances: ["no"],
     });
@@ -61,7 +62,7 @@ describe("Visual Telemetry & Terminal UI", () => {
     const calls = consoleSpy.mock.calls.map((c) => c[0]);
     expect(calls.some((c) => c.includes("Inbound POST /v1/messages from Claude-Code/1.0"))).toBe(true);
     expect(calls.some((c) => c.includes("Directive : lr-or-cl-ms-no -> Target: OpenRouter | Wire: Claude | EP: /api/v1/messages"))).toBe(true);
-    expect(calls.some((c) => c.includes("Model     : anthropic/claude-3.7-sonnet | Key: OpenRouter [Key #1/5]"))).toBe(true);
+    expect(calls.some((c) => c.includes("Model     : anthropic/claude-3.7-sonnet | Pool: OpenRouter (5 keys)"))).toBe(true);
     consoleSpy.mockRestore();
   });
 
@@ -96,6 +97,44 @@ describe("Visual Telemetry & Terminal UI", () => {
     expect(calls.some((c) => c.includes("[LIMIT REQ-89f2b] NVIDIA NIM [Key #2/3] returned 429 Too Many Requests"))).toBe(true);
     expect(calls.some((c) => c.includes("Parsed Retry-After: 60s -> Quarantined Key #2 for 60s"))).toBe(true);
     warnSpy.mockRestore();
+  });
+
+  it("logs limit warning with raw upstream error message and accurate status texts", () => {
+    const warnSpy = spyOn(console, "warn").mockImplementation(() => {});
+    logLimit("REQ-89f2b-502", "or", 0, 502, 10, 2, "OpenRouter provider anthropic returned 502: Internal server error");
+    logLimit("REQ-89f2b-500", "or", 0, 500, 10, 2, "Internal server error");
+    logLimit("REQ-89f2b-503", "or", 0, 503, 10, 2, "Service unavailable");
+    logLimit("REQ-89f2b-504", "or", 0, 504, 10, 2, "Gateway timeout");
+    logLimit("REQ-89f2b-418", "or", 0, 418, undefined, 2, "I'm a teapot");
+
+    const calls = warnSpy.mock.calls.map((c) => c[0]);
+    expect(calls.some((c) => c.includes("[LIMIT REQ-89f2b-502] OpenRouter [Key #1/2] returned 502 Bad Gateway"))).toBe(true);
+    expect(calls.some((c) => c.includes('Upstream Error: "OpenRouter provider anthropic returned 502: Internal server error"'))).toBe(true);
+    expect(calls.some((c) => c.includes("[LIMIT REQ-89f2b-500] OpenRouter [Key #1/2] returned 500 Internal Server Error"))).toBe(true);
+    expect(calls.some((c) => c.includes("[LIMIT REQ-89f2b-503] OpenRouter [Key #1/2] returned 503 Service Unavailable"))).toBe(true);
+    expect(calls.some((c) => c.includes("[LIMIT REQ-89f2b-504] OpenRouter [Key #1/2] returned 504 Gateway Timeout"))).toBe(true);
+    expect(calls.some((c) => c.includes("[LIMIT REQ-89f2b-418] OpenRouter [Key #1/2] returned HTTP 418"))).toBe(true);
+    warnSpy.mockRestore();
+  });
+
+  it("extracts error message from various body structures", () => {
+    expect(extractErrorMessage('{"error":{"message":"User quota exceeded"}}')).toBe("User quota exceeded");
+    expect(extractErrorMessage('{"error":"Rate limit reached"}')).toBe("Rate limit reached");
+    expect(extractErrorMessage('{"message":"Service degraded"}')).toBe("Service degraded");
+    expect(extractErrorMessage('{"detail":"Validation error"}')).toBe("Validation error");
+    expect(extractErrorMessage("502 Bad Gateway - upstream died")).toBe("502 Bad Gateway - upstream died");
+    expect(extractErrorMessage(undefined)).toBeUndefined();
+    expect(extractErrorMessage("")).toBeUndefined();
+  });
+
+  it("resolves accurate HTTP status texts with getHttpStatusText", () => {
+    expect(getHttpStatusText(429)).toBe("429 Too Many Requests");
+    expect(getHttpStatusText(500)).toBe("500 Internal Server Error");
+    expect(getHttpStatusText(502)).toBe("502 Bad Gateway");
+    expect(getHttpStatusText(503)).toBe("503 Service Unavailable");
+    expect(getHttpStatusText(504)).toBe("504 Gateway Timeout");
+    expect(getHttpStatusText(400)).toBe("HTTP 400");
+    expect(getHttpStatusText(404)).toBe("HTTP 404");
   });
 
   it("logs key rotation with attempt count", () => {
