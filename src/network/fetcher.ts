@@ -807,14 +807,14 @@ export async function handlePrematureEof(
   callbacks?: StreamCallbacks,
   hasEmittedTokens: boolean = false
 ): Promise<NextAttemptResult | null> {
-  if (state.hasSeenDoneMarker || state.hasSeenDataToken || hasEmittedTokens) {
+  if (state.hasSeenDoneMarker) {
     return null;
   }
   const provider = callbacks?.retryProvider ?? callbacks?.nextAttemptProvider;
   if (!provider) {
     return null;
   }
-  return await provider("Upstream terminated stream prematurely with 0 tokens and no [DONE] marker", false);
+  return await provider("Upstream terminated stream prematurely with 0 tokens and no [DONE] marker", hasEmittedTokens);
 }
 
 async function handleInBandErrorIfPresent(
@@ -829,14 +829,10 @@ async function handleInBandErrorIfPresent(
     return { isHandled: false, next: null };
   }
   const reason = errCheck.message ?? "In-band error detected";
-  if (hasEmittedTokens) {
-    emitStreamError(controller, reason, new Error(reason), callbacks, true, isClosedRef);
-    return { isHandled: true, next: null };
-  }
   const provider = callbacks?.nextAttemptProvider ?? callbacks?.retryProvider;
   if (provider) {
     try {
-      const next = await provider(reason, false);
+      const next = await provider(reason, hasEmittedTokens);
       if (next) {
         return { isHandled: true, next };
       }
@@ -858,14 +854,10 @@ export async function handleStreamFailure(
   isClosedRef?: { isClosed: boolean }
 ): Promise<NextAttemptResult | null> {
   const reason = err instanceof Error ? err.message : String(err);
-  if (hasEmittedTokens) {
-    emitStreamError(controller, reason, err, callbacks, true, isClosedRef);
-    return null;
-  }
   const provider = callbacks?.nextAttemptProvider ?? callbacks?.retryProvider;
   if (provider) {
     try {
-      const next = await provider(reason, false);
+      const next = await provider(reason, hasEmittedTokens);
       if (next) {
         return next;
       }
@@ -991,7 +983,7 @@ export function createResilientStream(
       return false;
     }
 
-    const next = await handlePrematureEof(tokenState, callbacks);
+    const next = await handlePrematureEof(tokenState, callbacks, tokenState.hasSeenDataToken);
     if (next && !isClosedRef.isClosed) {
       lineBuffer = "";
       const nextReader = applyNextAttempt(next, controller, tokenState, callbacks, usageState, isClosedRef);
@@ -1003,6 +995,23 @@ export function createResilientStream(
     }
 
     if (tokenState.hasSeenDataToken && !tokenState.hasSeenDoneMarker && !isClosedRef.isClosed) {
+      const provider = callbacks?.nextAttemptProvider ?? callbacks?.retryProvider;
+      if (provider) {
+        try {
+          const nextDrop = await provider("Upstream stream dropped mid-generation", true);
+          if (nextDrop && !isClosedRef.isClosed) {
+            lineBuffer = "";
+            const nextReader = applyNextAttempt(nextDrop, controller, tokenState, callbacks, usageState, isClosedRef);
+            if (nextReader) {
+              currentReader = nextReader;
+            }
+            keepAliveTimer = startKeepAliveTimer(controller, isClosedRef);
+            return true;
+          }
+        } catch (_dropErr: unknown) {
+          void _dropErr;
+        }
+      }
       emitStreamError(
         controller,
         "Upstream stream dropped mid-generation",

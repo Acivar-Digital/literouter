@@ -184,7 +184,7 @@ describe("handlePrematureEof", () => {
     expect(retryCalled).toBe(false);
   });
 
-  it("returns null if hasSeenDataToken is true", async () => {
+  it("calls retryProvider if hasSeenDataToken is true and no done marker seen", async () => {
     let retryCalled = false;
     const callbacks: StreamCallbacks = {
       retryProvider: async () => {
@@ -193,9 +193,9 @@ describe("handlePrematureEof", () => {
       },
     };
     const state: StreamTokenState = { hasSeenDoneMarker: false, hasSeenDataToken: true };
-    const result = await handlePrematureEof(state, callbacks);
+    const result = await handlePrematureEof(state, callbacks, true);
     expect(result).toBeNull();
-    expect(retryCalled).toBe(false);
+    expect(retryCalled).toBe(true);
   });
 
   it("calls retryProvider when neither token nor done marker seen", async () => {
@@ -247,7 +247,7 @@ describe("createResilientStream — Mid-Stream Error Recovery", () => {
     expect(text).not.toContain("Server error mid-response");
   });
 
-  it("in-band error chunk after tokens does not call nextAttemptProvider and emits SSE error frame", async () => {
+  it("in-band error chunk after tokens calls nextAttemptProvider and emits SSE error frame if attempts exhausted", async () => {
     const firstChunk = encoder.encode('data: {"choices":[{"delta":{"content":"First"}}]}\n\n');
     const inBandErrorChunk = encoder.encode(
       'data: {"error":{"message":"Server error mid-response","code":500}}\n\n'
@@ -266,7 +266,7 @@ describe("createResilientStream — Mid-Stream Error Recovery", () => {
     const stream = createResilientStream(firstChunk, failingReader, callbacks);
     const { text } = await readAllChunks(stream);
 
-    expect(providerCalled).toBe(false);
+    expect(providerCalled).toBe(true);
     expect(text).toContain("First");
     expect(text).toContain('"type":"stream_error"');
     expect(text).toContain("Server error mid-response");
@@ -302,7 +302,7 @@ describe("createResilientStream — Mid-Stream Error Recovery", () => {
     expect(text).toContain("[DONE]");
   });
 
-  it("seals downstream with SSE error frame when upstream throws after tokens without calling nextAttemptProvider", async () => {
+  it("seals downstream with SSE error frame when upstream throws after tokens and retry attempts fail", async () => {
     const firstChunk = encoder.encode('data: {"choices":[{"delta":{"content":"Start"}}]}\n\n');
     const socketError = new Error("Connection terminated unexpectedly");
 
@@ -319,10 +319,10 @@ describe("createResilientStream — Mid-Stream Error Recovery", () => {
     const stream = createResilientStream(firstChunk, failingReader, callbacks);
     const { text } = await readAllChunks(stream);
 
-    expect(providerCalled).toBe(false);
+    expect(providerCalled).toBe(true);
     expect(text).toContain("Start");
     expect(text).toContain('"type":"stream_error"');
-    expect(text).toContain("Connection terminated unexpectedly");
+    expect(text).toContain("All retry keys exhausted");
     expect(text).toContain("data: [DONE]\n\n");
   });
 
@@ -411,9 +411,9 @@ describe("createResilientStream — Mid-Stream Error Recovery", () => {
     expect(chunks.length).toBeGreaterThanOrEqual(3);
   });
 
-  it("clean EOF after data tokens does NOT trigger retry and closes cleanly", async () => {
+  it("clean EOF after data tokens with finish_reason does NOT trigger retry and closes cleanly", async () => {
     const firstChunk = encoder.encode('data: {"choices":[{"delta":{"content":"Hello"}}]}\n\n');
-    const chunk2 = encoder.encode('data: {"choices":[{"delta":{"content":" world"}}]}\n\n');
+    const chunk2 = encoder.encode('data: {"choices":[{"delta":{"content":" world"},"finish_reason":"stop"}]}\n\n');
     const normalReader = createMockReader([chunk2]);
 
     let retryCalled = false;

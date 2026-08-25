@@ -419,10 +419,7 @@ async function executeDirectCall(
     onFinishReason: (finishReason) => {
       logFinishReason(reqId, finishReason);
     },
-    retryProvider: async (reason: string, hasEmittedTokens?: boolean) => {
-      if (hasEmittedTokens) {
-        return null;
-      }
+    retryProvider: async (reason: string, _hasEmittedTokens?: boolean) => {
       globalKeyPool.reportFailure(directive.provider, currentKeyIndex, 500, undefined, reason, Date.now(), 60);
       logLimit(reqId, directive.provider, currentKeyIndex, 500, 60, selected.totalKeys, reason);
 
@@ -455,7 +452,7 @@ async function executeDirectCall(
           const maxQueueDepth = env.LITEROUTER_PACER_MAX_QUEUE_DEPTH > 0
             ? env.LITEROUTER_PACER_MAX_QUEUE_DEPTH
             : dynamicMaxQueueDepth;
-          const pacer = getPacerForProvider(directive.provider, nextSelected.index, {
+          const pacer = getPacerForProvider(directive.provider, 0, {
             maxQueueDepth,
           });
           await pacer.acquire(clientSignal);
@@ -601,7 +598,7 @@ async function executeSingleAttemptLoop(
   let prevKeyIndex = -1;
   const startTime = Date.now();
   const env = getEnv();
-  const maxWaitMs = env.LITEROUTER_PACER_MAX_QUEUE_WAIT_MS || 20000;
+  const maxWaitMs = env.LITEROUTER_PACER_MAX_QUEUE_WAIT_MS || 300000;
 
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     const dwellMs = Date.now() - startTime;

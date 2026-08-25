@@ -4,6 +4,18 @@ All notable changes to LiteRouter will be documented in this file.
 
 ## [Unreleased]
 
+### Added / Long-Running Harness Mid-Stream Resend & Conveyor Belt Ingress (`docs/Fix_Streaming_01.md`)
+- **Mid-Stream Resend on Drop & Replay (`src/network/fetcher.ts`, `src/handlers/openai_compat.ts`)**:
+  - Unlocked mid-stream recovery across all stream lifecycle hooks (`handlePrematureEof`, `handleInBandErrorIfPresent`, `handleStreamFailure`, and `handleEof`).
+  - When an upstream provider drops connection, returns an in-band error, or terminates unexpectedly, LiteRouter immediately rotates to the next available healthy key in the pool and re-sends the request to resume streaming downstream.
+  - Prioritizes long-running agent harness survival (OpenCode, Claude Code, Antigravity) over strict terminal cleanliness.
+- **Harmonized Conveyor Belt Queue (`src/handlers/openai_compat.ts`)**:
+  - Unified rate-pacing slots to index `0` across both inbound requests and mid-stream retry attempts, eliminating split pacer queues and deadlocks.
+- **Uncapped Ingress Leg Permanence (`src/handlers/openai_compat.ts`)**:
+  - Extended default ingress conveyor belt dwell timeout to 300,000ms (5 minutes) via `LITEROUTER_PACER_MAX_QUEUE_WAIT_MS`, ensuring long-running inference requests are not severed while waiting on key pools.
+- **Persistent Architectural Policy**:
+  - Formalized incoming leg (conveyor belt, zero artificial client socket timeouts) vs. outgoing leg (dynamic key rotation with mid-stream resend) in `docs/Fix_Streaming_01.md` and project Dolt memory.
+
 ### Added / Consolidated OpenCode Adapter, Resilient Stream Teardown & Telemetry Hardening
 - **Dedicated OpenCode Adapter (`src/transformers/opencode_adapter.ts`)**:
   - Consolidated all Zen-parity OpenCode streaming and history transformations into a unified adapter module.

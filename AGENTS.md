@@ -23,6 +23,15 @@ This file provides mandatory operational guidance to agents when working with co
 For all system design, folder maps, design decisions, and architectural constraints, refer to:
 👉 `docs/ARCHITECTURE.md`
 👉 `docs/Longrunning_Mode.md` (Fusion Sticky Fallback details)
+👉 `CHANGELOG.md` (Release & change log - fixed path: `/home/yapilwsl/arthityap/literouter/CHANGELOG.md`)
+👉 `literouter-playbook` Skill (Fixed path: `/home/yapilwsl/arthityap/literouter/.opencode2/skills/literouter-playbook/`)
+
+### ⚡ FIXED CORE PATHS (DO NOT SEARCH DISK)
+- **Literouter Playbook Skill**: `.opencode2/skills/literouter-playbook/` (Root: `.opencode2/skills/literouter-playbook/SKILL.md`)
+- **Changelog**: `CHANGELOG.md`
+- **Architecture**: `docs/ARCHITECTURE.md`
+- **Routing & Streaming Spec**: `docs/Fix_Streaming_01.md`
+- **Main Handlers**: `src/handlers/openai_compat.ts`, `src/network/fetcher.ts`, `src/network/pacer.ts`
 
 ### OpenCode vs OpenCode2 Config Format
 This repo maintains both OpenCode v1 and OpenCode2 v2 configurations. Key differences when editing JSON configs:
