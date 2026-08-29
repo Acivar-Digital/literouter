@@ -219,6 +219,109 @@ Let me try deeper add zone and momentum-gated adds.
     expect(parsed.cleanText).not.toContain("</tool_call>");
   });
 
+
+  it("parses Qwen XML format (<function=name><parameter=key>)", () => {
+    const raw = `I will now write the file.
+<tool_call>
+<function=write>
+<parameter=path>src/index.js</parameter>
+<parameter=content>console.log("hello world");</parameter>
+<parameter=count>42</parameter>
+<parameter=active>true</parameter>
+<parameter=ratio>3.14</parameter>
+</function>
+</tool_call>
+Let me know if you need changes.`;
+
+    const result = parseDotsXml(raw);
+    expect(result.toolCalls).toHaveLength(1);
+    expect(result.toolCalls[0]!.function.name).toBe("write");
+    const args = JSON.parse(result.toolCalls[0]!.function.arguments);
+    expect(args.path).toBe("src/index.js");
+    expect(args.content).toBe('console.log("hello world");');
+    expect(args.count).toBe(42);
+    expect(args.active).toBe(true);
+    expect(args.ratio).toBe(3.14);
+    expect(result.cleanText).toContain("I will now write the file.");
+    expect(result.cleanText).toContain("Let me know if you need changes.");
+    expect(result.cleanText).not.toContain("<function=");
+    expect(result.cleanText).not.toContain("<parameter=");
+  });
+
+  it("parses DeepSeek DSML / MiniMax XML format (<invoke name=...>)", () => {
+    const raw = `<invoke name="bash">
+<parameter name="command">ls -la</parameter>
+<parameter name="restart">false</parameter>
+<parameter name="timeout">300</parameter>
+</invoke>`;
+
+    const result = parseDotsXml(raw);
+    expect(result.toolCalls).toHaveLength(1);
+    expect(result.toolCalls[0]!.function.name).toBe("bash");
+    const args = JSON.parse(result.toolCalls[0]!.function.arguments);
+    expect(args.command).toBe("ls -la");
+    expect(args.restart).toBe(false);
+    expect(args.timeout).toBe(300);
+    expect(result.cleanText).toBe("");
+  });
+
+  it("parses Claude / Cline XML format (<tool_name><param>...)", () => {
+    const raw = `Writing configuration:
+<write>
+<path>server.py</path>
+<content>import os</content>
+<lines>10</lines>
+</write>`;
+
+    const result = parseDotsXml(raw);
+    expect(result.toolCalls).toHaveLength(1);
+    expect(result.toolCalls[0]!.function.name).toBe("write");
+    const args = JSON.parse(result.toolCalls[0]!.function.arguments);
+    expect(args.path).toBe("server.py");
+    expect(args.content).toBe("import os");
+    expect(args.lines).toBe(10);
+    expect(result.cleanText).toBe("Writing configuration:");
+  });
+
+  it("parses Qwen JSON-in-XML hybrid format (<tool_call>{...}</tool_call>)", () => {
+    const raw = `<tool_call>
+{"name": "edit", "arguments": {"path": "main.py", "diff": "- old\n+ new"}}
+</tool_call>`;
+
+    const result = parseDotsXml(raw);
+    expect(result.toolCalls).toHaveLength(1);
+    expect(result.toolCalls[0]!.function.name).toBe("edit");
+    const args = JSON.parse(result.toolCalls[0]!.function.arguments);
+    expect(args.path).toBe("main.py");
+    expect(args.diff).toBe("- old\n+ new");
+    expect(result.cleanText).toBe("");
+  });
+
+  it("handles complex data-type casting rules (bools, ints, floats, json arrays/objects, strings)", () => {
+    const raw = `<invoke name="test_types">
+<parameter name="is_admin">true</parameter>
+<parameter name="is_guest">false</parameter>
+<parameter name="user_id">12345</parameter>
+<parameter name="negative_val">-99</parameter>
+<parameter name="pi">3.14159</parameter>
+<parameter name="items">[1, 2, "three"]</parameter>
+<parameter name="config">{"theme": "dark", "retries": 3}</parameter>
+<parameter name="plain_str">Just plain text</parameter>
+</invoke>`;
+
+    const result = parseDotsXml(raw);
+    expect(result.toolCalls).toHaveLength(1);
+    const args = JSON.parse(result.toolCalls[0]!.function.arguments);
+    expect(args.is_admin).toBe(true);
+    expect(args.is_guest).toBe(false);
+    expect(args.user_id).toBe(12345);
+    expect(args.negative_val).toBe(-99);
+    expect(args.pi).toBe(3.14159);
+    expect(args.items).toEqual([1, 2, "three"]);
+    expect(args.config).toEqual({ theme: "dark", retries: 3 });
+    expect(args.plain_str).toBe("Just plain text");
+  });
+
   it("parses tool_call tags with child name and raw json arguments", () => {
     const input = '<tool_call><name>shell</name><arguments>{"command": "pytest tests/"}</arguments></tool_call>';
     const parsed = parseDotsXml(input);

@@ -6,7 +6,7 @@ export interface DotsParseResult {
 }
 
 export const LEAKED_TEMPLATE_REGEX =
-  /<role>(?:HUMAN|ASSISTANT|SYSTEM|BOT|USER|human|assistant|user|system|bot)<\/role>|<\/?(?:role|im_start|im_end|endoftext|start_of_turn|end_of_turn)(?:\s+[^>]*)?>|<\|(?:im_start|im_end|endoftext|start_of_turn|end_of_turn)\b[^|]*\|>|\[\/?INST\]|<<\/?SYS>>|(?:(?:HUMAN|ASSISTANT|SYSTEM|BOT|USER)\s*)?<\/(?:role|im_end|end_of_turn)>|<(?:role|im_start|start_of_turn)>\s*(?:HUMAN|ASSISTANT|SYSTEM|BOT|USER)\b/gi;
+  /<role>(?:HUMAN|ASSISTANT|SYSTEM|BOT|USER|human|assistant|user|system|bot)<\/role>|<\/?(?:role|im_start|im_end|endoftext|start_of_turn|end_of_turn)(?:\s+[^>]*)?>|<\|(?:im_start|im_end|endoftext|start_of_turn|end_of_turn)\b[^|]*\|>|\[\/?INST\]|<<\/?SYS>>|(?:\b(?:HUMAN|ASSISTANT|SYSTEM|BOT|USER)\b\s*)?<\/(?:role|im_end|end_of_turn)>|<(?:role|im_start|start_of_turn)>\s*(?:HUMAN|ASSISTANT|SYSTEM|BOT|USER)\b/gi;
 
 export function stripLeakedTemplateTags(text: string): string {
   return text.replace(LEAKED_TEMPLATE_REGEX, "");
@@ -45,41 +45,136 @@ export class TagSanitizerStreamBuffer {
 }
 
 const INVOKE_BLOCK_REGEX =
-  /<(?:invoke|tool_call|function_call)(?:\s+name=["']([^"']+)["'])?>([\s\S]*?)<\/(?:invoke|tool_call|function_call)>/gi;
+  /<(?:invoke|minimax:tool_call|tool_call|function_call)(?:\s+name=["']([^"']+)["'])?>([\s\S]*?)<\/(?:invoke|minimax:tool_call|tool_call|function_call)>/gi;
+
+const QWEN_FUNC_REGEX =
+  /<function=([a-zA-Z0-9_\-]+)>([\s\S]*?)<\/function>/gi;
+
+const QWEN_PARAM_REGEX =
+  /<parameter=([a-zA-Z0-9_\-]+)>([\s\S]*?)(?:<\/parameter>|(?=<parameter|<\/(?:function|tool_call)>|$))/gi;
 
 const PARAM_REGEX =
-  /<parameter\s+name=["']([^"']+)["']>([\s\S]*?)(?:<\/(?:parameter|arg_value|parameter_value)>|(?=<parameter|<arg_key|<\/(?:invoke|tool_call|function_call|function_calls|tool_calls)>|$))/gi;
+  /<parameter\s+name=["']([^"']+)["']>([\s\S]*?)(?:<\/(?:parameter|arg_value|parameter_value)>|(?=<parameter|<arg_key|<\/(?:invoke|tool_call|function_call|function_calls|tool_calls|minimax:tool_call)>|$))/gi;
 
 const ARG_KV_REGEX =
   /<(?:arg_key|argument_name|parameter_name)>([^<]+)<\/(?:arg_key|argument_name|parameter_name)>\s*<(?:arg_value|argument_value|parameter_value)>([\s\S]*?)<\/(?:arg_value|argument_value|parameter_value)>/gi;
 
-function parseParamValue(raw: string): unknown {
+const EXCLUDED_TAG_NAMES = new Set([
+  "tool_call",
+  "tool_calls",
+  "invoke",
+  "function_call",
+  "function_calls",
+  "minimax:tool_call",
+  "think",
+  "thought",
+  "p",
+  "div",
+  "span",
+  "pre",
+  "code",
+  "b",
+  "i",
+  "strong",
+  "em",
+  "table",
+  "tr",
+  "td",
+  "th",
+  "ul",
+  "ol",
+  "li",
+  "a",
+  "h1",
+  "h2",
+  "h3",
+  "h4",
+  "h5",
+  "h6",
+  "role",
+  "im_start",
+  "im_end",
+  "name",
+  "function",
+  "tool_name",
+  "arguments",
+  "args",
+  "parameter",
+  "arg_key",
+  "arg_value",
+  "parameter_value",
+  "argument_name",
+  "argument_value",
+]);
+
+function parseJsonTolerant(raw: string): unknown {
   try {
     return JSON.parse(raw);
-  } catch (err) {
-    if (err instanceof SyntaxError) {
-      return raw;
+  } catch (err: unknown) {
+    void err;
+    try {
+      const sanitized = raw.replace(/"(?:[^"\\]|\\.)*"/g, (match) => {
+        return match.replace(/\n/g, "\\n").replace(/\r/g, "\\r").replace(/\t/g, "\\t");
+      });
+      return JSON.parse(sanitized);
+    } catch (innerErr: unknown) {
+      void innerErr;
+      return null;
     }
-    return raw;
   }
+}
+
+function castValue(raw: string): unknown {
+  const trimmed = raw.trim();
+  const lower = trimmed.toLowerCase();
+  if (lower === "true") return true;
+  if (lower === "false") return false;
+  if (/^-?\d+$/.test(trimmed)) {
+    const parsed = parseInt(trimmed, 10);
+    if (!Number.isNaN(parsed)) return parsed;
+  }
+  if (/^-?\d+\.\d+$/.test(trimmed)) {
+    const parsed = parseFloat(trimmed);
+    if (!Number.isNaN(parsed)) return parsed;
+  }
+  if (
+    (trimmed.startsWith("{") && trimmed.endsWith("}")) ||
+    (trimmed.startsWith("[") && trimmed.endsWith("]"))
+  ) {
+    const parsed = parseJsonTolerant(trimmed);
+    if (parsed !== null) return parsed;
+  }
+  return trimmed;
 }
 
 function parseParameters(body: string): Record<string, unknown> {
   const params: Record<string, unknown> = {};
 
-  // 1. Key-Value pairs: <arg_key>k</arg_key><arg_value>v</arg_value>
+  // 1. Qwen Parameter Format: <parameter=path>src/index.js</parameter>
+  const qwenParamRegex = new RegExp(QWEN_PARAM_REGEX.source, "gi");
+  let qpMatch = qwenParamRegex.exec(body);
+  while (qpMatch !== null) {
+    const key = (qpMatch[1] ?? "").trim();
+    const val = (qpMatch[2] ?? "").trim();
+    if (key.length > 0 && !(key in params)) {
+      params[key] = castValue(val);
+    }
+    qpMatch = qwenParamRegex.exec(body);
+  }
+
+  // 2. Key-Value pairs: <arg_key>k</arg_key><arg_value>v</arg_value>
   const kvRegex = new RegExp(ARG_KV_REGEX.source, "gi");
   let kvMatch = kvRegex.exec(body);
   while (kvMatch !== null) {
     const key = (kvMatch[1] ?? "").trim();
     const val = (kvMatch[2] ?? "").trim();
-    if (key.length > 0) {
-      params[key] = parseParamValue(val);
+    if (key.length > 0 && !(key in params)) {
+      params[key] = castValue(val);
     }
     kvMatch = kvRegex.exec(body);
   }
 
-  // 2. Named parameter tags: <parameter name="k">v</parameter>
+  // 3. Named parameter tags: <parameter name="k">v</parameter>
   const paramRegex = new RegExp(PARAM_REGEX.source, "gi");
   let pMatch = paramRegex.exec(body);
   while (pMatch !== null) {
@@ -89,23 +184,45 @@ function parseParameters(body: string): Record<string, unknown> {
       val = val.split("<arg_key>")[0]?.trim() ?? val;
     }
     if (key.length > 0 && !(key in params)) {
-      params[key] = parseParamValue(val);
+      params[key] = castValue(val);
     }
     pMatch = paramRegex.exec(body);
   }
 
-  // 3. Fallback: <arguments>JSON</arguments> or raw JSON in body
+  // 4. Claude / Cline child tags: <path>server.py</path><content>import os</content>
+  if (Object.keys(params).length === 0) {
+    const childTagRegex = /<([a-zA-Z0-9_\-]+)>([^<]*?)<\/\1>/g;
+    let childMatch = childTagRegex.exec(body);
+    while (childMatch !== null) {
+      const tag = (childMatch[1] ?? "").trim();
+      const val = (childMatch[2] ?? "").trim();
+      if (!EXCLUDED_TAG_NAMES.has(tag.toLowerCase()) && tag.length > 0 && !(tag in params)) {
+        params[tag] = castValue(val);
+      }
+      childMatch = childTagRegex.exec(body);
+    }
+  }
+
+  // 5. Fallback: <arguments>JSON</arguments> or raw JSON in body
   if (Object.keys(params).length === 0) {
     const argsTagMatch = /<(?:arguments|args)>([\s\S]*?)<\/(?:arguments|args)>/i.exec(body);
     const rawCandidate = (argsTagMatch?.[1] ?? body).trim();
     if (rawCandidate.startsWith("{") && rawCandidate.endsWith("}")) {
-      try {
-        const parsed = JSON.parse(rawCandidate);
-        if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
-          Object.assign(params, parsed);
+      const parsed = parseJsonTolerant(rawCandidate);
+      if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
+        const dict = parsed as Record<string, unknown>;
+        if (dict.arguments && typeof dict.arguments === "object" && !Array.isArray(dict.arguments)) {
+          Object.assign(params, dict.arguments);
+        } else if (typeof dict.arguments === "string") {
+          const inner = parseJsonTolerant(dict.arguments);
+          if (typeof inner === "object" && inner !== null) {
+            Object.assign(params, inner);
+          } else {
+            params.arguments = dict.arguments;
+          }
+        } else {
+          Object.assign(params, dict);
         }
-      } catch (err: unknown) {
-        void err;
       }
     }
   }
@@ -124,23 +241,6 @@ function extractFunctionName(tagFnName: string | undefined, body: string): strin
   return "tool";
 }
 
-function createToolCallFromInvoke(
-  rawName: string | undefined,
-  body: string,
-  index: number
-): OpenAIToolCall {
-  const fnName = extractFunctionName(rawName, body);
-  const argsObj = parseParameters(body);
-  return {
-    id: `call_dots_${Date.now()}_${index}`,
-    type: "function",
-    function: {
-      name: fnName,
-      arguments: JSON.stringify(argsObj),
-    },
-  };
-}
-
 export function parseDotsXml(content: string): DotsParseResult {
   const sanitized = stripLeakedTemplateTags(content);
   const lower = sanitized.toLowerCase();
@@ -149,27 +249,119 @@ export function parseDotsXml(content: string): DotsParseResult {
     !lower.includes("<tool_call") &&
     !lower.includes("<function_call") &&
     !lower.includes("<function_calls") &&
-    !lower.includes("<tool_calls")
+    !lower.includes("<tool_calls") &&
+    !lower.includes("<function=") &&
+    !lower.includes("<minimax:tool_call") &&
+    !/<[a-zA-Z0-9_\-]+>\s*<[a-zA-Z0-9_\-]+>[^<]*<\/[a-zA-Z0-9_\-]+>/i.test(sanitized)
   ) {
     return { cleanText: sanitized, toolCalls: [] };
   }
 
   const toolCalls: OpenAIToolCall[] = [];
-  const regex = new RegExp(INVOKE_BLOCK_REGEX.source, "gi");
-  let match = regex.exec(sanitized);
   let index = 0;
 
-  while (match !== null) {
-    const rawFnName = match[1];
-    const body = match[2] ?? "";
-    toolCalls.push(createToolCallFromInvoke(rawFnName, body, index));
-    index += 1;
-    match = regex.exec(sanitized);
+  // 1. Qwen JSON-in-XML: <tool_call>\s*({.*?})\s*</tool_call>
+  const jsonXmlRegex = /<tool_call>\s*(\{[\s\S]*?\})\s*<\/tool_call>/gi;
+  let jMatch = jsonXmlRegex.exec(sanitized);
+  while (jMatch !== null) {
+    const rawJson = jMatch[1] ?? "{}";
+    const parsed = parseJsonTolerant(rawJson);
+    if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
+      const payload = parsed as Record<string, unknown>;
+      const name = (payload.name || payload.function || "tool") as string;
+      let rawArgs: unknown = payload.arguments ?? payload.parameters ?? {};
+      if (typeof rawArgs === "string") {
+        const inner = parseJsonTolerant(rawArgs);
+        rawArgs = inner !== null ? inner : { input: rawArgs };
+      }
+      toolCalls.push({
+        id: `call_dots_${Date.now()}_${index}`,
+        type: "function",
+        function: {
+          name,
+          arguments: JSON.stringify(rawArgs),
+        },
+      });
+      index += 1;
+    }
+    jMatch = jsonXmlRegex.exec(sanitized);
   }
 
+  // 2. Qwen Format: <function=name>...</function>
+  const qwenFuncRegex = new RegExp(QWEN_FUNC_REGEX.source, "gi");
+  let qMatch = qwenFuncRegex.exec(sanitized);
+  while (qMatch !== null) {
+    const fnName = (qMatch[1] ?? "").trim();
+    const body = qMatch[2] ?? "";
+    const argsObj = parseParameters(body);
+    toolCalls.push({
+      id: `call_dots_${Date.now()}_${index}`,
+      type: "function",
+      function: {
+        name: fnName,
+        arguments: JSON.stringify(argsObj),
+      },
+    });
+    index += 1;
+    qMatch = qwenFuncRegex.exec(sanitized);
+  }
+
+  // 3. DeepSeek / MiniMax / Standard Invoke Format: <invoke name="name">...
+  const invokeRegex = new RegExp(INVOKE_BLOCK_REGEX.source, "gi");
+  let iMatch = invokeRegex.exec(sanitized);
+  while (iMatch !== null) {
+    const rawBody = (iMatch[2] ?? "").trim();
+    if (!rawBody.startsWith("{") && !rawBody.includes("<function=")) {
+      const rawFnName = iMatch[1];
+      const fnName = extractFunctionName(rawFnName, rawBody);
+      const argsObj = parseParameters(rawBody);
+      toolCalls.push({
+        id: `call_dots_${Date.now()}_${index}`,
+        type: "function",
+        function: {
+          name: fnName,
+          arguments: JSON.stringify(argsObj),
+        },
+      });
+      index += 1;
+    }
+    iMatch = invokeRegex.exec(sanitized);
+  }
+
+  // 4. Claude / Cline Format: <write><path>...</path></write> (only if no tools extracted yet)
+  if (toolCalls.length === 0) {
+    const customToolRegex = /<([a-zA-Z0-9_\-]+)>(\s*<[a-zA-Z0-9_\-]+>[^<]*<\/[a-zA-Z0-9_\-]+>[\s\S]*?)<\/\1>/gi;
+    let cMatch = customToolRegex.exec(sanitized);
+    while (cMatch !== null) {
+      const tagName = (cMatch[1] ?? "").trim();
+      if (!EXCLUDED_TAG_NAMES.has(tagName.toLowerCase())) {
+        const body = cMatch[2] ?? "";
+        const argsObj = parseParameters(body);
+        if (Object.keys(argsObj).length > 0) {
+          toolCalls.push({
+            id: `call_dots_${Date.now()}_${index}`,
+            type: "function",
+            function: {
+              name: tagName,
+              arguments: JSON.stringify(argsObj),
+            },
+          });
+          index += 1;
+        }
+      }
+      cMatch = customToolRegex.exec(sanitized);
+    }
+  }
+
+  // Strip tool calling XML blocks and leftover tags from user text
   const cleanText = sanitized
+    .replace(/<tool_call>\s*\{[\s\S]*?\}\s*<\/tool_call>/gi, "")
+    .replace(/<function=[a-zA-Z0-9_\-]+>[\s\S]*?<\/function>/gi, "")
     .replace(new RegExp(INVOKE_BLOCK_REGEX.source, "gi"), "")
-    .replace(/<\/?(?:tool_calls|function_calls|invoke|tool_call|function_call|parameter|arg_key|arg_value|parameter_value|argument_name|argument_value|role)[^>]*>/gi, "")
+    .replace(/<([a-zA-Z0-9_\-]+)>\s*<[a-zA-Z0-9_\-]+>[^<]*<\/[a-zA-Z0-9_\-]+>[\s\S]*?<\/\1>/gi, (match, tag) => {
+      return EXCLUDED_TAG_NAMES.has(String(tag).toLowerCase()) ? match : "";
+    })
+    .replace(/<\/?(?:tool_calls|function_calls|invoke|tool_call|function_call|minimax:tool_call|parameter|arg_key|arg_value|parameter_value|argument_name|argument_value|role)[^>]*>/gi, "")
     .trim();
 
   return { cleanText, toolCalls };
@@ -177,15 +369,11 @@ export function parseDotsXml(content: string): DotsParseResult {
 
 function parseToolCallArguments(raw: unknown): Record<string, unknown> {
   if (typeof raw === "string") {
-    try {
-      const parsed = JSON.parse(raw);
-      if (typeof parsed === "object" && parsed !== null) {
-        return parsed as Record<string, unknown>;
-      }
-      return { input: parsed };
-    } catch {
-      return { input: raw };
+    const parsed = parseJsonTolerant(raw);
+    if (typeof parsed === "object" && parsed !== null) {
+      return parsed as Record<string, unknown>;
     }
+    return { input: raw };
   }
   if (typeof raw === "object" && raw !== null) {
     return raw as Record<string, unknown>;
@@ -351,7 +539,7 @@ export function formatOpenAIFinishDelta(
 }
 
 function flushNonTagContent(state: DotsStreamState): string {
-  const tagStart = state.buffer.search(/<(?:tool_calls?|function_calls?|invoke|tool_call|function_call)/i);
+  const tagStart = state.buffer.search(/<(?:tool_calls?|function_calls?|invoke|tool_call|function_call|function=|minimax:tool_call)/i);
   if (tagStart === -1) {
     const potentialTag = state.buffer.search(/<[^>]*$/);
     if (potentialTag !== -1) {
@@ -379,7 +567,10 @@ export function processDotsStreamChunk(
 ): string {
   state.buffer += chunk;
 
-  const hasClosingTag = /<\/(?:invoke|tool_call|function_call|tool_calls|function_calls)>/i.test(state.buffer);
+  const hasClosingTag =
+    /<\/(?:invoke|tool_call|function_call|function|tool_calls|function_calls|minimax:tool_call)>/i.test(
+      state.buffer
+    ) || /<\/([a-zA-Z0-9_\-]+)>\s*$/i.test(state.buffer);
   if (!hasClosingTag) {
     return flushNonTagContent(state);
   }
