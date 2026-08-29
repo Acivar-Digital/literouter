@@ -3,6 +3,7 @@ import type { OpenAIMessage, OpenAIToolCall } from "./nuances";
 export interface DotsParseResult {
   readonly cleanText: string;
   readonly toolCalls: readonly OpenAIToolCall[];
+  readonly reasoningContent?: string;
 }
 
 export const LEAKED_TEMPLATE_REGEX =
@@ -68,6 +69,7 @@ const EXCLUDED_TAG_NAMES = new Set([
   "minimax:tool_call",
   "think",
   "thought",
+  "thinking",
   "p",
   "div",
   "span",
@@ -243,7 +245,19 @@ function extractFunctionName(tagFnName: string | undefined, body: string): strin
 
 export function parseDotsXml(content: string): DotsParseResult {
   const sanitized = stripLeakedTemplateTags(content);
-  const lower = sanitized.toLowerCase();
+
+  // Extract Thinking / Reasoning tokens: <think>...</think>, <thought>...</thought>, <thinking>...</thinking>
+  let reasoningContent: string | undefined = undefined;
+  const thinkMatch = /<(?:think|thought|thinking)>([\s\S]*?)<\/(?:think|thought|thinking)>/i.exec(sanitized);
+  if (thinkMatch) {
+    const rawThink = (thinkMatch[1] ?? "").trim();
+    if (rawThink.length > 0) {
+      reasoningContent = stripLeakedTemplateTags(rawThink);
+    }
+  }
+
+  const contentWithoutThink = sanitized.replace(/<(?:think|thought|thinking)>[\s\S]*?<\/(?:think|thought|thinking)>/gi, "");
+  const lower = contentWithoutThink.toLowerCase();
   if (
     !lower.includes("<invoke") &&
     !lower.includes("<tool_call") &&
@@ -252,9 +266,10 @@ export function parseDotsXml(content: string): DotsParseResult {
     !lower.includes("<tool_calls") &&
     !lower.includes("<function=") &&
     !lower.includes("<minimax:tool_call") &&
-    !/<[a-zA-Z0-9_\-]+>\s*<[a-zA-Z0-9_\-]+>[^<]*<\/[a-zA-Z0-9_\-]+>/i.test(sanitized)
+    !/<[a-zA-Z0-9_\-]+>\s*<[a-zA-Z0-9_\-]+>[^<]*<\/[a-zA-Z0-9_\-]+>/i.test(contentWithoutThink)
   ) {
-    return { cleanText: sanitized, toolCalls: [] };
+    const cleanOnly = stripResidualTags(contentWithoutThink);
+    return { cleanText: cleanOnly, toolCalls: [], reasoningContent };
   }
 
   const toolCalls: OpenAIToolCall[] = [];
@@ -262,7 +277,7 @@ export function parseDotsXml(content: string): DotsParseResult {
 
   // 1. Qwen JSON-in-XML: <tool_call>\s*({.*?})\s*</tool_call>
   const jsonXmlRegex = /<tool_call>\s*(\{[\s\S]*?\})\s*<\/tool_call>/gi;
-  let jMatch = jsonXmlRegex.exec(sanitized);
+  let jMatch = jsonXmlRegex.exec(contentWithoutThink);
   while (jMatch !== null) {
     const rawJson = jMatch[1] ?? "{}";
     const parsed = parseJsonTolerant(rawJson);
@@ -284,12 +299,12 @@ export function parseDotsXml(content: string): DotsParseResult {
       });
       index += 1;
     }
-    jMatch = jsonXmlRegex.exec(sanitized);
+    jMatch = jsonXmlRegex.exec(contentWithoutThink);
   }
 
   // 2. Qwen Format: <function=name>...</function>
   const qwenFuncRegex = new RegExp(QWEN_FUNC_REGEX.source, "gi");
-  let qMatch = qwenFuncRegex.exec(sanitized);
+  let qMatch = qwenFuncRegex.exec(contentWithoutThink);
   while (qMatch !== null) {
     const fnName = (qMatch[1] ?? "").trim();
     const body = qMatch[2] ?? "";
@@ -303,12 +318,12 @@ export function parseDotsXml(content: string): DotsParseResult {
       },
     });
     index += 1;
-    qMatch = qwenFuncRegex.exec(sanitized);
+    qMatch = qwenFuncRegex.exec(contentWithoutThink);
   }
 
   // 3. DeepSeek / MiniMax / Standard Invoke Format: <invoke name="name">...
   const invokeRegex = new RegExp(INVOKE_BLOCK_REGEX.source, "gi");
-  let iMatch = invokeRegex.exec(sanitized);
+  let iMatch = invokeRegex.exec(contentWithoutThink);
   while (iMatch !== null) {
     const rawBody = (iMatch[2] ?? "").trim();
     if (!rawBody.startsWith("{") && !rawBody.includes("<function=")) {
@@ -325,13 +340,13 @@ export function parseDotsXml(content: string): DotsParseResult {
       });
       index += 1;
     }
-    iMatch = invokeRegex.exec(sanitized);
+    iMatch = invokeRegex.exec(contentWithoutThink);
   }
 
   // 4. Claude / Cline Format: <write><path>...</path></write> (only if no tools extracted yet)
   if (toolCalls.length === 0) {
     const customToolRegex = /<([a-zA-Z0-9_\-]+)>(\s*<[a-zA-Z0-9_\-]+>[^<]*<\/[a-zA-Z0-9_\-]+>[\s\S]*?)<\/\1>/gi;
-    let cMatch = customToolRegex.exec(sanitized);
+    let cMatch = customToolRegex.exec(contentWithoutThink);
     while (cMatch !== null) {
       const tagName = (cMatch[1] ?? "").trim();
       if (!EXCLUDED_TAG_NAMES.has(tagName.toLowerCase())) {
@@ -349,22 +364,24 @@ export function parseDotsXml(content: string): DotsParseResult {
           index += 1;
         }
       }
-      cMatch = customToolRegex.exec(sanitized);
+      cMatch = customToolRegex.exec(contentWithoutThink);
     }
   }
 
-  // Strip tool calling XML blocks and leftover tags from user text
-  const cleanText = sanitized
+  const cleanText = stripResidualTags(contentWithoutThink);
+  return { cleanText, toolCalls, reasoningContent };
+}
+
+function stripResidualTags(text: string): string {
+  return text
     .replace(/<tool_call>\s*\{[\s\S]*?\}\s*<\/tool_call>/gi, "")
     .replace(/<function=[a-zA-Z0-9_\-]+>[\s\S]*?<\/function>/gi, "")
     .replace(new RegExp(INVOKE_BLOCK_REGEX.source, "gi"), "")
     .replace(/<([a-zA-Z0-9_\-]+)>\s*<[a-zA-Z0-9_\-]+>[^<]*<\/[a-zA-Z0-9_\-]+>[\s\S]*?<\/\1>/gi, (match, tag) => {
       return EXCLUDED_TAG_NAMES.has(String(tag).toLowerCase()) ? match : "";
     })
-    .replace(/<\/?(?:tool_calls|function_calls|invoke|tool_call|function_call|minimax:tool_call|parameter|arg_key|arg_value|parameter_value|argument_name|argument_value|role)[^>]*>/gi, "")
+    .replace(/<\/?(?:tool_calls|function_calls|invoke|tool_call|function_call|minimax:tool_call|parameter|arg_key|arg_value|parameter_value|argument_name|argument_value|role|think|thought|thinking)[^>]*>/gi, "")
     .trim();
-
-  return { cleanText, toolCalls };
 }
 
 function parseToolCallArguments(raw: unknown): Record<string, unknown> {
@@ -422,10 +439,11 @@ function serializeMessageForDots(msg: OpenAIMessage): OpenAIMessage {
   }
   if (msg.role === "tool") {
     const toolId = msg.tool_call_id || "call_unknown";
+    const toolNameAttr = msg.name ? ` name="${msg.name}"` : "";
     const text = serializeToolResultContent(msg.content);
     return {
       role: "user",
-      content: `<tool_result id="${toolId}">\n${text}\n</tool_result>`,
+      content: `<tool_result id="${toolId}"${toolNameAttr}>\n${text}\n</tool_result>`,
     };
   }
   return msg;
@@ -435,6 +453,56 @@ export function serializeDotsToolHistory(
   messages: readonly OpenAIMessage[]
 ): OpenAIMessage[] {
   return messages.map(serializeMessageForDots);
+}
+
+export function injectToolsSchemaSystemPrompt(
+  messages: readonly OpenAIMessage[],
+  tools?: readonly unknown[]
+): readonly OpenAIMessage[] {
+  if (!tools || !Array.isArray(tools) || tools.length === 0) {
+    return messages;
+  }
+
+  const toolSchemas = tools
+    .map((t: unknown) => {
+      if (typeof t === "object" && t !== null) {
+        const item = t as Record<string, unknown>;
+        if (item.type === "function" && item.function) {
+          return JSON.stringify(item.function);
+        }
+        return JSON.stringify(item);
+      }
+      return "";
+    })
+    .filter((s) => s.length > 0);
+
+  if (toolSchemas.length === 0) {
+    return messages;
+  }
+
+  const toolSystemPrompt =
+    `\n\n# Tools\nYou have access to the following tools:\n<tools>\n` +
+    toolSchemas.join("\n") +
+    `\n</tools>\nWhen calling tools, output:\n<tool_call>\n<function=tool_name>\n<parameter=key>value</parameter>\n</function>\n</tool_call>`;
+
+  const result = [...messages];
+  const sysIndex = result.findIndex((m) => m.role === "system");
+  if (sysIndex >= 0) {
+    const existing = result[sysIndex]!;
+    const existingText = typeof existing.content === "string" ? existing.content : "";
+    if (!existingText.includes("<tools>")) {
+      result[sysIndex] = {
+        ...existing,
+        content: existingText + toolSystemPrompt,
+      };
+    }
+  } else {
+    result.unshift({
+      role: "system",
+      content: toolSystemPrompt.trim(),
+    });
+  }
+  return result;
 }
 
 export interface DotsStreamState {
@@ -539,7 +607,7 @@ export function formatOpenAIFinishDelta(
 }
 
 function flushNonTagContent(state: DotsStreamState): string {
-  const tagStart = state.buffer.search(/<(?:tool_calls?|function_calls?|invoke|tool_call|function_call|function=|minimax:tool_call)/i);
+  const tagStart = state.buffer.search(/<(?:tool_calls?|function_calls?|invoke|tool_call|function_call|function=|minimax:tool_call|think|thought|thinking)/i);
   if (tagStart === -1) {
     const potentialTag = state.buffer.search(/<[^>]*$/);
     if (potentialTag !== -1) {
@@ -568,7 +636,7 @@ export function processDotsStreamChunk(
   state.buffer += chunk;
 
   const hasClosingTag =
-    /<\/(?:invoke|tool_call|function_call|function|tool_calls|function_calls|minimax:tool_call)>/i.test(
+    /<\/(?:invoke|tool_call|function_call|function|tool_calls|function_calls|minimax:tool_call|think|thought|thinking)>/i.test(
       state.buffer
     ) || /<\/([a-zA-Z0-9_\-]+)>\s*$/i.test(state.buffer);
   if (!hasClosingTag) {
@@ -736,7 +804,8 @@ export function createDotsStreamTransformer(): TransformStream<Uint8Array, Uint8
                 encoder.encode(deltaModified ? `data: ${JSON.stringify(data)}\n\n` : line + "\n")
               );
             }
-          } catch {
+          } catch (jsonErr: unknown) {
+            void jsonErr;
             controller.enqueue(encoder.encode(line + "\n"));
           }
         } else {

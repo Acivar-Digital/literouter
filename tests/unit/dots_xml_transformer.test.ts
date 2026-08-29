@@ -322,6 +322,88 @@ Let me know if you need changes.`;
     expect(args.plain_str).toBe("Just plain text");
   });
 
+
+  it("extracts <think>, <thought>, <thinking> blocks into reasoningContent and strips from cleanText", () => {
+    const raw = `<think>
+Analyzing user requirements:
+1. User wants to check server status.
+2. Call status tool.
+</think>
+<tool_call>
+<function=status>
+<parameter=detailed>true</parameter>
+</function>
+</tool_call>`;
+
+    const result = parseDotsXml(raw);
+    expect(result.reasoningContent).toContain("Analyzing user requirements:");
+    expect(result.reasoningContent).toContain("Call status tool.");
+    expect(result.toolCalls).toHaveLength(1);
+    expect(result.toolCalls[0]!.function.name).toBe("status");
+    expect(result.cleanText).toBe("");
+  });
+
+  it("extracts <thought> and <thinking> blocks into reasoningContent for plain text responses", () => {
+    const raw1 = `<thought>
+I should explain the concept simply.
+</thought>
+Here is the simple explanation.`;
+
+    const res1 = parseDotsXml(raw1);
+    expect(res1.reasoningContent).toBe("I should explain the concept simply.");
+    expect(res1.cleanText).toBe("Here is the simple explanation.");
+    expect(res1.toolCalls).toHaveLength(0);
+
+    const raw2 = `<thinking>
+Deep philosophical reasoning...
+</thinking>
+Final answer is 42.`;
+
+    const res2 = parseDotsXml(raw2);
+    expect(res2.reasoningContent).toBe("Deep philosophical reasoning...");
+    expect(res2.cleanText).toBe("Final answer is 42.");
+  });
+
+  it("injects tools schema into system prompt XML when tools array is present", () => {
+    const payload: OpenAIRequestPayload = {
+      model: "qwen2.5-coder",
+      tools: [
+        {
+          type: "function",
+          function: {
+            name: "write_file",
+            description: "Write contents to a file",
+            parameters: {
+              type: "object",
+              properties: {
+                path: { type: "string" },
+                content: { type: "string" },
+              },
+              required: ["path", "content"],
+            },
+          },
+        },
+      ],
+      messages: [
+        { role: "system", content: "You are OpenCode assistant." },
+        { role: "user", content: "Create server.js" },
+      ],
+    };
+
+    const transformed = sanitizeAndTransformPayload(payload, {
+      nuances: ["tc"],
+    });
+
+    expect(transformed.messages.length).toBe(2);
+    expect(transformed.messages[0]?.role).toBe("system");
+    expect(transformed.messages[0]?.content).toContain("You are OpenCode assistant.");
+    expect(transformed.messages[0]?.content).toContain("# Tools");
+    expect(transformed.messages[0]?.content).toContain("<tools>");
+    expect(transformed.messages[0]?.content).toContain('"name":"write_file"');
+    expect(transformed.messages[0]?.content).toContain("<tool_call>");
+    expect(transformed.messages[1]?.role).toBe("user");
+  });
+
   it("parses tool_call tags with child name and raw json arguments", () => {
     const input = '<tool_call><name>shell</name><arguments>{"command": "pytest tests/"}</arguments></tool_call>';
     const parsed = parseDotsXml(input);

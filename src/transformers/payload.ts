@@ -4,7 +4,7 @@ import type {
   OpenAIRequestPayload,
 } from "./nuances";
 import { applyNuanceModifiers } from "./nuances";
-import { serializeDotsToolHistory } from "./dots";
+import { serializeDotsToolHistory, injectToolsSchemaSystemPrompt } from "./dots";
 import {
   injectThoughtSignatures,
   shouldStripReasoning,
@@ -263,7 +263,8 @@ export function scrubUnsupportedParameters(
 function transformMessages(
   messages: readonly OpenAIMessage[],
   nuances: readonly string[],
-  model?: string
+  model?: string,
+  tools?: readonly unknown[]
 ): readonly OpenAIMessage[] {
   let res = scrubReasoningFromMessages(messages);
   res = applyLatexNormalization(res);
@@ -274,6 +275,7 @@ function transformMessages(
     res = injectThoughtSignatures(res);
   }
   if (nuances.includes("tc") || (model && model.toLowerCase().includes("dots"))) {
+    res = injectToolsSchemaSystemPrompt(res, tools);
     res = serializeDotsToolHistory(res);
     res = mergeConsecutiveMessages(res);
   }
@@ -306,7 +308,8 @@ export function sanitizeAndTransformPayload(
   const transformedMessages = transformMessages(
     payload.messages,
     nuances,
-    payload.model
+    payload.model,
+    payload.tools as readonly unknown[] | undefined
   );
   let transformed: Record<string, unknown> = { ...payload, messages: transformedMessages };
 

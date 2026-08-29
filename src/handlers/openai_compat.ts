@@ -317,12 +317,15 @@ async function executeDirectCall(
       if (choice?.message) {
         let msgModified = false;
         if (typeof choice.message.content === "string") {
-          const { cleanText, toolCalls } = parseDotsXml(choice.message.content);
-          if (toolCalls.length > 0 || cleanText !== choice.message.content) {
+          const { cleanText, toolCalls, reasoningContent } = parseDotsXml(choice.message.content);
+          if (toolCalls.length > 0 || cleanText !== choice.message.content || reasoningContent) {
             choice.message.content = cleanText || null;
             if (toolCalls.length > 0) {
               choice.message.tool_calls = toolCalls;
               choice.finish_reason = "tool_calls";
+            }
+            if (reasoningContent && !choice.message.reasoning_content) {
+              choice.message.reasoning_content = reasoningContent;
             }
             msgModified = true;
           }
