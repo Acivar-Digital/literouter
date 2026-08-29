@@ -1,3 +1,4 @@
+import { TagSanitizerStreamBuffer, stripLeakedTemplateTags } from "../transformers/dots";
 import type { OpenAIMessage, OpenAIRequestPayload } from "../transformers/nuances";
 import { validateDirective } from "../directive/validator";
 import {
@@ -450,17 +451,22 @@ export function translateOpenAIToAnthropicResponse(
 
   const reasoning = msg?.reasoning_content || msg?.reasoning;
   if (typeof reasoning === "string" && reasoning.length > 0) {
-    contentBlocks.push({ type: "thinking", thinking: reasoning } as AnthropicContentBlock);
+    const cleaned = stripLeakedTemplateTags(reasoning);
+    if (cleaned.length > 0) {
+      contentBlocks.push({ type: "thinking", thinking: cleaned } as AnthropicContentBlock);
+    }
   }
 
   let textContent = "";
   if (typeof msg?.content === "string") {
-    textContent = msg.content;
+    textContent = stripLeakedTemplateTags(msg.content);
   } else if (Array.isArray(msg?.content)) {
-    textContent = msg.content
-      .filter((p) => p?.type === "text" && typeof p.text === "string")
-      .map((p) => p.text)
-      .join("");
+    textContent = stripLeakedTemplateTags(
+      msg.content
+        .filter((p) => p?.type === "text" && typeof p.text === "string")
+        .map((p) => p.text)
+        .join("")
+    );
   }
 
   if (textContent.length > 0) {
@@ -523,6 +529,8 @@ interface StreamTransformState {
   readonly activeToolMap: Map<number, ActiveToolInfo>;
   readonly openBlockIndices: Set<number>;
   pendingStopReason: string | null;
+  readonly thinkingSanitizer: TagSanitizerStreamBuffer;
+  readonly textSanitizer: TagSanitizerStreamBuffer;
 }
 
 function sseEvent(encoder: TextEncoder, event: string, data: unknown): Uint8Array {
@@ -599,6 +607,29 @@ function closeCurrentBlock(
   encoder: TextEncoder
 ): void {
   if (state.currentBlockType !== null && state.openBlockIndices.has(state.currentBlockIndex)) {
+    if (state.currentBlockType === "thinking") {
+      const trailing = state.thinkingSanitizer.flush();
+      if (trailing.length > 0) {
+        controller.enqueue(
+          sseEvent(encoder, "content_block_delta", {
+            type: "content_block_delta",
+            index: state.currentBlockIndex,
+            delta: { type: "thinking_delta", thinking: trailing },
+          })
+        );
+      }
+    } else if (state.currentBlockType === "text") {
+      const trailing = state.textSanitizer.flush();
+      if (trailing.length > 0) {
+        controller.enqueue(
+          sseEvent(encoder, "content_block_delta", {
+            type: "content_block_delta",
+            index: state.currentBlockIndex,
+            delta: { type: "text_delta", text: trailing },
+          })
+        );
+      }
+    }
     controller.enqueue(
       sseEvent(encoder, "content_block_stop", {
         type: "content_block_stop",
@@ -616,6 +647,10 @@ function processReasoningDelta(
   controller: TransformStreamDefaultController<Uint8Array>,
   encoder: TextEncoder
 ): void {
+  const sanitized = state.thinkingSanitizer.process(reasoningDelta);
+  if (!sanitized) {
+    return;
+  }
   if (state.currentBlockType !== "thinking") {
     closeCurrentBlock(state, controller, encoder);
     state.currentBlockIndex++;
@@ -633,7 +668,7 @@ function processReasoningDelta(
     sseEvent(encoder, "content_block_delta", {
       type: "content_block_delta",
       index: state.currentBlockIndex,
-      delta: { type: "thinking_delta", thinking: reasoningDelta },
+      delta: { type: "thinking_delta", thinking: sanitized },
     })
   );
 }
@@ -644,6 +679,10 @@ function processTextDelta(
   controller: TransformStreamDefaultController<Uint8Array>,
   encoder: TextEncoder
 ): void {
+  const sanitized = state.textSanitizer.process(textDelta);
+  if (!sanitized) {
+    return;
+  }
   if (state.currentBlockType !== "text") {
     closeCurrentBlock(state, controller, encoder);
     state.currentBlockIndex++;
@@ -661,7 +700,7 @@ function processTextDelta(
     sseEvent(encoder, "content_block_delta", {
       type: "content_block_delta",
       index: state.currentBlockIndex,
-      delta: { type: "text_delta", text: textDelta },
+      delta: { type: "text_delta", text: sanitized },
     })
   );
 }
@@ -720,6 +759,8 @@ export function createAnthropicStreamTransformer(model: string): TransformStream
     activeToolMap: new Map<number, ActiveToolInfo>(),
     openBlockIndices: new Set<number>(),
     pendingStopReason: null,
+    thinkingSanitizer: new TagSanitizerStreamBuffer(),
+    textSanitizer: new TagSanitizerStreamBuffer(),
   };
   let buffer = "";
 

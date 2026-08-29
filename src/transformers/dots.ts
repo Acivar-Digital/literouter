@@ -6,10 +6,42 @@ export interface DotsParseResult {
 }
 
 export const LEAKED_TEMPLATE_REGEX =
-  /<\/?(?:role|im_start|im_end|endoftext)(?:\s+[^>]*)?>|<\|(?:im_start|im_end|endoftext)\|>|\[\/?INST\]/gi;
+  /<role>(?:HUMAN|ASSISTANT|SYSTEM|BOT|USER|human|assistant|user|system|bot)<\/role>|<\/?(?:role|im_start|im_end|endoftext|start_of_turn|end_of_turn)(?:\s+[^>]*)?>|<\|(?:im_start|im_end|endoftext|start_of_turn|end_of_turn)\b[^|]*\|>|\[\/?INST\]|<<\/?SYS>>|(?:(?:HUMAN|ASSISTANT|SYSTEM|BOT|USER)\s*)?<\/(?:role|im_end|end_of_turn)>|<(?:role|im_start|start_of_turn)>\s*(?:HUMAN|ASSISTANT|SYSTEM|BOT|USER)\b/gi;
 
 export function stripLeakedTemplateTags(text: string): string {
   return text.replace(LEAKED_TEMPLATE_REGEX, "");
+}
+
+export class TagSanitizerStreamBuffer {
+  private buffer = "";
+
+  public process(incoming: string): string {
+    this.buffer += incoming;
+
+    const openRoleMatch = /<role>(?:(?!<\/role>)[\s\S]){0,30}$/i.exec(this.buffer);
+    if (openRoleMatch && !this.buffer.slice(openRoleMatch.index).toLowerCase().includes("</role>")) {
+      const safePrefix = this.buffer.slice(0, openRoleMatch.index);
+      this.buffer = this.buffer.slice(openRoleMatch.index);
+      return stripLeakedTemplateTags(safePrefix);
+    }
+
+    const cleaned = stripLeakedTemplateTags(this.buffer);
+    const partialTagMatch = /(?:<[^>]*|\[[^\]]*|<<[^>]*|<\|[^|]*)$/.exec(cleaned);
+    if (partialTagMatch && partialTagMatch.index !== undefined) {
+      const emitText = cleaned.slice(0, partialTagMatch.index);
+      this.buffer = cleaned.slice(partialTagMatch.index);
+      return emitText;
+    }
+
+    this.buffer = "";
+    return cleaned;
+  }
+
+  public flush(): string {
+    const finalCleaned = stripLeakedTemplateTags(this.buffer);
+    this.buffer = "";
+    return finalCleaned;
+  }
 }
 
 const INVOKE_BLOCK_REGEX =
@@ -219,6 +251,7 @@ export function serializeDotsToolHistory(
 
 export interface DotsStreamState {
   buffer: string;
+  reasoningSanitizer: TagSanitizerStreamBuffer;
   toolCallIndex: number;
   hasEmittedToolCalls: boolean;
   hasEmittedFinishReason: boolean;
@@ -230,6 +263,7 @@ export interface DotsStreamState {
 export function createDotsStreamState(): DotsStreamState {
   return {
     buffer: "",
+    reasoningSanitizer: new TagSanitizerStreamBuffer(),
     toolCallIndex: 0,
     hasEmittedToolCalls: false,
     hasEmittedFinishReason: false,
@@ -440,29 +474,20 @@ export function createDotsStreamTransformer(): TransformStream<Uint8Array, Uint8
             const content = delta?.content;
             const incomingFinishReason = choice?.finish_reason;
 
-            // Sanitize reasoning / thought fields in delta if present
+            // Sanitize reasoning / thought fields across token stream buffers
             let deltaModified = false;
             if (delta && typeof delta === "object") {
               if (typeof delta.reasoning_content === "string") {
-                const cleaned = stripLeakedTemplateTags(delta.reasoning_content);
-                if (cleaned !== delta.reasoning_content) {
-                  delta.reasoning_content = cleaned;
-                  deltaModified = true;
-                }
+                delta.reasoning_content = state.reasoningSanitizer.process(delta.reasoning_content);
+                deltaModified = true;
               }
               if (typeof delta.thought === "string") {
-                const cleaned = stripLeakedTemplateTags(delta.thought);
-                if (cleaned !== delta.thought) {
-                  delta.thought = cleaned;
-                  deltaModified = true;
-                }
+                delta.thought = state.reasoningSanitizer.process(delta.thought);
+                deltaModified = true;
               }
               if (typeof delta.reasoning === "string") {
-                const cleaned = stripLeakedTemplateTags(delta.reasoning);
-                if (cleaned !== delta.reasoning) {
-                  delta.reasoning = cleaned;
-                  deltaModified = true;
-                }
+                delta.reasoning = state.reasoningSanitizer.process(delta.reasoning);
+                deltaModified = true;
               }
             }
 
@@ -490,7 +515,7 @@ export function createDotsStreamTransformer(): TransformStream<Uint8Array, Uint8
               continue;
             }
 
-            // BUFFERING MODE: XML tag in progress or newly encountered
+            // BUFFERING MODE: XML tag in progress or newly encountered in content
             if (typeof content === "string") {
               const processedSse = processDotsStreamChunk(content, state);
               if (processedSse) {

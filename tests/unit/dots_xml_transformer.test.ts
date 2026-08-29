@@ -10,6 +10,61 @@ import { sanitizeAndTransformPayload } from "../../src/transformers/payload";
 import type { OpenAIMessage, OpenAIRequestPayload } from "../../src/transformers/nuances";
 
 describe("Dots XML Transformer — Static Parsing", () => {
+  it("strips complete and split <role>HUMAN</role> in TagSanitizerStreamBuffer", () => {
+    const { TagSanitizerStreamBuffer } = require("../../src/transformers/dots");
+    const buffer = new TagSanitizerStreamBuffer();
+
+    // 1. Single chunk complete
+    const res1 = buffer.process("<role>HUMAN</role>continue");
+    expect(res1).toBe("continue");
+
+    // 2. Split across chunks
+    const buffer2 = new TagSanitizerStreamBuffer();
+    const c1 = buffer2.process("<role>HU");
+    const c2 = buffer2.process("MAN</");
+    const c3 = buffer2.process("role>continue work");
+    expect(c1).toBe("");
+    expect(c2).toBe("");
+    expect(c3).toBe("continue work");
+  });
+
+  it("strips leaked </role> across split chunks in streaming reasoning_content", async () => {
+    const { createDotsStreamTransformer } = await import("../../src/transformers/dots");
+    const transformer = createDotsStreamTransformer();
+
+    const chunk1 = 'data: {"id":"chat-1","choices":[{"delta":{"reasoning_content":"Let me calculate the risk...</ro"}}]}\n\n';
+    const chunk2 = 'data: {"id":"chat-1","choices":[{"delta":{"reasoning_content":"le>"}}]}\n\n';
+    const chunk3 = 'data: {"id":"chat-1","choices":[{"delta":{"content":"Final answer."}}]}\n\n';
+    const chunk4 = 'data: {"id":"chat-1","choices":[{"delta":{},"finish_reason":"stop"}]}\n\n';
+    const chunk5 = 'data: [DONE]\n\n';
+
+    const inputChunks = [chunk1, chunk2, chunk3, chunk4, chunk5];
+
+    const stream = new ReadableStream({
+      start(controller) {
+        for (const chunk of inputChunks) {
+          controller.enqueue(new TextEncoder().encode(chunk));
+        }
+        controller.close();
+      },
+    });
+
+    const transformedStream = stream.pipeThrough(transformer);
+    const reader = transformedStream.getReader();
+    let resultText = "";
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      resultText += new TextDecoder().decode(value);
+    }
+
+    expect(resultText).not.toContain("</role>");
+    expect(resultText).not.toContain("</ro");
+    expect(resultText).not.toContain("le>");
+    expect(resultText).toContain("Let me calculate the risk...");
+    expect(resultText).toContain("Final answer.");
+  });
+
   it("strips leaked </role>, <role assistant>, and chat template delimiters in static parsing", () => {
     const input = "</role>The risk-budget approach made DD WORSE (-79% vs baseline -68%).";
     const result = parseDotsXml(input);
