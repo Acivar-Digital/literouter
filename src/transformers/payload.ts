@@ -312,7 +312,7 @@ export function sanitizeAndTransformPayload(
   let currentPayload = payload;
   const isLing =
     nuances.includes("lg") ||
-    (Boolean(payload.model && payload.model.toLowerCase().includes("ling")) && !nuances.includes("tc"));
+    (Boolean(payload.model && payload.model.toLowerCase().includes("ling")) && !nuances.includes("tc") && !nuances.includes("no"));
 
   if (isLing) {
     currentPayload = transformLingRequest(currentPayload);

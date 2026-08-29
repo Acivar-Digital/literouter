@@ -311,7 +311,75 @@ export function parseLingXml(rawText: string): LingParseResult {
     return "";
   });
 
-  // 5. Extract Thinking (<think>...</think>)
+  // 5. Degraded / Tagless Concat Dialects (e.g. websearchquery..., shellcommand..., editpath...)
+  const websearchConcatPattern = /(?:^|\n)\s*websearchquery\s*([^\n\r]+)/gi;
+  remainingText = remainingText.replace(websearchConcatPattern, (_m, query) => {
+    const q = query.trim();
+    if (q.length > 0) {
+      toolCalls.push({
+        id: generateCallId(),
+        type: "function",
+        function: {
+          name: "websearch",
+          arguments: JSON.stringify({ query: q }),
+        },
+      });
+      return "";
+    }
+    return _m;
+  });
+
+  const shellConcatPattern = /(?:^|\n)\s*shellcommand\s*([\s\S]+?)(?=(?:\n\s*(?:shellcommand|readpath|editpath|writepath|websearchquery))|$)/gi;
+  remainingText = remainingText.replace(shellConcatPattern, (_m, cmd) => {
+    const c = cmd.trim();
+    if (c.length > 0) {
+      toolCalls.push({
+        id: generateCallId(),
+        type: "function",
+        function: {
+          name: "shell",
+          arguments: JSON.stringify({ command: c }),
+        },
+      });
+      return "";
+    }
+    return _m;
+  });
+
+  const editConcatPattern = /(?:^|\n)\s*editpath\s*([^\n\r]+?)\s*oldString\s*([\s\S]+?)\s*newString\s*([\s\S]+?)(?=(?:\n\s*(?:shellcommand|readpath|editpath|writepath|websearchquery))|$)/gi;
+  remainingText = remainingText.replace(editConcatPattern, (_m, path, oldStr, newStr) => {
+    toolCalls.push({
+      id: generateCallId(),
+      type: "function",
+      function: {
+        name: "edit",
+        arguments: JSON.stringify({
+          path: path.trim(),
+          oldString: oldStr.trim(),
+          newString: newStr.trim(),
+        }),
+      },
+    });
+    return "";
+  });
+
+  const readConcatPattern = /(?:^|\n)\s*readpath\s*([^\n\r\s]+)(?:\s*offset\s*(\d+))?(?:\s*limit\s*(\d+))?/gi;
+  remainingText = remainingText.replace(readConcatPattern, (_m, path, offset, limit) => {
+    const args: Record<string, unknown> = { path: path.trim() };
+    if (offset) args.offset = parseInt(offset, 10);
+    if (limit) args.limit = parseInt(limit, 10);
+    toolCalls.push({
+      id: generateCallId(),
+      type: "function",
+      function: {
+        name: "read",
+        arguments: JSON.stringify(args),
+      },
+    });
+    return "";
+  });
+
+  // 6. Extract Thinking (<think>...</think>)
   let reasoningContent: string | undefined = undefined;
   const thinkMatch = /<(?:think|thought|thinking)>([\s\S]*?)(?:<\/(?:think|thought|thinking)>|(?=<(?:tool_calls?|invoke|function=|tool_call))|$)/i.exec(
     remainingText
@@ -614,7 +682,14 @@ export function createLingStreamTransformer(): TransformStream<Uint8Array, Uint8
             const choice = data.choices?.[0];
             const content = choice?.delta?.content;
             const reasoning = choice?.delta?.reasoning_content;
+            const toolCalls = choice?.delta?.tool_calls;
             const incomingFinishReason = choice?.finish_reason;
+
+            if (toolCalls && Array.isArray(toolCalls) && toolCalls.length > 0) {
+              hasEmittedToolCalls = true;
+              controller.enqueue(encoder.encode(line + "\n\n"));
+              continue;
+            }
 
             if (typeof reasoning === "string" && reasoning.length > 0) {
               controller.enqueue(encoder.encode(emitReasoning(reasoning)));
@@ -628,7 +703,7 @@ export function createLingStreamTransformer(): TransformStream<Uint8Array, Uint8
             if (incomingFinishReason) {
               const pending = flushPending();
               if (pending) controller.enqueue(encoder.encode(pending));
-              const finishReason = hasEmittedToolCalls ? "tool_calls" : incomingFinishReason;
+              const finishReason = hasEmittedToolCalls || incomingFinishReason === "tool_calls" ? "tool_calls" : incomingFinishReason;
               const finishSse = emitFinish(finishReason);
               if (finishSse) controller.enqueue(encoder.encode(finishSse));
             }

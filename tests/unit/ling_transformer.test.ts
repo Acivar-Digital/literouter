@@ -171,6 +171,70 @@ describe("Ling Transformer & Streaming Suite", () => {
     expect(accumulatedOutput).toContain('"finish_reason":"stop"');
   });
 
+  it("parses degraded tagless concat dialects (websearchquery, shellcommand, editpath, readpath)", () => {
+    const rawWebsearch = "Let me check the web:\nwebsearchquery IBKR Singapore CFD trading allowed 2026\n";
+    const resWebsearch = parseLingXml(rawWebsearch);
+    expect(resWebsearch.toolCalls.length).toBe(1);
+    expect(resWebsearch.toolCalls[0]!.function.name).toBe("websearch");
+    expect(JSON.parse(resWebsearch.toolCalls[0]!.function.arguments)).toEqual({
+      query: "IBKR Singapore CFD trading allowed 2026",
+    });
+
+    const rawShell = "Running git status:\nshellcommand git status && git push\n";
+    const resShell = parseLingXml(rawShell);
+    expect(resShell.toolCalls.length).toBe(1);
+    expect(resShell.toolCalls[0]!.function.name).toBe("shell");
+    expect(JSON.parse(resShell.toolCalls[0]!.function.arguments)).toEqual({
+      command: "git status && git push",
+    });
+
+    const rawEdit = "Editing code:\neditpath /path/to/file.py oldString def foo(): pass newString def foo(): return 42\n";
+    const resEdit = parseLingXml(rawEdit);
+    expect(resEdit.toolCalls.length).toBe(1);
+    expect(resEdit.toolCalls[0]!.function.name).toBe("edit");
+    expect(JSON.parse(resEdit.toolCalls[0]!.function.arguments)).toEqual({
+      path: "/path/to/file.py",
+      oldString: "def foo(): pass",
+      newString: "def foo(): return 42",
+    });
+  });
+
+  it("passes through native delta.tool_calls chunks without dropping", async () => {
+    const transformer = createLingStreamTransformer();
+    const encoder = new TextEncoder();
+    const decoder = new TextDecoder();
+
+    const inputChunks = [
+      'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_123","type":"function","function":{"name":"bash","arguments":""}}]},"finish_reason":null}]}\n\n',
+      'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\\"command\\":\\"ls\\"}"}}]},"finish_reason":null}]}\n\n',
+      'data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}\n\n',
+      "data: [DONE]\n\n",
+    ];
+
+    const stream = new ReadableStream({
+      start(controller) {
+        for (const chunk of inputChunks) {
+          controller.enqueue(encoder.encode(chunk));
+        }
+        controller.close();
+      },
+    });
+
+    const transformedStream = stream.pipeThrough(transformer);
+    const reader = transformedStream.getReader();
+    let accumulatedOutput = "";
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      accumulatedOutput += decoder.decode(value);
+    }
+
+    expect(accumulatedOutput).toContain('"id":"call_123"');
+    expect(accumulatedOutput).toContain('{\\"command\\":\\"ls\\"}');
+    expect(accumulatedOutput).toContain('"finish_reason":"tool_calls"');
+  });
+
   it("transforms non-streaming Ling responses with tool calls and reasoning", () => {
     const rawResponse = {
       id: "gen-123",
