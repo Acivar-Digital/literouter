@@ -4,6 +4,13 @@ All notable changes to LiteRouter will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed / HTTP/2 Connection Pool Zombie Socket Purge on `ECONNRESET`
+- **Permanent Runtime Error & Socket Reset Purging (`src/network/h2_pool.ts`, `tests/unit/h2_pool.test.ts`)**:
+  - Fixed an issue where HTTP/2 sessions removed their socket error listeners immediately after the initial TLS handshake, leaving severed or half-closed connections (`ECONNRESET`, `EPIPE`, TCP RST) inside the active connection pool.
+  - Resolved a condition where key failover rotation across multi-key pools failed repeatedly on the exact same underlying poisoned HTTP/2 socket instead of establishing a fresh connection.
+  - Attached permanent lifecycle listeners (`session.on("error")`, `session.on("frameError")`, and `session.on("close")`) to instantly purge, destroy, and clear dead sessions and timers from the pool.
+  - Added unit test coverage asserting immediate session destruction and pool eviction upon runtime transport failures.
+
 ### Added / Selective Tool Reasoning Retention & Thinking Budget Inflation (`LITEROUTER_AO_MAX_TOKENS`)
 - **Selective History Reasoning Preservation (`src/transformers/opencode_adapter.ts`)**:
   - Upgraded `scrubReasoningFromMessage` so that assistant turns with `tool_calls` retain their `reasoning_content`.

@@ -193,30 +193,37 @@ export class Http2SessionPool {
         const pool = this.sessions.get(origin) ?? [];
         pool.push(pooled);
         this.sessions.set(origin, pool);
+
+        // Attach permanent runtime error and lifecycle listeners to purge zombie sessions
+        session.on("error", (err: Error) => {
+          console.debug(`[H2 Pool] Runtime socket error for ${origin}, purging session:`, err?.message || err);
+          this.destroySession(origin, pooled);
+        });
+
+        session.on("frameError", (type: number, code: number, id: number) => {
+          console.debug(`[H2 Pool] Frame error (type=${type}, code=${code}, id=${id}) for ${origin}, purging session`);
+          this.destroySession(origin, pooled);
+        });
+
         resolve(session);
       };
 
       const onError = (err: Error) => {
         cleanupListeners();
-        this.removeSession(origin, session);
+        this.destroySession(origin, pooled);
         reject(err);
       };
 
       connectTimer = setTimeout(() => {
         cleanupListeners();
-        this.removeSession(origin, session);
-        try {
-          session.destroy();
-        } catch (err: unknown) {
-          console.debug(`[H2 Pool] Ignored destroy error on timeout for ${origin}:`, err);
-        }
+        this.destroySession(origin, pooled);
         reject(new Error(`HTTP/2 connection timeout to origin ${origin}`));
       }, this.connectTimeoutMs);
 
       session.once("connect", onConnect);
       session.once("error", onError);
 
-      session.on("close", () => this.removeSession(origin, session));
+      session.on("close", () => this.destroySession(origin, pooled));
 
       // Upstream GOAWAY Handler: Keep session in pool for active stream releases, but mark isDraining
       session.on("goaway", () => {
@@ -230,12 +237,19 @@ export class Http2SessionPool {
   }
 
   private destroySession(origin: string, item: PooledSession): void {
-    if (item.drainTimer) clearTimeout(item.drainTimer);
-    if (!item.session.closed && !item.session.destroyed) {
+    if (item.drainTimer) {
+      clearTimeout(item.drainTimer);
+      item.drainTimer = undefined;
+    }
+    if (!item.session.destroyed && !item.session.closed) {
       try {
-        item.session.close();
+        if (typeof item.session.destroy === "function") {
+          item.session.destroy();
+        } else if (typeof item.session.close === "function") {
+          item.session.close();
+        }
       } catch (err: unknown) {
-        console.debug(`[H2 Pool] Ignored close error during destroySession for ${origin}:`, err);
+        console.debug(`[H2 Pool] Ignored destroy error during destroySession for ${origin}:`, err);
       }
     }
     this.removeSession(origin, item.session);

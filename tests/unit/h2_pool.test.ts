@@ -59,6 +59,9 @@ describe("Outbound HTTP/2 Multiplexed Session Pool", () => {
       close: () => {
         isClosed = true;
       },
+      destroy: () => {
+        isClosed = true;
+      },
     } as unknown as http2.ClientHttp2Session;
 
     const origin = "https://mock-origin.local";
@@ -116,5 +119,37 @@ describe("Outbound HTTP/2 Multiplexed Session Pool", () => {
     const allStats = pool.getSessionStats() as any;
     expect(allStats[origin1]?.totalActiveStreams).toBe(8);
     expect(allStats[origin2]?.totalActiveStreams).toBe(1);
+  });
+
+  it("purges and destroys session immediately on runtime error or socket reset", () => {
+    const pool = new Http2SessionPool();
+    let isDestroyed = false;
+
+    const fakeSession = {
+      closed: false,
+      destroyed: false,
+      destroy: () => {
+        isDestroyed = true;
+      },
+      close: () => {},
+    } as unknown as http2.ClientHttp2Session;
+
+    const origin = "https://openrouter.ai";
+    const pooledItem = {
+      session: fakeSession,
+      activeStreams: 1,
+      origin,
+      isDraining: false,
+      drainTimer: setTimeout(() => {}, 10000),
+    };
+
+    (pool as any).sessions.set(origin, [pooledItem]);
+    expect((pool as any).sessions.get(origin)?.length).toBe(1);
+
+    // Call destroySession (triggered by session.on("error") or session.on("close"))
+    (pool as any).destroySession(origin, pooledItem);
+
+    expect(isDestroyed).toBe(true);
+    expect((pool as any).sessions.get(origin)).toBeUndefined();
   });
 });

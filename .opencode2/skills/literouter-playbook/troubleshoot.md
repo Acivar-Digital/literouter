@@ -105,9 +105,11 @@ curl -sk -X POST https://localhost:7766/reset
   - **HTTP 5xx Server Error**: Retries next key, quarantines key for 10s.
   - **Client Errors (400 Context Length, 404, Safety)**: Fails fast immediately with 0s quarantine to return the actionable error directly to the caller.
 
-### Pattern 9: Network & Transport Layer Failures (Pre-Stream Socket Errors, TCP RST, GOAWAY, `ConnectTimeout`)
-- **Symptom**: Outbound upstream connection fails prior to stream establishment due to network hiccups, TCP reset (`ECONNRESET` / `ReadError`), HTTP/2 GOAWAY frame from edge load balancers (`RemoteProtocolError`), or connect timeouts (`ConnectTimeout` / `ConnectError`).
-- **Handling**: `fetchWithTtftGuard` in `src/network/fetcher.ts` intercepts pre-stream transport exceptions (unless caused by downstream client abort) and wraps them into `NoResponseError("Network transport failure: ...")`. Upstream execution loops catch `NoResponseError`, report failure on the current key, and rotate in-flight to the next pooled active key (up to 3 attempts) with 0s cooldown, preventing unhandled transport drops from bubbling up to the client.
+### Pattern 9: Network & Transport Layer Failures & HTTP/2 Zombie Session Purge (TCP RST, `ECONNRESET`, GOAWAY, `ConnectTimeout`)
+- **Symptom**: Outbound upstream connection fails prior to or during stream establishment due to network hiccups, TCP reset (`ECONNRESET` / `ReadError`), HTTP/2 GOAWAY frame from edge load balancers (`RemoteProtocolError`), or connect timeouts (`ConnectTimeout` / `ConnectError`).
+- **Handling**:
+  1. `Http2SessionPool` (`src/network/h2_pool.ts`) maintains permanent `error`, `frameError`, and `close` lifecycle listeners. Any broken, half-closed, or reset socket is instantly purged and destroyed from `this.sessions`, preventing key failover loops from reusing poisoned sockets across key rotation attempts.
+  2. `fetchWithTtftGuard` in `src/network/fetcher.ts` intercepts pre-stream transport exceptions (unless caused by downstream client abort) and wraps them into `NoResponseError("Network transport failure: ...")`. Upstream execution loops catch `NoResponseError`, report failure on the current key, and rotate in-flight to the next pooled active key (up to 3 attempts) with a brief 2s transport cooldown, seamlessly recovering downstream traffic without bubbling transport drops up to the client.
 
 ### Pattern 10: Mid-Stream In-Band Server Errors (`Server error mid-response. The response above may be incomplete.` / Socket Drops)
 - **Symptom**: Upstream provider emits an in-band SSE error payload mid-stream (e.g. `data: {"error": {"message": "Server error mid-response..."}}`) or drops the TCP socket during token generation.
