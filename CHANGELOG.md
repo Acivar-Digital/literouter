@@ -4,6 +4,12 @@ All notable changes to LiteRouter will be documented in this file.
 
 ## [Unreleased]
 
+### Added / Canonical XML $\longleftrightarrow$ JSON Bidirectional Translation Gold Test
+- **Universal XML Dialect Gold Test Suite (`tests/unit/gold_xml_bidirectional_translation.test.ts`)**:
+  - Added comprehensive bidirectional translation Gold Tests validating:
+    - **Inbound XML $\to$ JSON**: Exact 1-to-1 parsing of Ling-3.0/GLM-4 `<arg_key>/<arg_value>` syntax with type casting, Qwen `<function=...><parameter=...>`, DeepSeek/MiniMax `<invoke name="...">`, and trapped `<think>` tool calls without leaking XML markup or reasoning tokens.
+    - **Outbound JSON $\to$ XML**: System prompt tool schema injection, `role: "tool"` execution observation transformation into `<tool_result id="...">` user turns, consecutive tool result turn compaction, and historical scratchpad reasoning pruning.
+
 ### Hardened / Unadorned GLM/Ling Tool Calling Thinking Breakout & Parameter Splitting
 - **Unadorned Tool Breakout from Thinking Mode (`src/transformers/dots.ts`, `tests/unit/dots_xml_transformer.test.ts`)**:
   - Enhanced `flushInsideThinkContent` and `parseDotsXml` to immediately break out of `<think>` mode upon encountering unadorned function invocation syntax (e.g. `bash<arg_key>...`, `run_command<parameter_name>...`), preventing tool calls from getting trapped inside `reasoning_content` and stripped by downstream client filters.
