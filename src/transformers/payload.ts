@@ -274,7 +274,11 @@ function transformMessages(
   if (nuances.includes("ts")) {
     res = injectThoughtSignatures(res);
   }
-  if (nuances.includes("tc") || (model && model.toLowerCase().includes("dots"))) {
+  if (
+    nuances.includes("tc") ||
+    nuances.includes("lg") ||
+    (model && (model.toLowerCase().includes("dots") || model.toLowerCase().includes("ling")))
+  ) {
     res = injectToolsSchemaSystemPrompt(res, tools);
     res = serializeDotsToolHistory(res);
     res = mergeConsecutiveMessages(res);

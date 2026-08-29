@@ -4,6 +4,16 @@ All notable changes to LiteRouter will be documented in this file.
 
 ## [Unreleased]
 
+### Added / Dedicated `lg` Nuance & Clean Zero-Overhead Passthrough
+- **Pure Zero-Overhead Default Passthrough (`src/handlers/openai_compat.ts`)**:
+  - Removed blanket XML/dots transformation from standard `openai_compat` streaming and non-streaming pipelines. Default OpenAI, Claude, Gemini, Qwen, DeepSeek, and other model requests now pass through with 100% untouched raw bytes and 0ms buffering.
+  - Retained outbound provider reasoning parameter scrubbing (`sanitizeAndTransformPayload`), stripping unsupported thinking parameters and previous reasoning content from message history before dispatching to upstream providers.
+  - Inbound reasoning streams (`reasoning_content`, `thought`, native reasoning deltas) pass directly through to OpenCode without interference.
+- **Dedicated 1:1 Ling Mapping & `lg` Nuance (`src/transformers/ling.ts`, `src/directive/parser.ts`, `tests/unit/ling_transformer.test.ts`)**:
+  - Introduced the `lg` directive nuance code (`lr-<provider>-<payload>-<completions>-lg`).
+  - Added dedicated `src/transformers/ling.ts` containing a strict `LING_KNOWN_TAGS` 1:1 whitelist for exact Ling/GLM `<arg_key>/<arg_value>` syntax, `<invoke>` wrapping, role delimiters, and unclosed tag lookaheads.
+  - XML transformation only activates when explicitly requested via `lg`, `tc`, or targeting `ling`/`dots` models, isolating experimental parsing from standard production traffic.
+
 ### Added / Canonical XML $\longleftrightarrow$ JSON Bidirectional Translation Gold Test
 - **Universal XML Dialect Gold Test Suite (`tests/unit/gold_xml_bidirectional_translation.test.ts`)**:
   - Added comprehensive bidirectional translation Gold Tests validating:

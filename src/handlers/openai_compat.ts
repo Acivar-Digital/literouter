@@ -306,6 +306,11 @@ async function executeDirectCall(
   globalKeyPool.reportSuccess(directive.provider, selected.index);
   logTtft(reqId, ttftMs, isStream ? "Stream established" : "First chunk streamed downstream", protocol);
 
+  const isXmlTranslationActive =
+    directive.nuances.includes("tc") ||
+    directive.nuances.includes("lg") ||
+    Boolean(payload.model && (payload.model.toLowerCase().includes("dots") || payload.model.toLowerCase().includes("ling")));
+
   if (!isStream) {
     const fullBody = await collectFullBody(firstChunk, rawReader);
     let finalBody: Uint8Array = fullBody;
@@ -314,7 +319,7 @@ async function executeDirectCall(
       const json = JSON.parse(decoded) as Record<string, unknown>;
 
       const choice = (json.choices as Array<{ message?: { content?: string | null; reasoning_content?: string | null; thought?: string | null; tool_calls?: unknown }; finish_reason?: string }>)?.[0];
-      if (choice?.message) {
+      if (choice?.message && isXmlTranslationActive) {
         let msgModified = false;
         if (typeof choice.message.content === "string") {
           const { cleanText, toolCalls, reasoningContent } = parseDotsXml(choice.message.content);
@@ -476,7 +481,9 @@ async function executeDirectCall(
     },
   });
 
-  resilientStream = resilientStream.pipeThrough(createDotsStreamTransformer());
+  if (isXmlTranslationActive) {
+    resilientStream = resilientStream.pipeThrough(createDotsStreamTransformer());
+  }
 
   return new Response(resilientStream, {
     status: response.status,
