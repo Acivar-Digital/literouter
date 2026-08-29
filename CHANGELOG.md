@@ -5,10 +5,10 @@ All notable changes to LiteRouter will be documented in this file.
 ## [Unreleased]
 
 ### Added / AO Strip Reasoning Standard Flag (`LITEROUTER_AO_STRIP_REASONING`)
-- **Default Reasoning Stripping for Anthropic->OpenAI Cross-Wire (`.env`, `src/config/schema.ts`, `src/config/env.ts`)**:
-  - Added `LITEROUTER_AO_STRIP_REASONING=true` (defaults to `true`), establishing a standard policy to strip reasoning parameters (`thinking`, `thinkingConfig`, `reasoning_effort`, `budget_tokens`) and reasoning deltas for `ao` payloads (`lr-*-ao-ch-*`).
-  - Solves Claude Code `/compact` compaction failures (`Error during compaction: summarization produced empty response`) by preventing reasoning models (DeepSeek-R1, QwQ, Qwen-Max, etc.) from sinking all generated text into `reasoning_content` without producing Anthropic `text` blocks.
-  - Fully honors the `ts` (Thinking Support) nuance to preserve reasoning when explicitly requested (e.g. `lr-or-ao-ch-ts`), as well as `sb` (Strip Budget) to force strip.
+- **Default Outgoing Reasoning Stripping for Anthropic->OpenAI Cross-Wire (`.env`, `src/config/schema.ts`, `src/config/env.ts`, `src/transformers/payload.ts`)**:
+  - Added `LITEROUTER_AO_STRIP_REASONING=true` (defaults to `true`), establishing a standard policy to strip reasoning parameters (`thinking`, `thinkingConfig`, `reasoning_effort`, `budget_tokens`) and historical thinking blocks from request payloads sent **TO** the upstream provider.
+  - Ensures the user gets to read all live reasoning deltas downstream, while preventing upstream providers from wasting context or re-processing past reasoning.
+  - Fully honors the `ts` (Thinking Support) nuance to preserve thinking signatures, and `sb` (Strip Budget) if explicit response filtering is desired.
 
 
 ### Added / Long-Running Harness Mid-Stream Resend & Conveyor Belt Ingress (`docs/Fix_Streaming_01.md`)

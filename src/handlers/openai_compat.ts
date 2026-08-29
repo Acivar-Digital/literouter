@@ -207,9 +207,6 @@ function determineShouldFilterReasoning(
   if (directive.nuances.includes("sb")) {
     return true;
   }
-  if (directive.payload === "ao" && getEnv().LITEROUTER_AO_STRIP_REASONING) {
-    return true;
-  }
   if (isOpenCodeClient(clientOptions?.userAgent, clientOptions?.headers, directive.nuances)) {
     return true;
   }

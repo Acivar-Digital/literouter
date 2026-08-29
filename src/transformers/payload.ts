@@ -319,7 +319,7 @@ export function sanitizeAndTransformPayload(
     nuances,
     targetWire
   );
-  const finalPayload = enableScrubbing
+  const finalPayload = (enableScrubbing || targetWire === "ao")
     ? applyReasoningStripIfNeeded(
         withModifiers as unknown as Record<string, unknown>,
         globalStrip,

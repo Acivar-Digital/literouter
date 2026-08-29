@@ -36,7 +36,7 @@ literouter/
 | `LITEROUTER_STREAM_IDLE_TIMEOUT_MS` | `30000` | Max idle time allowed between streamed tokens (30 seconds). |
 | `LITEROUTER_ROTATE_DELAY_MS` | `2000` | Inter-key rotation delay upon rate limits or errors. |
 | `LITEROUTER_STRIP_REASONING` | `true` | Global default to strip upstream reasoning from historical messages (overridden by `ts` nuance). |
-| `LITEROUTER_AO_STRIP_REASONING` | `true` | Standard default for `ao` (Anthropic->OpenAI cross-wire) to strip reasoning parameters and prevent empty compaction responses in Claude Code (overridden by `ts` nuance). |
+| `LITEROUTER_AO_STRIP_REASONING` | `true` | Standard default for `ao` (Anthropic->OpenAI cross-wire) to strip reasoning parameters and historical reasoning sent TO the upstream provider while preserving reasoning deltas sent downstream (overridden by `ts` nuance). |
 | `LITEROUTER_AO_STRIP_REASONING` | `true` | Standard default for `ao` (Anthropic->OpenAI cross-wire) to strip reasoning parameters and prevent empty compaction responses in Claude Code (overridden by `ts` nuance). |
 
 ### Secret Upstream Key Pools (`.env.local`)
