@@ -10,10 +10,10 @@ export const LEAKED_TEMPLATE_REGEX =
   /<role>(?:HUMAN|ASSISTANT|SYSTEM|BOT|USER|human|assistant|user|system|bot)?<\/role>|<\s*\/?\s*role(?::[a-zA-Z0-9_\-]+|\s*=\s*[a-zA-Z0-9_\-]+|\s+[a-zA-Z0-9_\-]+)?\s*>|<\s*\/?\s*(?:assistant|user|system|human|bot)\s*>|<\|\s*(?:im_start|im_end|endoftext|startoftext|start_of_turn|end_of_turn|role_start|role_end|system|user|assistant|observation|bot|tool_calls?|\/?tool_calls?|eot_id|start_header_id|end_header_id|end)\b[^|]*\|>(?:\s*(?:assistant|user|system|human|bot)\b)?|<｜\s*(?:System|User|Assistant|begin of sentence|end of sentence|tool calls?|tool results?|tool outputs?)\b[^｜]*｜>|＜｜\s*(?:System|User|Assistant|begin of sentence|end of sentence|tool calls?|tool results?|tool outputs?)\b[^｜]*｜＞|\[gMASK\](?:<sop>)?|<sop>|\[\/?INST\]|<<\/?SYS>>|(?:\b(?:HUMAN|ASSISTANT|SYSTEM|BOT|USER)\b\s*)?<\s*\/\s*(?:role|im_end|end_of_turn|role_end)\s*>|<\s*(?:role|im_start|start_of_turn|role_start)\s*>\s*(?:HUMAN|ASSISTANT|SYSTEM|BOT|USER)\b|<\/?(?:im_start|im_end|endoftext|startoftext|start_of_turn|end_of_turn|role_start|role_end)(?:\s+[^>]*)?>|<\/?(?:tool_response|tool_result|tools|turn|turn_end)(?:\s+[^>]*)?>/gi;
 
 export const STREAM_PARTIAL_TAG_REGEX =
-  /<$|<(?:\/|[a-zA-Z_])[a-zA-Z0-9_\-: ="]{0,50}$|<\|[^|]{0,40}$|<｜[^｜]{0,40}$|＜｜?[^｜＞]{0,40}$|\[(?:gMASK|\/?INST)[a-zA-Z0-9_\-/]{0,10}$|<<\/?(?:SYS)?[^>]{0,10}$/i;
+  /<$|<(?:\/|[a-zA-Z_])[a-zA-Z0-9_\-: ='"/]{0,80}$|<\|[^|]{0,40}$|<｜[^｜]{0,40}$|＜｜?[^｜＞]{0,40}$|\[(?:gMASK|\/?INST)[a-zA-Z0-9_\-/]{0,10}$|<<\/?(?:SYS)?[^>]{0,10}$/i;
 
 export const UNCLOSED_TEMPLATE_TAG_REGEX =
-  /<(?:\/|\/?(?:role|think|thought|thinking|tool_call|tool_calls|function|invoke|parameter|arg_key|arg_value|turn|assistant|user|system|bot|human|minimax|sop|im_start|im_end|endoftext|startoftext|start_of_turn|end_of_turn|role_start|role_end|observation|eot_id|start_header_id|end_header_id|tool_response|tool_result))[a-zA-Z0-9_\-: ="]{0,40}$|<\|[^|]{0,40}$|<｜[^｜]{0,40}$|＜｜?[^｜＞]{0,40}$|\[(?:gMASK|\/?INST)[^\]]{0,10}$|<<\/?(?:SYS)[^>]{0,10}$/i;
+  /<(?:\/|\/?(?:role|think|thought|thinking|tool_call|tool_calls|function|invoke|parameter|parameter_name|parameter_value|arg_key|arg_value|argument_name|argument_value|turn|assistant|user|system|bot|human|minimax|sop|im_start|im_end|endoftext|startoftext|start_of_turn|end_of_turn|role_start|role_end|observation|eot_id|start_header_id|end_header_id|tool_response|tool_result))[^>]*$|<\|[^|]{0,40}$|<｜[^｜]{0,40}$|＜｜?[^｜＞]{0,40}$|\[(?:gMASK|\/?INST)[^\]]{0,10}$|<<\/?(?:SYS)[^>]{0,10}$/i;
 
 export function stripLeakedTemplateTags(text: string): string {
   return text.replace(LEAKED_TEMPLATE_REGEX, "");
@@ -49,14 +49,14 @@ export class TagSanitizerStreamBuffer {
   }
 
   public flush(): string {
-    const finalCleaned = stripUnclosedTemplateTags(stripLeakedTemplateTags(this.buffer));
+    const finalCleaned = stripLeakedTemplateTags(this.buffer);
     this.buffer = "";
     return finalCleaned;
   }
 }
 
 const INVOKE_BLOCK_REGEX =
-  /<(?:invoke|minimax:tool_call|tool_call|function_call)(?:\s+name=["']([^"']+)["'])?>([\s\S]*?)<\/(?:invoke|minimax:tool_call|tool_call|function_call)>/gi;
+  /<(?:invoke|minimax:tool_call|tool_call|function_call)\b(?:\s+(?:name|function)=["']?([^"'\s>]+)["']?)?[^>]*>([\s\S]*?)<\/(?:invoke|minimax:tool_call|tool_call|function_call)>/gi;
 
 const QWEN_FUNC_REGEX =
   /<function=([a-zA-Z0-9_\-]+)>([\s\S]*?)<\/function>/gi;
@@ -65,7 +65,7 @@ const QWEN_PARAM_REGEX =
   /<parameter=([a-zA-Z0-9_\-]+)>([\s\S]*?)(?:<\/parameter>|(?=<parameter|<\/(?:function|tool_call)>|$))/gi;
 
 const PARAM_REGEX =
-  /<parameter\s+name=["']([^"']+)["']>([\s\S]*?)(?:<\/(?:parameter|arg_value|parameter_value)>|(?=<parameter|<arg_key|<\/(?:invoke|tool_call|function_call|function_calls|tool_calls|minimax:tool_call)>|$))/gi;
+  /<parameter\s+name=["']?([^"'\s>]+)["']?>([\s\S]*?)(?:<\/(?:parameter|arg_value|parameter_value)>|(?=<parameter|<arg_key|<\/(?:invoke|tool_call|function_call|function_calls|tool_calls|minimax:tool_call)>|$))/gi;
 
 const ARG_KV_REGEX =
   /<(?:arg_key|argument_name|parameter_name)>([^<]+)<\/(?:arg_key|argument_name|parameter_name)>\s*<(?:arg_value|argument_value|parameter_value)>([\s\S]*?)<\/(?:arg_value|argument_value|parameter_value)>/gi;
@@ -595,7 +595,7 @@ export function createDotsStreamState(): DotsStreamState {
   };
 }
 
-function formatOpenAIToolCallDelta(
+export function formatOpenAIToolCallDelta(
   toolCall: OpenAIToolCall,
   index: number,
   id?: string,
@@ -650,7 +650,7 @@ export function formatOpenAIReasoningDelta(
   return `data: ${JSON.stringify(payload)}\n\n`;
 }
 
-function formatOpenAITextDelta(
+export function formatOpenAITextDelta(
   text: string,
   id?: string,
   model?: string
@@ -776,6 +776,99 @@ function flushNonTagContent(state: DotsStreamState): string {
   return "";
 }
 
+function hasUnclosedToolContainers(buffer: string): boolean {
+  const openInvoke = (buffer.match(/<invoke\b[^>]*>/gi) || []).length;
+  const closeInvoke = (buffer.match(/<\/invoke>/gi) || []).length;
+  if (openInvoke > closeInvoke) return true;
+
+  const openToolCall = (buffer.match(/<tool_call\b[^>]*>/gi) || []).length;
+  const closeToolCall = (buffer.match(/<\/tool_call>/gi) || []).length;
+  if (openToolCall > closeToolCall) return true;
+
+  const openFunctionCall = (buffer.match(/<function_call\b[^>]*>/gi) || []).length;
+  const closeFunctionCall = (buffer.match(/<\/function_call>/gi) || []).length;
+  if (openFunctionCall > closeFunctionCall) return true;
+
+  const openMinimax = (buffer.match(/<minimax:tool_call\b[^>]*>/gi) || []).length;
+  const closeMinimax = (buffer.match(/<\/minimax:tool_call>/gi) || []).length;
+  if (openMinimax > closeMinimax) return true;
+
+  const openQwenFunc = (buffer.match(/<function=[a-zA-Z0-9_\-]+>/gi) || []).length;
+  const closeQwenFunc = (buffer.match(/<\/function>/gi) || []).length;
+  if (openQwenFunc > closeQwenFunc) return true;
+
+  return false;
+}
+
+function hasOpenGroupContainers(buffer: string): boolean {
+  const openToolCalls = (buffer.match(/<tool_calls\b[^>]*>/gi) || []).length;
+  const closeToolCalls = (buffer.match(/<\/tool_calls>/gi) || []).length;
+  if (openToolCalls > closeToolCalls) return true;
+
+  const openFunctionCalls = (buffer.match(/<function_calls\b[^>]*>/gi) || []).length;
+  const closeFunctionCalls = (buffer.match(/<\/function_calls>/gi) || []).length;
+  if (openFunctionCalls > closeFunctionCalls) return true;
+
+  return false;
+}
+
+function isIntermediateTagState(buffer: string): boolean {
+  return (
+    /<\/(?:parameter|parameter_name|parameter_value|arg_key|arg_value|argument_name|argument_value|name|tool_name|arguments|args)>\s*$/i.test(
+      buffer
+    ) ||
+    /<(?:parameter|parameter_name|parameter_value|arg_key|arg_value|argument_name|argument_value|name|tool_name|arguments|args)\b[^>]*$/i.test(
+      buffer
+    ) ||
+    /<(?:parameter|parameter_name|parameter_value|arg_key|arg_value|argument_name|argument_value|name|tool_name|arguments|args)\b[^>]*>[^<]*$/i.test(
+      buffer
+    )
+  );
+}
+
+function checkToolClosingTag(
+  buffer: string,
+  unclosedTool: boolean,
+  openGroup: boolean
+): boolean {
+  if (unclosedTool || openGroup) {
+    return false;
+  }
+
+  if (
+    /<\/(?:invoke|tool_call|function_call|function|tool_calls|function_calls|minimax:tool_call|tool_response|tool_result)>/i.test(
+      buffer
+    )
+  ) {
+    return true;
+  }
+
+  if (/[a-zA-Z0-9_\-]+\s*<(?:arg_key|argument_name|parameter_name)/i.test(buffer)) {
+    if (/<\/(?:arg_value|argument_value|parameter_value)>\s*$/i.test(buffer)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function checkGenericClosingTag(
+  buffer: string,
+  unclosedTool: boolean,
+  openGroup: boolean,
+  intermediate: boolean
+): boolean {
+  if (unclosedTool || openGroup || intermediate) {
+    return false;
+  }
+  const customTagMatch =
+    /<([a-zA-Z0-9_\-]+)>\s*<[a-zA-Z0-9_\-]+>[^<]*<\/[a-zA-Z0-9_\-]+>[\s\S]*?<\/\1>\s*$/i.exec(buffer);
+  if (customTagMatch && customTagMatch[1] && !EXCLUDED_TAG_NAMES.has(customTagMatch[1].toLowerCase())) {
+    return true;
+  }
+  return false;
+}
+
 export function processDotsStreamChunk(
   chunk: string,
   state: DotsStreamState
@@ -786,20 +879,14 @@ export function processDotsStreamChunk(
     return flushInsideThinkContent(state);
   }
 
-  const hasIntermediateTagOnly =
-    /<(?:arg_key|argument_name|parameter_name|parameter)[^>]*>[^<]*<\/(?:arg_key|argument_name|parameter_name|parameter)>\s*$/i.test(
-      state.buffer
-    ) || /<(?:arg_key|argument_name|parameter_name|parameter)[^>]*$/i.test(state.buffer);
+  const unclosedTool = hasUnclosedToolContainers(state.buffer);
+  const openGroup = hasOpenGroupContainers(state.buffer);
+  const intermediate = isIntermediateTagState(state.buffer);
 
-  const hasToolClosingTag =
-    /<\/(?:invoke|tool_call|function_call|function|tool_calls|function_calls|minimax:tool_call|arg_value|argument_value|parameter_value|tool_response|tool_result)>/i.test(
-      state.buffer
-    );
+  const hasToolClosing = checkToolClosingTag(state.buffer, unclosedTool, openGroup);
+  const hasGenericClosing = checkGenericClosingTag(state.buffer, unclosedTool, openGroup, intermediate);
 
-  const hasGenericClosingTag =
-    !hasIntermediateTagOnly && /<\/([a-zA-Z0-9_\-]+)>\s*$/i.test(state.buffer);
-
-  const hasClosingTag = hasToolClosingTag || hasGenericClosingTag;
+  const hasClosingTag = hasToolClosing || hasGenericClosing;
   if (!hasClosingTag) {
     return flushNonTagContent(state);
   }

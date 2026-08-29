@@ -18,6 +18,7 @@ import { KeyPool, type SelectedKey } from "../network/pool";
 import { sanitizeAndTransformPayload } from "../transformers/payload";
 import type { OpenAIRequestPayload } from "../transformers/nuances";
 import { createDotsStreamTransformer, parseDotsXml, stripLeakedTemplateTags } from "../transformers/dots";
+import { createLingStreamTransformer, parseLingXml } from "../transformers/ling";
 
 import type { FusionConfig, FusionTier } from "../config/schema";
 import { getEnv } from "../config/env";
@@ -481,7 +482,13 @@ async function executeDirectCall(
     },
   });
 
-  if (isXmlTranslationActive) {
+  const isLing =
+    directive.nuances.includes("lg") ||
+    Boolean(payload.model && payload.model.toLowerCase().includes("ling"));
+
+  if (isLing) {
+    resilientStream = resilientStream.pipeThrough(createLingStreamTransformer());
+  } else if (isXmlTranslationActive) {
     resilientStream = resilientStream.pipeThrough(createDotsStreamTransformer());
   }
 
