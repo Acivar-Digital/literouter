@@ -305,4 +305,36 @@ describe("Ling Transformer & Streaming Suite", () => {
     expect(transformed.choices[0]!.message.tool_calls?.[0]?.function.arguments).toBe('{"command":"ls"}');
     expect(transformed.choices[0]!.finish_reason).toBe("tool_calls");
   });
+
+  it("parses DeepSeek <｜DSML｜invoke> and degraded parameter blocks without closing tags", () => {
+    const rawDsml = `<｜DSML｜tool_calls>
+<｜DSML｜invoke name="edit">
+<｜DSML｜parameter name="path" string="true">/home/yapilwsl/arthityap/trend/scripts/bt/kelly_backtest.py</｜DSML｜parameter>
+<｜DSML｜parameter name="oldString" string="true">def walk_forward(gold_df, is_years=5):</｜DSML｜parameter>
+<｜DSML｜parameter name="newString" string="true">def walk_forward(gold_df, is_years=5, lot_size=LOT_SIZE):</｜DSML｜parameter>
+<｜DSML｜parameter name="replaceAll" boolean="false">false</｜DSML｜parameter>
+</｜DSML｜invoke>
+<｜DSML｜invoke name="edit">
+<｜DSML｜parameter name="path" string="true">/home/yapilwsl/arthityap/trend/scripts/bt/kelly_backtest.py</｜DSML｜parameter>
+<｜DSML｜parameter name="oldString" string="true">is_res = run_backtest(is_df)newString
+is_res = run_backtest(is_df, lot_size=lot_size)
+<｜DSML｜parameter name="replaceAll" boolean="false">false</｜DSML｜parameter>
+</｜DSML｜invoke>
+</｜DSML｜tool_calls>`;
+
+    const res = parseLingXml(rawDsml);
+    expect(res.toolCalls.length).toBe(2);
+    expect(res.toolCalls[0]!.function.name).toBe("edit");
+    const args0 = JSON.parse(res.toolCalls[0]!.function.arguments);
+    expect(args0.path).toBe("/home/yapilwsl/arthityap/trend/scripts/bt/kelly_backtest.py");
+    expect(args0.oldString).toBe("def walk_forward(gold_df, is_years=5):");
+    expect(args0.newString).toBe("def walk_forward(gold_df, is_years=5, lot_size=LOT_SIZE):");
+    expect(args0.replaceAll).toBe(false);
+
+    expect(res.toolCalls[1]!.function.name).toBe("edit");
+    const args1 = JSON.parse(res.toolCalls[1]!.function.arguments);
+    expect(args1.oldString).toBe("is_res = run_backtest(is_df)");
+    expect(args1.newString).toBe("is_res = run_backtest(is_df, lot_size=lot_size)");
+    expect(args1.replaceAll).toBe(false);
+  });
 });

@@ -41,10 +41,10 @@ export interface OpenAIResponse {
 // ---------------------------------------------------------------------------
 
 export const LING_LEAKED_TEMPLATE_REGEX =
-  /<role>(?:HUMAN|ASSISTANT|SYSTEM|BOT|USER|human|assistant|user|system|bot)?<\/role>|<\s*\/?\s*role(?::[a-zA-Z0-9_\-]+|\s*=\s*[a-zA-Z0-9_\-]+|\s+[a-zA-Z0-9_\-]+)?\s*>|<\/?(?:tool_calls|tool_call|tool_response|tool_result|arg_key|arg_value|argument_name|argument_value|parameter|parameter_name|parameter_value|invoke|function|think|thought|thinking)[^>]*>|<\|(?:role_end|startoftext|endoftext|im_end|im_start|fim_start|fim_hole|fim_end|start_of_turn|end_of_turn|eot_id|start_header_id|end_header_id)\|>|<｜(?:System|User|Assistant|begin of sentence|end of sentence)｜>|\[gMASK\](?:<sop>)?|<sop>|\[\/?INST\]|<<\/?SYS>>/gi;
+  /<role>(?:HUMAN|ASSISTANT|SYSTEM|BOT|USER|human|assistant|user|system|bot)?<\/role>|<\s*\/?\s*role(?::[a-zA-Z0-9_\-]+|\s*=\s*[a-zA-Z0-9_\-]+|\s+[a-zA-Z0-9_\-]+)?\s*>|<\/?[｜|]?(?:DSML[｜|]?)?(?:tool_calls|tool_call|tool_response|tool_result|arg_key|arg_value|argument_name|argument_value|parameter|parameter_name|parameter_value|invoke|function|think|thought|thinking)[^>]*>|<\|(?:role_end|startoftext|endoftext|im_end|im_start|fim_start|fim_hole|fim_end|start_of_turn|end_of_turn|eot_id|start_header_id|end_header_id)\|>|<[｜|](?:System|User|Assistant|begin of sentence|end of sentence|DSML)[｜|]?>|\[gMASK\](?:<sop>)?|<sop>|\[\/?INST\]|<<\/?SYS>>/gi;
 
 export const LING_STREAM_PARTIAL_TAG_REGEX =
-  /<$|<(?:\/|[a-zA-Z_])[a-zA-Z0-9_\-: ='"/]{0,80}$|<\|[^|]{0,40}$|<｜[^｜]{0,40}$|＜｜?[^｜＞]{0,40}$|\[(?:gMASK|\/?INST)[a-zA-Z0-9_\-/]{0,10}$|<<\/?(?:SYS)?[^>]{0,10}$/i;
+  /<$|<(?:\/|[a-zA-Z_｜|])[a-zA-Z0-9_\-: ='"/｜|]{0,80}$|<\|[^|]{0,40}$|<｜[^｜]{0,40}$|＜｜?[^｜＞]{0,40}$|\[(?:gMASK|\/?INST)[a-zA-Z0-9_\-/]{0,10}$|<<\/?(?:SYS)?[^>]{0,10}$/i;
 
 export function stripLingLeakedTemplateTags(raw: string): string {
   if (!raw) return "";
@@ -267,14 +267,22 @@ export function parseLingXml(rawText: string): LingParseResult {
     return "";
   });
 
-  // 3. DeepSeek / MiniMax / Standard (<invoke name="...">...<parameter name="k">v</parameter></invoke>)
-  const invokePattern = /<invoke\s+name=["']?([a-zA-Z0-9_\-]+)["']?>([\s\S]*?)<\/invoke>/gi;
+  // 3. DeepSeek / MiniMax / DSML / Standard (<invoke name="...">...<parameter name="k">v</parameter></invoke>)
+  const invokePattern = /<[｜|]?(?:DSML[｜|]?)?invoke\s+name=["']?([a-zA-Z0-9_\-]+)["']?[^>]*>([\s\S]*?)<\/[｜|]?(?:DSML[｜|]?)?invoke>/gi;
   remainingText = remainingText.replace(invokePattern, (_m, fnName, body) => {
-    const paramRegex = /<parameter\s+name=["']?([a-zA-Z0-9_\-]+)["']?>([\s\S]*?)<\/parameter>/gi;
+    const paramRegex = /<[｜|]?(?:DSML[｜|]?)?parameter\s+name=["']?([a-zA-Z0-9_\-]+)["']?[^>]*>([\s\S]*?)(?:<\/[｜|]?(?:DSML[｜|]?)?parameter>|(?=<[｜|]?(?:DSML[｜|]?)?parameter)|$)/gi;
     const argsObj: Record<string, unknown> = {};
     let pMatch: RegExpExecArray | null;
     while ((pMatch = paramRegex.exec(body)) !== null) {
-      argsObj[pMatch[1]!.trim()] = castValue(pMatch[2]!.trim());
+      const k = pMatch[1]!.trim();
+      let v = pMatch[2]!.trim();
+      if (k === "oldString" && v.includes("newString")) {
+        const idx = v.indexOf("newString");
+        argsObj["oldString"] = v.slice(0, idx).trim();
+        argsObj["newString"] = v.slice(idx + "newString".length).trim();
+      } else {
+        argsObj[k] = castValue(v);
+      }
     }
     toolCalls.push({
       id: generateCallId(),
@@ -635,12 +643,12 @@ export function createLingStreamTransformer(): TransformStream<Uint8Array, Uint8
     const CONCAT_TOOL_START_REGEX = /(?:^|[\n\r\s])(?:editpath|writepath|readpath|shellcommand|websearchquery|greppattern|globpattern)/i;
 
     const hasToolTagStart =
-      /<(?:tool_calls?|invoke|function=|tool_call)/i.test(textBuffer) ||
+      /<[｜|]?(?:DSML[｜|]?)?(?:tool_calls?|invoke|function=|tool_call)/i.test(textBuffer) ||
       /[a-zA-Z0-9_\-]+\s*<arg_key>/i.test(textBuffer) ||
       CONCAT_TOOL_START_REGEX.test(textBuffer);
 
     const hasToolClosure =
-      /<\/(?:tool_calls?|invoke|function|tool_call)>/i.test(textBuffer) ||
+      /<\/[｜|]?(?:DSML[｜|]?)?(?:tool_calls?|invoke|function|tool_call)>/i.test(textBuffer) ||
       (textBuffer.includes("</arg_value>") && !textBuffer.includes("<arg_key>") && /<\/(?:arg_value)>/i.test(textBuffer));
 
     if (hasToolTagStart) {
@@ -660,7 +668,7 @@ export function createLingStreamTransformer(): TransformStream<Uint8Array, Uint8
       }
 
       // If tool tag has started but not closed, emit any leading non-tool text and hold the rest
-      const tagMatch = /<(?:tool_calls?|invoke|function=|tool_call)/i.exec(textBuffer);
+      const tagMatch = /<[｜|]?(?:DSML[｜|]?)?(?:tool_calls?|invoke|function=|tool_call)/i.exec(textBuffer);
       const glmMatch = /[a-zA-Z0-9_\-]+\s*<arg_key>/i.exec(textBuffer);
       const concatMatch = CONCAT_TOOL_START_REGEX.exec(textBuffer);
       let earliest = -1;
