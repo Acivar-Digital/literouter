@@ -152,4 +152,71 @@ describe("Outbound HTTP/2 Multiplexed Session Pool", () => {
     expect(isDestroyed).toBe(true);
     expect((pool as any).sessions.get(origin)).toBeUndefined();
   });
+
+  it("purgeSession evicts and destroys session by reference", () => {
+    const pool = new Http2SessionPool();
+    let destroyed = false;
+    const fakeSession = {
+      closed: false,
+      destroyed: false,
+      destroy: () => {
+        destroyed = true;
+      },
+    } as unknown as http2.ClientHttp2Session;
+
+    const origin = "https://openrouter.ai";
+    (pool as any).sessions.set(origin, [
+      {
+        session: fakeSession,
+        activeStreams: 1,
+        origin,
+        isDraining: false,
+      },
+    ]);
+
+    pool.purgeSession(origin, fakeSession);
+    expect(destroyed).toBe(true);
+    expect((pool as any).sessions.get(origin)).toBeUndefined();
+  });
+
+  it("acquireSession evicts dead/destroyed sessions and creates a fresh session", async () => {
+    const pool = new Http2SessionPool();
+    const deadSession = {
+      closed: true,
+      destroyed: true,
+      destroy: () => {},
+    } as unknown as http2.ClientHttp2Session;
+
+    const origin = "https://mock-origin.local";
+    (pool as any).sessions.set(origin, [
+      {
+        session: deadSession,
+        activeStreams: 0,
+        origin,
+        isDraining: false,
+      },
+    ]);
+
+    // Mock createSession to avoid actual TCP connection
+    const freshSession = {
+      closed: false,
+      destroyed: false,
+      destroy: () => {},
+    } as unknown as http2.ClientHttp2Session;
+
+    (pool as any).createSession = async () => {
+      (pool as any).sessions.set(origin, [
+        {
+          session: freshSession,
+          activeStreams: 0,
+          origin,
+          isDraining: false,
+        },
+      ]);
+      return freshSession;
+    };
+
+    const acquired = await pool.acquireSession(origin);
+    expect(acquired).toBe(freshSession);
+  });
 });

@@ -4,6 +4,14 @@ All notable changes to LiteRouter will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed / Upstream H2 Zombie Session Purge & Downstream Socket Reset on Stream Abort
+- **Active H2 Session Purging & Liveness Validation (`src/network/h2_pool.ts`, `src/network/fetcher.ts`)**:
+  - Added `purgeSession(origin, session)` and socket liveness validation (`isSessionHealthy`) in `H2SessionPool.acquireSession()`.
+  - When an upstream stream aborts (e.g. idle timeout, network drop, or RST_STREAM frame), the faulted HTTP/2 session is immediately evicted and destroyed, guaranteeing that subsequent requests spawn a fresh TCP/TLS session rather than hanging on a poisoned socket.
+- **Forced Downstream Socket Destruction on Broken Streams (`src/index.ts`)**:
+  - Updated `pipeWebResponseToNode` to call `nodeRes.destroy(err)` if an unhandled stream error occurs after headers are sent, preventing downstream clients (like OpenCode CLI) from retaining a half-closed socket in their keep-alive pool that would otherwise trigger `ECONNRESET` on the subsequent turn.
+  - Added `clientError` and `unknownProtocol` handlers to the HTTPS/H2 server to cleanly terminate aborted connections.
+
 ### Hardened / Incremental Thinking Streaming & Multi-Dialect XML Tool Processing
 - **Live Incremental Thinking Streaming (`src/transformers/dots.ts`, `tests/unit/dots_xml_transformer.test.ts`)**:
   - Upgraded `createDotsStreamTransformer` and `processDotsStreamChunk` to stream inside-`<think>` tokens incrementally as `reasoning_content` deltas as each SSE chunk arrives, preventing client/TUI UI freezing during extended thinking runs.

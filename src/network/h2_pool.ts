@@ -34,17 +34,38 @@ export class Http2SessionPool {
     this.connectTimeoutMs = config?.connectTimeoutMs ?? 10000;
   }
 
+  private isSessionHealthy(session: ClientHttp2Session): boolean {
+    if (session.closed || session.destroyed || session.connecting) {
+      return false;
+    }
+    const socket = (session as unknown as { socket?: { destroyed?: boolean } }).socket;
+    if (socket && socket.destroyed) {
+      return false;
+    }
+    return true;
+  }
+
+  public purgeSession(origin: string, session: ClientHttp2Session): void {
+    const pool = this.sessions.get(origin);
+    if (!pool) return;
+    const item = pool.find((p) => p.session === session);
+    if (item) {
+      this.destroySession(origin, item);
+    }
+  }
+
   public async acquireSession(origin: string): Promise<ClientHttp2Session> {
     const pool = this.sessions.get(origin) ?? [];
 
-    // 1. Find existing active, non-draining session with available stream capacity
+    // 1. Clean up dead/unhealthy sessions and find existing active, non-draining session
+    const validPool: PooledSession[] = [];
     for (const item of pool) {
-      if (
-        !item.isDraining &&
-        !item.session.closed &&
-        !item.session.destroyed &&
-        item.activeStreams < this.maxStreamsPerSession
-      ) {
+      if (!this.isSessionHealthy(item.session)) {
+        this.destroySession(origin, item);
+        continue;
+      }
+      validPool.push(item);
+      if (!item.isDraining && item.activeStreams < this.maxStreamsPerSession) {
         item.activeStreams++;
         return item.session;
       }
@@ -56,7 +77,7 @@ export class Http2SessionPool {
       try {
         const session = await inFlightConnection;
         const item = (this.sessions.get(origin) ?? []).find((p) => p.session === session);
-        if (item && !item.isDraining && item.activeStreams < this.maxStreamsPerSession) {
+        if (item && !item.isDraining && this.isSessionHealthy(item.session) && item.activeStreams < this.maxStreamsPerSession) {
           item.activeStreams++;
           return item.session;
         }
@@ -67,7 +88,7 @@ export class Http2SessionPool {
     }
 
     // 3. Spawn new session with Single-Flight Mutex lock if under sessionsPerOrigin
-    const activeNonDraining = pool.filter((p) => !p.isDraining && !p.session.closed && !p.session.destroyed);
+    const activeNonDraining = validPool.filter((p) => !p.isDraining && this.isSessionHealthy(p.session));
     if (activeNonDraining.length < this.sessionsPerOrigin) {
       const connectPromise = this.createSession(origin);
       this.connectionLocks.set(origin, connectPromise);

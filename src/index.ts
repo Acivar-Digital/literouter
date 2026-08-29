@@ -310,9 +310,12 @@ async function pipeWebResponseToNode(
   } catch (err: unknown) {
     if (!isAborted) {
       logError("STREAM", "Stream read error during HTTP/2 response piping", err);
+      if (!nodeRes.destroyed) {
+        nodeRes.destroy(err instanceof Error ? err : new Error(String(err)));
+      }
     }
   } finally {
-    if (!nodeRes.writableEnded) {
+    if (!nodeRes.writableEnded && !nodeRes.destroyed) {
       nodeRes.end();
     }
   }
@@ -383,6 +386,18 @@ export function createServer(portOverride?: number): Server<unknown> | LiteRoute
         });
       }
     );
+
+    h2Server.on("clientError", (_err, socket) => {
+      if (!socket.destroyed) {
+        socket.destroy();
+      }
+    });
+
+    h2Server.on("unknownProtocol", (socket) => {
+      if (!socket.destroyed) {
+        socket.destroy();
+      }
+    });
 
     h2Server.listen(port, env.LITEROUTER_HOST);
 

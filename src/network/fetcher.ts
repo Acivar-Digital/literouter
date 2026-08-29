@@ -485,6 +485,7 @@ export async function executeH2Fetch(
             safeClose(controller, isClosedRef);
           });
           stream.on("error", (err) => {
+            pool.purgeSession(origin, session);
             safeError(controller, err, isClosedRef);
           });
         },
@@ -506,11 +507,16 @@ export async function executeH2Fetch(
     });
 
     stream.on("error", (err) => {
+      pool.purgeSession(origin, session);
       if (!settled) {
         settled = true;
         signal.removeEventListener("abort", abortListener);
         reject(err);
       }
+    });
+
+    stream.on("frameError", () => {
+      pool.purgeSession(origin, session);
     });
 
     if (options.body) {
