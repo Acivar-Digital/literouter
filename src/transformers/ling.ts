@@ -1,4 +1,14 @@
-import type { OpenAIMessage, OpenAIToolCall } from "./nuances";
+import type {
+  OpenAIMessage,
+  OpenAIToolCall,
+  OpenAIRequestPayload,
+  OpenAIContentPart,
+} from "./nuances";
+
+export interface OpenAIFunctionCall {
+  name: string;
+  arguments: string;
+}
 
 export interface LingParseResult {
   readonly cleanText: string;
@@ -6,302 +16,90 @@ export interface LingParseResult {
   readonly reasoningContent?: string;
 }
 
-export type DotsParseResult = LingParseResult;
+export interface OpenAIResponseChoice {
+  index: number;
+  message: {
+    role: "assistant";
+    content: string | null;
+    reasoning_content?: string;
+    tool_calls?: OpenAIToolCall[];
+  };
+  finish_reason: string;
+}
 
-export interface LingStreamState {
-  buffer: string;
-  toolCallIndex: number;
-  hasEmittedToolCalls: boolean;
-  hasEmittedFinishReason: boolean;
-  isInThinkTag: boolean;
-  id?: string;
-  model?: string;
+export interface OpenAIResponse {
+  id: string;
+  object: string;
+  created: number;
+  model: string;
+  choices: OpenAIResponseChoice[];
   usage?: Record<string, unknown>;
 }
 
-export type DotsStreamState = LingStreamState;
+// ---------------------------------------------------------------------------
+// 1. REGEX ENGINE
+// ---------------------------------------------------------------------------
 
-/**
- * Universal Leaked Control/Template Token Regex.
- * Captures Ling-3.0, ChatML, DeepSeek, GLM, and standard LLM control markers.
- */
-export const LEAKED_TEMPLATE_REGEX =
-  /<role>(?:HUMAN|ASSISTANT|SYSTEM|BOT|USER|human|assistant|user|system|bot)?<\/role>|<\s*\/?\s*role(?::[a-zA-Z0-9_\-]+|\s*=\s*[a-zA-Z0-9_\-]+|\s+[a-zA-Z0-9_\-]+)?\s*>|<\/?(?:tool_call|tool_response|tool_result|arg_key|arg_value|argument_name|argument_value|parameter|parameter_name|parameter_value|invoke|function|think|thought|thinking)[^>]*>|<\|(?:role_end|startoftext|endoftext|im_end|im_start|fim_start|fim_hole|fim_end|start_of_turn|end_of_turn|eot_id|start_header_id|end_header_id)\|>|<｜(?:System|User|Assistant|begin of sentence|end of sentence)｜>|\[gMASK\](?:<sop>)?|<sop>|\[\/?INST\]|<<\/?SYS>>/gi;
+export const LING_LEAKED_TEMPLATE_REGEX =
+  /<role>(?:HUMAN|ASSISTANT|SYSTEM|BOT|USER|human|assistant|user|system|bot)?<\/role>|<\s*\/?\s*role(?::[a-zA-Z0-9_\-]+|\s*=\s*[a-zA-Z0-9_\-]+|\s+[a-zA-Z0-9_\-]+)?\s*>|<\/?(?:tool_calls|tool_call|tool_response|tool_result|arg_key|arg_value|argument_name|argument_value|parameter|parameter_name|parameter_value|invoke|function|think|thought|thinking)[^>]*>|<\|(?:role_end|startoftext|endoftext|im_end|im_start|fim_start|fim_hole|fim_end|start_of_turn|end_of_turn|eot_id|start_header_id|end_header_id)\|>|<｜(?:System|User|Assistant|begin of sentence|end of sentence)｜>|\[gMASK\](?:<sop>)?|<sop>|\[\/?INST\]|<<\/?SYS>>/gi;
 
-/**
- * Bounded streaming lookahead regex.
- * Specifically targets plausible opening/closing tag prefixes at chunk boundaries.
- * Will NOT match mathematical comparisons like "x < y" or "a < 10".
- */
-export const STREAM_PARTIAL_TAG_REGEX =
-  /<\/?(?:t(?:o(?:o(?:l(?:_(?:c(?:a(?:l(?:l)?)?)?|r(?:e(?:s(?:p(?:o(?:n(?:s(?:e)?)?)?)?|u(?:l(?:t)?)?)?)?)?)?)?)?)?|h(?:i(?:n(?:k)?)?)?|h(?:o(?:u(?:g(?:h(?:t)?)?)?)?)?)?|r(?:o(?:l(?:e)?)?)?|a(?:r(?:g(?:_(?:k(?:e(?:y)?)?|v(?:a(?:l(?:u(?:e)?)?)?)?))?)?)?|i(?:n(?:v(?:o(?:k(?:e)?)?)?)?)?|p(?:a(?:r(?:a(?:m(?:e(?:t(?:e(?:r)?)?)?)?)?)?)?)?|f(?:u(?:n(?:c(?:t(?:i(?:o(?:n)?)?)?)?)?)?)?|\|[a-z0-9_]*|｜[a-z0-9_]*)$/i;
+export const LING_STREAM_PARTIAL_TAG_REGEX =
+  /<$|<(?:\/|[a-zA-Z_])[a-zA-Z0-9_\-: ='"/]{0,80}$|<\|[^|]{0,40}$|<｜[^｜]{0,40}$|＜｜?[^｜＞]{0,40}$|\[(?:gMASK|\/?INST)[a-zA-Z0-9_\-/]{0,10}$|<<\/?(?:SYS)?[^>]{0,10}$/i;
 
-const EXCLUDED_TAG_NAMES = new Set([
-  "tool_call",
-  "tool_calls",
-  "invoke",
-  "function_call",
-  "function_calls",
-  "minimax:tool_call",
-  "think",
-  "thought",
-  "thinking",
-  "role",
-  "tool_response",
-  "tool_result",
-  "arg_key",
-  "arg_value",
-  "parameter",
-  "function",
-  "p",
-  "div",
-  "span",
-  "pre",
-  "code",
-  "b",
-  "i",
-  "strong",
-  "em",
-  "table",
-  "tr",
-  "td",
-  "th",
-  "ul",
-  "ol",
-  "li",
-  "a",
-  "h1",
-  "h2",
-  "h3",
-  "h4",
-  "h5",
-  "h6",
-]);
-
-export function stripLeakedTemplateTags(text: string): string {
-  return text.replace(LEAKED_TEMPLATE_REGEX, "");
-}
-
-export function stripLingLeakedTemplateTags(text: string): string {
-  return stripLeakedTemplateTags(text);
-}
-
-export function stripLingUnclosedTemplateTags(text: string): string {
-  return text.replace(STREAM_PARTIAL_TAG_REGEX, "");
+export function stripLingLeakedTemplateTags(raw: string): string {
+  if (!raw) return "";
+  return raw.replace(LING_LEAKED_TEMPLATE_REGEX, "").trim();
 }
 
 function generateCallId(): string {
-  return `call_${Math.random().toString(36).substring(2, 10)}${Date.now().toString(36).substring(4)}`;
+  return `call_${Math.random().toString(36).substring(2, 10)}${Date.now().toString(36).substring(4, 8)}`;
 }
 
-function parseJsonTolerant(raw: string): unknown {
-  try {
-    return JSON.parse(raw);
-  } catch {
-    try {
-      const sanitized = raw.replace(/"(?:[^"\\]|\\.)*"/g, (match) =>
-        match.replace(/\n/g, "\\n").replace(/\r/g, "\\r").replace(/\t/g, "\\t")
-      );
-      return JSON.parse(sanitized);
-    } catch {
-      return null;
-    }
-  }
-}
-
-export function castValue(raw: string): unknown {
+function castValue(raw: string): unknown {
   const trimmed = raw.trim();
   const lower = trimmed.toLowerCase();
   if (lower === "true") return true;
   if (lower === "false") return false;
   if (lower === "null") return null;
   if (/^-?\d+$/.test(trimmed)) {
-    const parsed = parseInt(trimmed, 10);
-    if (!Number.isNaN(parsed)) return parsed;
+    const num = parseInt(trimmed, 10);
+    if (!Number.isNaN(num)) return num;
   }
   if (/^-?\d+\.\d+$/.test(trimmed)) {
-    const parsed = parseFloat(trimmed);
-    if (!Number.isNaN(parsed)) return parsed;
+    const num = parseFloat(trimmed);
+    if (!Number.isNaN(num)) return num;
   }
-  if (
-    (trimmed.startsWith("{") && trimmed.endsWith("}")) ||
-    (trimmed.startsWith("[") && trimmed.endsWith("]"))
-  ) {
-    const parsed = parseJsonTolerant(trimmed);
-    if (parsed !== null) return parsed;
+  try {
+    return JSON.parse(trimmed);
+  } catch (err: unknown) {
+    void err;
+    return trimmed;
   }
-  return trimmed;
 }
 
-export const coerceLingValue = castValue;
-
-export function parseParameters(body: string): Record<string, unknown> {
-  const params: Record<string, unknown> = {};
-
-  // 1. Qwen Parameter Format: <parameter=path>value</parameter>
-  const qwenParamRegex =
-    /<parameter=([a-zA-Z0-9_\-]+)>([\s\S]*?)(?:<\/parameter>|(?=<parameter|<\/(?:function|tool_call)>|$))/gi;
-  let qpMatch = qwenParamRegex.exec(body);
-  while (qpMatch !== null) {
-    const key = (qpMatch[1] ?? "").trim();
-    const val = (qpMatch[2] ?? "").trim();
-    if (key.length > 0 && !(key in params)) params[key] = castValue(val);
-    qpMatch = qwenParamRegex.exec(body);
+function extractMessageContentText(content: string | null | readonly OpenAIContentPart[] | undefined): string {
+  if (!content) return "";
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    return content
+      .map((part) => (part.type === "text" && typeof part.text === "string" ? part.text : ""))
+      .join("\n");
   }
-
-  // 2. Ling-3.0 / GLM Key-Value: <arg_key>k</arg_key><arg_value>v</arg_value>
-  const kvRegex =
-    /<(?:arg_key|argument_name|parameter_name)>([\s\S]*?)<\/(?:arg_key|argument_name|parameter_name)>\s*<(?:arg_value|argument_value|parameter_value)>([\s\S]*?)<\/(?:arg_value|argument_value|parameter_value)>/gi;
-  let kvMatch = kvRegex.exec(body);
-  while (kvMatch !== null) {
-    const key = (kvMatch[1] ?? "").trim();
-    const val = (kvMatch[2] ?? "").trim();
-    if (key.length > 0 && !(key in params)) params[key] = castValue(val);
-    kvMatch = kvRegex.exec(body);
-  }
-
-  // 3. Named parameter tags: <parameter name="k">v</parameter>
-  const paramRegex =
-    /<parameter\s+name=["']?([^"'\s>]+)["']?>([\s\S]*?)(?:<\/parameter>|(?=<parameter|<\/(?:invoke|tool_call)>|$))/gi;
-  let pMatch = paramRegex.exec(body);
-  while (pMatch !== null) {
-    const key = (pMatch[1] ?? "").trim();
-    const val = (pMatch[2] ?? "").trim();
-    if (key.length > 0 && !(key in params)) params[key] = castValue(val);
-    pMatch = paramRegex.exec(body);
-  }
-
-  // 4. Custom child tags: <path>src/index.js</path>
-  if (Object.keys(params).length === 0) {
-    const childTagRegex = /<([a-zA-Z0-9_\-]+)>([\s\S]*?)<\/\1>/g;
-    let childMatch = childTagRegex.exec(body);
-    while (childMatch !== null) {
-      const tag = (childMatch[1] ?? "").trim();
-      const val = (childMatch[2] ?? "").trim();
-      if (
-        !EXCLUDED_TAG_NAMES.has(tag.toLowerCase()) &&
-        tag.length > 0 &&
-        !(tag in params)
-      ) {
-        params[tag] = castValue(val);
-      }
-      childMatch = childTagRegex.exec(body);
-    }
-  }
-
-  return params;
+  return "";
 }
 
-export function parseLingXml(content: string): LingParseResult {
-  const sanitized = content;
-  const toolCalls: OpenAIToolCall[] = [];
-  let remainingText = sanitized;
+// ---------------------------------------------------------------------------
+// 2. REQUEST SERIALIZER (Fixes Upstream 400 Schema Collisions)
+// ---------------------------------------------------------------------------
 
-  // 1. Ling-3.0 / GLM: <tool_call>name<arg_key>...</arg_value></tool_call>
-  const glmPattern =
-    /(?:<tool_call>)?\s*([a-zA-Z0-9_\-]+)\s*(<arg_key>[\s\S]*?<\/arg_value>(?:\s*<arg_key>[\s\S]*?<\/arg_value>)*)\s*(?:<\/tool_call>)?/gi;
-  let gMatch = glmPattern.exec(remainingText);
-  while (gMatch !== null) {
-    const fnName = (gMatch[1] ?? "").trim().toLowerCase();
-    const argsObj = parseParameters(gMatch[2] ?? "");
-    if (Object.keys(argsObj).length > 0) {
-      toolCalls.push({
-        id: generateCallId(),
-        type: "function",
-        function: { name: fnName, arguments: JSON.stringify(argsObj) },
-      });
-      remainingText = remainingText.replace(gMatch[0], "");
-    }
-    gMatch = glmPattern.exec(remainingText);
-  }
-
-  // 2. Qwen Format: <function=name>...</function>
-  const qwenFuncRegex = /<function=([a-zA-Z0-9_\-]+)>([\s\S]*?)<\/function>/gi;
-  let qMatch = qwenFuncRegex.exec(remainingText);
-  while (qMatch !== null) {
-    const fnName = (qMatch[1] ?? "").trim();
-    const argsObj = parseParameters(qMatch[2] ?? "");
-    toolCalls.push({
-      id: generateCallId(),
-      type: "function",
-      function: { name: fnName, arguments: JSON.stringify(argsObj) },
-    });
-    remainingText = remainingText.replace(qMatch[0], "");
-    qMatch = qwenFuncRegex.exec(remainingText);
-  }
-
-  // 3. DeepSeek / MiniMax: <invoke name="...">...</invoke>
-  const invokeRegex =
-    /<invoke\s+name=["']?([^"'\s>]+)["']?[^>]*>([\s\S]*?)<\/invoke>/gi;
-  let iMatch = invokeRegex.exec(remainingText);
-  while (iMatch !== null) {
-    const fnName = (iMatch[1] ?? "").trim();
-    const argsObj = parseParameters(iMatch[2] ?? "");
-    toolCalls.push({
-      id: generateCallId(),
-      type: "function",
-      function: { name: fnName, arguments: JSON.stringify(argsObj) },
-    });
-    remainingText = remainingText.replace(iMatch[0], "");
-    iMatch = invokeRegex.exec(remainingText);
-  }
-
-  // 4. JSON-in-XML: <tool_call>{"name": ..., "arguments": ...}</tool_call>
-  const jsonXmlRegex = /<tool_call>\s*(\{[\s\S]*?\})\s*<\/tool_call>/gi;
-  let jMatch = jsonXmlRegex.exec(remainingText);
-  while (jMatch !== null) {
-    const parsed = parseJsonTolerant(jMatch[1] ?? "{}");
-    if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
-      const payload = parsed as Record<string, unknown>;
-      const name = String(payload.name || payload.function || "tool");
-      const args = payload.arguments ?? payload.parameters ?? {};
-      toolCalls.push({
-        id: generateCallId(),
-        type: "function",
-        function: {
-          name,
-          arguments: typeof args === "string" ? args : JSON.stringify(args),
-        },
-      });
-      remainingText = remainingText.replace(jMatch[0], "");
-    }
-    jMatch = jsonXmlRegex.exec(remainingText);
-  }
-
-  // Extract Thinking Content
-  let reasoningContent: string | undefined = undefined;
-  const thinkMatch =
-    /<(?:think|thought|thinking)>([\s\S]*?)(?:<\/(?:think|thought|thinking)>|(?=<(?:tool_call|invoke|function=))|$)/i.exec(
-      remainingText
-    );
-  if (thinkMatch) {
-    const rawThink = (thinkMatch[1] ?? "").trim();
-    if (rawThink.length > 0) {
-      reasoningContent = stripLeakedTemplateTags(rawThink);
-    }
-    remainingText = remainingText.replace(thinkMatch[0], "");
-  }
-
-  const cleanText = stripLeakedTemplateTags(remainingText).trim();
-
-  return { cleanText, toolCalls, reasoningContent };
-}
-
-export const parseDotsXml = parseLingXml;
-
-/**
- * Serializes conversation history using Ling-3.0's native <tool_response> tags
- * and enforces strict turn alternation.
- */
-export function serializeLingToolHistory(
-  messages: readonly OpenAIMessage[]
-): OpenAIMessage[] {
-  const result: OpenAIMessage[] = [];
+export function transformLingRequest(req: OpenAIRequestPayload): OpenAIRequestPayload {
+  const transformed: Record<string, unknown> = { ...req };
+  const serializedMessages: OpenAIMessage[] = [];
   const pendingToolResponses: string[] = [];
 
   const flushToolResponses = () => {
     if (pendingToolResponses.length > 0) {
-      result.push({
+      serializedMessages.push({
         role: "user",
         content: pendingToolResponses.join("\n\n"),
       });
@@ -309,350 +107,485 @@ export function serializeLingToolHistory(
     }
   };
 
+  const messages = req.messages ?? [];
+
   for (let i = 0; i < messages.length; i++) {
     const msg = messages[i]!;
     const isLastTurn = i >= messages.length - 2;
 
     if (msg.role === "tool") {
       const toolId = msg.tool_call_id || "call_unknown";
-      const text =
-        typeof msg.content === "string"
-          ? msg.content
-          : JSON.stringify(msg.content ?? "");
-      // Ling-3.0 Native Token 156898 & 156899
-      pendingToolResponses.push(
-        `<tool_response id="${toolId}">\n${text}\n</tool_response>`
-      );
+      const text = extractMessageContentText(msg.content);
+      pendingToolResponses.push(`<tool_response id="${toolId}">\n${text}\n</tool_response>`);
       continue;
     }
 
     flushToolResponses();
 
-    const cleanMsg = { ...msg };
-    // Prune reasoning from older turns to prevent context bloat while preserving active turn Jinja integrity
-    if (!isLastTurn && cleanMsg.reasoning_content) {
-      delete (cleanMsg as Record<string, unknown>).reasoning_content;
+    const cleanMsg: Record<string, unknown> = {
+      role: msg.role,
+      content: msg.content,
+    };
+
+    if (msg.name) {
+      cleanMsg.name = msg.name;
     }
 
+    // Keep reasoning only on the immediate prior turn to maintain Jinja template health
+    if (isLastTurn && msg.reasoning_content) {
+      cleanMsg.reasoning_content = msg.reasoning_content;
+    }
+
+    // Format assistant tool calls into Ling XML and CRITICALLY DELETE tool_calls field
     if (msg.role === "assistant" && msg.tool_calls && msg.tool_calls.length > 0) {
       let callXml = "";
       for (const tc of msg.tool_calls) {
         const fnName = tc.function.name;
-        const args = parseParameters(tc.function.arguments);
+        let args: Record<string, unknown> = {};
+        try {
+          args = typeof tc.function.arguments === "string"
+            ? (JSON.parse(tc.function.arguments) as Record<string, unknown>)
+            : (tc.function.arguments as unknown as Record<string, unknown>);
+        } catch (err: unknown) {
+          void err;
+          args = {};
+        }
+
         callXml += `\n<tool_call>${fnName}`;
-        for (const [k, v] of Object.entries(args)) {
-          const valStr =
-            typeof v === "object" && v !== null ? JSON.stringify(v) : String(v);
+        for (const [k, v] of Object.entries(args ?? {})) {
+          const valStr = typeof v === "object" && v !== null ? JSON.stringify(v) : String(v);
           callXml += `<arg_key>${k}</arg_key><arg_value>${valStr}</arg_value>`;
         }
         callXml += `</tool_call>`;
       }
-      const baseText = typeof msg.content === "string" ? msg.content : "";
+
+      const baseText = extractMessageContentText(msg.content);
       cleanMsg.content = (baseText + callXml).trim() || " ";
-      result.push(cleanMsg);
-    } else {
-      result.push(cleanMsg);
+      // DO NOT include tool_calls field; prevents upstream 400 schema error
     }
+
+    serializedMessages.push(cleanMsg as unknown as OpenAIMessage);
   }
 
   flushToolResponses();
-  return result;
-}
 
-export const serializeDotsToolHistory = serializeLingToolHistory;
+  // Inject tools into System Prompt as Ling XML
+  if (req.tools && Array.isArray(req.tools) && req.tools.length > 0) {
+    const toolDefs = req.tools
+      .map((t: unknown) => {
+        const toolObj = t as { function?: unknown; [key: string]: unknown };
+        return JSON.stringify(toolObj.function ?? toolObj);
+      })
+      .join("\n");
 
-export function injectLingToolsSchemaSystemPrompt(
-  messages: readonly OpenAIMessage[],
-  tools?: readonly unknown[]
-): readonly OpenAIMessage[] {
-  if (!tools || !Array.isArray(tools) || tools.length === 0) return messages;
+    const toolSystemPrompt =
+      `\n\n# Tools\nYou have access to the following tools:\n<tools>\n` +
+      toolDefs +
+      `\n</tools>\nTo invoke a tool, output:\n<tool_call>tool_name<arg_key>key</arg_key><arg_value>value</arg_value></tool_call>`;
 
-  const toolSchemas = tools
-    .map((t: unknown) => {
-      if (typeof t === "object" && t !== null) {
-        const item = t as Record<string, unknown>;
-        return JSON.stringify(
-          item.type === "function" && item.function ? item.function : item
-        );
-      }
-      return "";
-    })
-    .filter((s) => s.length > 0);
-
-  if (toolSchemas.length === 0) return messages;
-
-  const toolSystemPrompt =
-    `\n\n# Tools\nYou have access to the following tools:\n<tools>\n` +
-    toolSchemas.join("\n") +
-    `\n</tools>\nTo invoke a tool, output:\n<tool_call>tool_name<arg_key>key</arg_key><arg_value>value</arg_value></tool_call>`;
-
-  const result = [...messages];
-  const sysIndex = result.findIndex((m) => m.role === "system");
-  if (sysIndex >= 0) {
-    const existing = result[sysIndex]!;
-    const existingText =
-      typeof existing.content === "string" ? existing.content : "";
-    if (!existingText.includes("<tools>")) {
-      result[sysIndex] = {
+    const sysIdx = serializedMessages.findIndex((m) => m.role === "system");
+    if (sysIdx >= 0) {
+      const existing = serializedMessages[sysIdx]!;
+      const existingContent = extractMessageContentText(existing.content);
+      serializedMessages[sysIdx] = {
         ...existing,
-        content: existingText + toolSystemPrompt,
+        content: (existingContent + toolSystemPrompt).trim(),
       };
-    }
-  } else {
-    result.unshift({ role: "system", content: toolSystemPrompt.trim() });
-  }
-  return result;
-}
-
-export const injectToolsSchemaSystemPrompt = injectLingToolsSchemaSystemPrompt;
-
-export function createLingStreamState(): LingStreamState {
-  return {
-    buffer: "",
-    toolCallIndex: 0,
-    hasEmittedToolCalls: false,
-    hasEmittedFinishReason: false,
-    isInThinkTag: false,
-  };
-}
-
-export const createDotsStreamState = createLingStreamState;
-
-export function formatOpenAIToolCallDelta(
-  toolCall: OpenAIToolCall,
-  index: number,
-  id?: string,
-  model?: string
-): string {
-  return `data: ${JSON.stringify({
-    id: id || `chatcmpl_${Date.now()}`,
-    object: "chat.completion.chunk",
-    created: Math.floor(Date.now() / 1000),
-    model: model || "model",
-    choices: [
-      {
-        index: 0,
-        delta: {
-          tool_calls: [
-            {
-              index,
-              id: toolCall.id,
-              type: "function",
-              function: toolCall.function,
-            },
-          ],
-        },
-      },
-    ],
-  })}\n\n`;
-}
-
-export function formatOpenAIReasoningDelta(
-  reasoning: string,
-  id?: string,
-  model?: string
-): string {
-  return `data: ${JSON.stringify({
-    id: id || `chatcmpl_${Date.now()}`,
-    object: "chat.completion.chunk",
-    created: Math.floor(Date.now() / 1000),
-    model: model || "model",
-    choices: [{ index: 0, delta: { reasoning_content: reasoning } }],
-  })}\n\n`;
-}
-
-export function formatOpenAITextDelta(
-  text: string,
-  id?: string,
-  model?: string
-): string {
-  return `data: ${JSON.stringify({
-    id: id || `chatcmpl_${Date.now()}`,
-    object: "chat.completion.chunk",
-    created: Math.floor(Date.now() / 1000),
-    model: model || "model",
-    choices: [{ index: 0, delta: { content: text } }],
-  })}\n\n`;
-}
-
-export function formatOpenAIFinishDelta(
-  finishReason: string,
-  id?: string,
-  model?: string,
-  usage?: Record<string, unknown>
-): string {
-  const payload: Record<string, unknown> = {
-    id: id || `chatcmpl_${Date.now()}`,
-    object: "chat.completion.chunk",
-    created: Math.floor(Date.now() / 1000),
-    model: model || "model",
-    choices: [{ index: 0, delta: {}, finish_reason: finishReason }],
-  };
-  if (usage) payload.usage = usage;
-  return `data: ${JSON.stringify(payload)}\n\n`;
-}
-
-export function processLingStreamChunk(
-  chunk: string,
-  state: LingStreamState
-): string {
-  state.buffer += chunk;
-  let output = "";
-
-  // 1. Thinking state management with immediate tool breakout
-  if (state.isInThinkTag) {
-    const thinkEndMatch = /<\/(?:think|thought|thinking)>/i.exec(state.buffer);
-    const toolBreakoutMatch = /<(?:tool_call|invoke|function=)/i.exec(state.buffer);
-
-    if (thinkEndMatch) {
-      const thoughtText = state.buffer.slice(0, thinkEndMatch.index);
-      state.buffer = state.buffer.slice(
-        thinkEndMatch.index + thinkEndMatch[0].length
-      );
-      state.isInThinkTag = false;
-      const cleanThought = stripLeakedTemplateTags(thoughtText);
-      if (cleanThought)
-        output += formatOpenAIReasoningDelta(cleanThought, state.id, state.model);
-    } else if (toolBreakoutMatch) {
-      // Direct breakout into tool calling without closing </think>
-      const thoughtText = state.buffer.slice(0, toolBreakoutMatch.index);
-      state.buffer = state.buffer.slice(toolBreakoutMatch.index);
-      state.isInThinkTag = false;
-      const cleanThought = stripLeakedTemplateTags(thoughtText);
-      if (cleanThought)
-        output += formatOpenAIReasoningDelta(cleanThought, state.id, state.model);
     } else {
-      const holdMatch = STREAM_PARTIAL_TAG_REGEX.exec(state.buffer);
-      if (holdMatch) {
-        const streamable = state.buffer.slice(0, holdMatch.index);
-        state.buffer = state.buffer.slice(holdMatch.index);
-        const cleanThought = stripLeakedTemplateTags(streamable);
-        if (cleanThought)
-          output += formatOpenAIReasoningDelta(cleanThought, state.id, state.model);
-      } else {
-        const cleanThought = stripLeakedTemplateTags(state.buffer);
-        state.buffer = "";
-        if (cleanThought)
-          output += formatOpenAIReasoningDelta(cleanThought, state.id, state.model);
-      }
-      return output;
+      serializedMessages.unshift({ role: "system", content: toolSystemPrompt.trim() });
     }
   }
 
-  // 2. Detect entry into <think>
-  if (!state.isInThinkTag) {
-    const thinkStartMatch = /<(?:think|thought|thinking)>/i.exec(state.buffer);
-    if (thinkStartMatch) {
-      const beforeText = state.buffer.slice(0, thinkStartMatch.index);
-      state.buffer = state.buffer.slice(
-        thinkStartMatch.index + thinkStartMatch[0].length
-      );
-      state.isInThinkTag = true;
-      const cleanBefore = stripLeakedTemplateTags(beforeText);
-      if (cleanBefore)
-        output += formatOpenAITextDelta(cleanBefore, state.id, state.model);
-      return output + processLingStreamChunk("", state);
-    }
-  }
+  transformed.messages = serializedMessages;
 
-  // 3. Process Completed Tool Containers
-  const hasToolClosingTag =
-    /<\/(?:tool_call|invoke|function)>\s*$/i.test(state.buffer) ||
-    (state.buffer.includes("</arg_value>") &&
-      !state.buffer.includes("<arg_key>") &&
-      /<\/(?:arg_value)>\s*$/i.test(state.buffer));
+  // CRITICAL: Strip tools and tool_choice from upstream payload to prevent provider rejection
+  delete transformed.tools;
+  delete transformed.tool_choice;
 
-  if (hasToolClosingTag) {
-    const { cleanText, toolCalls, reasoningContent } = parseLingXml(state.buffer);
-    state.buffer = "";
+  // Enforce Ling-3.0 EOS stop tokens
+  const existingStop = Array.isArray(req.stop)
+    ? (req.stop as string[])
+    : typeof req.stop === "string"
+      ? [req.stop]
+      : [];
+  const stopSet = new Set([...existingStop, "<|role_end|>", "<|endoftext|>"]);
+  transformed.stop = Array.from(stopSet);
 
-    if (reasoningContent)
-      output += formatOpenAIReasoningDelta(reasoningContent, state.id, state.model);
-    if (cleanText)
-      output += formatOpenAITextDelta(cleanText, state.id, state.model);
-    for (const tc of toolCalls) {
-      output += formatOpenAIToolCallDelta(
-        tc,
-        state.toolCallIndex,
-        state.id,
-        state.model
-      );
-      state.toolCallIndex += 1;
-      state.hasEmittedToolCalls = true;
-    }
-    return output;
-  }
-
-  // 4. Safe streaming forward (Hold back only true partial tag prefixes)
-  const partialMatch = STREAM_PARTIAL_TAG_REGEX.exec(state.buffer);
-  if (partialMatch) {
-    const emitText = state.buffer.slice(0, partialMatch.index);
-    state.buffer = state.buffer.slice(partialMatch.index);
-    const cleanText = stripLeakedTemplateTags(emitText);
-    if (cleanText)
-      output += formatOpenAITextDelta(cleanText, state.id, state.model);
-  } else if (!state.buffer.includes("<")) {
-    const cleanText = stripLeakedTemplateTags(state.buffer);
-    state.buffer = "";
-    if (cleanText)
-      output += formatOpenAITextDelta(cleanText, state.id, state.model);
-  }
-
-  return output;
+  return transformed as unknown as OpenAIRequestPayload;
 }
 
-export const processDotsStreamChunk = processLingStreamChunk;
+// ---------------------------------------------------------------------------
+// 3. PARSER ENGINE (Multi-dialect XML -> OpenAIToolCall[])
+// ---------------------------------------------------------------------------
 
-export function createLingStreamTransformer(): TransformStream<
-  Uint8Array,
-  Uint8Array
-> {
-  const state = createLingStreamState();
+export function parseLingXml(rawText: string): LingParseResult {
+  const toolCalls: OpenAIToolCall[] = [];
+  let remainingText = rawText;
+
+  // 1. Ling-3.0 / GLM <arg_key> & <arg_value> Dialect
+  const glmPattern =
+    /(?:<tool_call>)?\s*([a-zA-Z0-9_\-]+)\s*(<arg_key>[\s\S]*?<\/arg_value>(?:\s*<arg_key>[\s\S]*?<\/arg_value>)*)\s*(?:<\/tool_call>)?/gi;
+
+  remainingText = remainingText.replace(glmPattern, (fullMatch, fnName, argsBody) => {
+    const pairRegex = /<arg_key>([\s\S]*?)<\/arg_key>\s*<arg_value>([\s\S]*?)<\/arg_value>/gi;
+    const argsObj: Record<string, unknown> = {};
+    let pMatch: RegExpExecArray | null;
+
+    while ((pMatch = pairRegex.exec(argsBody)) !== null) {
+      const k = pMatch[1]!.trim();
+      const v = pMatch[2]!.trim();
+      argsObj[k] = castValue(v);
+    }
+
+    if (Object.keys(argsObj).length > 0) {
+      toolCalls.push({
+        id: generateCallId(),
+        type: "function",
+        function: {
+          name: fnName.trim().toLowerCase(),
+          arguments: JSON.stringify(argsObj),
+        },
+      });
+      return "";
+    }
+    return fullMatch;
+  });
+
+  // 2. Qwen XML (<function=name><parameter=k>v</parameter></function>)
+  const qwenPattern = /<function=([a-zA-Z0-9_\-]+)>([\s\S]*?)<\/function>/gi;
+  remainingText = remainingText.replace(qwenPattern, (_m, fnName, body) => {
+    const paramRegex = /<parameter=([a-zA-Z0-9_\-]+)>([\s\S]*?)<\/parameter>/gi;
+    const argsObj: Record<string, unknown> = {};
+    let pMatch: RegExpExecArray | null;
+    while ((pMatch = paramRegex.exec(body)) !== null) {
+      argsObj[pMatch[1]!.trim()] = castValue(pMatch[2]!.trim());
+    }
+    toolCalls.push({
+      id: generateCallId(),
+      type: "function",
+      function: {
+        name: fnName.trim().toLowerCase(),
+        arguments: JSON.stringify(argsObj),
+      },
+    });
+    return "";
+  });
+
+  // 3. DeepSeek / MiniMax / Standard (<invoke name="...">...<parameter name="k">v</parameter></invoke>)
+  const invokePattern = /<invoke\s+name=["']?([a-zA-Z0-9_\-]+)["']?>([\s\S]*?)<\/invoke>/gi;
+  remainingText = remainingText.replace(invokePattern, (_m, fnName, body) => {
+    const paramRegex = /<parameter\s+name=["']?([a-zA-Z0-9_\-]+)["']?>([\s\S]*?)<\/parameter>/gi;
+    const argsObj: Record<string, unknown> = {};
+    let pMatch: RegExpExecArray | null;
+    while ((pMatch = paramRegex.exec(body)) !== null) {
+      argsObj[pMatch[1]!.trim()] = castValue(pMatch[2]!.trim());
+    }
+    toolCalls.push({
+      id: generateCallId(),
+      type: "function",
+      function: {
+        name: fnName.trim().toLowerCase(),
+        arguments: JSON.stringify(argsObj),
+      },
+    });
+    return "";
+  });
+
+  // 4. JSON tool call (<tool_call>{...}</tool_call>)
+  const jsonToolPattern = /<tool_call>\s*(\{[\s\S]*?\})\s*<\/tool_call>/gi;
+  remainingText = remainingText.replace(jsonToolPattern, (_m, jsonStr) => {
+    try {
+      const parsed = JSON.parse(jsonStr) as Record<string, unknown>;
+      if (parsed && typeof parsed === "object") {
+        const name = parsed.name || (parsed.function as Record<string, unknown> | undefined)?.name || "tool";
+        const args = parsed.arguments || (parsed.function as Record<string, unknown> | undefined)?.arguments || parsed.parameters || {};
+        toolCalls.push({
+          id: generateCallId(),
+          type: "function",
+          function: {
+            name: String(name).toLowerCase(),
+            arguments: typeof args === "string" ? args : JSON.stringify(args),
+          },
+        });
+        return "";
+      }
+    } catch (err: unknown) {
+      void err;
+    }
+    return "";
+  });
+
+  // 5. Extract Thinking (<think>...</think>)
+  let reasoningContent: string | undefined = undefined;
+  const thinkMatch = /<(?:think|thought|thinking)>([\s\S]*?)(?:<\/(?:think|thought|thinking)>|(?=<(?:tool_calls?|invoke|function=|tool_call))|$)/i.exec(
+    remainingText
+  );
+  if (thinkMatch) {
+    const rawThink = (thinkMatch[1] ?? "").trim();
+    if (rawThink.length > 0) {
+      reasoningContent = rawThink.replace(LING_LEAKED_TEMPLATE_REGEX, "");
+    }
+    remainingText = remainingText.replace(thinkMatch[0], "");
+  }
+
+  // 6. Scrub remaining leaked control tokens
+  const cleanText = remainingText.replace(LING_LEAKED_TEMPLATE_REGEX, "").trim();
+
+  return { cleanText, toolCalls, reasoningContent };
+}
+
+// ---------------------------------------------------------------------------
+// 4. OPENCODE2 SSE STREAM TRANSFORMER (Strict OpenAI Spec)
+// ---------------------------------------------------------------------------
+
+export function createLingStreamTransformer(): TransformStream<Uint8Array, Uint8Array> {
   const decoder = new TextDecoder();
   const encoder = new TextEncoder();
   let lineBuffer = "";
+  let textBuffer = "";
+  let isInThinkTag = false;
+  let hasEmittedRole = false;
+  let hasEmittedToolCalls = false;
+  let hasEmittedFinish = false;
+  let toolCallIndex = 0;
+  let streamId = `chatcmpl_${Date.now()}`;
+  let streamModel = "ling-3.0-flash";
+  let streamUsage: Record<string, unknown> | undefined;
 
-  function flushPending(): string {
-    let out = "";
-    if (state.buffer.length > 0) {
-      const { cleanText, toolCalls, reasoningContent } = parseLingXml(
-        state.buffer
-      );
-      state.buffer = "";
-      if (reasoningContent)
-        out += formatOpenAIReasoningDelta(
-          reasoningContent,
-          state.id,
-          state.model
-        );
-      if (cleanText)
-        out += formatOpenAITextDelta(cleanText, state.id, state.model);
-      for (const tc of toolCalls) {
-        out += formatOpenAIToolCallDelta(
-          tc,
-          state.toolCallIndex,
-          state.id,
-          state.model
-        );
-        state.toolCallIndex += 1;
-        state.hasEmittedToolCalls = true;
-      }
+  function sse(payload: Record<string, unknown>): string {
+    return `data: ${JSON.stringify(payload)}\n\n`;
+  }
+
+  function emitRoleHeader(): string {
+    if (!hasEmittedRole) {
+      hasEmittedRole = true;
+      return sse({
+        id: streamId,
+        object: "chat.completion.chunk",
+        created: Math.floor(Date.now() / 1000),
+        model: streamModel,
+        choices: [{ index: 0, delta: { role: "assistant", content: "" }, finish_reason: null }],
+      });
     }
+    return "";
+  }
+
+  function emitReasoning(reasoning: string): string {
+    return sse({
+      id: streamId,
+      object: "chat.completion.chunk",
+      created: Math.floor(Date.now() / 1000),
+      model: streamModel,
+      choices: [{ index: 0, delta: { reasoning_content: reasoning }, finish_reason: null }],
+    });
+  }
+
+  function emitContent(content: string): string {
+    return sse({
+      id: streamId,
+      object: "chat.completion.chunk",
+      created: Math.floor(Date.now() / 1000),
+      model: streamModel,
+      choices: [{ index: 0, delta: { content }, finish_reason: null }],
+    });
+  }
+
+  /** Emits OpenCode2 compliant tool call chunks (Declaration -> Arguments) */
+  function emitToolCallChunks(tc: OpenAIToolCall, index: number): string {
+    let out = "";
+    // Chunk 1: Tool Call Header
+    out += sse({
+      id: streamId,
+      object: "chat.completion.chunk",
+      created: Math.floor(Date.now() / 1000),
+      model: streamModel,
+      choices: [
+        {
+          index: 0,
+          delta: {
+            tool_calls: [
+              {
+                index,
+                id: tc.id,
+                type: "function",
+                function: { name: tc.function.name, arguments: "" },
+              },
+            ],
+          },
+          finish_reason: null,
+        },
+      ],
+    });
+
+    // Chunk 2: Tool Call Arguments Payload
+    out += sse({
+      id: streamId,
+      object: "chat.completion.chunk",
+      created: Math.floor(Date.now() / 1000),
+      model: streamModel,
+      choices: [
+        {
+          index: 0,
+          delta: {
+            tool_calls: [
+              {
+                index,
+                function: { arguments: tc.function.arguments },
+              },
+            ],
+          },
+          finish_reason: null,
+        },
+      ],
+    });
+
     return out;
   }
 
-  function getFinishSse(): string {
-    if (!state.hasEmittedFinishReason) {
-      state.hasEmittedFinishReason = true;
-      const finishReason = state.hasEmittedToolCalls ? "tool_calls" : "stop";
-      return formatOpenAIFinishDelta(
-        finishReason,
-        state.id,
-        state.model,
-        state.usage
-      );
+  function emitFinish(reason: string): string {
+    if (!hasEmittedFinish) {
+      hasEmittedFinish = true;
+      const payload: Record<string, unknown> = {
+        id: streamId,
+        object: "chat.completion.chunk",
+        created: Math.floor(Date.now() / 1000),
+        model: streamModel,
+        choices: [{ index: 0, delta: {}, finish_reason: reason }],
+      };
+      if (streamUsage) payload.usage = streamUsage;
+      return sse(payload);
     }
     return "";
+  }
+
+  function processChunk(chunkText: string): string {
+    textBuffer += chunkText;
+    let out = emitRoleHeader();
+
+    // 1. Manage Thinking & Breakout
+    if (isInThinkTag) {
+      const thinkEndMatch = /<\/(?:think|thought|thinking)>/i.exec(textBuffer);
+      const toolBreakoutMatch = /<(?:tool_calls?|tool_call|invoke|function=|\/role>)/i.exec(textBuffer);
+      const glmBreakoutMatch = /[a-zA-Z0-9_\-]+\s*<arg_key>/i.exec(textBuffer);
+
+      let breakoutIdx = -1;
+      if (toolBreakoutMatch) breakoutIdx = toolBreakoutMatch.index;
+      if (glmBreakoutMatch && (breakoutIdx === -1 || glmBreakoutMatch.index < breakoutIdx)) {
+        breakoutIdx = glmBreakoutMatch.index;
+      }
+
+      if (thinkEndMatch) {
+        const thought = textBuffer.slice(0, thinkEndMatch.index);
+        textBuffer = textBuffer.slice(thinkEndMatch.index + thinkEndMatch[0].length);
+        isInThinkTag = false;
+        const clean = thought.replace(LING_LEAKED_TEMPLATE_REGEX, "");
+        if (clean) out += emitReasoning(clean);
+      } else if (breakoutIdx !== -1) {
+        const thought = textBuffer.slice(0, breakoutIdx);
+        textBuffer = textBuffer.slice(breakoutIdx);
+        isInThinkTag = false;
+        const clean = thought.replace(LING_LEAKED_TEMPLATE_REGEX, "");
+        if (clean) out += emitReasoning(clean);
+      } else {
+        const hold = LING_STREAM_PARTIAL_TAG_REGEX.exec(textBuffer);
+        if (hold) {
+          const emit = textBuffer.slice(0, hold.index);
+          textBuffer = textBuffer.slice(hold.index);
+          const clean = emit.replace(LING_LEAKED_TEMPLATE_REGEX, "");
+          if (clean) out += emitReasoning(clean);
+        } else {
+          const clean = textBuffer.replace(LING_LEAKED_TEMPLATE_REGEX, "");
+          textBuffer = "";
+          if (clean) out += emitReasoning(clean);
+        }
+        return out;
+      }
+    }
+
+    if (!isInThinkTag) {
+      const thinkStart = /<(?:think|thought|thinking)>/i.exec(textBuffer);
+      if (thinkStart) {
+        const before = textBuffer.slice(0, thinkStart.index);
+        textBuffer = textBuffer.slice(thinkStart.index + thinkStart[0].length);
+        isInThinkTag = true;
+        const clean = before.replace(LING_LEAKED_TEMPLATE_REGEX, "");
+        if (clean) out += emitContent(clean);
+        return out + processChunk("");
+      }
+    }
+
+    // 2. Check for Tool Tag Detection and Completion
+    const hasToolTagStart =
+      /<(?:tool_calls?|invoke|function=|tool_call)/i.test(textBuffer) ||
+      /[a-zA-Z0-9_\-]+\s*<arg_key>/i.test(textBuffer);
+
+    const hasToolClosure =
+      /<\/(?:tool_calls?|invoke|function|tool_call)>/i.test(textBuffer) ||
+      (textBuffer.includes("</arg_value>") && !textBuffer.includes("<arg_key>") && /<\/(?:arg_value)>/i.test(textBuffer));
+
+    if (hasToolTagStart) {
+      if (hasToolClosure) {
+        const { cleanText, toolCalls, reasoningContent } = parseLingXml(textBuffer);
+        textBuffer = "";
+
+        if (reasoningContent) out += emitReasoning(reasoningContent);
+        if (cleanText) out += emitContent(cleanText);
+
+        for (const tc of toolCalls) {
+          out += emitToolCallChunks(tc, toolCallIndex);
+          toolCallIndex += 1;
+          hasEmittedToolCalls = true;
+        }
+        return out;
+      }
+
+      // If tool tag has started but not closed, emit any leading non-tool text and hold the rest
+      const tagMatch = /<(?:tool_calls?|invoke|function=|tool_call)/i.exec(textBuffer);
+      const glmMatch = /[a-zA-Z0-9_\-]+\s*<arg_key>/i.exec(textBuffer);
+      let earliest = -1;
+      if (tagMatch) earliest = tagMatch.index;
+      if (glmMatch && (earliest === -1 || glmMatch.index < earliest)) earliest = glmMatch.index;
+
+      if (earliest > 0) {
+        const lead = textBuffer.slice(0, earliest);
+        textBuffer = textBuffer.slice(earliest);
+        const clean = lead.replace(LING_LEAKED_TEMPLATE_REGEX, "");
+        if (clean) out += emitContent(clean);
+      }
+      // Hold remainder in textBuffer until closure
+      return out;
+    }
+
+    // 3. Safe Text Streaming (Buffers ONLY actual partial tag suffixes)
+    const partialMatch = LING_STREAM_PARTIAL_TAG_REGEX.exec(textBuffer);
+    if (partialMatch) {
+      const emit = textBuffer.slice(0, partialMatch.index);
+      textBuffer = textBuffer.slice(partialMatch.index);
+      const clean = emit.replace(LING_LEAKED_TEMPLATE_REGEX, "");
+      if (clean) out += emitContent(clean);
+    } else {
+      const clean = textBuffer.replace(LING_LEAKED_TEMPLATE_REGEX, "");
+      textBuffer = "";
+      if (clean) out += emitContent(clean);
+    }
+
+    return out;
+  }
+
+  function flushPending(): string {
+    let out = "";
+    if (textBuffer.length > 0) {
+      const { cleanText, toolCalls, reasoningContent } = parseLingXml(textBuffer);
+      textBuffer = "";
+      if (reasoningContent) out += emitReasoning(reasoningContent);
+      if (cleanText) out += emitContent(cleanText);
+      for (const tc of toolCalls) {
+        out += emitToolCallChunks(tc, toolCallIndex);
+        toolCallIndex += 1;
+        hasEmittedToolCalls = true;
+      }
+    }
+    return out;
   }
 
   return new TransformStream<Uint8Array, Uint8Array>({
@@ -663,60 +596,90 @@ export function createLingStreamTransformer(): TransformStream<
 
       for (const line of lines) {
         const trimmed = line.trim();
-        if (!trimmed || trimmed.startsWith(":")) {
-          controller.enqueue(encoder.encode(line + "\n"));
-          continue;
-        }
+        if (!trimmed || trimmed.startsWith(":")) continue;
 
         if (trimmed === "data: [DONE]") {
           const pending = flushPending();
           if (pending) controller.enqueue(encoder.encode(pending));
-          const finishSse = getFinishSse();
+          const finishReason = hasEmittedToolCalls ? "tool_calls" : "stop";
+          const finishSse = emitFinish(finishReason);
           if (finishSse) controller.enqueue(encoder.encode(finishSse));
-          controller.enqueue(encoder.encode(line + "\n"));
+          controller.enqueue(encoder.encode("data: [DONE]\n\n"));
           continue;
         }
 
         if (trimmed.startsWith("data: ")) {
           try {
             const data = JSON.parse(trimmed.slice(6));
-            if (data.id) state.id = data.id;
-            if (data.model) state.model = data.model;
-            if (data.usage) state.usage = data.usage;
+            if (data.id) streamId = data.id;
+            if (data.model) streamModel = data.model;
+            if (data.usage) streamUsage = data.usage;
 
             const choice = data.choices?.[0];
             const content = choice?.delta?.content;
+            const reasoning = choice?.delta?.reasoning_content;
             const incomingFinishReason = choice?.finish_reason;
 
-            if (typeof content === "string") {
-              const processed = processLingStreamChunk(content, state);
+            if (typeof reasoning === "string" && reasoning.length > 0) {
+              controller.enqueue(encoder.encode(emitReasoning(reasoning)));
+            }
+
+            if (typeof content === "string" && content.length > 0) {
+              const processed = processChunk(content);
               if (processed) controller.enqueue(encoder.encode(processed));
             }
 
             if (incomingFinishReason) {
               const pending = flushPending();
               if (pending) controller.enqueue(encoder.encode(pending));
-              const finishSse = getFinishSse();
+              const finishReason = hasEmittedToolCalls ? "tool_calls" : incomingFinishReason;
+              const finishSse = emitFinish(finishReason);
               if (finishSse) controller.enqueue(encoder.encode(finishSse));
-              // Swallowed raw upstream finish line to prevent double finish_reason collision
-              continue;
             }
-          } catch {
+          } catch (err: unknown) {
+            void err;
+            // Keep raw non-JSON SSE lines
             controller.enqueue(encoder.encode(line + "\n"));
           }
-        } else {
-          controller.enqueue(encoder.encode(line + "\n"));
         }
       }
     },
     flush(controller) {
       const pending = flushPending();
       if (pending) controller.enqueue(encoder.encode(pending));
-      const finishSse = getFinishSse();
+      const finishReason = hasEmittedToolCalls ? "tool_calls" : "stop";
+      const finishSse = emitFinish(finishReason);
       if (finishSse) controller.enqueue(encoder.encode(finishSse));
       if (lineBuffer.length > 0) controller.enqueue(encoder.encode(lineBuffer));
     },
   });
 }
 
-export const createDotsStreamTransformer = createLingStreamTransformer;
+// ---------------------------------------------------------------------------
+// 5. NON-STREAMING RESPONSE HANDLER
+// ---------------------------------------------------------------------------
+
+export function transformLingResponse(rawResponse: OpenAIResponse | Record<string, unknown>): OpenAIResponse {
+  const resp = rawResponse as OpenAIResponse;
+  const choice = resp.choices?.[0];
+  if (!choice) return resp;
+
+  const rawText = choice.message.content || "";
+  const { cleanText, toolCalls, reasoningContent } = parseLingXml(rawText);
+
+  const modifiedChoice: OpenAIResponseChoice = {
+    ...choice,
+    message: {
+      ...choice.message,
+      content: cleanText.length > 0 ? cleanText : null,
+      reasoning_content: reasoningContent,
+      tool_calls: toolCalls.length > 0 ? (toolCalls as OpenAIToolCall[]) : undefined,
+    },
+    finish_reason: toolCalls.length > 0 ? "tool_calls" : choice.finish_reason || "stop",
+  };
+
+  return {
+    ...resp,
+    choices: [modifiedChoice],
+  };
+}

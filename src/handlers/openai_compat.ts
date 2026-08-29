@@ -18,7 +18,7 @@ import { KeyPool, type SelectedKey } from "../network/pool";
 import { sanitizeAndTransformPayload } from "../transformers/payload";
 import type { OpenAIRequestPayload } from "../transformers/nuances";
 import { createDotsStreamTransformer, parseDotsXml, stripLeakedTemplateTags } from "../transformers/dots";
-import { createLingStreamTransformer, parseLingXml } from "../transformers/ling";
+import { createLingStreamTransformer, parseLingXml, transformLingResponse } from "../transformers/ling";
 
 import type { FusionConfig, FusionTier } from "../config/schema";
 import { getEnv } from "../config/env";
@@ -307,10 +307,13 @@ async function executeDirectCall(
   globalKeyPool.reportSuccess(directive.provider, selected.index);
   logTtft(reqId, ttftMs, isStream ? "Stream established" : "First chunk streamed downstream", protocol);
 
+  const isLing =
+    directive.nuances.includes("lg") ||
+    Boolean(payload.model && payload.model.toLowerCase().includes("ling"));
+
   const isXmlTranslationActive =
     directive.nuances.includes("tc") ||
-    directive.nuances.includes("lg") ||
-    Boolean(payload.model && (payload.model.toLowerCase().includes("dots") || payload.model.toLowerCase().includes("ling")));
+    Boolean(payload.model && payload.model.toLowerCase().includes("dots"));
 
   if (!isStream) {
     const fullBody = await collectFullBody(firstChunk, rawReader);
@@ -320,7 +323,10 @@ async function executeDirectCall(
       const json = JSON.parse(decoded) as Record<string, unknown>;
 
       const choice = (json.choices as Array<{ message?: { content?: string | null; reasoning_content?: string | null; thought?: string | null; tool_calls?: unknown }; finish_reason?: string }>)?.[0];
-      if (choice?.message && isXmlTranslationActive) {
+      if (choice?.message && isLing) {
+        const transformedResponse = transformLingResponse(json);
+        finalBody = new TextEncoder().encode(JSON.stringify(transformedResponse));
+      } else if (choice?.message && isXmlTranslationActive) {
         let msgModified = false;
         if (typeof choice.message.content === "string") {
           const { cleanText, toolCalls, reasoningContent } = parseDotsXml(choice.message.content);
@@ -481,10 +487,6 @@ async function executeDirectCall(
       return null;
     },
   });
-
-  const isLing =
-    directive.nuances.includes("lg") ||
-    Boolean(payload.model && payload.model.toLowerCase().includes("ling"));
 
   if (isLing) {
     resilientStream = resilientStream.pipeThrough(createLingStreamTransformer());

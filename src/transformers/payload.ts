@@ -5,6 +5,7 @@ import type {
 } from "./nuances";
 import { applyNuanceModifiers } from "./nuances";
 import { serializeDotsToolHistory, injectToolsSchemaSystemPrompt } from "./dots";
+import { transformLingRequest } from "./ling";
 import {
   injectThoughtSignatures,
   shouldStripReasoning,
@@ -276,8 +277,7 @@ function transformMessages(
   }
   if (
     nuances.includes("tc") ||
-    nuances.includes("lg") ||
-    (model && (model.toLowerCase().includes("dots") || model.toLowerCase().includes("ling")))
+    (model && model.toLowerCase().includes("dots"))
   ) {
     res = injectToolsSchemaSystemPrompt(res, tools);
     res = serializeDotsToolHistory(res);
@@ -309,13 +309,22 @@ export function sanitizeAndTransformPayload(
   const aoStripReasoning = options.aoStripReasoning;
   const enableScrubbing = options.enableScrubbing ?? false;
 
+  let currentPayload = payload;
+  const isLing =
+    nuances.includes("lg") ||
+    (Boolean(payload.model && payload.model.toLowerCase().includes("ling")) && !nuances.includes("tc"));
+
+  if (isLing) {
+    currentPayload = transformLingRequest(currentPayload);
+  }
+
   const transformedMessages = transformMessages(
-    payload.messages,
+    currentPayload.messages,
     nuances,
-    payload.model,
-    payload.tools as readonly unknown[] | undefined
+    currentPayload.model,
+    currentPayload.tools as readonly unknown[] | undefined
   );
-  let transformed: Record<string, unknown> = { ...payload, messages: transformedMessages };
+  let transformed: Record<string, unknown> = { ...currentPayload, messages: transformedMessages };
 
   if (enableScrubbing && nuances.includes("gm")) {
     transformed = scrubGemmaParameters(transformed);
