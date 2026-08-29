@@ -10,14 +10,14 @@ interface ParsedParameter {
   readonly value: string;
 }
 
-const INVOKE_BLOCK_REGEX = /<invoke\s+name="([^"]+)">([\s\S]*?)<\/invoke>/g;
-const PARAM_REGEX = /<parameter\s+name="([^"]+)">([\s\S]*?)<\/parameter>/g;
+const INVOKE_BLOCK_REGEX =
+  /<(?:invoke|tool_call|function_call)(?:\s+name=["']([^"']+)["'])?>([\s\S]*?)<\/(?:invoke|tool_call|function_call)>/gi;
 
-function parseSingleParam(match: RegExpExecArray): ParsedParameter {
-  const name = match[1] ?? "";
-  const value = (match[2] ?? "").trim();
-  return { name, value };
-}
+const PARAM_REGEX =
+  /<parameter\s+name=["']([^"']+)["']>([\s\S]*?)(?:<\/(?:parameter|arg_value|parameter_value)>|(?=<parameter|<arg_key|<\/(?:invoke|tool_call|function_call|function_calls|tool_calls)>|$))/gi;
+
+const ARG_KV_REGEX =
+  /<(?:arg_key|argument_name|parameter_name)>([^<]+)<\/(?:arg_key|argument_name|parameter_name)>\s*<(?:arg_value|argument_value|parameter_value)>([\s\S]*?)<\/(?:arg_value|argument_value|parameter_value)>/gi;
 
 function parseParamValue(raw: string): unknown {
   try {
@@ -32,56 +32,111 @@ function parseParamValue(raw: string): unknown {
 
 function parseParameters(body: string): Record<string, unknown> {
   const params: Record<string, unknown> = {};
-  const regex = new RegExp(PARAM_REGEX.source, "g");
-  let match = regex.exec(body);
-  while (match !== null) {
-    const { name, value } = parseSingleParam(match);
-    if (name.length > 0) {
-      params[name] = parseParamValue(value);
+
+  // 1. Key-Value pairs: <arg_key>k</arg_key><arg_value>v</arg_value>
+  const kvRegex = new RegExp(ARG_KV_REGEX.source, "gi");
+  let kvMatch = kvRegex.exec(body);
+  while (kvMatch !== null) {
+    const key = (kvMatch[1] ?? "").trim();
+    const val = (kvMatch[2] ?? "").trim();
+    if (key.length > 0) {
+      params[key] = parseParamValue(val);
     }
-    match = regex.exec(body);
+    kvMatch = kvRegex.exec(body);
   }
+
+  // 2. Named parameter tags: <parameter name="k">v</parameter>
+  const paramRegex = new RegExp(PARAM_REGEX.source, "gi");
+  let pMatch = paramRegex.exec(body);
+  while (pMatch !== null) {
+    const key = (pMatch[1] ?? "").trim();
+    let val = (pMatch[2] ?? "").trim();
+    if (val.includes("<arg_key>")) {
+      val = val.split("<arg_key>")[0]?.trim() ?? val;
+    }
+    if (key.length > 0 && !(key in params)) {
+      params[key] = parseParamValue(val);
+    }
+    pMatch = paramRegex.exec(body);
+  }
+
+  // 3. Fallback: <arguments>JSON</arguments> or raw JSON in body
+  if (Object.keys(params).length === 0) {
+    const argsTagMatch = /<(?:arguments|args)>([\s\S]*?)<\/(?:arguments|args)>/i.exec(body);
+    const rawCandidate = (argsTagMatch?.[1] ?? body).trim();
+    if (rawCandidate.startsWith("{") && rawCandidate.endsWith("}")) {
+      try {
+        const parsed = JSON.parse(rawCandidate);
+        if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
+          Object.assign(params, parsed);
+        }
+      } catch (err: unknown) {
+        void err;
+      }
+    }
+  }
+
   return params;
 }
 
+function extractFunctionName(tagFnName: string | undefined, body: string): string {
+  if (tagFnName && tagFnName.trim().length > 0) {
+    return tagFnName.trim();
+  }
+  const nameMatch = /<(?:name|function|tool_name)>([^<]+)<\/(?:name|function|tool_name)>/i.exec(body);
+  if (nameMatch && (nameMatch[1] ?? "").trim().length > 0) {
+    return (nameMatch[1] ?? "").trim();
+  }
+  return "tool";
+}
+
 function createToolCallFromInvoke(
-  name: string,
+  rawName: string | undefined,
   body: string,
   index: number
 ): OpenAIToolCall {
+  const fnName = extractFunctionName(rawName, body);
   const argsObj = parseParameters(body);
   return {
     id: `call_dots_${Date.now()}_${index}`,
     type: "function",
     function: {
-      name: name.trim(),
+      name: fnName,
       arguments: JSON.stringify(argsObj),
     },
   };
 }
 
 export function parseDotsXml(content: string): DotsParseResult {
-  if (!content.includes("<invoke")) {
+  const lower = content.toLowerCase();
+  if (
+    !lower.includes("<invoke") &&
+    !lower.includes("<tool_call") &&
+    !lower.includes("<function_call") &&
+    !lower.includes("<function_calls") &&
+    !lower.includes("<tool_calls")
+  ) {
     return { cleanText: content, toolCalls: [] };
   }
 
   const toolCalls: OpenAIToolCall[] = [];
-  const regex = new RegExp(INVOKE_BLOCK_REGEX.source, "g");
+  const regex = new RegExp(INVOKE_BLOCK_REGEX.source, "gi");
   let match = regex.exec(content);
   let index = 0;
 
   while (match !== null) {
-    const fnName = match[1] ?? "";
+    const rawFnName = match[1];
     const body = match[2] ?? "";
-    toolCalls.push(createToolCallFromInvoke(fnName, body, index));
+    toolCalls.push(createToolCallFromInvoke(rawFnName, body, index));
     index += 1;
     match = regex.exec(content);
   }
 
   const cleanText = content
-    .replace(INVOKE_BLOCK_REGEX, "")
-    .replace(/<\/?(?:tool_calls|function_calls)>/g, "")
+    .replace(new RegExp(INVOKE_BLOCK_REGEX.source, "gi"), "")
+    .replace(/<\/?(?:tool_calls|function_calls|invoke|tool_call|function_call|parameter|arg_key|arg_value|parameter_value|argument_name|argument_value)[^>]*>/gi, "")
     .trim();
+
   return { cleanText, toolCalls };
 }
 
@@ -113,7 +168,9 @@ function serializeSingleInvoke(tc: OpenAIToolCall): string {
   const argsObj = parseToolCallArguments(tc.function?.arguments);
   const paramXml = Object.entries(argsObj).map(serializeParamEntry).join("\n");
   if (paramXml.length > 0) {
-    return `<invoke name="${fnName}">\n${paramXml}\n</invoke>`;
+    return `<invoke name="${fnName}">
+${paramXml}
+</invoke>`;
   }
   return `<invoke name="${fnName}">\n</invoke>`;
 }
@@ -125,7 +182,9 @@ export function serializeDotsToolCalls(
     return "";
   }
   const invokes = toolCalls.map(serializeSingleInvoke).join("\n");
-  return `<tool_calls>\n${invokes}\n</tool_calls>`;
+  return `<tool_calls>
+${invokes}
+</tool_calls>`;
 }
 
 function serializeToolResultContent(content: unknown): string {
@@ -139,7 +198,8 @@ function serializeMessageForDots(msg: OpenAIMessage): OpenAIMessage {
   if (msg.role === "assistant" && msg.tool_calls && msg.tool_calls.length > 0) {
     const xml = serializeDotsToolCalls(msg.tool_calls);
     const baseText = typeof msg.content === "string" ? msg.content : "";
-    const newContent = baseText.length > 0 ? `${baseText}\n${xml}` : xml;
+    const newContent = baseText.length > 0 ? `${baseText}
+${xml}` : xml;
     return { role: "assistant", content: newContent };
   }
   if (msg.role === "tool") {
@@ -147,7 +207,9 @@ function serializeMessageForDots(msg: OpenAIMessage): OpenAIMessage {
     const text = serializeToolResultContent(msg.content);
     return {
       role: "user",
-      content: `<tool_result id="${toolId}">\n${text}\n</tool_result>`,
+      content: `<tool_result id="${toolId}">
+${text}
+</tool_result>`,
     };
   }
   return msg;
@@ -195,7 +257,9 @@ function formatOpenAIToolCallDelta(
       },
     ],
   };
-  return `data: ${JSON.stringify(payload)}\n\n`;
+  return `data: ${JSON.stringify(payload)}
+
+`;
 }
 
 function formatOpenAITextDelta(text: string): string {
@@ -209,11 +273,13 @@ function formatOpenAITextDelta(text: string): string {
       },
     ],
   };
-  return `data: ${JSON.stringify(payload)}\n\n`;
+  return `data: ${JSON.stringify(payload)}
+
+`;
 }
 
 function flushNonTagContent(state: DotsStreamState): string {
-  const tagStart = state.buffer.search(/<(?:tool_calls|function_calls|invoke)/i);
+  const tagStart = state.buffer.search(/<(?:tool_calls?|function_calls?|invoke|tool_call|function_call)/i);
   if (tagStart === -1) {
     const potentialTag = state.buffer.search(/<[a-zA-Z0-9_]*$/);
     if (potentialTag !== -1) {
@@ -239,7 +305,8 @@ export function processDotsStreamChunk(
 ): string {
   state.buffer += chunk;
 
-  if (!state.buffer.includes("</invoke>") && !state.buffer.includes("</tool_calls>")) {
+  const hasClosingTag = /<\/(?:invoke|tool_call|function_call|tool_calls|function_calls)>/i.test(state.buffer);
+  if (!hasClosingTag) {
     return flushNonTagContent(state);
   }
 
@@ -301,6 +368,21 @@ export function createDotsStreamTransformer(): TransformStream<Uint8Array, Uint8
       }
     },
     flush(controller) {
+      if (state.buffer.length > 0) {
+        const { cleanText, toolCalls } = parseDotsXml(state.buffer);
+        state.buffer = "";
+        let output = "";
+        if (cleanText.length > 0) {
+          output += formatOpenAITextDelta(cleanText);
+        }
+        for (const tc of toolCalls) {
+          output += formatOpenAIToolCallDelta(tc, state.toolCallIndex);
+          state.toolCallIndex += 1;
+        }
+        if (output.length > 0) {
+          controller.enqueue(encoder.encode(output));
+        }
+      }
       if (lineBuffer.length > 0) {
         controller.enqueue(encoder.encode(lineBuffer));
       }

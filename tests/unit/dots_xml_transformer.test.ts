@@ -48,6 +48,48 @@ describe("Dots XML Transformer — Static Parsing", () => {
     expect(parsed.cleanText).toBe(input);
     expect(parsed.toolCalls.length).toBe(0);
   });
+  it("parses complex mixed XML tool calls with malformed closing tags and arg_key/arg_value pairs", () => {
+    const input = `Actually, let me just try a few parameter combinations and pick the best one.
+</parameter>
+</invoke>
+</function_calls>
+
+Let me try deeper add zone and momentum-gated adds.
+
+<function_calls>
+<invoke name="edit">
+<parameter name="path">/home/yapilwsl/arthityap/trend/scripts/bt/kelly_backtest.py</parameter>
+<parameter name="oldString">r_si = run_backtest(gold_jpy, add_fraction=0.5, add_zone_pct=0.6, max_additions=3)</arg_value><arg_key>newString</arg_key>
+<arg_value>r_si = run_backtest(gold_jpy, add_fraction=0.5, add_zone_pct=0.7, max_additions=3)</arg_value>
+</tool_call>`;
+
+    const parsed = parseDotsXml(input);
+
+    expect(parsed.toolCalls.length).toBe(1);
+    const call = parsed.toolCalls[0]!;
+    expect(call.function.name).toBe("edit");
+
+    const args = JSON.parse(call.function.arguments);
+    expect(args.path).toBe("/home/yapilwsl/arthityap/trend/scripts/bt/kelly_backtest.py");
+    expect(args.oldString).toBe("r_si = run_backtest(gold_jpy, add_fraction=0.5, add_zone_pct=0.6, max_additions=3)");
+    expect(args.newString).toBe("r_si = run_backtest(gold_jpy, add_fraction=0.5, add_zone_pct=0.7, max_additions=3)");
+
+    expect(parsed.cleanText).toContain("Actually, let me just try a few parameter combinations and pick the best one.");
+    expect(parsed.cleanText).toContain("Let me try deeper add zone and momentum-gated adds.");
+    expect(parsed.cleanText).not.toContain("<invoke");
+    expect(parsed.cleanText).not.toContain("</tool_call>");
+  });
+
+  it("parses tool_call tags with child name and raw json arguments", () => {
+    const input = '<tool_call><name>shell</name><arguments>{"command": "pytest tests/"}</arguments></tool_call>';
+    const parsed = parseDotsXml(input);
+
+    expect(parsed.toolCalls.length).toBe(1);
+    const call = parsed.toolCalls[0]!;
+    expect(call.function.name).toBe("shell");
+    const args = JSON.parse(call.function.arguments);
+    expect(args.command).toBe("pytest tests/");
+  });
 });
 
 describe("Dots XML Transformer — Streaming Chunk Handling", () => {

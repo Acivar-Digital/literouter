@@ -313,16 +313,14 @@ async function executeDirectCall(
       const decoded = new TextDecoder().decode(fullBody);
       const json = JSON.parse(decoded) as Record<string, unknown>;
 
-      if (directive.nuances.includes("tc") || activePayload.model.toLowerCase().includes("dots")) {
-        const choice = (json.choices as Array<{ message?: { content?: string | null; tool_calls?: unknown }; finish_reason?: string }>)?.[0];
-        if (choice?.message?.content && typeof choice.message.content === "string") {
-          const { cleanText, toolCalls } = parseDotsXml(choice.message.content);
-          if (toolCalls.length > 0) {
-            choice.message.content = cleanText || null;
-            choice.message.tool_calls = toolCalls;
-            choice.finish_reason = "tool_calls";
-            finalBody = new TextEncoder().encode(JSON.stringify(json));
-          }
+      const choice = (json.choices as Array<{ message?: { content?: string | null; tool_calls?: unknown }; finish_reason?: string }>)?.[0];
+      if (choice?.message?.content && typeof choice.message.content === "string") {
+        const { cleanText, toolCalls } = parseDotsXml(choice.message.content);
+        if (toolCalls.length > 0) {
+          choice.message.content = cleanText || null;
+          choice.message.tool_calls = toolCalls;
+          choice.finish_reason = "tool_calls";
+          finalBody = new TextEncoder().encode(JSON.stringify(json));
         }
       }
 
@@ -453,9 +451,7 @@ async function executeDirectCall(
     },
   });
 
-  if (directive.nuances.includes("tc") || activePayload.model.toLowerCase().includes("dots")) {
-    resilientStream = resilientStream.pipeThrough(createDotsStreamTransformer());
-  }
+  resilientStream = resilientStream.pipeThrough(createDotsStreamTransformer());
 
   return new Response(resilientStream, {
     status: response.status,
