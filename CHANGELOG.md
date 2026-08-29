@@ -4,6 +4,15 @@ All notable changes to LiteRouter will be documented in this file.
 
 ## [Unreleased]
 
+### Added / Selective Tool Reasoning Retention & Thinking Budget Inflation (`LITEROUTER_AO_MAX_TOKENS`)
+- **Selective History Reasoning Preservation (`src/transformers/opencode_adapter.ts`)**:
+  - Upgraded `scrubReasoningFromMessage` so that assistant turns with `tool_calls` retain their `reasoning_content`.
+  - Gives reasoning models (e.g., Ling 3.0, DeepSeek R1, QwQ) memory of their rationale across tool turns, eliminating tool amnesia loops and repetitive re-analysis of the same problem.
+  - Conversational/text-only turns continue to have older thinking blocks pruned to keep context compact.
+- **Thinking Budget Release & Max Tokens Inflation (`src/handlers/anthropic_compat.ts`, `src/config/schema.ts`, `src/config/env.ts`)**:
+  - Added `LITEROUTER_AO_MAX_TOKENS` (default `32768`) to auto-inflate incoming Anthropic `max_tokens` (which Claude Code limits to 4k/8k) up to 32k when translating to OpenAI request payloads.
+  - Prevents reasoning models from exhausting token ceilings during extended thinking phases, eliminating mid-stream truncation (`finish_reason: "length"`) and preventing CLI stalls that prompt the user to type "continue".
+
 ### Added / Anthropic Token Counter Endpoint (`POST /v1/messages/count_tokens`)
 - **Native Support for Claude CLI Token Counting (`src/handlers/anthropic_compat.ts`, `src/index.ts`, `src/ui/banner.ts`)**:
   - Implemented `handleAnthropicCountTokens` and `estimateAnthropicInputTokens` to support Anthropic's `POST /v1/messages/count_tokens` (and `/api/v1/messages/count_tokens`, `/messages/count_tokens`).

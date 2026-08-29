@@ -27,7 +27,7 @@ describe("Anthropic -> OpenAI Forward Translation", () => {
 
     const openAi = translateAnthropicToOpenAI(req);
     expect(openAi.model).toBe("dots-studio/dots-3-note-preview:free");
-    expect(openAi.max_tokens).toBe(4096);
+    expect(openAi.max_tokens).toBe(32768);
     expect(openAi.max_completion_tokens).toBeUndefined();
     expect(openAi.temperature).toBe(0.7);
     expect(openAi.stream).toBe(true);
@@ -48,7 +48,7 @@ describe("Anthropic -> OpenAI Forward Translation", () => {
 
     const openAi = translateAnthropicToOpenAI(req);
     expect(openAi.stream_options).toBeUndefined();
-    expect(openAi.max_tokens).toBe(2048);
+    expect(openAi.max_tokens).toBe(32768);
     expect(openAi.max_completion_tokens).toBeUndefined();
   });
 
@@ -240,6 +240,24 @@ describe("Anthropic -> OpenAI Forward Translation", () => {
     expect(openAi.anthropic_beta).toBeUndefined();
     expect(openAi.container).toBeUndefined();
     expect(openAi.mcp_servers).toBeUndefined();
+  });
+
+  it("inflates max_tokens lower than threshold to 32768, and preserves higher values", () => {
+    const reqLow: AnthropicMessagesRequest = {
+      model: "test-model",
+      messages: [{ role: "user", content: "Hi" }],
+      max_tokens: 1024,
+    };
+    const openAiLow = translateAnthropicToOpenAI(reqLow);
+    expect(openAiLow.max_tokens).toBe(32768);
+
+    const reqHigh: AnthropicMessagesRequest = {
+      model: "test-model",
+      messages: [{ role: "user", content: "Hi" }],
+      max_tokens: 65536,
+    };
+    const openAiHigh = translateAnthropicToOpenAI(reqHigh);
+    expect(openAiHigh.max_tokens).toBe(65536);
   });
 });
 

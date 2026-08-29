@@ -590,4 +590,24 @@ describe("opencode_adapter — 6. scrubReasoningFromMessages & metadata strippin
     expect(result[1]?.content).toBe("4");
     expect(result[2]?.content).toBe("Tool output verified");
   });
+
+  it("preserves reasoning_content on assistant messages that contain tool_calls", () => {
+    const assistantToolMsg: OpenAIMessage = {
+      role: "assistant",
+      content: null,
+      reasoning_content: "I need to check auth.ts before editing",
+      tool_calls: [
+        {
+          id: "call_123",
+          type: "function",
+          function: { name: "grep", arguments: '{"pattern":"auth"}' },
+        },
+      ],
+    } as unknown as OpenAIMessage;
+
+    const scrubbed = scrubReasoningFromMessage(assistantToolMsg);
+    expect((scrubbed as Record<string, unknown>).reasoning_content).toBe("I need to check auth.ts before editing");
+    expect(scrubbed.tool_calls).toBeDefined();
+    expect(scrubbed.tool_calls?.length).toBe(1);
+  });
 });

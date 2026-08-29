@@ -392,7 +392,11 @@ export function translateAnthropicToOpenAI(req: AnthropicMessagesRequest): OpenA
     result.stream_options = req.stream_options;
   }
 
-  if (req.max_tokens !== undefined) {
+  const env = getEnv();
+  const minAoMaxTokens = env.LITEROUTER_AO_MAX_TOKENS ?? 32768;
+  if (minAoMaxTokens > 0) {
+    result.max_tokens = req.max_tokens !== undefined ? Math.max(req.max_tokens, minAoMaxTokens) : minAoMaxTokens;
+  } else if (req.max_tokens !== undefined) {
     result.max_tokens = req.max_tokens;
   }
   if (req.temperature !== undefined) result.temperature = req.temperature;

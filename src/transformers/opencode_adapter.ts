@@ -420,9 +420,15 @@ function scrubMessageContent(cleaned: Record<string, unknown>): void {
 
 export function scrubReasoningFromMessage(msg: OpenAIMessage): OpenAIMessage {
   const cleaned: Record<string, unknown> = { ...msg };
-  deleteReasoningKeys(cleaned);
+  const hasToolCalls = Array.isArray(msg.tool_calls) && msg.tool_calls.length > 0;
+  const savedReasoningContent = hasToolCalls ? (cleaned.reasoning_content as string | undefined) : undefined;
 
+  deleteReasoningKeys(cleaned);
   scrubMessageContent(cleaned);
+
+  if (hasToolCalls && savedReasoningContent !== undefined) {
+    cleaned.reasoning_content = savedReasoningContent;
+  }
 
   return cleaned as unknown as OpenAIMessage;
 }
