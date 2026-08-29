@@ -21,6 +21,43 @@ describe("Dots XML Transformer — Static Parsing", () => {
     expect(result2.cleanText).toBe("Hello user!");
   });
 
+  it("strips leaked </role> and <role assistant> from delta.reasoning_content and delta.thought in streams", async () => {
+    const { createDotsStreamTransformer } = await import("../../src/transformers/dots");
+    const transformer = createDotsStreamTransformer();
+
+    const chunk1 = 'data: {"id":"chat-1","choices":[{"delta":{"reasoning_content":"Let me calculate the risk...</role>"}}]}\n\n';
+    const chunk2 = 'data: {"id":"chat-1","choices":[{"delta":{"thought":"<role assistant>Now we proceed."}}]}\n\n';
+    const chunk3 = 'data: {"id":"chat-1","choices":[{"delta":{"content":"Final answer."}}]}\n\n';
+    const chunk4 = 'data: {"id":"chat-1","choices":[{"delta":{},"finish_reason":"stop"}]}\n\n';
+    const chunk5 = 'data: [DONE]\n\n';
+
+    const inputChunks = [chunk1, chunk2, chunk3, chunk4, chunk5];
+
+    const stream = new ReadableStream({
+      start(controller) {
+        for (const chunk of inputChunks) {
+          controller.enqueue(new TextEncoder().encode(chunk));
+        }
+        controller.close();
+      },
+    });
+
+    const transformedStream = stream.pipeThrough(transformer);
+    const reader = transformedStream.getReader();
+    let resultText = "";
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      resultText += new TextDecoder().decode(value);
+    }
+
+    expect(resultText).not.toContain("</role>");
+    expect(resultText).not.toContain("<role assistant>");
+    expect(resultText).toContain("Let me calculate the risk...");
+    expect(resultText).toContain("Now we proceed.");
+    expect(resultText).toContain("Final answer.");
+  });
+
   it("strips leaked </role> across streaming chunks", async () => {
     const { createDotsStreamTransformer } = await import("../../src/transformers/dots");
     const transformer = createDotsStreamTransformer();

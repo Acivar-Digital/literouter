@@ -6,7 +6,7 @@ export interface DotsParseResult {
 }
 
 export const LEAKED_TEMPLATE_REGEX =
-  /<\/?(?:role|im_start|im_end|endoftext)(?:\s+[^>]*)?>|<\|(?:im_start|im_end|endoftext)\|>/gi;
+  /<\/?(?:role|im_start|im_end|endoftext)(?:\s+[^>]*)?>|<\|(?:im_start|im_end|endoftext)\|>|\[\/?INST\]/gi;
 
 export function stripLeakedTemplateTags(text: string): string {
   return text.replace(LEAKED_TEMPLATE_REGEX, "");
@@ -436,10 +436,37 @@ export function createDotsStreamTransformer(): TransformStream<Uint8Array, Uint8
             }
 
             const choice = data.choices?.[0];
-            const content = choice?.delta?.content;
+            const delta = choice?.delta;
+            const content = delta?.content;
             const incomingFinishReason = choice?.finish_reason;
 
-            // FAST PASS-THROUGH: If no XML buffering is active and content has no '<', forward chunk raw
+            // Sanitize reasoning / thought fields in delta if present
+            let deltaModified = false;
+            if (delta && typeof delta === "object") {
+              if (typeof delta.reasoning_content === "string") {
+                const cleaned = stripLeakedTemplateTags(delta.reasoning_content);
+                if (cleaned !== delta.reasoning_content) {
+                  delta.reasoning_content = cleaned;
+                  deltaModified = true;
+                }
+              }
+              if (typeof delta.thought === "string") {
+                const cleaned = stripLeakedTemplateTags(delta.thought);
+                if (cleaned !== delta.thought) {
+                  delta.thought = cleaned;
+                  deltaModified = true;
+                }
+              }
+              if (typeof delta.reasoning === "string") {
+                const cleaned = stripLeakedTemplateTags(delta.reasoning);
+                if (cleaned !== delta.reasoning) {
+                  delta.reasoning = cleaned;
+                  deltaModified = true;
+                }
+              }
+            }
+
+            // FAST PASS-THROUGH: If no XML buffering is active and content has no '<', forward chunk
             if (
               state.buffer.length === 0 &&
               (typeof content !== "string" || !content.includes("<"))
@@ -451,10 +478,14 @@ export function createDotsStreamTransformer(): TransformStream<Uint8Array, Uint8
                   controller.enqueue(encoder.encode(`data: ${JSON.stringify(data)}\n\n`));
                 } else {
                   state.hasEmittedFinishReason = true;
-                  controller.enqueue(encoder.encode(line + "\n"));
+                  controller.enqueue(
+                    encoder.encode(deltaModified ? `data: ${JSON.stringify(data)}\n\n` : line + "\n")
+                  );
                 }
               } else {
-                controller.enqueue(encoder.encode(line + "\n"));
+                controller.enqueue(
+                  encoder.encode(deltaModified ? `data: ${JSON.stringify(data)}\n\n` : line + "\n")
+                );
               }
               continue;
             }
@@ -480,10 +511,14 @@ export function createDotsStreamTransformer(): TransformStream<Uint8Array, Uint8
               if (finishSse) {
                 controller.enqueue(encoder.encode(finishSse));
               } else {
-                controller.enqueue(encoder.encode(line + "\n"));
+                controller.enqueue(
+                  encoder.encode(deltaModified ? `data: ${JSON.stringify(data)}\n\n` : line + "\n")
+                );
               }
             } else {
-              controller.enqueue(encoder.encode(line + "\n"));
+              controller.enqueue(
+                encoder.encode(deltaModified ? `data: ${JSON.stringify(data)}\n\n` : line + "\n")
+              );
             }
           } catch {
             controller.enqueue(encoder.encode(line + "\n"));

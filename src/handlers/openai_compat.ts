@@ -17,7 +17,7 @@ import {
 import { KeyPool, type SelectedKey } from "../network/pool";
 import { sanitizeAndTransformPayload } from "../transformers/payload";
 import type { OpenAIRequestPayload } from "../transformers/nuances";
-import { createDotsStreamTransformer, parseDotsXml } from "../transformers/dots";
+import { createDotsStreamTransformer, parseDotsXml, stripLeakedTemplateTags } from "../transformers/dots";
 
 import type { FusionConfig, FusionTier } from "../config/schema";
 import { getEnv } from "../config/env";
@@ -313,15 +313,35 @@ async function executeDirectCall(
       const decoded = new TextDecoder().decode(fullBody);
       const json = JSON.parse(decoded) as Record<string, unknown>;
 
-      const choice = (json.choices as Array<{ message?: { content?: string | null; tool_calls?: unknown }; finish_reason?: string }>)?.[0];
-      if (choice?.message?.content && typeof choice.message.content === "string") {
-        const { cleanText, toolCalls } = parseDotsXml(choice.message.content);
-        if (toolCalls.length > 0 || cleanText !== choice.message.content) {
-          choice.message.content = cleanText || null;
-          if (toolCalls.length > 0) {
-            choice.message.tool_calls = toolCalls;
-            choice.finish_reason = "tool_calls";
+      const choice = (json.choices as Array<{ message?: { content?: string | null; reasoning_content?: string | null; thought?: string | null; tool_calls?: unknown }; finish_reason?: string }>)?.[0];
+      if (choice?.message) {
+        let msgModified = false;
+        if (typeof choice.message.content === "string") {
+          const { cleanText, toolCalls } = parseDotsXml(choice.message.content);
+          if (toolCalls.length > 0 || cleanText !== choice.message.content) {
+            choice.message.content = cleanText || null;
+            if (toolCalls.length > 0) {
+              choice.message.tool_calls = toolCalls;
+              choice.finish_reason = "tool_calls";
+            }
+            msgModified = true;
           }
+        }
+        if (typeof choice.message.reasoning_content === "string") {
+          const cleaned = stripLeakedTemplateTags(choice.message.reasoning_content);
+          if (cleaned !== choice.message.reasoning_content) {
+            choice.message.reasoning_content = cleaned || null;
+            msgModified = true;
+          }
+        }
+        if (typeof choice.message.thought === "string") {
+          const cleaned = stripLeakedTemplateTags(choice.message.thought);
+          if (cleaned !== choice.message.thought) {
+            choice.message.thought = cleaned || null;
+            msgModified = true;
+          }
+        }
+        if (msgModified) {
           finalBody = new TextEncoder().encode(JSON.stringify(json));
         }
       }
