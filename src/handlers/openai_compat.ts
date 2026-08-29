@@ -18,7 +18,7 @@ import { KeyPool, type SelectedKey } from "../network/pool";
 import { sanitizeAndTransformPayload } from "../transformers/payload";
 import type { OpenAIRequestPayload } from "../transformers/nuances";
 import { createDotsStreamTransformer, parseDotsXml, stripLeakedTemplateTags } from "../transformers/dots";
-import { createLingStreamTransformer, parseLingXml, transformLingResponse } from "../transformers/ling";
+import { createLingStreamTransformer, lingResponseToSseStream, parseLingXml, transformLingResponse, type OpenAIResponse } from "../transformers/ling";
 
 import type { FusionConfig, FusionTier } from "../config/schema";
 import { getEnv } from "../config/env";
@@ -226,11 +226,23 @@ async function executeDirectCall(
     );
   }
 
+  const isLing =
+    directive.nuances.includes("lg") ||
+    Boolean(payload.model && payload.model.toLowerCase().includes("ling"));
+
   let activePayload = payload;
   if ((directive.provider === "or" || (directive.provider as string) === "openrouter") && payload.model.startsWith("openrouter/")) {
     activePayload = {
       ...payload,
       model: payload.model.slice("openrouter/".length),
+    };
+  }
+
+  // Force upstream non-streaming for Ling models to guarantee complete-payload parsing
+  if (isLing && activePayload.stream) {
+    activePayload = {
+      ...activePayload,
+      stream: false,
     };
   }
 
@@ -307,13 +319,71 @@ async function executeDirectCall(
   globalKeyPool.reportSuccess(directive.provider, selected.index);
   logTtft(reqId, ttftMs, isStream ? "Stream established" : "First chunk streamed downstream", protocol);
 
-  const isLing =
-    directive.nuances.includes("lg") ||
-    Boolean(payload.model && payload.model.toLowerCase().includes("ling"));
-
   const isXmlTranslationActive =
     directive.nuances.includes("tc") ||
     Boolean(payload.model && payload.model.toLowerCase().includes("dots"));
+
+  // Ling Downstream Streaming Emulation: Emits clean SSE chunks from complete upstream payload
+  if (isLing && isStream) {
+    const fullBody = await collectFullBody(firstChunk, rawReader);
+    let transformedResponse: OpenAIResponse;
+    try {
+      const decoded = new TextDecoder().decode(fullBody);
+      const json = JSON.parse(decoded) as OpenAIResponse;
+      transformedResponse = transformLingResponse(json);
+    } catch {
+      transformedResponse = {
+        id: `chatcmpl_${Date.now()}`,
+        object: "chat.completion",
+        created: Math.floor(Date.now() / 1000),
+        model: payload.model,
+        choices: [{ index: 0, message: { role: "assistant", content: new TextDecoder().decode(fullBody) }, finish_reason: "stop" }],
+      };
+    }
+
+    const choiceForFinish = transformedResponse.choices?.[0];
+    if (choiceForFinish?.finish_reason) {
+      logFinishReason(reqId, choiceForFinish.finish_reason);
+    }
+
+    if (transformedResponse.usage && typeof transformedResponse.usage === "object") {
+      const u = transformedResponse.usage as Record<string, unknown>;
+      const promptTokens = typeof u.prompt_tokens === "number" ? u.prompt_tokens : 0;
+      const completionTokens = typeof u.completion_tokens === "number" ? u.completion_tokens : 0;
+      const totalTokens = typeof u.total_tokens === "number" ? u.total_tokens : promptTokens + completionTokens;
+      let reasoningTokens = 0;
+      if (u.completion_tokens_details && typeof u.completion_tokens_details === "object") {
+        const details = u.completion_tokens_details as Record<string, unknown>;
+        if (typeof details.reasoning_tokens === "number") {
+          reasoningTokens = details.reasoning_tokens;
+        }
+      }
+      logUsage({
+        reqId,
+        provider: directive.provider,
+        keyIndex: selected.index,
+        totalKeys: selected.totalKeys,
+        promptTokens,
+        reasoningTokens,
+        completionTokens,
+        totalTokens,
+        durationMs: duration,
+      });
+    }
+
+    logServed(reqId, duration, response.status, attempt, maxAttempts);
+    logSeparator();
+
+    const sseStream = lingResponseToSseStream(transformedResponse);
+    return new Response(sseStream, {
+      status: 200,
+      headers: {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        Connection: "keep-alive",
+      },
+    });
+  }
 
   if (!isStream) {
     const fullBody = await collectFullBody(firstChunk, rawReader);
