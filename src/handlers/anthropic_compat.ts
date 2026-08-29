@@ -1366,4 +1366,127 @@ export async function handleAnthropicCompat(
   return handleNonStreamingResult(openAiRes, anthropicBody.model);
 }
 
+export function estimateTextTokens(text: string): number {
+  if (!text) return 0;
+  const cjkMatches = text.match(/[\u4e00-\u9fa5\u3040-\u30ff\uac00-\ud7af]/g);
+  const cjkCount = cjkMatches ? cjkMatches.length : 0;
+  const nonCjkLen = text.length - cjkCount;
+  const latinTokens = Math.ceil(nonCjkLen / 3.7);
+  const cjkTokens = Math.ceil(cjkCount * 1.5);
+  return Math.max(1, latinTokens + cjkTokens);
+}
+
+export function estimateAnthropicInputTokens(req: AnthropicMessagesRequest): number {
+  let total = 3;
+
+  if (req.system) {
+    total += 4;
+    if (typeof req.system === "string") {
+      total += estimateTextTokens(req.system);
+    } else if (Array.isArray(req.system)) {
+      for (const block of req.system) {
+        if (typeof block === "string") {
+          total += estimateTextTokens(block);
+        } else if (block && typeof block === "object" && "text" in block && typeof block.text === "string") {
+          total += estimateTextTokens(block.text);
+        }
+      }
+    }
+  }
+
+  if (Array.isArray(req.messages)) {
+    for (const msg of req.messages) {
+      total += 4;
+      if (typeof msg.content === "string") {
+        total += estimateTextTokens(msg.content);
+      } else if (Array.isArray(msg.content)) {
+        for (const block of msg.content) {
+          if (block.type === "text" && block.text) {
+            total += estimateTextTokens(block.text);
+          } else if (block.type === "thinking" && block.thinking) {
+            total += estimateTextTokens(block.thinking);
+          } else if (block.type === "image") {
+            total += 1600;
+          } else if (block.type === "tool_use") {
+            total += 8;
+            if (block.name) total += estimateTextTokens(block.name);
+            if (block.input) {
+              const inputStr = typeof block.input === "string" ? block.input : JSON.stringify(block.input);
+              total += estimateTextTokens(inputStr);
+            }
+          } else if (block.type === "tool_result") {
+            total += 8;
+            if (typeof block.content === "string") {
+              total += estimateTextTokens(block.content);
+            } else if (Array.isArray(block.content)) {
+              total += estimateTextTokens(JSON.stringify(block.content));
+            }
+          }
+        }
+      }
+    }
+  }
+
+  if (Array.isArray(req.tools)) {
+    for (const tool of req.tools) {
+      total += 10;
+      total += estimateTextTokens(JSON.stringify(tool));
+    }
+  }
+
+  return total;
+}
+
+export async function handleAnthropicCountTokens(
+  req: Request,
+  rawKey: string,
+  reqId: string
+): Promise<Response> {
+  const startTime = Date.now();
+  const validation = validateDirective(rawKey);
+  if (validation.valid === false) {
+    return createAnthropicErrorResponse(401, validation.error, "authentication_error");
+  }
+
+  const directive = validation.directive;
+  const anthropicBody = await parseAnthropicRequest(req);
+  if (!anthropicBody) {
+    logError(reqId, "Failed to parse Anthropic count_tokens body");
+    return createAnthropicErrorResponse(400, "Malformed JSON", "invalid_request_error");
+  }
+
+  const validationError = validateAnthropicPayload(anthropicBody);
+  if (validationError) {
+    return createAnthropicErrorResponse(400, validationError, "invalid_request_error");
+  }
+
+  const clientAgent = req.headers.get("user-agent") || "unknown";
+  logInbound({
+    reqId,
+    method: req.method,
+    path: "/v1/messages/count_tokens",
+    clientAgent,
+    protocol: req.headers.get("x-http-version") || "HTTP/1.1",
+    directiveStr: rawKey,
+    targetProvider: directive.type === "direct" ? directive.provider : directive.preset,
+    wireFormat: directive.type === "direct" ? directive.payload : "cl",
+    model: anthropicBody.model,
+    totalKeys: directive.type === "direct" ? globalKeyPool.getPoolSize(directive.provider) : 1,
+    nuances: directive.type === "direct" ? directive.nuances : undefined,
+  });
+
+  const inputTokens = estimateAnthropicInputTokens(anthropicBody);
+  logServed(reqId, Date.now() - startTime, 200);
+
+  return Response.json(
+    { input_tokens: inputTokens },
+    {
+      status: 200,
+      headers: {
+        "Content-Type": "application/json",
+      },
+    }
+  );
+}
+
 export const handleAnthropicOpenAICompat = handleAnthropicCompat;

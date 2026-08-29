@@ -3,6 +3,9 @@ import {
   type AnthropicMessagesRequest,
   createAnthropicErrorResponse,
   createAnthropicStreamTransformer,
+  estimateAnthropicInputTokens,
+  estimateTextTokens,
+  handleAnthropicCountTokens,
   mapOpenAIToAnthropicStopReason,
   mapOpenAIToAnthropicUsage,
   translateAnthropicToOpenAI,
@@ -580,5 +583,88 @@ describe("Anthropic Error Response Helper", () => {
         message: "Invalid JSON payload",
       },
     });
+  });
+});
+
+describe("Anthropic Count Tokens Endpoint (/v1/messages/count_tokens)", () => {
+  it("estimates text tokens accurately for English and CJK text", () => {
+    expect(estimateTextTokens("Hello world")).toBeGreaterThan(0);
+    expect(estimateTextTokens("你好世界")).toBeGreaterThan(0);
+  });
+
+  it("estimates input tokens from Anthropic messages request", () => {
+    const req: AnthropicMessagesRequest = {
+      model: "claude-3-5-sonnet-20241022",
+      system: "You are a helpful coding assistant.",
+      messages: [
+        { role: "user", content: "What is the capital of France?" },
+        { role: "assistant", content: [{ type: "text", text: "Paris" }] },
+        { role: "user", content: "And Spain?" },
+      ],
+      tools: [
+        {
+          name: "get_weather",
+          description: "Get current weather in location",
+          input_schema: {
+            type: "object",
+            properties: { location: { type: "string" } },
+            required: ["location"],
+          },
+        },
+      ],
+    };
+
+    const tokens = estimateAnthropicInputTokens(req);
+    expect(tokens).toBeGreaterThan(20);
+  });
+
+  it("handles handleAnthropicCountTokens with valid request and directive", async () => {
+    const body = JSON.stringify({
+      model: "claude-3-5-sonnet-20241022",
+      messages: [{ role: "user", content: "Hello world" }],
+    });
+    const req = new Request("http://localhost:7766/v1/messages/count_tokens", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body,
+    });
+
+    const res = await handleAnthropicCountTokens(req, "lr-or-ao-ch-no", "req_test_count");
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as { input_tokens: number };
+    expect(typeof json.input_tokens).toBe("number");
+    expect(json.input_tokens).toBeGreaterThan(0);
+  });
+
+  it("rejects invalid directive in count_tokens", async () => {
+    const body = JSON.stringify({
+      model: "claude-3-5-sonnet-20241022",
+      messages: [{ role: "user", content: "Hello world" }],
+    });
+    const req = new Request("http://localhost:7766/v1/messages/count_tokens", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body,
+    });
+
+    const res = await handleAnthropicCountTokens(req, "invalid-key", "req_test_count");
+    expect(res.status).toBe(401);
+  });
+
+  it("rejects malformed payload in count_tokens", async () => {
+    const req = new Request("http://localhost:7766/v1/messages/count_tokens", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: "not-json",
+    });
+
+    const res = await handleAnthropicCountTokens(req, "lr-or-ao-ch-no", "req_test_count");
+    expect(res.status).toBe(400);
   });
 });

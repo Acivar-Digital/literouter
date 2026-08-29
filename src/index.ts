@@ -6,7 +6,7 @@ import { getEnv } from "./config/env";
 import { loadKeyPools } from "./config/keys";
 import { parseDirective } from "./directive/parser";
 import { extractDirectiveToken } from "./directive/validator";
-import { handleAnthropicCompat } from "./handlers/anthropic_compat";
+import { handleAnthropicCompat, handleAnthropicCountTokens } from "./handlers/anthropic_compat";
 import { handleModelsDiscovery } from "./handlers/discovery";
 import {
   handleGoogleInteractionsPassthrough,
@@ -134,6 +134,9 @@ const ROUTE_MAP: Readonly<Record<string, RouteHandler>> = {
   "/v1/messages": handleAnthropicCompat,
   "/messages": handleAnthropicCompat,
   "/api/v1/messages": handleAnthropicCompat,
+  "/v1/messages/count_tokens": handleAnthropicCountTokens,
+  "/messages/count_tokens": handleAnthropicCountTokens,
+  "/api/v1/messages/count_tokens": handleAnthropicCountTokens,
 };
 
 const SYSTEM_MAP: Readonly<Record<string, () => Response>> = {

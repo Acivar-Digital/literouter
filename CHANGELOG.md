@@ -4,6 +4,12 @@ All notable changes to LiteRouter will be documented in this file.
 
 ## [Unreleased]
 
+### Added / Anthropic Token Counter Endpoint (`POST /v1/messages/count_tokens`)
+- **Native Support for Claude CLI Token Counting (`src/handlers/anthropic_compat.ts`, `src/index.ts`, `src/ui/banner.ts`)**:
+  - Implemented `handleAnthropicCountTokens` and `estimateAnthropicInputTokens` to support Anthropic's `POST /v1/messages/count_tokens` (and `/api/v1/messages/count_tokens`, `/messages/count_tokens`).
+  - Estimates input tokens accurately across system prompts, text blocks, thinking blocks, image inputs, tool calls, and tool schemas.
+  - Resolves `404 Route Not Found: POST /v1/messages/count_tokens from claude-cli` errors encountered during Claude Code / Claude CLI execution.
+
 ### Added / AO Strip Reasoning Standard Flag (`LITEROUTER_AO_STRIP_REASONING`)
 - **Default Outgoing Reasoning Stripping for Anthropic->OpenAI Cross-Wire (`.env`, `src/config/schema.ts`, `src/config/env.ts`, `src/transformers/payload.ts`)**:
   - Added `LITEROUTER_AO_STRIP_REASONING=true` (defaults to `true`), establishing a standard policy to strip reasoning parameters (`thinking`, `thinkingConfig`, `reasoning_effort`, `budget_tokens`) and historical thinking blocks from request payloads sent **TO** the upstream provider.
