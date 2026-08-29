@@ -18,11 +18,7 @@ import { KeyPool, type SelectedKey } from "../network/pool";
 import { sanitizeAndTransformPayload } from "../transformers/payload";
 import type { OpenAIRequestPayload } from "../transformers/nuances";
 import { createDotsStreamTransformer, parseDotsXml } from "../transformers/dots";
-import {
-  createOpenCodeReasoningFilterStreamTransformer,
-  isOpenCodeClient,
-  stripReasoningFromResponseBody,
-} from "../transformers/opencode_adapter";
+
 import type { FusionConfig, FusionTier } from "../config/schema";
 import { getEnv } from "../config/env";
 import { getPacerForProvider, PacerQueueOverflowError } from "../network/pacer";
@@ -194,26 +190,7 @@ export interface RequestClientOptions {
   readonly filterReasoning?: boolean;
 }
 
-function determineShouldFilterReasoning(
-  directive: DirectDirective,
-  clientOptions?: RequestClientOptions
-): boolean {
-  if (clientOptions?.filterReasoning !== undefined) {
-    return clientOptions.filterReasoning;
-  }
-  if (directive.nuances.includes("ts")) {
-    return false;
-  }
-  if (directive.nuances.includes("sb")) {
-    return true;
-  }
-  if (isOpenCodeClient(clientOptions?.userAgent, clientOptions?.headers, directive.nuances)) {
-    return true;
-  }
-  return false;
-}
 
-export { stripReasoningFromResponseBody };
 
 export function parseRetryAfterHeader(headers: Headers): number | undefined {
   const ra = headers.get("retry-after");
@@ -329,8 +306,6 @@ async function executeDirectCall(
   globalKeyPool.reportSuccess(directive.provider, selected.index);
   logTtft(reqId, ttftMs, isStream ? "Stream established" : "First chunk streamed downstream", protocol);
 
-  const shouldFilterReasoning = determineShouldFilterReasoning(directive, clientOptions);
-
   if (!isStream) {
     const fullBody = await collectFullBody(firstChunk, rawReader);
     let finalBody: Uint8Array = fullBody;
@@ -354,11 +329,6 @@ async function executeDirectCall(
       const choiceForFinish = (json.choices as Array<{ finish_reason?: string | null }>)?.[0];
       if (choiceForFinish?.finish_reason) {
         logFinishReason(reqId, choiceForFinish.finish_reason);
-      }
-
-      if (shouldFilterReasoning) {
-        stripReasoningFromResponseBody(json);
-        finalBody = new TextEncoder().encode(JSON.stringify(json));
       }
 
       if (json.usage && typeof json.usage === "object") {
@@ -485,10 +455,6 @@ async function executeDirectCall(
 
   if (directive.nuances.includes("tc") || activePayload.model.toLowerCase().includes("dots")) {
     resilientStream = resilientStream.pipeThrough(createDotsStreamTransformer());
-  }
-
-  if (shouldFilterReasoning) {
-    resilientStream = resilientStream.pipeThrough(createOpenCodeReasoningFilterStreamTransformer(reqId));
   }
 
   return new Response(resilientStream, {

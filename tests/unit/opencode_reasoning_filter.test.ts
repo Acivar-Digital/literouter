@@ -4,7 +4,7 @@ import {
   filterReasoningFromChunk,
   isOpenCodeClient,
 } from "../../src/transformers/thinking";
-import { stripReasoningFromResponseBody } from "../../src/handlers/openai_compat";
+import { stripReasoningFromResponseBody } from "../../src/transformers/opencode_adapter";
 
 async function readStreamToString(stream: ReadableStream<Uint8Array>): Promise<string> {
   const reader = stream.getReader();
