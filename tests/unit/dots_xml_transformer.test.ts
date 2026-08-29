@@ -93,6 +93,60 @@ Let me try deeper add zone and momentum-gated adds.
 });
 
 describe("Dots XML Transformer — Streaming Chunk Handling", () => {
+  it("emits finish_reason: 'tool_calls' before data: [DONE] when tool calls are streamed", async () => {
+    const { createDotsStreamTransformer } = await import("../../src/transformers/dots");
+    const transformer = createDotsStreamTransformer();
+
+    const chunk1Obj = {
+      id: "chatcmpl-123",
+      model: "ling-3.0",
+      choices: [{ delta: { content: '<function_calls><invoke name="edit">' } }],
+    };
+    const chunk2Obj = {
+      choices: [{ delta: { content: '<parameter name="path">/tmp/test.py</parameter></invoke></function_calls>' } }],
+    };
+    const chunk3Obj = {
+      choices: [{ delta: {}, finish_reason: "stop" }],
+    };
+
+    const inputChunks = [
+      `data: ${JSON.stringify(chunk1Obj)}\n\n`,
+      `data: ${JSON.stringify(chunk2Obj)}\n\n`,
+      `data: ${JSON.stringify(chunk3Obj)}\n\n`,
+      "data: [DONE]\n\n",
+    ];
+
+    const stream = new ReadableStream({
+      start(controller) {
+        for (const chunk of inputChunks) {
+          controller.enqueue(new TextEncoder().encode(chunk));
+        }
+        controller.close();
+      },
+    });
+
+    const transformedStream = stream.pipeThrough(transformer);
+    const reader = transformedStream.getReader();
+    let resultText = "";
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      resultText += new TextDecoder().decode(value);
+    }
+
+    expect(resultText).toContain('"tool_calls"');
+    expect(resultText).toContain('"name":"edit"');
+    expect(resultText).toContain('/tmp/test.py');
+    expect(resultText).toContain('"finish_reason":"tool_calls"');
+    expect(resultText).toContain('data: [DONE]');
+
+    // Ensure finish_reason occurs BEFORE data: [DONE]
+    const finishIdx = resultText.indexOf('"finish_reason":"tool_calls"');
+    const doneIdx = resultText.indexOf('data: [DONE]');
+    expect(finishIdx).toBeGreaterThan(-1);
+    expect(doneIdx).toBeGreaterThan(finishIdx);
+  });
+
   it("handles XML tags split across chunk boundaries", () => {
     const state = createDotsStreamState();
 

@@ -168,9 +168,7 @@ function serializeSingleInvoke(tc: OpenAIToolCall): string {
   const argsObj = parseToolCallArguments(tc.function?.arguments);
   const paramXml = Object.entries(argsObj).map(serializeParamEntry).join("\n");
   if (paramXml.length > 0) {
-    return `<invoke name="${fnName}">
-${paramXml}
-</invoke>`;
+    return `<invoke name="${fnName}">\n${paramXml}\n</invoke>`;
   }
   return `<invoke name="${fnName}">\n</invoke>`;
 }
@@ -182,9 +180,7 @@ export function serializeDotsToolCalls(
     return "";
   }
   const invokes = toolCalls.map(serializeSingleInvoke).join("\n");
-  return `<tool_calls>
-${invokes}
-</tool_calls>`;
+  return `<tool_calls>\n${invokes}\n</tool_calls>`;
 }
 
 function serializeToolResultContent(content: unknown): string {
@@ -198,8 +194,7 @@ function serializeMessageForDots(msg: OpenAIMessage): OpenAIMessage {
   if (msg.role === "assistant" && msg.tool_calls && msg.tool_calls.length > 0) {
     const xml = serializeDotsToolCalls(msg.tool_calls);
     const baseText = typeof msg.content === "string" ? msg.content : "";
-    const newContent = baseText.length > 0 ? `${baseText}
-${xml}` : xml;
+    const newContent = baseText.length > 0 ? `${baseText}\n${xml}` : xml;
     return { role: "assistant", content: newContent };
   }
   if (msg.role === "tool") {
@@ -207,9 +202,7 @@ ${xml}` : xml;
     const text = serializeToolResultContent(msg.content);
     return {
       role: "user",
-      content: `<tool_result id="${toolId}">
-${text}
-</tool_result>`,
+      content: `<tool_result id="${toolId}">\n${text}\n</tool_result>`,
     };
   }
   return msg;
@@ -224,20 +217,32 @@ export function serializeDotsToolHistory(
 export interface DotsStreamState {
   buffer: string;
   toolCallIndex: number;
+  hasEmittedToolCalls: boolean;
+  hasEmittedFinishReason: boolean;
+  id?: string;
+  model?: string;
 }
 
 export function createDotsStreamState(): DotsStreamState {
   return {
     buffer: "",
     toolCallIndex: 0,
+    hasEmittedToolCalls: false,
+    hasEmittedFinishReason: false,
   };
 }
 
 function formatOpenAIToolCallDelta(
   toolCall: OpenAIToolCall,
-  index: number
+  index: number,
+  id?: string,
+  model?: string
 ): string {
   const payload = {
+    id: id || `chatcmpl_dots_${Date.now()}`,
+    object: "chat.completion.chunk",
+    created: Math.floor(Date.now() / 1000),
+    model: model || "model",
     choices: [
       {
         index: 0,
@@ -257,13 +262,19 @@ function formatOpenAIToolCallDelta(
       },
     ],
   };
-  return `data: ${JSON.stringify(payload)}
-
-`;
+  return `data: ${JSON.stringify(payload)}\n\n`;
 }
 
-function formatOpenAITextDelta(text: string): string {
+function formatOpenAITextDelta(
+  text: string,
+  id?: string,
+  model?: string
+): string {
   const payload = {
+    id: id || `chatcmpl_dots_${Date.now()}`,
+    object: "chat.completion.chunk",
+    created: Math.floor(Date.now() / 1000),
+    model: model || "model",
     choices: [
       {
         index: 0,
@@ -273,9 +284,28 @@ function formatOpenAITextDelta(text: string): string {
       },
     ],
   };
-  return `data: ${JSON.stringify(payload)}
+  return `data: ${JSON.stringify(payload)}\n\n`;
+}
 
-`;
+export function formatOpenAIFinishDelta(
+  finishReason: string,
+  id?: string,
+  model?: string
+): string {
+  const payload = {
+    id: id || `chatcmpl_dots_${Date.now()}`,
+    object: "chat.completion.chunk",
+    created: Math.floor(Date.now() / 1000),
+    model: model || "model",
+    choices: [
+      {
+        index: 0,
+        delta: {},
+        finish_reason: finishReason,
+      },
+    ],
+  };
+  return `data: ${JSON.stringify(payload)}\n\n`;
 }
 
 function flushNonTagContent(state: DotsStreamState): string {
@@ -285,16 +315,16 @@ function flushNonTagContent(state: DotsStreamState): string {
     if (potentialTag !== -1) {
       const textToEmit = state.buffer.slice(0, potentialTag);
       state.buffer = state.buffer.slice(potentialTag);
-      return textToEmit.length > 0 ? formatOpenAITextDelta(textToEmit) : "";
+      return textToEmit.length > 0 ? formatOpenAITextDelta(textToEmit, state.id, state.model) : "";
     }
     const textToEmit = state.buffer;
     state.buffer = "";
-    return textToEmit.length > 0 ? formatOpenAITextDelta(textToEmit) : "";
+    return textToEmit.length > 0 ? formatOpenAITextDelta(textToEmit, state.id, state.model) : "";
   }
   if (tagStart > 0) {
     const prefix = state.buffer.slice(0, tagStart);
     state.buffer = state.buffer.slice(tagStart);
-    return formatOpenAITextDelta(prefix);
+    return formatOpenAITextDelta(prefix, state.id, state.model);
   }
   return "";
 }
@@ -315,11 +345,12 @@ export function processDotsStreamChunk(
 
   let output = "";
   if (cleanText.length > 0) {
-    output += formatOpenAITextDelta(cleanText);
+    output += formatOpenAITextDelta(cleanText, state.id, state.model);
   }
   for (const tc of toolCalls) {
-    output += formatOpenAIToolCallDelta(tc, state.toolCallIndex);
+    output += formatOpenAIToolCallDelta(tc, state.toolCallIndex, state.id, state.model);
     state.toolCallIndex += 1;
+    state.hasEmittedToolCalls = true;
   }
   return output;
 }
@@ -329,6 +360,32 @@ export function createDotsStreamTransformer(): TransformStream<Uint8Array, Uint8
   const decoder = new TextDecoder();
   const encoder = new TextEncoder();
   let lineBuffer = "";
+
+  function flushPendingBuffer(): string {
+    let out = "";
+    if (state.buffer.length > 0) {
+      const { cleanText, toolCalls } = parseDotsXml(state.buffer);
+      state.buffer = "";
+      if (cleanText.length > 0) {
+        out += formatOpenAITextDelta(cleanText, state.id, state.model);
+      }
+      for (const tc of toolCalls) {
+        out += formatOpenAIToolCallDelta(tc, state.toolCallIndex, state.id, state.model);
+        state.toolCallIndex += 1;
+        state.hasEmittedToolCalls = true;
+      }
+    }
+    return out;
+  }
+
+  function ensureFinishReason(): string {
+    if (!state.hasEmittedFinishReason) {
+      state.hasEmittedFinishReason = true;
+      const finishReason = state.hasEmittedToolCalls ? "tool_calls" : "stop";
+      return formatOpenAIFinishDelta(finishReason, state.id, state.model);
+    }
+    return "";
+  }
 
   return new TransformStream<Uint8Array, Uint8Array>({
     transform(chunk, controller) {
@@ -343,6 +400,14 @@ export function createDotsStreamTransformer(): TransformStream<Uint8Array, Uint8
           continue;
         }
         if (trimmed === "data: [DONE]") {
+          const pending = flushPendingBuffer();
+          if (pending) {
+            controller.enqueue(encoder.encode(pending));
+          }
+          const finishSse = ensureFinishReason();
+          if (finishSse) {
+            controller.enqueue(encoder.encode(finishSse));
+          }
           controller.enqueue(encoder.encode(line + "\n"));
           continue;
         }
@@ -350,11 +415,38 @@ export function createDotsStreamTransformer(): TransformStream<Uint8Array, Uint8
           const jsonStr = trimmed.slice(6);
           try {
             const data = JSON.parse(jsonStr);
-            const content = data.choices?.[0]?.delta?.content;
+            if (data.id && typeof data.id === "string") {
+              state.id = data.id;
+            }
+            if (data.model && typeof data.model === "string") {
+              state.model = data.model;
+            }
+
+            const choice = data.choices?.[0];
+            const content = choice?.delta?.content;
+            const incomingFinishReason = choice?.finish_reason;
+
             if (typeof content === "string") {
               const processedSse = processDotsStreamChunk(content, state);
               if (processedSse) {
                 controller.enqueue(encoder.encode(processedSse));
+              }
+              if (incomingFinishReason) {
+                const finishSse = ensureFinishReason();
+                if (finishSse) {
+                  controller.enqueue(encoder.encode(finishSse));
+                }
+              }
+            } else if (incomingFinishReason) {
+              const pending = flushPendingBuffer();
+              if (pending) {
+                controller.enqueue(encoder.encode(pending));
+              }
+              const finishSse = ensureFinishReason();
+              if (finishSse) {
+                controller.enqueue(encoder.encode(finishSse));
+              } else {
+                controller.enqueue(encoder.encode(line + "\n"));
               }
             } else {
               controller.enqueue(encoder.encode(line + "\n"));
@@ -368,20 +460,13 @@ export function createDotsStreamTransformer(): TransformStream<Uint8Array, Uint8
       }
     },
     flush(controller) {
-      if (state.buffer.length > 0) {
-        const { cleanText, toolCalls } = parseDotsXml(state.buffer);
-        state.buffer = "";
-        let output = "";
-        if (cleanText.length > 0) {
-          output += formatOpenAITextDelta(cleanText);
-        }
-        for (const tc of toolCalls) {
-          output += formatOpenAIToolCallDelta(tc, state.toolCallIndex);
-          state.toolCallIndex += 1;
-        }
-        if (output.length > 0) {
-          controller.enqueue(encoder.encode(output));
-        }
+      const pending = flushPendingBuffer();
+      if (pending) {
+        controller.enqueue(encoder.encode(pending));
+      }
+      const finishSse = ensureFinishReason();
+      if (finishSse) {
+        controller.enqueue(encoder.encode(finishSse));
       }
       if (lineBuffer.length > 0) {
         controller.enqueue(encoder.encode(lineBuffer));
