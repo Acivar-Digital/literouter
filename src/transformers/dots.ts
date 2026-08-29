@@ -221,6 +221,7 @@ export interface DotsStreamState {
   hasEmittedFinishReason: boolean;
   id?: string;
   model?: string;
+  usage?: Record<string, unknown>;
 }
 
 export function createDotsStreamState(): DotsStreamState {
@@ -290,9 +291,10 @@ function formatOpenAITextDelta(
 export function formatOpenAIFinishDelta(
   finishReason: string,
   id?: string,
-  model?: string
+  model?: string,
+  usage?: Record<string, unknown>
 ): string {
-  const payload = {
+  const payload: Record<string, unknown> = {
     id: id || `chatcmpl_dots_${Date.now()}`,
     object: "chat.completion.chunk",
     created: Math.floor(Date.now() / 1000),
@@ -305,6 +307,9 @@ export function formatOpenAIFinishDelta(
       },
     ],
   };
+  if (usage) {
+    payload.usage = usage;
+  }
   return `data: ${JSON.stringify(payload)}\n\n`;
 }
 
@@ -382,7 +387,7 @@ export function createDotsStreamTransformer(): TransformStream<Uint8Array, Uint8
     if (!state.hasEmittedFinishReason) {
       state.hasEmittedFinishReason = true;
       const finishReason = state.hasEmittedToolCalls ? "tool_calls" : "stop";
-      return formatOpenAIFinishDelta(finishReason, state.id, state.model);
+      return formatOpenAIFinishDelta(finishReason, state.id, state.model, state.usage);
     }
     return "";
   }
@@ -421,11 +426,35 @@ export function createDotsStreamTransformer(): TransformStream<Uint8Array, Uint8
             if (data.model && typeof data.model === "string") {
               state.model = data.model;
             }
+            if (data.usage && typeof data.usage === "object") {
+              state.usage = data.usage as Record<string, unknown>;
+            }
 
             const choice = data.choices?.[0];
             const content = choice?.delta?.content;
             const incomingFinishReason = choice?.finish_reason;
 
+            // FAST PASS-THROUGH: If no XML buffering is active and content has no '<', forward chunk raw
+            if (
+              state.buffer.length === 0 &&
+              (typeof content !== "string" || !content.includes("<"))
+            ) {
+              if (incomingFinishReason) {
+                if (state.hasEmittedToolCalls) {
+                  choice.finish_reason = "tool_calls";
+                  state.hasEmittedFinishReason = true;
+                  controller.enqueue(encoder.encode(`data: ${JSON.stringify(data)}\n\n`));
+                } else {
+                  state.hasEmittedFinishReason = true;
+                  controller.enqueue(encoder.encode(line + "\n"));
+                }
+              } else {
+                controller.enqueue(encoder.encode(line + "\n"));
+              }
+              continue;
+            }
+
+            // BUFFERING MODE: XML tag in progress or newly encountered
             if (typeof content === "string") {
               const processedSse = processDotsStreamChunk(content, state);
               if (processedSse) {

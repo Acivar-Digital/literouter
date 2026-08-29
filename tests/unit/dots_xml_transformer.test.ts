@@ -93,6 +93,44 @@ Let me try deeper add zone and momentum-gated adds.
 });
 
 describe("Dots XML Transformer — Streaming Chunk Handling", () => {
+  it("passes through normal text chunks untouched including reasoning_content and usage", async () => {
+    const { createDotsStreamTransformer } = await import("../../src/transformers/dots");
+    const transformer = createDotsStreamTransformer();
+
+    const chunk1 = 'data: {"id":"chat-1","choices":[{"delta":{"reasoning_content":"Thinking deeply...","thought":"Step 1"}}]}\n\n';
+    const chunk2 = 'data: {"id":"chat-1","choices":[{"delta":{"content":"Hello world!"}}]}\n\n';
+    const chunk3 = 'data: {"id":"chat-1","choices":[{"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}\n\n';
+    const chunk4 = 'data: [DONE]\n\n';
+
+    const inputChunks = [chunk1, chunk2, chunk3, chunk4];
+
+    const stream = new ReadableStream({
+      start(controller) {
+        for (const chunk of inputChunks) {
+          controller.enqueue(new TextEncoder().encode(chunk));
+        }
+        controller.close();
+      },
+    });
+
+    const transformedStream = stream.pipeThrough(transformer);
+    const reader = transformedStream.getReader();
+    let resultText = "";
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      resultText += new TextDecoder().decode(value);
+    }
+
+    expect(resultText).toContain('"reasoning_content":"Thinking deeply..."');
+    expect(resultText).toContain('"thought":"Step 1"');
+    expect(resultText).toContain('"content":"Hello world!"');
+    expect(resultText).toContain('"prompt_tokens":10');
+    expect(resultText).toContain('"completion_tokens":5');
+    expect(resultText).toContain('"finish_reason":"stop"');
+    expect(resultText).toContain('data: [DONE]');
+  });
+
   it("emits finish_reason: 'tool_calls' before data: [DONE] when tool calls are streamed", async () => {
     const { createDotsStreamTransformer } = await import("../../src/transformers/dots");
     const transformer = createDotsStreamTransformer();
