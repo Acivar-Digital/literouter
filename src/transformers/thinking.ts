@@ -95,12 +95,17 @@ export function stripReasoningParameters(
 
 export function shouldStripReasoning(
   globalStrip: boolean,
-  nuances: readonly string[]
+  nuances: readonly string[],
+  targetWire?: string,
+  aoStripReasoning?: boolean
 ): boolean {
   if (nuances.includes("ts")) {
     return false;
   }
   if (nuances.includes("sb")) {
+    return true;
+  }
+  if (targetWire === "ao" && (aoStripReasoning ?? true)) {
     return true;
   }
   return globalStrip;

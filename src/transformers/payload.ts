@@ -37,6 +37,7 @@ export interface PayloadTransformOptions {
   readonly nuances?: readonly string[];
   readonly targetWire?: "oa" | "cl" | "gg" | "rs" | "ao";
   readonly globalStripReasoning?: boolean;
+  readonly aoStripReasoning?: boolean;
   readonly capabilities?: ModelCapabilities;
   readonly enableScrubbing?: boolean;
 }
@@ -282,9 +283,11 @@ function transformMessages(
 function applyReasoningStripIfNeeded(
   payload: Record<string, unknown>,
   globalStrip: boolean,
-  nuances: readonly string[]
+  nuances: readonly string[],
+  targetWire?: string,
+  aoStripReasoning?: boolean
 ): Record<string, unknown> {
-  if (shouldStripReasoning(globalStrip, nuances)) {
+  if (shouldStripReasoning(globalStrip, nuances, targetWire, aoStripReasoning)) {
     return stripReasoningParameters(payload);
   }
   return payload;
@@ -297,6 +300,7 @@ export function sanitizeAndTransformPayload(
   const nuances = options.nuances ?? [];
   const targetWire = options.targetWire ?? "oa";
   const globalStrip = options.globalStripReasoning ?? false;
+  const aoStripReasoning = options.aoStripReasoning;
   const enableScrubbing = options.enableScrubbing ?? false;
 
   const transformedMessages = transformMessages(
@@ -319,7 +323,9 @@ export function sanitizeAndTransformPayload(
     ? applyReasoningStripIfNeeded(
         withModifiers as unknown as Record<string, unknown>,
         globalStrip,
-        nuances
+        nuances,
+        targetWire,
+        aoStripReasoning
       )
     : withModifiers;
 

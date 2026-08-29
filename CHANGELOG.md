@@ -4,6 +4,13 @@ All notable changes to LiteRouter will be documented in this file.
 
 ## [Unreleased]
 
+### Added / AO Strip Reasoning Standard Flag (`LITEROUTER_AO_STRIP_REASONING`)
+- **Default Reasoning Stripping for Anthropic->OpenAI Cross-Wire (`.env`, `src/config/schema.ts`, `src/config/env.ts`)**:
+  - Added `LITEROUTER_AO_STRIP_REASONING=true` (defaults to `true`), establishing a standard policy to strip reasoning parameters (`thinking`, `thinkingConfig`, `reasoning_effort`, `budget_tokens`) and reasoning deltas for `ao` payloads (`lr-*-ao-ch-*`).
+  - Solves Claude Code `/compact` compaction failures (`Error during compaction: summarization produced empty response`) by preventing reasoning models (DeepSeek-R1, QwQ, Qwen-Max, etc.) from sinking all generated text into `reasoning_content` without producing Anthropic `text` blocks.
+  - Fully honors the `ts` (Thinking Support) nuance to preserve reasoning when explicitly requested (e.g. `lr-or-ao-ch-ts`), as well as `sb` (Strip Budget) to force strip.
+
+
 ### Added / Long-Running Harness Mid-Stream Resend & Conveyor Belt Ingress (`docs/Fix_Streaming_01.md`)
 - **Mid-Stream Resend on Drop & Replay (`src/network/fetcher.ts`, `src/handlers/openai_compat.ts`)**:
   - Unlocked mid-stream recovery across all stream lifecycle hooks (`handlePrematureEof`, `handleInBandErrorIfPresent`, `handleStreamFailure`, and `handleEof`).

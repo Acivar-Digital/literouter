@@ -48,6 +48,15 @@ describe("Thinking Transformer — Reasoning Stripping Policy", () => {
     expect(strip).toBe(true);
   });
 
+  it("strips reasoning by default for targetWire 'ao'", () => {
+    expect(shouldStripReasoning(false, ["no"], "ao", true)).toBe(true);
+    expect(shouldStripReasoning(false, ["no"], "ao", false)).toBe(false);
+  });
+
+  it("preserves reasoning for targetWire 'ao' when 'ts' nuance is present", () => {
+    expect(shouldStripReasoning(false, ["ts"], "ao", true)).toBe(false);
+  });
+
   it("follows global default when neither 'ts' nor 'sb' is specified", () => {
     expect(shouldStripReasoning(true, ["no"])).toBe(true);
     expect(shouldStripReasoning(false, ["no"])).toBe(false);

@@ -128,8 +128,9 @@ Claude Code speaks Anthropic Messages API (`/v1/messages`). Depending on the tar
 When using open-weights or OpenAI-format models with Claude Code:
 1. Claude Code sends Anthropic Messages (`tools`, `tool_use`, `tool_result`, `stream: true`).
 2. LiteRouter translates Anthropic tools into OpenAI function calls and maps multi-turn `tool_result` blocks into standard OpenAI `role: "tool"` messages.
-3. LiteRouter calls OpenRouter's standard `/api/v1/chat/completions`.
-4. LiteRouter's streaming transformer converts OpenAI SSE chunks (including `delta.tool_calls`) back into Anthropic `content_block_start`, `content_block_delta`, and `message_delta` events.
+3. **Reasoning Stripping Standard (`LITEROUTER_AO_STRIP_REASONING=true`)**: Strips reasoning parameters and deltas by default so models return direct text content, ensuring Claude Code's `/compact` summarization runs cleanly without empty response errors (overridden via `ts` nuance).
+4. LiteRouter calls OpenRouter's standard `/api/v1/chat/completions`.
+5. LiteRouter's streaming transformer converts OpenAI SSE chunks (including `delta.tool_calls`) back into Anthropic `content_block_start`, `content_block_delta`, and `message_delta` events.
 
 ---
 

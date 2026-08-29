@@ -123,6 +123,7 @@ export const EnvConfigSchema = z.object({
   LITEROUTER_TLS_ENABLED: BooleanCoerceSchema.default(false),
   LITEROUTER_HTTP2: BooleanCoerceSchema.default(false),
   LITEROUTER_STRIP_REASONING: BooleanCoerceSchema.default(false),
+  LITEROUTER_AO_STRIP_REASONING: BooleanCoerceSchema.default(true),
   LITEROUTER_ENABLE_SCRUBBING: BooleanCoerceSchema.default(false),
   LITEROUTER_TTFT_TIMEOUT_MS: z.coerce.number().int().positive().default(120000),
   LITEROUTER_NO_RESPONSE_TIMEOUT_MS: z.coerce.number().int().positive().default(120000),

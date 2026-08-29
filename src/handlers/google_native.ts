@@ -126,3 +126,102 @@ export async function handleGoogleOpenAIBeta(
 ): Promise<Response> {
   return handleOpenAICompat(req, rawKey, reqId);
 }
+
+/**
+ * Verbatim pass-through for the Antigravity Agent Interactions API
+ * (`POST /v1beta/interactions`, `GET /v1beta/files/{id}:download`).
+ *
+ * The directive (api-key as filter) selects the Google provider; the request
+ * path + query are forwarded as-is to GOOGLE_NATIVE_BASE_URL and authenticated
+ * with a rotated key from the `gg` pool. The gateway master key (sk-lr-*) is
+ * intentionally NOT accepted here.
+ */
+export async function handleGoogleInteractionsPassthrough(
+  req: Request,
+  rawKey: string,
+  reqId: string
+): Promise<Response> {
+  const validation = validateDirective(rawKey);
+  if (validation.valid === false) {
+    return createUnauthorizedResponse(validation.error);
+  }
+  const directive = validation.directive;
+  if (directive.type !== "direct" || directive.provider !== "gg") {
+    return Response.json(
+      {
+        error: {
+          message: "Antigravity interactions requires a Google directive (lr-gg-*)",
+          type: "invalid_request_error",
+        },
+      },
+      { status: 400 }
+    );
+  }
+
+  const url = new URL(req.url);
+  const base = process.env.GOOGLE_NATIVE_BASE_URL || "https://generativelanguage.googleapis.com";
+  const upstreamUrl = new URL(`${base}${url.pathname}${url.search}`);
+
+  const selected = globalKeyPool.selectNextKey("gg");
+  if (!selected) {
+    return Response.json(
+      { error: { message: "Google key pool exhausted", type: "rate_limit_error" } },
+      { status: 503 }
+    );
+  }
+
+  const upstreamHeaders = new Headers();
+  for (const [k, v] of req.headers) {
+    const lk = k.toLowerCase();
+    if (lk === "authorization" || lk === "x-goog-api-key" || lk === "host" || lk === "content-length") {
+      continue;
+    }
+    upstreamHeaders.set(k, v);
+  }
+  upstreamHeaders.set("x-goog-api-key", selected.key);
+  // Request uncompressed upstream so we don't have to re-encode; Bun's fetch
+  // already decompresses gzip, and leaking a `content-encoding` header would
+  // make the client try (and fail) to decompress the plaintext body.
+  upstreamHeaders.set("Accept-Encoding", "identity");
+
+  logInbound({
+    reqId,
+    method: req.method,
+    path: url.pathname,
+    clientAgent: req.headers.get("user-agent") || "unknown",
+    protocol: req.headers.get("x-http-version") || "HTTP/1.1",
+    directiveStr: rawKey,
+    targetProvider: "gg",
+    wireFormat: "gg",
+    endpoint: url.pathname,
+    model: "antigravity",
+    totalKeys: selected.totalKeys,
+  });
+
+  try {
+    const upstreamReq = new Request(upstreamUrl.toString(), {
+      method: req.method,
+      headers: upstreamHeaders,
+      body: req.body,
+      signal: req.signal,
+    });
+    const res = await fetch(upstreamReq);
+    globalKeyPool.reportSuccess("gg", selected.index);
+    // Return the upstream body verbatim, but drop hop-by-hop / content-encoding
+    // headers. Bun's fetch already decompresses the body, so leaking a
+    // `content-encoding` header would make the client try (and fail) to
+    // decompress plaintext. Requesting `identity` upstream keeps it clean.
+    const outHeaders = new Headers(res.headers);
+    outHeaders.delete("content-encoding");
+    outHeaders.delete("content-length");
+    outHeaders.delete("transfer-encoding");
+    return new Response(res.body, { status: res.status, headers: outHeaders });
+  } catch (err) {
+    globalKeyPool.reportFailure("gg", selected.index, 502);
+    logError(reqId, "Google interactions passthrough upstream failure", err);
+    return Response.json(
+      { error: { message: "Upstream Google interactions request failed", type: "server_error" } },
+      { status: 502 }
+    );
+  }
+}

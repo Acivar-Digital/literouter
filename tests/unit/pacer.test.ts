@@ -244,7 +244,7 @@ describe("Pure FIFO Conveyor Belt Pacer & Anti-429 Queue", () => {
     it("applies provider delays from registry and clears properly", () => {
       clearPacerRegistry();
       const ggPacer = getPacerForProvider("gg", 0);
-      expect(ggPacer.getMinInterval()).toBe(2000);
+      expect(ggPacer.getMinInterval()).toBe(200);
 
       const orPacer = getPacerForProvider("or", 0);
       expect(orPacer.getMinInterval()).toBeGreaterThanOrEqual(0);

@@ -207,6 +207,12 @@ function determineShouldFilterReasoning(
   if (directive.nuances.includes("sb")) {
     return true;
   }
+  if (directive.payload === "ao" && getEnv().LITEROUTER_AO_STRIP_REASONING) {
+    return true;
+  }
+  if (isOpenCodeClient(clientOptions?.userAgent, clientOptions?.headers, directive.nuances)) {
+    return true;
+  }
   return false;
 }
 
@@ -705,10 +711,13 @@ export async function executeDirectRequest(
       model: body.model.slice("openrouter/".length),
     };
   }
+  const env = getEnv();
   const transformed = sanitizeAndTransformPayload(targetBody, {
     nuances: directive.nuances,
     targetWire: directive.payload,
-    enableScrubbing: getEnv().LITEROUTER_ENABLE_SCRUBBING,
+    enableScrubbing: env.LITEROUTER_ENABLE_SCRUBBING,
+    globalStripReasoning: env.LITEROUTER_STRIP_REASONING,
+    aoStripReasoning: env.LITEROUTER_AO_STRIP_REASONING,
   });
   return executeSingleAttemptLoop(directive, transformed, clientSignal, reqId, clientOptions);
 }

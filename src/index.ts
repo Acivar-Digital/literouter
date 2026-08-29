@@ -8,7 +8,11 @@ import { parseDirective } from "./directive/parser";
 import { extractDirectiveToken } from "./directive/validator";
 import { handleAnthropicCompat } from "./handlers/anthropic_compat";
 import { handleModelsDiscovery } from "./handlers/discovery";
-import { handleGoogleNative, handleGoogleOpenAIBeta } from "./handlers/google_native";
+import {
+  handleGoogleInteractionsPassthrough,
+  handleGoogleNative,
+  handleGoogleOpenAIBeta,
+} from "./handlers/google_native";
 import {
   globalCooldownManager,
   globalKeyPool,
@@ -176,6 +180,9 @@ function dispatchModelsRoute(path: string, req: Request, rawKey: string): Promis
 }
 
 function dispatchGoogleBeta(path: string, req: Request, rawKey: string, reqId: string): Promise<Response> | null {
+  if (path.startsWith("/v1beta/interactions") || path.startsWith("/v1beta/files/")) {
+    return handleGoogleInteractionsPassthrough(req, rawKey, reqId);
+  }
   if (path.startsWith("/v1beta/openai/")) {
     return handleGoogleOpenAIBeta(req, rawKey, reqId);
   }
