@@ -279,6 +279,39 @@ describe("Ling Transformer & Streaming Suite", () => {
     expect(accumulatedOutput).toContain('"finish_reason":"tool_calls"');
   });
 
+  it("buffers streaming split shellcommand (e.g. shell + commandcat -n ...) and emits OpenCode2 tool_calls deltas", async () => {
+    const rawChunks = [
+      'data: {"id":"gen-1","choices":[{"index":0,"delta":{"role":"assistant","content":"continue\\n\\nshell"}}]}\n\n',
+      'data: {"id":"gen-1","choices":[{"index":0,"delta":{"content":"commandcat -n /home/yapilwsl/arthityap/trend/scripts/bt/"}}]}\n\n',
+      'data: {"id":"gen-1","choices":[{"index":0,"delta":{"content":"kelly_backtest.py | tail -90"}}]}\n\n',
+      'data: {"id":"gen-1","choices":[{"index":0,"delta":{},"finish_reason":"stop"}}]}\n\n',
+      'data: [DONE]\n\n',
+    ];
+
+    const transformer = createLingStreamTransformer();
+    const encoder = new TextEncoder();
+    const decoder = new TextDecoder();
+    const stream = new ReadableStream({
+      start(c) {
+        for (const ch of rawChunks) c.enqueue(encoder.encode(ch));
+        c.close();
+      },
+    }).pipeThrough(transformer);
+
+    const reader = stream.getReader();
+    let accumulated = "";
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      accumulated += decoder.decode(value);
+    }
+
+    expect(accumulated).toContain('"content":"continue\\n"');
+    expect(accumulated).toContain('"name":"shell","arguments":""');
+    expect(accumulated).toContain('{\\"command\\":\\"cat -n /home/yapilwsl/arthityap/trend/scripts/bt/kelly_backtest.py | tail -90\\"}');
+    expect(accumulated).toContain('"finish_reason":"tool_calls"');
+  });
+
   it("transforms non-streaming Ling responses with tool calls and reasoning", () => {
     const rawResponse = {
       id: "gen-123",

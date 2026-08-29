@@ -44,7 +44,7 @@ export const LING_LEAKED_TEMPLATE_REGEX =
   /<role>(?:HUMAN|ASSISTANT|SYSTEM|BOT|USER|human|assistant|user|system|bot)?<\/role>|<\s*\/?\s*role(?::[a-zA-Z0-9_\-]+|\s*=\s*[a-zA-Z0-9_\-]+|\s+[a-zA-Z0-9_\-]+)?\s*>|<\/?[｜|]?(?:DSML[｜|]?)?(?:tool_calls|tool_call|tool_response|tool_result|arg_key|arg_value|argument_name|argument_value|parameter|parameter_name|parameter_value|invoke|function|think|thought|thinking)[^>]*>|<\|(?:role_end|startoftext|endoftext|im_end|im_start|fim_start|fim_hole|fim_end|start_of_turn|end_of_turn|eot_id|start_header_id|end_header_id)\|>|<[｜|](?:System|User|Assistant|begin of sentence|end of sentence|DSML)[｜|]?>|\[gMASK\](?:<sop>)?|<sop>|\[\/?INST\]|<<\/?SYS>>/gi;
 
 export const LING_STREAM_PARTIAL_TAG_REGEX =
-  /<$|<(?:\/|[a-zA-Z_｜|])[a-zA-Z0-9_\-: ='"/｜|]{0,80}$|<\|[^|]{0,40}$|<｜[^｜]{0,40}$|＜｜?[^｜＞]{0,40}$|\[(?:gMASK|\/?INST)[a-zA-Z0-9_\-/]{0,10}$|<<\/?(?:SYS)?[^>]{0,10}$/i;
+  /<$|<(?:\/|[a-zA-Z_｜|])[a-zA-Z0-9_\-: ='"/｜|]{0,80}$|<\|[^|]{0,40}$|<｜[^｜]{0,40}$|＜｜?[^｜＞]{0,40}$|\[(?:gMASK|\/?INST)[a-zA-Z0-9_\-/]{0,10}$|<<\/?(?:SYS)?[^>]{0,10}$|(?:^|[\n\r\s])(?:edit|write|read|shell|websearch|grep|glob)(?:p|pa|pat|path|c|co|com|comm|comma|comman|command|q|qu|que|quer|query|pattern)?$/i;
 
 export function stripLingLeakedTemplateTags(raw: string): string {
   if (!raw) return "";
