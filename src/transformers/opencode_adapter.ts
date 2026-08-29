@@ -422,7 +422,7 @@ function scrubMessageContent(cleaned: Record<string, unknown>): void {
         .replace(/(?:^|[^\w>])[a-zA-Z0-9_\-]+\s*<(?:arg_key|argument_name|parameter_name)>[\s\S]*?<\/(?:arg_value|argument_value|parameter_value)>\s*(?:<\/tool_call>)?/gi, "");
     }
     content = content
-      .replace(/<\/?(?:tool_calls?|function_calls?|invoke|tool_call|function_call|function|parameter|arg_key|arg_value|parameter_value|argument_name|argument_value|parameter_name)[^>]*>/gi, "")
+      .replace(/<\/?(?:tool_calls?|function_calls?|invoke|tool_call|function_call|function|parameter|arg_key|arg_value|parameter_value|argument_name|argument_value|parameter_name|tool_response|tool_result|role)[^>]*>/gi, "")
       .trim();
     cleaned.content = content;
   }

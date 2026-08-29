@@ -285,6 +285,16 @@ Let me know if you need changes.`;
     expect(result.cleanText).not.toContain("<parameter=");
   });
 
+  it("strips GLM-4 / Ling-3.0 template tokens (<|role_end|>, <|role_start|>, <tool_response>, <role>)", () => {
+    const raw = `<|role_start|>assistant<role>assistant</role>Hello user!<tool_response>Success</tool_response><|role_end|>`;
+    const result = parseDotsXml(raw);
+    expect(result.cleanText).toBe("Hello user!Success");
+    expect(result.cleanText).not.toContain("<|role_end|>");
+    expect(result.cleanText).not.toContain("<|role_start|>");
+    expect(result.cleanText).not.toContain("<role>");
+    expect(result.cleanText).not.toContain("<tool_response>");
+  });
+
   it("parses GLM-4 / Zhipu / Qwen3 <tool_call>name<arg_key>...<arg_value> format", () => {
     const raw = `<tool_call>bash
 <arg_key>command</arg_key>
