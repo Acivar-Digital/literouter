@@ -4,6 +4,12 @@ All notable changes to LiteRouter will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed / Elimination of Leaked `</role>` and Template Tags on TUI
+- **Universal Template Tag Scrubbing & Bounded Prefix Matching (`src/transformers/dots.ts`, `tests/unit/dots_xml_transformer.test.ts`)**:
+  - Expanded `LEAKED_TEMPLATE_REGEX` to cover all role, delimiter, and turn-boundary variations (`</role>`, `<role>`, `<role assistant>`, `<|startoftext|>`, `<|eot_id|>`, `<|tool_calls|>`, `<|/tool_call|>`, `<turn_end>`).
+  - Switched unclosed tag streaming lookahead (`UNCLOSED_TEMPLATE_TAG_REGEX`) to bounded alpha/slash prefix matching so math operators like `x < 5` are preserved while incomplete tag fragments (`</ro`, `</role`, `<role`) are safely buffered until resolved or stripped at `[DONE]`.
+  - Added role/transition tag awareness in `flushInsideThinkContent` and `parseDotsXml` (`</role>`, `<|role_end|>`, `<tool_call>`), preventing thinking state locks and reasoning delta leakage into the TUI.
+
 ### Fixed / Upstream H2 Zombie Session Purge & Downstream Socket Reset on Stream Abort
 - **Active H2 Session Purging & Liveness Validation (`src/network/h2_pool.ts`, `src/network/fetcher.ts`)**:
   - Added `purgeSession(origin, session)` and socket liveness validation (`isSessionHealthy`) in `H2SessionPool.acquireSession()`.

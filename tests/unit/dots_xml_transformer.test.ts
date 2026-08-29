@@ -149,6 +149,41 @@ describe("Dots XML Transformer — Static Parsing", () => {
     expect(resultText).toContain(" is working.");
   });
 
+  it("handles thinking closed with </role> or transitioning directly to tool call", async () => {
+    const { createDotsStreamTransformer } = await import("../../src/transformers/dots");
+    const transformer = createDotsStreamTransformer();
+
+    const chunk1 = 'data: {"id":"chat-1","choices":[{"delta":{"content":"<think>I need to search files.\\n</role><tool_call>bash\\n<arg_key>command</arg_key><arg_value>ls</arg_value></tool_call>"}}]}\n\n';
+    const chunk2 = 'data: {"id":"chat-1","choices":[{"delta":{},"finish_reason":"tool_calls"}]}\n\n';
+    const chunk3 = 'data: [DONE]\n\n';
+
+    const inputChunks = [chunk1, chunk2, chunk3];
+    const stream = new ReadableStream({
+      start(controller) {
+        for (const chunk of inputChunks) {
+          controller.enqueue(new TextEncoder().encode(chunk));
+        }
+        controller.close();
+      },
+    });
+
+    const transformedStream = stream.pipeThrough(transformer);
+    const reader = transformedStream.getReader();
+    let resultText = "";
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      resultText += new TextDecoder().decode(value);
+    }
+
+    expect(resultText).not.toContain("</role>");
+    expect(resultText).toContain("reasoning_content");
+    expect(resultText).toContain("I need to search files.");
+    expect(resultText).toContain('"name":"bash"');
+    expect(resultText).toContain('bash');
+    expect(resultText).toContain('command');
+  });
+
   it("parses single XML function invocation into OpenAI tool_calls structure", () => {
     const input =
       'I will look up the weather for you: <invoke name="get_weather"><parameter name="location">Tokyo</parameter></invoke>';
