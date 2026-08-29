@@ -591,7 +591,7 @@ describe("opencode_adapter — 6. scrubReasoningFromMessages & metadata strippin
     expect(result[2]?.content).toBe("Tool output verified");
   });
 
-  it("preserves reasoning_content on assistant messages that contain tool_calls", () => {
+  it("unconditionally strips reasoning_content on assistant messages even when containing tool_calls", () => {
     const assistantToolMsg: OpenAIMessage = {
       role: "assistant",
       content: null,
@@ -606,8 +606,32 @@ describe("opencode_adapter — 6. scrubReasoningFromMessages & metadata strippin
     } as unknown as OpenAIMessage;
 
     const scrubbed = scrubReasoningFromMessage(assistantToolMsg);
-    expect((scrubbed as Record<string, unknown>).reasoning_content).toBe("I need to check auth.ts before editing");
+    expect((scrubbed as Record<string, unknown>).reasoning_content).toBeUndefined();
     expect(scrubbed.tool_calls).toBeDefined();
     expect(scrubbed.tool_calls?.length).toBe(1);
+  });
+
+  it("strips XML <think>, <thought>, <thinking> blocks from historical assistant string content", () => {
+    const assistantMsg: OpenAIMessage = {
+      role: "assistant",
+      content: "<think>Let me evaluate the user's codebase</think>Here is the final answer.",
+    };
+
+    const scrubbed = scrubReasoningFromMessage(assistantMsg);
+    expect(scrubbed.content).toBe("Here is the final answer.");
+  });
+
+  it("strips multi-line <thought> blocks leaving clean text for assistant messages", () => {
+    const assistantMsg: OpenAIMessage = {
+      role: "assistant",
+      content: `<thought>
+Step 1: Check imports
+Step 2: Run tests
+</thought>
+Execution complete.`,
+    };
+
+    const scrubbed = scrubReasoningFromMessage(assistantMsg);
+    expect(scrubbed.content).toBe("Execution complete.");
   });
 });

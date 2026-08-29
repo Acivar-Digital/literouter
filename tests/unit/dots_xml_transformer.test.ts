@@ -187,6 +187,43 @@ describe("Dots XML Transformer — Static Parsing", () => {
     expect(parsed.cleanText).toBe(input);
     expect(parsed.toolCalls.length).toBe(0);
   });
+
+  it("extracts tool calls trapped inside <think> tags (Qwen / Ling / DeepSeek pattern)", () => {
+    const input =
+      '<think>\nI need to inspect the working directory first.\n<tool_call>bash\n<arg_key>command</arg_key><arg_value>ls -la</arg_value></tool_call>\n</think>';
+    const parsed = parseDotsXml(input);
+
+    expect(parsed.toolCalls.length).toBe(1);
+    expect(parsed.toolCalls[0]!.function.name).toBe("bash");
+    const args = JSON.parse(parsed.toolCalls[0]!.function.arguments);
+    expect(args.command).toBe("ls -la");
+    expect(parsed.reasoningContent).toContain("I need to inspect the working directory first.");
+    expect(parsed.cleanText).toBe("");
+  });
+
+  it("merges consecutive tool results into a single user message", () => {
+    const messages: OpenAIMessage[] = [
+      {
+        role: "tool",
+        tool_call_id: "call_1",
+        name: "bash",
+        content: "file1.txt\nfile2.txt",
+      },
+      {
+        role: "tool",
+        tool_call_id: "call_2",
+        name: "read_file",
+        content: "export const A = 1;",
+      },
+    ];
+    const serialized = serializeDotsToolHistory(messages);
+
+    expect(serialized.length).toBe(1);
+    expect(serialized[0]!.role).toBe("user");
+    const content = serialized[0]!.content as string;
+    expect(content).toContain('<tool_result id="call_1" name="bash">');
+    expect(content).toContain('<tool_result id="call_2" name="read_file">');
+  });
   it("parses complex mixed XML tool calls with malformed closing tags and arg_key/arg_value pairs", () => {
     const input = `Actually, let me just try a few parameter combinations and pick the best one.
 </parameter>
@@ -246,6 +283,44 @@ Let me know if you need changes.`;
     expect(result.cleanText).toContain("Let me know if you need changes.");
     expect(result.cleanText).not.toContain("<function=");
     expect(result.cleanText).not.toContain("<parameter=");
+  });
+
+  it("parses GLM-4 / Zhipu / Qwen3 <tool_call>name<arg_key>...<arg_value> format", () => {
+    const raw = `<tool_call>bash
+<arg_key>command</arg_key>
+<arg_value>ls -la</arg_value>
+<arg_key>description</arg_key>
+<arg_value>List files in directory</arg_value>
+</tool_call>`;
+
+    const result = parseDotsXml(raw);
+    expect(result.toolCalls).toHaveLength(1);
+    expect(result.toolCalls[0]!.function.name).toBe("bash");
+    const args = JSON.parse(result.toolCalls[0]!.function.arguments);
+    expect(args.command).toBe("ls -la");
+    expect(args.description).toBe("List files in directory");
+    expect(result.cleanText).toBe("");
+    expect(result.cleanText).not.toContain("<arg_key>");
+    expect(result.cleanText).not.toContain("<arg_value>");
+  });
+
+  it("parses GLM-4 unwrapped tool calls with multiline <arg_value> scripts", () => {
+    const raw = `I will run the script now.
+bash<arg_key>command</arg_key><arg_value>cat << 'EOF' > test.py
+import sys
+print("hello world")
+EOF
+python test.py</arg_value></tool_call>`;
+
+    const result = parseDotsXml(raw);
+    expect(result.toolCalls).toHaveLength(1);
+    expect(result.toolCalls[0]!.function.name).toBe("bash");
+    const args = JSON.parse(result.toolCalls[0]!.function.arguments);
+    expect(args.command).toContain('import sys\nprint("hello world")');
+    expect(result.cleanText).toContain("I will run the script now.");
+    expect(result.cleanText).not.toContain("arg_value");
+    expect(result.cleanText).not.toContain("arg_key");
+    expect(result.cleanText).not.toContain("<tool_call>");
   });
 
   it("parses DeepSeek DSML / MiniMax XML format (<invoke name=...>)", () => {
@@ -404,6 +479,36 @@ Final answer is 42.`;
     expect(transformed.messages[1]?.role).toBe("user");
   });
 
+  it("strips leaked </role:assistant>, <role:assistant>, <role=assistant>, and whitespace variations", () => {
+    const input1 = "</role:assistant>Here is the content";
+    const res1 = parseDotsXml(input1);
+    expect(res1.cleanText).toBe("Here is the content");
+
+    const input2 = "<role:assistant>Thinking complete.</role:assistant>Ready to proceed.";
+    const res2 = parseDotsXml(input2);
+    expect(res2.cleanText).toBe("Thinking complete.Ready to proceed.");
+
+    const input3 = "</ role >Whitespace test</  role>";
+    const res3 = parseDotsXml(input3);
+    expect(res3.cleanText).toBe("Whitespace test");
+  });
+
+  it("strips DeepSeek fullwidth template tags (＜｜User｜＞, <｜Assistant｜>, <｜end of sentence｜>)", () => {
+    const input1 = "<｜Assistant｜>DeepSeek response<｜end of sentence｜>";
+    const res1 = parseDotsXml(input1);
+    expect(res1.cleanText).toBe("DeepSeek response");
+
+    const input2 = "＜｜User｜＞Hello＜｜end of sentence｜＞";
+    const res2 = parseDotsXml(input2);
+    expect(res2.cleanText).toBe("Hello");
+  });
+
+  it("strips GLM tokens ([gMASK]<sop>, <|observation|>)", () => {
+    const input = "[gMASK]<sop>GLM generated response<|observation|>";
+    const res = parseDotsXml(input);
+    expect(res.cleanText).toBe("GLM generated response");
+  });
+
   it("parses tool_call tags with child name and raw json arguments", () => {
     const input = '<tool_call><name>shell</name><arguments>{"command": "pytest tests/"}</arguments></tool_call>';
     const parsed = parseDotsXml(input);
@@ -509,6 +614,56 @@ describe("Dots XML Transformer — Streaming Chunk Handling", () => {
     expect(doneIdx).toBeGreaterThan(finishIdx);
   });
 
+  it("streams GLM <tool_call>name<arg_key> syntax without leaking <arg_value> or tags to text deltas", async () => {
+    const { createDotsStreamTransformer } = await import("../../src/transformers/dots");
+    const transformer = createDotsStreamTransformer();
+
+    const chunk1Obj = {
+      id: "chatcmpl-glm",
+      model: "glm-4",
+      choices: [{ delta: { content: '<tool_call>bash\n<arg_key>command</arg_key>\n<arg_value>ls ' } }],
+    };
+    const chunk2Obj = {
+      choices: [{ delta: { content: '-la</arg_value>\n</tool_call>' } }],
+    };
+    const chunk3Obj = {
+      choices: [{ delta: {}, finish_reason: "stop" }],
+    };
+
+    const inputChunks = [
+      `data: ${JSON.stringify(chunk1Obj)}\n\n`,
+      `data: ${JSON.stringify(chunk2Obj)}\n\n`,
+      `data: ${JSON.stringify(chunk3Obj)}\n\n`,
+      "data: [DONE]\n\n",
+    ];
+
+    const stream = new ReadableStream({
+      start(controller) {
+        for (const chunk of inputChunks) {
+          controller.enqueue(new TextEncoder().encode(chunk));
+        }
+        controller.close();
+      },
+    });
+
+    const transformedStream = stream.pipeThrough(transformer);
+    const reader = transformedStream.getReader();
+    let resultText = "";
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      resultText += new TextDecoder().decode(value);
+    }
+
+    expect(resultText).toContain('"tool_calls"');
+    expect(resultText).toContain('"name":"bash"');
+    expect(resultText).toContain('ls -la');
+    expect(resultText).not.toContain('<arg_value>');
+    expect(resultText).not.toContain('<arg_key>');
+    expect(resultText).not.toContain('<tool_call>');
+    expect(resultText).toContain('"finish_reason":"tool_calls"');
+  });
+
   it("handles XML tags split across chunk boundaries", () => {
     const state = createDotsStreamState();
 
@@ -523,6 +678,71 @@ describe("Dots XML Transformer — Streaming Chunk Handling", () => {
     expect(out2).toContain("get_weather");
     expect(out2).toContain("Berlin");
     expect(out2).toContain("Done!");
+  });
+
+  it("strips trailing unclosed </role or </ro at end of stream without leaking", async () => {
+    const { createDotsStreamTransformer } = await import("../../src/transformers/dots");
+    const transformer = createDotsStreamTransformer();
+
+    const chunk1 = 'data: {"id":"chat-1","choices":[{"delta":{"content":"Response text</ro"}}]}\n\n';
+    const chunk2 = 'data: [DONE]\n\n';
+
+    const inputChunks = [chunk1, chunk2];
+
+    const stream = new ReadableStream({
+      start(controller) {
+        for (const chunk of inputChunks) {
+          controller.enqueue(new TextEncoder().encode(chunk));
+        }
+        controller.close();
+      },
+    });
+
+    const transformedStream = stream.pipeThrough(transformer);
+    const reader = transformedStream.getReader();
+    let resultText = "";
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      resultText += new TextDecoder().decode(value);
+    }
+
+    expect(resultText).not.toContain("</ro");
+    expect(resultText).toContain("Response text");
+  });
+
+  it("emits reasoning_content delta when <think> tag is streamed in content", async () => {
+    const { createDotsStreamTransformer } = await import("../../src/transformers/dots");
+    const transformer = createDotsStreamTransformer();
+
+    const chunk1 = 'data: {"id":"chat-1","choices":[{"delta":{"content":"<think>Plan step 1</think>Here is the result"}}]}\n\n';
+    const chunk2 = 'data: {"id":"chat-1","choices":[{"delta":{},"finish_reason":"stop"}]}\n\n';
+    const chunk3 = 'data: [DONE]\n\n';
+
+    const inputChunks = [chunk1, chunk2, chunk3];
+
+    const stream = new ReadableStream({
+      start(controller) {
+        for (const chunk of inputChunks) {
+          controller.enqueue(new TextEncoder().encode(chunk));
+        }
+        controller.close();
+      },
+    });
+
+    const transformedStream = stream.pipeThrough(transformer);
+    const reader = transformedStream.getReader();
+    let resultText = "";
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      resultText += new TextDecoder().decode(value);
+    }
+
+    expect(resultText).toContain('"reasoning_content":"Plan step 1"');
+    expect(resultText).toContain('"content":"Here is the result"');
+    expect(resultText).not.toContain("<think>");
+    expect(resultText).not.toContain("</think>");
   });
 });
 

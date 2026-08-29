@@ -411,6 +411,22 @@ function scrubMessageContent(cleaned: Record<string, unknown>): void {
     stripClientMetadata(cleaned);
   }
 
+  if (cleaned.role === "assistant" && typeof cleaned.content === "string") {
+    let content = cleaned.content
+      .replace(/<(?:think|thought|thinking)>[\s\S]*?<\/(?:think|thought|thinking)>/gi, "");
+    if (Array.isArray(cleaned.tool_calls) && cleaned.tool_calls.length > 0) {
+      content = content
+        .replace(/<tool_call>[\s\S]*?<\/tool_call>/gi, "")
+        .replace(/<invoke[\s\S]*?<\/invoke>/gi, "")
+        .replace(/<function=[a-zA-Z0-9_\-]+>[\s\S]*?<\/function>/gi, "")
+        .replace(/(?:^|[^\w>])[a-zA-Z0-9_\-]+\s*<(?:arg_key|argument_name|parameter_name)>[\s\S]*?<\/(?:arg_value|argument_value|parameter_value)>\s*(?:<\/tool_call>)?/gi, "");
+    }
+    content = content
+      .replace(/<\/?(?:tool_calls?|function_calls?|invoke|tool_call|function_call|function|parameter|arg_key|arg_value|parameter_value|argument_name|argument_value|parameter_name)[^>]*>/gi, "")
+      .trim();
+    cleaned.content = content;
+  }
+
   if (Array.isArray(cleaned.content)) {
     const rawParts = cleaned.content as readonly OpenAIContentPart[];
     const nonReasoningParts = rawParts.filter((p) => !isReasoningContentPart(p));
@@ -420,15 +436,9 @@ function scrubMessageContent(cleaned: Record<string, unknown>): void {
 
 export function scrubReasoningFromMessage(msg: OpenAIMessage): OpenAIMessage {
   const cleaned: Record<string, unknown> = { ...msg };
-  const hasToolCalls = Array.isArray(msg.tool_calls) && msg.tool_calls.length > 0;
-  const savedReasoningContent = hasToolCalls ? (cleaned.reasoning_content as string | undefined) : undefined;
 
   deleteReasoningKeys(cleaned);
   scrubMessageContent(cleaned);
-
-  if (hasToolCalls && savedReasoningContent !== undefined) {
-    cleaned.reasoning_content = savedReasoningContent;
-  }
 
   return cleaned as unknown as OpenAIMessage;
 }

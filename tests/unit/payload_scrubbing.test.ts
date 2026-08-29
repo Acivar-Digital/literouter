@@ -259,10 +259,10 @@ describe("Inbound Request Reasoning Scrubbing (OpenCode2 Inbound Payload)", () =
     // Verify Turn 1
     expect(transformed.messages[0]?.content).toBe("Solve this complex puzzle.");
 
-    // Verify Turn 2 (375 reasoning parts removed from content array, collapsed to string, reasoning_content preserved for tool calls)
+    // Verify Turn 2 (375 reasoning parts removed from content array, collapsed to string, reasoning_content stripped)
     const turn2 = transformed.messages[1];
     expect(turn2?.content).toBe("I will check the configuration file first.");
-    expect(turn2?.reasoning_content).toBe("Long reasoning content block");
+    expect(turn2?.reasoning_content).toBeUndefined();
     expect(turn2?.reasoning).toBeUndefined();
     expect(turn2?.tool_calls).toHaveLength(1);
 

@@ -7,10 +7,17 @@ export interface DotsParseResult {
 }
 
 export const LEAKED_TEMPLATE_REGEX =
-  /<role>(?:HUMAN|ASSISTANT|SYSTEM|BOT|USER|human|assistant|user|system|bot)<\/role>|<\/?(?:role|im_start|im_end|endoftext|start_of_turn|end_of_turn)(?:\s+[^>]*)?>|<\|(?:im_start|im_end|endoftext|start_of_turn|end_of_turn)\b[^|]*\|>|\[\/?INST\]|<<\/?SYS>>|(?:\b(?:HUMAN|ASSISTANT|SYSTEM|BOT|USER)\b\s*)?<\/(?:role|im_end|end_of_turn)>|<(?:role|im_start|start_of_turn)>\s*(?:HUMAN|ASSISTANT|SYSTEM|BOT|USER)\b/gi;
+  /<role>(?:HUMAN|ASSISTANT|SYSTEM|BOT|USER|human|assistant|user|system|bot)<\/role>|<\s*\/?\s*role(?::[a-zA-Z0-9_\-]+|\s*=\s*[a-zA-Z0-9_\-]+|\s+[a-zA-Z0-9_\-]+)?\s*>|<\s*\/?\s*(?:assistant|user|system|human|bot)\s*>|<\|\s*(?:im_start|im_end|endoftext|start_of_turn|end_of_turn|system|user|assistant|observation|bot)\b[^|]*\|>|<｜\s*(?:System|User|Assistant|begin of sentence|end of sentence|tool calls?|tool results?|tool outputs?)\b[^｜]*｜>|＜｜\s*(?:System|User|Assistant|begin of sentence|end of sentence|tool calls?|tool results?|tool outputs?)\b[^｜]*｜＞|\[gMASK\](?:<sop>)?|<sop>|\[\/?INST\]|<<\/?SYS>>|(?:\b(?:HUMAN|ASSISTANT|SYSTEM|BOT|USER)\b\s*)?<\s*\/\s*(?:role|im_end|end_of_turn)\s*>|<\s*(?:role|im_start|start_of_turn)\s*>\s*(?:HUMAN|ASSISTANT|SYSTEM|BOT|USER)\b|<\/?(?:im_start|im_end|endoftext|start_of_turn|end_of_turn)(?:\s+[^>]*)?>|<\/?(?:tool_response|tool_result|tools)(?:\s+[^>]*)?>/gi;
+
+export const UNCLOSED_TEMPLATE_TAG_REGEX =
+  /<[^>]*$|<\|[^|]*$|<｜[^｜]*$|＜｜?[^｜＞]*$|\[[^\]]*$|<<[^>]*$/;
 
 export function stripLeakedTemplateTags(text: string): string {
   return text.replace(LEAKED_TEMPLATE_REGEX, "");
+}
+
+export function stripUnclosedTemplateTags(text: string): string {
+  return text.replace(UNCLOSED_TEMPLATE_TAG_REGEX, "");
 }
 
 export class TagSanitizerStreamBuffer {
@@ -19,7 +26,7 @@ export class TagSanitizerStreamBuffer {
   public process(incoming: string): string {
     this.buffer += incoming;
 
-    const openRoleMatch = /<role>(?:(?!<\/role>)[\s\S]){0,30}$/i.exec(this.buffer);
+    const openRoleMatch = /<role>(?:HUMAN|ASSISTANT|SYSTEM|BOT|USER|human|assistant|user|system|bot)?(?:(?!<\/role>)[\s\S]){0,20}$/i.exec(this.buffer);
     if (openRoleMatch && !this.buffer.slice(openRoleMatch.index).toLowerCase().includes("</role>")) {
       const safePrefix = this.buffer.slice(0, openRoleMatch.index);
       this.buffer = this.buffer.slice(openRoleMatch.index);
@@ -27,7 +34,7 @@ export class TagSanitizerStreamBuffer {
     }
 
     const cleaned = stripLeakedTemplateTags(this.buffer);
-    const partialTagMatch = /(?:<[^>]*|\[[^\]]*|<<[^>]*|<\|[^|]*)$/.exec(cleaned);
+    const partialTagMatch = /(?:<[^>]*|\[[^\]]*|<<[^>]*|<\|[^|]*|＜[^＞]*|<｜[^｜]*)$/.exec(cleaned);
     if (partialTagMatch && partialTagMatch.index !== undefined) {
       const emitText = cleaned.slice(0, partialTagMatch.index);
       this.buffer = cleaned.slice(partialTagMatch.index);
@@ -39,7 +46,7 @@ export class TagSanitizerStreamBuffer {
   }
 
   public flush(): string {
-    const finalCleaned = stripLeakedTemplateTags(this.buffer);
+    const finalCleaned = stripUnclosedTemplateTags(stripLeakedTemplateTags(this.buffer));
     this.buffer = "";
     return finalCleaned;
   }
@@ -240,96 +247,71 @@ function extractFunctionName(tagFnName: string | undefined, body: string): strin
   if (nameMatch && (nameMatch[1] ?? "").trim().length > 0) {
     return (nameMatch[1] ?? "").trim();
   }
+  const prefixMatch = /^\s*([a-zA-Z0-9_\-]+)\s*<(?:arg_key|argument_name|parameter|parameter_name)/i.exec(body);
+  if (prefixMatch && (prefixMatch[1] ?? "").trim().length > 0) {
+    return (prefixMatch[1] ?? "").trim();
+  }
   return "tool";
 }
 
 export function parseDotsXml(content: string): DotsParseResult {
   const sanitized = stripLeakedTemplateTags(content);
 
-  // Extract Thinking / Reasoning tokens: <think>...</think>, <thought>...</thought>, <thinking>...</thinking>
-  let reasoningContent: string | undefined = undefined;
-  const thinkMatch = /<(?:think|thought|thinking)>([\s\S]*?)<\/(?:think|thought|thinking)>/i.exec(sanitized);
-  if (thinkMatch) {
-    const rawThink = (thinkMatch[1] ?? "").trim();
-    if (rawThink.length > 0) {
-      reasoningContent = stripLeakedTemplateTags(rawThink);
-    }
-  }
-
-  const contentWithoutThink = sanitized.replace(/<(?:think|thought|thinking)>[\s\S]*?<\/(?:think|thought|thinking)>/gi, "");
-  const lower = contentWithoutThink.toLowerCase();
-  if (
-    !lower.includes("<invoke") &&
-    !lower.includes("<tool_call") &&
-    !lower.includes("<function_call") &&
-    !lower.includes("<function_calls") &&
-    !lower.includes("<tool_calls") &&
-    !lower.includes("<function=") &&
-    !lower.includes("<minimax:tool_call") &&
-    !/<[a-zA-Z0-9_\-]+>\s*<[a-zA-Z0-9_\-]+>[^<]*<\/[a-zA-Z0-9_\-]+>/i.test(contentWithoutThink)
-  ) {
-    const cleanOnly = stripResidualTags(contentWithoutThink);
-    return { cleanText: cleanOnly, toolCalls: [], reasoningContent };
-  }
+  const lower = sanitized.toLowerCase();
+  const hasPotentialTools =
+    lower.includes("<invoke") ||
+    lower.includes("<tool_call") ||
+    lower.includes("<function_call") ||
+    lower.includes("<function_calls") ||
+    lower.includes("<tool_calls") ||
+    lower.includes("<function=") ||
+    lower.includes("<minimax:tool_call") ||
+    lower.includes("<arg_key") ||
+    lower.includes("<arg_value") ||
+    lower.includes("<parameter") ||
+    /<[a-zA-Z0-9_\-]+>\s*<[a-zA-Z0-9_\-]+>[^<]*<\/[a-zA-Z0-9_\-]+>/i.test(sanitized);
 
   const toolCalls: OpenAIToolCall[] = [];
   let index = 0;
+  let remainingText = sanitized;
 
-  // 1. Qwen JSON-in-XML: <tool_call>\s*({.*?})\s*</tool_call>
-  const jsonXmlRegex = /<tool_call>\s*(\{[\s\S]*?\})\s*<\/tool_call>/gi;
-  let jMatch = jsonXmlRegex.exec(contentWithoutThink);
-  while (jMatch !== null) {
-    const rawJson = jMatch[1] ?? "{}";
-    const parsed = parseJsonTolerant(rawJson);
-    if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
-      const payload = parsed as Record<string, unknown>;
-      const name = (payload.name || payload.function || "tool") as string;
-      let rawArgs: unknown = payload.arguments ?? payload.parameters ?? {};
-      if (typeof rawArgs === "string") {
-        const inner = parseJsonTolerant(rawArgs);
-        rawArgs = inner !== null ? inner : { input: rawArgs };
+  // STEP 1: Extract tool calls FIRST (even if inside <think> tags)
+  if (hasPotentialTools) {
+    // 1. Qwen JSON-in-XML: <tool_call>\s*({.*?})\s*</tool_call>
+    const jsonXmlRegex = /<tool_call>\s*(\{[\s\S]*?\})\s*<\/tool_call>/gi;
+    let jMatch = jsonXmlRegex.exec(sanitized);
+    while (jMatch !== null) {
+      const rawJson = jMatch[1] ?? "{}";
+      const parsed = parseJsonTolerant(rawJson);
+      if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
+        const payload = parsed as Record<string, unknown>;
+        const name = (payload.name || payload.function || "tool") as string;
+        let rawArgs: unknown = payload.arguments ?? payload.parameters ?? {};
+        if (typeof rawArgs === "string") {
+          const inner = parseJsonTolerant(rawArgs);
+          rawArgs = inner !== null ? inner : { input: rawArgs };
+        }
+        toolCalls.push({
+          id: `call_dots_${Date.now()}_${index}`,
+          type: "function",
+          function: {
+            name,
+            arguments: JSON.stringify(rawArgs),
+          },
+        });
+        index += 1;
+        remainingText = remainingText.replace(jMatch[0], "");
       }
-      toolCalls.push({
-        id: `call_dots_${Date.now()}_${index}`,
-        type: "function",
-        function: {
-          name,
-          arguments: JSON.stringify(rawArgs),
-        },
-      });
-      index += 1;
+      jMatch = jsonXmlRegex.exec(sanitized);
     }
-    jMatch = jsonXmlRegex.exec(contentWithoutThink);
-  }
 
-  // 2. Qwen Format: <function=name>...</function>
-  const qwenFuncRegex = new RegExp(QWEN_FUNC_REGEX.source, "gi");
-  let qMatch = qwenFuncRegex.exec(contentWithoutThink);
-  while (qMatch !== null) {
-    const fnName = (qMatch[1] ?? "").trim();
-    const body = qMatch[2] ?? "";
-    const argsObj = parseParameters(body);
-    toolCalls.push({
-      id: `call_dots_${Date.now()}_${index}`,
-      type: "function",
-      function: {
-        name: fnName,
-        arguments: JSON.stringify(argsObj),
-      },
-    });
-    index += 1;
-    qMatch = qwenFuncRegex.exec(contentWithoutThink);
-  }
-
-  // 3. DeepSeek / MiniMax / Standard Invoke Format: <invoke name="name">...
-  const invokeRegex = new RegExp(INVOKE_BLOCK_REGEX.source, "gi");
-  let iMatch = invokeRegex.exec(contentWithoutThink);
-  while (iMatch !== null) {
-    const rawBody = (iMatch[2] ?? "").trim();
-    if (!rawBody.startsWith("{") && !rawBody.includes("<function=")) {
-      const rawFnName = iMatch[1];
-      const fnName = extractFunctionName(rawFnName, rawBody);
-      const argsObj = parseParameters(rawBody);
+    // 2. Qwen Format: <function=name>...</function>
+    const qwenFuncRegex = new RegExp(QWEN_FUNC_REGEX.source, "gi");
+    let qMatch = qwenFuncRegex.exec(sanitized);
+    while (qMatch !== null) {
+      const fnName = (qMatch[1] ?? "").trim();
+      const body = qMatch[2] ?? "";
+      const argsObj = parseParameters(body);
       toolCalls.push({
         id: `call_dots_${Date.now()}_${index}`,
         type: "function",
@@ -339,36 +321,99 @@ export function parseDotsXml(content: string): DotsParseResult {
         },
       });
       index += 1;
+      remainingText = remainingText.replace(qMatch[0], "");
+      qMatch = qwenFuncRegex.exec(sanitized);
     }
-    iMatch = invokeRegex.exec(contentWithoutThink);
-  }
 
-  // 4. Claude / Cline Format: <write><path>...</path></write> (only if no tools extracted yet)
-  if (toolCalls.length === 0) {
-    const customToolRegex = /<([a-zA-Z0-9_\-]+)>(\s*<[a-zA-Z0-9_\-]+>[^<]*<\/[a-zA-Z0-9_\-]+>[\s\S]*?)<\/\1>/gi;
-    let cMatch = customToolRegex.exec(contentWithoutThink);
-    while (cMatch !== null) {
-      const tagName = (cMatch[1] ?? "").trim();
-      if (!EXCLUDED_TAG_NAMES.has(tagName.toLowerCase())) {
-        const body = cMatch[2] ?? "";
+    // 3. DeepSeek / MiniMax / Standard Invoke Format: <invoke name="name">...
+    const invokeRegex = new RegExp(INVOKE_BLOCK_REGEX.source, "gi");
+    let iMatch = invokeRegex.exec(sanitized);
+    while (iMatch !== null) {
+      const rawBody = (iMatch[2] ?? "").trim();
+      if (!rawBody.startsWith("{") && !rawBody.includes("<function=")) {
+        const rawFnName = iMatch[1];
+        const fnName = extractFunctionName(rawFnName, rawBody);
+        const argsObj = parseParameters(rawBody);
+        toolCalls.push({
+          id: `call_dots_${Date.now()}_${index}`,
+          type: "function",
+          function: {
+            name: fnName,
+            arguments: JSON.stringify(argsObj),
+          },
+        });
+        index += 1;
+        remainingText = remainingText.replace(iMatch[0], "");
+      }
+      iMatch = invokeRegex.exec(sanitized);
+    }
+
+    // 4. GLM / Zhipu / Qwen3 unwrapped <arg_key> & <arg_value> format: bash<arg_key>... or <tool_call>bash\n<arg_key>...
+    if (toolCalls.length === 0) {
+      const glmUnwrappedRegex =
+        /(?:<tool_call>)?\s*([a-zA-Z0-9_\-]+)\s*(<(?:arg_key|argument_name|parameter_name)>[\s\S]*?<\/(?:arg_value|argument_value|parameter_value)>)\s*(?:<\/tool_call>)?/gi;
+      let gMatch = glmUnwrappedRegex.exec(sanitized);
+      while (gMatch !== null) {
+        const fnName = (gMatch[1] ?? "").trim();
+        const body = gMatch[2] ?? "";
         const argsObj = parseParameters(body);
         if (Object.keys(argsObj).length > 0) {
           toolCalls.push({
             id: `call_dots_${Date.now()}_${index}`,
             type: "function",
             function: {
-              name: tagName,
+              name: fnName,
               arguments: JSON.stringify(argsObj),
             },
           });
           index += 1;
+          remainingText = remainingText.replace(gMatch[0], "");
         }
+        gMatch = glmUnwrappedRegex.exec(sanitized);
       }
-      cMatch = customToolRegex.exec(contentWithoutThink);
+    }
+
+    // 5. Claude / Cline Format: <write><path>...</path></write> (only if no tools extracted yet)
+    if (toolCalls.length === 0) {
+      const customToolRegex = /<([a-zA-Z0-9_\-]+)>(\s*<[a-zA-Z0-9_\-]+>[^<]*<\/[a-zA-Z0-9_\-]+>[\s\S]*?)<\/\1>/gi;
+      let cMatch = customToolRegex.exec(sanitized);
+      while (cMatch !== null) {
+        const tagName = (cMatch[1] ?? "").trim();
+        if (!EXCLUDED_TAG_NAMES.has(tagName.toLowerCase())) {
+          const body = cMatch[2] ?? "";
+          const argsObj = parseParameters(body);
+          if (Object.keys(argsObj).length > 0) {
+            toolCalls.push({
+              id: `call_dots_${Date.now()}_${index}`,
+              type: "function",
+              function: {
+                name: tagName,
+                arguments: JSON.stringify(argsObj),
+              },
+            });
+            index += 1;
+            remainingText = remainingText.replace(cMatch[0], "");
+          }
+        }
+        cMatch = customToolRegex.exec(sanitized);
+      }
     }
   }
 
+  // STEP 2: Extract Thinking / Reasoning tokens from remaining text
+  let reasoningContent: string | undefined = undefined;
+  const thinkMatch = /<(?:think|thought|thinking)>([\s\S]*?)<\/(?:think|thought|thinking)>/i.exec(remainingText);
+  if (thinkMatch) {
+    const rawThink = (thinkMatch[1] ?? "").trim();
+    if (rawThink.length > 0) {
+      reasoningContent = stripLeakedTemplateTags(rawThink);
+    }
+  }
+
+  // STEP 3: Remove <think> blocks and strip residual markup
+  const contentWithoutThink = remainingText.replace(/<(?:think|thought|thinking)>[\s\S]*?<\/(?:think|thought|thinking)>/gi, "");
   const cleanText = stripResidualTags(contentWithoutThink);
+
   return { cleanText, toolCalls, reasoningContent };
 }
 
@@ -377,10 +422,11 @@ function stripResidualTags(text: string): string {
     .replace(/<tool_call>\s*\{[\s\S]*?\}\s*<\/tool_call>/gi, "")
     .replace(/<function=[a-zA-Z0-9_\-]+>[\s\S]*?<\/function>/gi, "")
     .replace(new RegExp(INVOKE_BLOCK_REGEX.source, "gi"), "")
+    .replace(/(?:<tool_call>)?\s*[a-zA-Z0-9_\-]+\s*<(?:arg_key|argument_name|parameter_name)>[\s\S]*?<\/(?:arg_value|argument_value|parameter_value)>\s*(?:<\/tool_call>)?/gi, "")
     .replace(/<([a-zA-Z0-9_\-]+)>\s*<[a-zA-Z0-9_\-]+>[^<]*<\/[a-zA-Z0-9_\-]+>[\s\S]*?<\/\1>/gi, (match, tag) => {
       return EXCLUDED_TAG_NAMES.has(String(tag).toLowerCase()) ? match : "";
     })
-    .replace(/<\/?(?:tool_calls|function_calls|invoke|tool_call|function_call|minimax:tool_call|parameter|arg_key|arg_value|parameter_value|argument_name|argument_value|role|think|thought|thinking)[^>]*>/gi, "")
+    .replace(/<\/?(?:tool_calls|function_calls|invoke|tool_call|function_call|minimax:tool_call|parameter|arg_key|arg_value|parameter_value|argument_name|argument_value|parameter_name|role|think|thought|thinking)[^>]*>/gi, "")
     .trim();
 }
 
@@ -430,29 +476,47 @@ function serializeToolResultContent(content: unknown): string {
   return JSON.stringify(content ?? "");
 }
 
-function serializeMessageForDots(msg: OpenAIMessage): OpenAIMessage {
-  if (msg.role === "assistant" && msg.tool_calls && msg.tool_calls.length > 0) {
-    const xml = serializeDotsToolCalls(msg.tool_calls);
-    const baseText = typeof msg.content === "string" ? msg.content : "";
-    const newContent = baseText.length > 0 ? `${baseText}\n${xml}` : xml;
-    return { role: "assistant", content: newContent };
-  }
-  if (msg.role === "tool") {
-    const toolId = msg.tool_call_id || "call_unknown";
-    const toolNameAttr = msg.name ? ` name="${msg.name}"` : "";
-    const text = serializeToolResultContent(msg.content);
-    return {
-      role: "user",
-      content: `<tool_result id="${toolId}"${toolNameAttr}>\n${text}\n</tool_result>`,
-    };
-  }
-  return msg;
-}
-
 export function serializeDotsToolHistory(
   messages: readonly OpenAIMessage[]
 ): OpenAIMessage[] {
-  return messages.map(serializeMessageForDots);
+  const result: OpenAIMessage[] = [];
+  const pendingToolResults: string[] = [];
+
+  const flushToolResults = () => {
+    if (pendingToolResults.length > 0) {
+      result.push({
+        role: "user",
+        content: pendingToolResults.join("\n\n"),
+      });
+      pendingToolResults.length = 0;
+    }
+  };
+
+  for (const msg of messages) {
+    if (msg.role === "tool") {
+      const toolId = msg.tool_call_id || "call_unknown";
+      const toolNameAttr = msg.name ? ` name="${msg.name}"` : "";
+      const text = serializeToolResultContent(msg.content);
+      pendingToolResults.push(
+        `<tool_result id="${toolId}"${toolNameAttr}>\n${text}\n</tool_result>`
+      );
+      continue;
+    }
+
+    flushToolResults();
+
+    if (msg.role === "assistant" && msg.tool_calls && msg.tool_calls.length > 0) {
+      const xml = serializeDotsToolCalls(msg.tool_calls);
+      const baseText = typeof msg.content === "string" ? msg.content : "";
+      const newContent = baseText.length > 0 ? `${baseText}\n${xml}` : xml;
+      result.push({ role: "assistant", content: newContent || " " });
+    } else {
+      result.push(msg);
+    }
+  }
+
+  flushToolResults();
+  return result;
 }
 
 export function injectToolsSchemaSystemPrompt(
@@ -559,6 +623,28 @@ function formatOpenAIToolCallDelta(
   return `data: ${JSON.stringify(payload)}\n\n`;
 }
 
+export function formatOpenAIReasoningDelta(
+  reasoning: string,
+  id?: string,
+  model?: string
+): string {
+  const payload = {
+    id: id || `chatcmpl_dots_${Date.now()}`,
+    object: "chat.completion.chunk",
+    created: Math.floor(Date.now() / 1000),
+    model: model || "model",
+    choices: [
+      {
+        index: 0,
+        delta: {
+          reasoning_content: reasoning,
+        },
+      },
+    ],
+  };
+  return `data: ${JSON.stringify(payload)}\n\n`;
+}
+
 function formatOpenAITextDelta(
   text: string,
   id?: string,
@@ -607,8 +693,21 @@ export function formatOpenAIFinishDelta(
 }
 
 function flushNonTagContent(state: DotsStreamState): string {
-  const tagStart = state.buffer.search(/<(?:tool_calls?|function_calls?|invoke|tool_call|function_call|function=|minimax:tool_call|think|thought|thinking)/i);
-  if (tagStart === -1) {
+  const glmPrefixMatch = state.buffer.search(/[a-zA-Z0-9_\-]+\s*<(?:arg_key|argument_name|parameter_name)/i);
+  const tagStart = state.buffer.search(
+    /<(?:tool_calls?|function_calls?|invoke|tool_call|function_call|function=|minimax:tool_call|think|thought|thinking|arg_key|arg_value|argument_name|argument_value|parameter|parameter_name|parameter_value)/i
+  );
+
+  let earliestTag = -1;
+  if (glmPrefixMatch !== -1 && tagStart !== -1) {
+    earliestTag = Math.min(glmPrefixMatch, tagStart);
+  } else if (glmPrefixMatch !== -1) {
+    earliestTag = glmPrefixMatch;
+  } else {
+    earliestTag = tagStart;
+  }
+
+  if (earliestTag === -1) {
     const potentialTag = state.buffer.search(/<[^>]*$/);
     if (potentialTag !== -1) {
       const rawPrefix = state.buffer.slice(0, potentialTag);
@@ -620,9 +719,9 @@ function flushNonTagContent(state: DotsStreamState): string {
     state.buffer = "";
     return textToEmit.length > 0 ? formatOpenAITextDelta(textToEmit, state.id, state.model) : "";
   }
-  if (tagStart > 0) {
-    const rawPrefix = state.buffer.slice(0, tagStart);
-    state.buffer = state.buffer.slice(tagStart);
+  if (earliestTag > 0) {
+    const rawPrefix = state.buffer.slice(0, earliestTag);
+    state.buffer = state.buffer.slice(earliestTag);
     const prefix = stripLeakedTemplateTags(rawPrefix);
     return prefix.length > 0 ? formatOpenAITextDelta(prefix, state.id, state.model) : "";
   }
@@ -636,17 +735,20 @@ export function processDotsStreamChunk(
   state.buffer += chunk;
 
   const hasClosingTag =
-    /<\/(?:invoke|tool_call|function_call|function|tool_calls|function_calls|minimax:tool_call|think|thought|thinking)>/i.test(
+    /<\/(?:invoke|tool_call|function_call|function|tool_calls|function_calls|minimax:tool_call|think|thought|thinking|arg_value|argument_value|parameter_value)>/i.test(
       state.buffer
     ) || /<\/([a-zA-Z0-9_\-]+)>\s*$/i.test(state.buffer);
   if (!hasClosingTag) {
     return flushNonTagContent(state);
   }
 
-  const { cleanText, toolCalls } = parseDotsXml(state.buffer);
+  const { cleanText, toolCalls, reasoningContent } = parseDotsXml(state.buffer);
   state.buffer = "";
 
   let output = "";
+  if (reasoningContent && reasoningContent.length > 0) {
+    output += formatOpenAIReasoningDelta(reasoningContent, state.id, state.model);
+  }
   if (cleanText.length > 0) {
     output += formatOpenAITextDelta(cleanText, state.id, state.model);
   }
@@ -667,8 +769,12 @@ export function createDotsStreamTransformer(): TransformStream<Uint8Array, Uint8
   function flushPendingBuffer(): string {
     let out = "";
     if (state.buffer.length > 0) {
-      const { cleanText, toolCalls } = parseDotsXml(state.buffer);
+      const sanitized = stripUnclosedTemplateTags(state.buffer);
+      const { cleanText, toolCalls, reasoningContent } = parseDotsXml(sanitized);
       state.buffer = "";
+      if (reasoningContent && reasoningContent.length > 0) {
+        out += formatOpenAIReasoningDelta(reasoningContent, state.id, state.model);
+      }
       if (cleanText.length > 0) {
         out += formatOpenAITextDelta(cleanText, state.id, state.model);
       }
@@ -750,11 +856,15 @@ export function createDotsStreamTransformer(): TransformStream<Uint8Array, Uint8
               }
             }
 
-            // FAST PASS-THROUGH: If no XML buffering is active and content has no '<', forward chunk
-            if (
-              state.buffer.length === 0 &&
-              (typeof content !== "string" || !content.includes("<"))
-            ) {
+            const hasPotentialTag =
+              typeof content === "string" &&
+              (content.includes("<") ||
+                content.includes("＜") ||
+                content.includes("[") ||
+                content.includes("<<"));
+
+            // FAST PASS-THROUGH: If no XML buffering is active and content has no tag chars, forward chunk
+            if (state.buffer.length === 0 && !hasPotentialTag) {
               if (incomingFinishReason) {
                 if (state.hasEmittedToolCalls) {
                   choice.finish_reason = "tool_calls";

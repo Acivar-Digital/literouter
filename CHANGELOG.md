@@ -4,6 +4,16 @@ All notable changes to LiteRouter will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed / Universal XML Tool Calling, Trapped Thinking Extraction & Turn Compaction
+- **Pre-Thinking Tool Extraction (`src/transformers/dots.ts`, `tests/unit/dots_xml_transformer.test.ts`)**:
+  - Re-ordered `parseDotsXml` to extract tool calls across all supported dialects (GLM `<arg_key>`/`<arg_value>`, Qwen `<function=...>`, DeepSeek `<invoke>`, JSON-in-XML) *before* stripping `<think>` reasoning tokens.
+  - Fixes premature halting and empty responses on reasoning models (Ling 1.0, Qwen 2.5/3, DeepSeek R1, Kimi) where the model outputs tool calls inside its `<think>` block.
+- **Consecutive Tool Results Compaction (`src/transformers/dots.ts`)**:
+  - Upgraded `serializeDotsToolHistory` to buffer and collapse consecutive `role: "tool"` messages into a single `role: "user"` turn containing combined `<tool_result>` blocks.
+  - Preserves strict user/assistant turn alternation expected by Jinja chat templates, eliminating template crashes and empty acknowledgments.
+- **Zero Tag Leakage across Streams & Static Responses (`src/transformers/dots.ts`, `src/transformers/opencode_adapter.ts`)**:
+  - Added full regex scrubbing for `<arg_key>`, `<arg_value>`, `<argument_name>`, `<argument_value>`, `<tool_call>`, and `<invoke>` across streaming deltas, non-streaming outputs, and outbound conversation history.
+
 ### Fixed / HTTP/2 Connection Pool Zombie Socket Purge on `ECONNRESET`
 - **Permanent Runtime Error & Socket Reset Purging (`src/network/h2_pool.ts`, `tests/unit/h2_pool.test.ts`)**:
   - Fixed an issue where HTTP/2 sessions removed their socket error listeners immediately after the initial TLS handshake, leaving severed or half-closed connections (`ECONNRESET`, `EPIPE`, TCP RST) inside the active connection pool.
