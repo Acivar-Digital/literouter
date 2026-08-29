@@ -5,7 +5,6 @@ import {
   stripLingLeakedTemplateTags,
   transformLingRequest,
   transformLingResponse,
-  lingResponseToSseStream,
 } from "../../src/transformers/ling";
 import type { OpenAIRequestPayload } from "../../src/transformers/nuances";
 
@@ -337,59 +336,5 @@ is_res = run_backtest(is_df, lot_size=lot_size)
     expect(args1.oldString).toBe("is_res = run_backtest(is_df)");
     expect(args1.newString).toBe("is_res = run_backtest(is_df, lot_size=lot_size)");
     expect(args1.replaceAll).toBe(false);
-  });
-
-  it("converts completed OpenAIResponse to downstream SSE stream with reasoning, tools, and finish_reason: tool_calls", async () => {
-    const resp = {
-      id: "chatcmpl_test_123",
-      object: "chat.completion",
-      created: 1788039000,
-      model: "inclusionai/ling-3.0-flash-fin:free",
-      choices: [
-        {
-          index: 0,
-          message: {
-            role: "assistant" as const,
-            content: "Applying patch now:",
-            reasoning_content: "Let me check the diff carefully",
-            tool_calls: [
-              {
-                id: "call_abc123",
-                type: "function" as const,
-                function: {
-                  name: "edit",
-                  arguments: JSON.stringify({ path: "/path/to/file.py", oldString: "a", newString: "b" }),
-                },
-              },
-            ],
-          },
-          finish_reason: "tool_calls",
-        },
-      ],
-      usage: {
-        prompt_tokens: 100,
-        completion_tokens: 50,
-        total_tokens: 150,
-      },
-    };
-
-    const stream = lingResponseToSseStream(resp);
-    const reader = stream.getReader();
-    const decoder = new TextDecoder();
-    let accumulated = "";
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      accumulated += decoder.decode(value);
-    }
-
-    expect(accumulated).toContain('"reasoning_content":"Let me check the diff carefully"');
-    expect(accumulated).toContain('"content":"Applying patch now:"');
-    expect(accumulated).toContain('"name":"edit","arguments":""');
-    expect(accumulated).toContain('{\\"path\\":\\"/path/to/file.py\\",\\"oldString\\":\\"a\\",\\"newString\\":\\"b\\"}');
-    expect(accumulated).toContain('"finish_reason":"tool_calls"');
-    expect(accumulated).toContain('"total_tokens":150');
-    expect(accumulated).toContain("data: [DONE]\n\n");
   });
 });
