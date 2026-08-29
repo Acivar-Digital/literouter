@@ -45,6 +45,8 @@ export const LING_KNOWN_TAGS = [
   "<|im_start|>",
   "<|im_end|>",
   "<|eot_id|>",
+  "<|startoftext|>",
+  "<|role_end|>",
 ] as const;
 
 /**
@@ -70,12 +72,7 @@ export function coerceLingValue(val: string): unknown {
 }
 
 /**
- * 1-to-1 Parameter XML Parser:
- * Parses:
- * 1. <parameter name="key">value</parameter>
- * 2. <parameter=key>value</parameter>
- * 3. <arg_key>key</arg_key><arg_value>value</arg_value>
- * 4. <parameter_name>key</parameter_name><parameter_value>value</parameter_value>
+ * 1-to-1 Parameter XML Parser
  */
 export function parseXmlParameters(xmlBody: string): Record<string, unknown> {
   const args: Record<string, unknown> = {};
@@ -144,7 +141,6 @@ export function parseLingXml(raw: string): LingParseResult {
   let reasoningContent: string | undefined;
 
   // 1. Thinking extraction & breakout
-  // Handles <think>reasoning</think> OR unclosed <think>reasoning<tool_call>...
   const thinkClosedMatch = /<(?:think|thought|thinking)>([\s\S]*?)<\/(?:think|thought|thinking)>/i.exec(text);
   if (thinkClosedMatch) {
     reasoningContent = stripLingLeakedTemplateTags(thinkClosedMatch[1]?.trim() ?? "");
@@ -193,7 +189,6 @@ export function parseLingXml(raw: string): LingParseResult {
     const rawName = match[1]?.trim() || "";
     const body = match[2] ?? "";
     
-    // Check if name is embedded at start of body (e.g. <tool_call>bash\n<arg_key>...)
     let name = rawName;
     let paramBody = body;
     if (!name) {
@@ -259,15 +254,25 @@ export function parseLingXml(raw: string): LingParseResult {
 
 /**
  * Dedicated 1-to-1 Ling SSE Streaming Transformer
- * Buffers tool call XML until closing tag and maps 1:1 into OpenAI tool_calls delta.
- * Passes regular text through untouched byte-for-byte.
+ * Accurately extracts reasoning (<think>) to reasoning_content,
+ * buffers tool calls to delta.tool_calls,
+ * and passes text untouched to delta.content without leaking tags.
  */
 export function createLingStreamTransformer(): TransformStream<Uint8Array, Uint8Array> {
   const textDecoder = new TextDecoder();
   const textEncoder = new TextEncoder();
   let buffer = "";
-  let insideToolCall = false;
+  let inThink = false;
+  let inToolCall = false;
   const toolCallId = `call_lg_${Date.now()}`;
+
+  function cleanControlTokens(s: string): string {
+    return s
+      .replace(/\[gMASK\](?:<sop>)?|<sop>|\[\/?INST\]|<<\/?SYS>>/gi, "")
+      .replace(/<\|\s*(?:startoftext|endoftext|role_start|role_end|im_start|im_end|start_of_turn|end_of_turn)\s*\|>/gi, "")
+      .replace(/<role>(?:HUMAN|ASSISTANT|SYSTEM|BOT|USER|human|assistant|user|system|bot)?<\/role>/gi, "")
+      .replace(/<\s*\/?\s*role(?::[a-zA-Z0-9_\-]+|\s*=\s*[a-zA-Z0-9_\-]+|\s+[a-zA-Z0-9_\-]+)?\s*>/gi, "");
+  }
 
   return new TransformStream({
     transform(chunk, controller) {
@@ -278,8 +283,8 @@ export function createLingStreamTransformer(): TransformStream<Uint8Array, Uint8
         const trimmed = line.trim();
         if (!trimmed) continue;
         if (trimmed === "data: [DONE]") {
-          if (insideToolCall && buffer.length > 0) {
-            const { toolCalls } = parseLingXml(buffer);
+          if (inToolCall && buffer.length > 0) {
+            const { toolCalls, reasoningContent } = parseLingXml(buffer);
             const tc = toolCalls[0];
             if (tc) {
               const delta = {
@@ -299,6 +304,7 @@ export function createLingStreamTransformer(): TransformStream<Uint8Array, Uint8
                           function: tc.function,
                         },
                       ],
+                      ...(reasoningContent ? { reasoning_content: reasoningContent } : {}),
                     },
                     finish_reason: "tool_calls",
                   },
@@ -307,7 +313,7 @@ export function createLingStreamTransformer(): TransformStream<Uint8Array, Uint8
               controller.enqueue(textEncoder.encode(`data: ${JSON.stringify(delta)}\n\n`));
             }
             buffer = "";
-            insideToolCall = false;
+            inToolCall = false;
           }
           controller.enqueue(textEncoder.encode("data: [DONE]\n\n"));
           continue;
@@ -329,58 +335,206 @@ export function createLingStreamTransformer(): TransformStream<Uint8Array, Uint8
           };
 
           const choice = json.choices?.[0];
-          const content = choice?.delta?.content;
+          const rawContent = choice?.delta?.content;
 
-          if (typeof content === "string") {
-            // Check if tool call starts
-            if (
-              !insideToolCall &&
-              (/<tool_calls>|<tool_call>|<invoke|<function=/i.test(content) ||
-                /<(?:arg_key|parameter)/i.test(content))
-            ) {
-              insideToolCall = true;
-              buffer += content;
-            } else if (insideToolCall) {
-              buffer += content;
-              // Check if tool call block ends
-              if (
-                /<\/(?:tool_calls|tool_call|invoke|function)>\s*$/i.test(buffer) ||
-                /<\/tool_calls>/i.test(buffer)
-              ) {
-                const { toolCalls, reasoningContent } = parseLingXml(buffer);
-                const tc = toolCalls[0];
-                if (tc) {
-                  const delta = {
-                    id: json.id || toolCallId,
-                    object: "chat.completion.chunk",
-                    created: Math.floor(Date.now() / 1000),
-                    model: json.model || "ling",
-                    choices: [
-                      {
-                        index: 0,
-                        delta: {
-                          tool_calls: [
-                            {
-                              index: 0,
-                              id: tc.id,
-                              type: "function",
-                              function: tc.function,
-                            },
-                          ],
-                          reasoning_content: reasoningContent,
-                        },
-                        finish_reason: "tool_calls",
-                      },
-                    ],
-                  };
-                  controller.enqueue(textEncoder.encode(`data: ${JSON.stringify(delta)}\n\n`));
+          if (typeof rawContent === "string") {
+            const content = cleanControlTokens(rawContent);
+            buffer += content;
+
+            // Process buffer line by line or token by token
+            while (buffer.length > 0) {
+              if (!inThink && !inToolCall) {
+                // Check if thinking starts
+                const thinkOpenIdx = buffer.search(/<(?:think|thought|thinking)>/i);
+                const toolOpenIdx = buffer.search(/<(?:tool_calls?|invoke|function=)/i);
+                const glmToolOpenIdx = buffer.search(/[a-zA-Z0-9_\-]+\s*<(?:arg_key|parameter)/i);
+
+                let nextTagIdx = -1;
+                let isThink = false;
+                let isTool = false;
+
+                if (thinkOpenIdx !== -1) {
+                  nextTagIdx = thinkOpenIdx;
+                  isThink = true;
                 }
-                buffer = "";
-                insideToolCall = false;
+                if (toolOpenIdx !== -1 && (nextTagIdx === -1 || toolOpenIdx < nextTagIdx)) {
+                  nextTagIdx = toolOpenIdx;
+                  isThink = false;
+                  isTool = true;
+                }
+                if (glmToolOpenIdx !== -1 && (nextTagIdx === -1 || glmToolOpenIdx < nextTagIdx)) {
+                  nextTagIdx = glmToolOpenIdx;
+                  isThink = false;
+                  isTool = true;
+                }
+
+                if (nextTagIdx === -1) {
+                  // No tags, pure text!
+                  // Check if buffer ends with partial '<' to avoid splitting a tag
+                  const partialMatch = /<[a-zA-Z0-9_\-/]*$/.exec(buffer);
+                  if (partialMatch) {
+                    const emit = buffer.slice(0, partialMatch.index);
+                    buffer = buffer.slice(partialMatch.index);
+                    if (emit.length > 0) {
+                      const delta = {
+                        id: json.id || toolCallId,
+                        object: "chat.completion.chunk",
+                        created: Math.floor(Date.now() / 1000),
+                        model: json.model || "ling",
+                        choices: [{ index: 0, delta: { content: emit }, finish_reason: null }],
+                      };
+                      controller.enqueue(textEncoder.encode(`data: ${JSON.stringify(delta)}\n\n`));
+                    }
+                    break;
+                  }
+                  // Emit all buffer as text
+                  const emit = buffer;
+                  buffer = "";
+                  if (emit.length > 0) {
+                    const delta = {
+                      id: json.id || toolCallId,
+                      object: "chat.completion.chunk",
+                      created: Math.floor(Date.now() / 1000),
+                      model: json.model || "ling",
+                      choices: [{ index: 0, delta: { content: emit }, finish_reason: null }],
+                    };
+                    controller.enqueue(textEncoder.encode(`data: ${JSON.stringify(delta)}\n\n`));
+                  }
+                } else {
+                  // Emit text before the tag
+                  if (nextTagIdx > 0) {
+                    const emit = buffer.slice(0, nextTagIdx);
+                    buffer = buffer.slice(nextTagIdx);
+                    const delta = {
+                      id: json.id || toolCallId,
+                      object: "chat.completion.chunk",
+                      created: Math.floor(Date.now() / 1000),
+                      model: json.model || "ling",
+                      choices: [{ index: 0, delta: { content: emit }, finish_reason: null }],
+                    };
+                    controller.enqueue(textEncoder.encode(`data: ${JSON.stringify(delta)}\n\n`));
+                  }
+                  if (isThink) {
+                    const tagMatch = /<(?:think|thought|thinking)>/i.exec(buffer);
+                    if (tagMatch) {
+                      buffer = buffer.slice(tagMatch[0].length);
+                      inThink = true;
+                    }
+                  } else if (isTool) {
+                    inToolCall = true;
+                    break; // Stay in inToolCall and accumulate
+                  }
+                }
+              } else if (inThink) {
+                // Look for </think> or tool call breakout
+                const thinkCloseIdx = buffer.search(/<\/(?:think|thought|thinking)>/i);
+                const toolBreakoutIdx = buffer.search(/<(?:tool_calls?|invoke|function=)|[a-zA-Z0-9_\-]+\s*<(?:arg_key|parameter)/i);
+
+                if (thinkCloseIdx !== -1) {
+                  const reasoning = buffer.slice(0, thinkCloseIdx);
+                  const closeMatch = /<\/(?:think|thought|thinking)>/i.exec(buffer.slice(thinkCloseIdx));
+                  buffer = buffer.slice(thinkCloseIdx + (closeMatch ? closeMatch[0].length : 0));
+                  inThink = false;
+
+                  if (reasoning.length > 0) {
+                    const delta = {
+                      id: json.id || toolCallId,
+                      object: "chat.completion.chunk",
+                      created: Math.floor(Date.now() / 1000),
+                      model: json.model || "ling",
+                      choices: [{ index: 0, delta: { reasoning_content: reasoning }, finish_reason: null }],
+                    };
+                    controller.enqueue(textEncoder.encode(`data: ${JSON.stringify(delta)}\n\n`));
+                  }
+                } else if (toolBreakoutIdx !== -1) {
+                  // Tool call broke out without closing </think>
+                  const reasoning = buffer.slice(0, toolBreakoutIdx);
+                  buffer = buffer.slice(toolBreakoutIdx);
+                  inThink = false;
+                  inToolCall = true;
+
+                  if (reasoning.length > 0) {
+                    const delta = {
+                      id: json.id || toolCallId,
+                      object: "chat.completion.chunk",
+                      created: Math.floor(Date.now() / 1000),
+                      model: json.model || "ling",
+                      choices: [{ index: 0, delta: { reasoning_content: reasoning }, finish_reason: null }],
+                    };
+                    controller.enqueue(textEncoder.encode(`data: ${JSON.stringify(delta)}\n\n`));
+                  }
+                  break;
+                } else {
+                  // Emit reasoning incrementally
+                  const partialMatch = /<[a-zA-Z0-9_\-/]*$/.exec(buffer);
+                  if (partialMatch) {
+                    const emit = buffer.slice(0, partialMatch.index);
+                    buffer = buffer.slice(partialMatch.index);
+                    if (emit.length > 0) {
+                      const delta = {
+                        id: json.id || toolCallId,
+                        object: "chat.completion.chunk",
+                        created: Math.floor(Date.now() / 1000),
+                        model: json.model || "ling",
+                        choices: [{ index: 0, delta: { reasoning_content: emit }, finish_reason: null }],
+                      };
+                      controller.enqueue(textEncoder.encode(`data: ${JSON.stringify(delta)}\n\n`));
+                    }
+                    break;
+                  }
+                  const emit = buffer;
+                  buffer = "";
+                  if (emit.length > 0) {
+                    const delta = {
+                      id: json.id || toolCallId,
+                      object: "chat.completion.chunk",
+                      created: Math.floor(Date.now() / 1000),
+                      model: json.model || "ling",
+                      choices: [{ index: 0, delta: { reasoning_content: emit }, finish_reason: null }],
+                    };
+                    controller.enqueue(textEncoder.encode(`data: ${JSON.stringify(delta)}\n\n`));
+                  }
+                }
+              } else if (inToolCall) {
+                // Buffer until tool call block is closed
+                if (
+                  /<\/(?:tool_calls|tool_call|invoke|function)>\s*$/i.test(buffer) ||
+                  /<\/tool_calls>/i.test(buffer) ||
+                  /<\/arg_value>\s*<\/tool_call>/i.test(buffer)
+                ) {
+                  const { toolCalls, reasoningContent } = parseLingXml(buffer);
+                  const tc = toolCalls[0];
+                  if (tc) {
+                    const delta = {
+                      id: json.id || toolCallId,
+                      object: "chat.completion.chunk",
+                      created: Math.floor(Date.now() / 1000),
+                      model: json.model || "ling",
+                      choices: [
+                        {
+                          index: 0,
+                          delta: {
+                            tool_calls: [
+                              {
+                                index: 0,
+                                id: tc.id,
+                                type: "function",
+                                function: tc.function,
+                              },
+                            ],
+                            ...(reasoningContent ? { reasoning_content: reasoningContent } : {}),
+                          },
+                          finish_reason: "tool_calls",
+                        },
+                      ],
+                    };
+                    controller.enqueue(textEncoder.encode(`data: ${JSON.stringify(delta)}\n\n`));
+                  }
+                  buffer = "";
+                  inToolCall = false;
+                }
+                break;
               }
-            } else {
-              // Regular text delta - 100% untouched passthrough
-              controller.enqueue(textEncoder.encode(`${trimmed}\n\n`));
             }
           } else {
             // Non-content deltas (e.g. reasoning_content, finish_reason) pass straight through
@@ -392,8 +546,8 @@ export function createLingStreamTransformer(): TransformStream<Uint8Array, Uint8
       }
     },
     flush(controller) {
-      if (insideToolCall && buffer.length > 0) {
-        const { toolCalls } = parseLingXml(buffer);
+      if (inToolCall && buffer.length > 0) {
+        const { toolCalls, reasoningContent } = parseLingXml(buffer);
         const tc = toolCalls[0];
         if (tc) {
           const delta = {
@@ -413,8 +567,27 @@ export function createLingStreamTransformer(): TransformStream<Uint8Array, Uint8
                       function: tc.function,
                     },
                   ],
+                  ...(reasoningContent ? { reasoning_content: reasoningContent } : {}),
                 },
                 finish_reason: "tool_calls",
+              },
+            ],
+          };
+          controller.enqueue(textEncoder.encode(`data: ${JSON.stringify(delta)}\n\n`));
+        }
+      } else if (buffer.length > 0) {
+        const clean = cleanControlTokens(buffer);
+        if (clean.length > 0) {
+          const delta = {
+            id: toolCallId,
+            object: "chat.completion.chunk",
+            created: Math.floor(Date.now() / 1000),
+            model: "ling",
+            choices: [
+              {
+                index: 0,
+                delta: inThink ? { reasoning_content: clean } : { content: clean },
+                finish_reason: null,
               },
             ],
           };

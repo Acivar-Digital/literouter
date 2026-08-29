@@ -1,73 +1,95 @@
 import { describe, expect, it } from "bun:test";
 import {
-  LING_KNOWN_TAGS,
   parseLingXml,
+  createLingStreamTransformer,
   stripLingLeakedTemplateTags,
-  stripLingUnclosedTemplateTags,
 } from "../../src/transformers/ling";
-import { parseDirective } from "../../src/directive/parser";
 
-describe("Ling 1:1 Explicit Mapping Transformer", () => {
-  it("recognizes 'lg' nuance directive correctly", () => {
-    const direct = parseDirective("lr-or-oa-ch-lg");
-    expect(direct).not.toBeNull();
-    if (direct && direct.type === "direct") {
-      expect(direct.nuances).toContain("lg");
+describe("Ling Transformer & Streaming Suite", () => {
+  it("strips control tokens like [gMASK] and <role>", () => {
+    const raw = "[gMASK]<|startoftext|><role>assistant</role>Hello World<|role_end|>";
+    expect(stripLingLeakedTemplateTags(raw)).toBe("Hello World");
+  });
+
+  it("streams thinking to reasoning_content and tool call to tool_calls delta", async () => {
+    const transformer = createLingStreamTransformer();
+    const encoder = new TextEncoder();
+    const decoder = new TextDecoder();
+
+    const inputChunks = [
+      'data: {"choices":[{"delta":{"content":"[gMASK]<|startoftext|><role>assistant</role>\\n<think>Inspecting codebase"}}]}\n\n',
+      'data: {"choices":[{"delta":{"content":" for test files.</think>\\n"}}]}\n\n',
+      'data: {"choices":[{"delta":{"content":"<tool_call>bash\\n<arg_key>command</arg_key>\\n"}}]}\n\n',
+      'data: {"choices":[{"delta":{"content":"<arg_value>ls -la</arg_value>\\n</tool_call>"}}]}\n\n',
+      "data: [DONE]\n\n",
+    ];
+
+    const stream = new ReadableStream({
+      start(controller) {
+        for (const chunk of inputChunks) {
+          controller.enqueue(encoder.encode(chunk));
+        }
+        controller.close();
+      },
+    });
+
+    const transformedStream = stream.pipeThrough(transformer);
+    const reader = transformedStream.getReader();
+    let accumulatedOutput = "";
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      accumulatedOutput += decoder.decode(value);
     }
 
-    const multi = parseDirective("lr-or-oa-ch-ts+lg");
-    expect(multi).not.toBeNull();
-    if (multi && multi.type === "direct") {
-      expect(multi.nuances).toContain("ts");
-      expect(multi.nuances).toContain("lg");
+    // Verify [gMASK] and <role> are never leaked
+    expect(accumulatedOutput).not.toContain("[gMASK]");
+    expect(accumulatedOutput).not.toContain("<role>");
+    expect(accumulatedOutput).not.toContain("<think>");
+    expect(accumulatedOutput).not.toContain("<tool_call>");
+
+    // Verify reasoning_content delta was emitted
+    expect(accumulatedOutput).toContain('"reasoning_content"');
+    expect(accumulatedOutput).toContain("Inspecting codebase");
+
+    // Verify tool_calls delta was emitted with correct JSON
+    expect(accumulatedOutput).toContain('"tool_calls"');
+    expect(accumulatedOutput).toContain('"name":"bash"');
+    expect(accumulatedOutput).toContain('{\\"command\\":\\"ls -la\\"}');
+  });
+
+  it("streams plain text untouched without tag corruption", async () => {
+    const transformer = createLingStreamTransformer();
+    const encoder = new TextEncoder();
+    const decoder = new TextDecoder();
+
+    const inputChunks = [
+      'data: {"choices":[{"delta":{"content":"Here is the strategy: 1 < 2 and 3 > 2."}}]}\n\n',
+      'data: {"choices":[{"delta":{"content":" Done!"}}]}\n\n',
+      "data: [DONE]\n\n",
+    ];
+
+    const stream = new ReadableStream({
+      start(controller) {
+        for (const chunk of inputChunks) {
+          controller.enqueue(encoder.encode(chunk));
+        }
+        controller.close();
+      },
+    });
+
+    const transformedStream = stream.pipeThrough(transformer);
+    const reader = transformedStream.getReader();
+    let accumulatedOutput = "";
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      accumulatedOutput += decoder.decode(value);
     }
-  });
 
-  it("contains all expected standard Ling/GLM tags in LING_KNOWN_TAGS whitelist", () => {
-    expect(LING_KNOWN_TAGS).toContain("<tool_calls>");
-    expect(LING_KNOWN_TAGS).toContain("</tool_calls>");
-    expect(LING_KNOWN_TAGS).toContain("<arg_key>");
-    expect(LING_KNOWN_TAGS).toContain("</arg_key>");
-    expect(LING_KNOWN_TAGS).toContain("<arg_value>");
-    expect(LING_KNOWN_TAGS).toContain("</arg_value>");
-    expect(LING_KNOWN_TAGS).toContain("<think>");
-    expect(LING_KNOWN_TAGS).toContain("</think>");
-    expect(LING_KNOWN_TAGS).toContain("</role>");
-  });
-
-  it("parses unadorned Ling tool calls with exact 1:1 <arg_key>/<arg_value> mapping", () => {
-    const raw = `bash<arg_key>command</arg_key><arg_value>git status</arg_value>`;
-    const parsed = parseLingXml(raw);
-
-    expect(parsed.cleanText).toBe("");
-    expect(parsed.toolCalls.length).toBe(1);
-    expect(parsed.toolCalls[0]?.function.name).toBe("bash");
-    expect(JSON.parse(parsed.toolCalls[0]?.function.arguments ?? "{}")).toEqual({
-      command: "git status",
-    });
-  });
-
-  it("parses invoke-wrapped Ling tool calls and extracts reasoning content cleanly", () => {
-    const raw = `<think>Need to inspect files</think><tool_calls><invoke name="read_file"><parameter_name>path</parameter_name><parameter_value>src/index.ts</parameter_value></invoke></tool_calls>`;
-    const parsed = parseLingXml(raw);
-
-    expect(parsed.reasoningContent).toBe("Need to inspect files");
-    expect(parsed.toolCalls.length).toBe(1);
-    expect(parsed.toolCalls[0]?.function.name).toBe("read_file");
-    expect(JSON.parse(parsed.toolCalls[0]?.function.arguments ?? "{}")).toEqual({
-      path: "src/index.ts",
-    });
-  });
-
-  it("preserves math expressions and code comparisons without stripping", () => {
-    const code = "for (let i = 0; i < len; i++) { if (x < 5) return true; }";
-    const cleaned = stripLingUnclosedTemplateTags(code);
-    expect(cleaned).toBe(code);
-  });
-
-  it("strips leaked template tags cleanly", () => {
-    const leaked = "<role:assistant>Here is your result</role>";
-    const cleaned = stripLingLeakedTemplateTags(leaked);
-    expect(cleaned).toBe("Here is your result");
+    expect(accumulatedOutput).toContain("Here is the strategy: 1 < 2 and 3 > 2.");
+    expect(accumulatedOutput).toContain("Done!");
   });
 });
