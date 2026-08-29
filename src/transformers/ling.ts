@@ -256,15 +256,20 @@ export function parseLingXml(raw: string): LingParseResult {
  * Dedicated 1-to-1 Ling SSE Streaming Transformer
  * Accurately extracts reasoning (<think>) to reasoning_content,
  * buffers tool calls to delta.tool_calls,
+ * guarantees explicit finish_reason on stream end,
  * and passes text untouched to delta.content without leaking tags.
  */
 export function createLingStreamTransformer(): TransformStream<Uint8Array, Uint8Array> {
   const textDecoder = new TextDecoder();
   const textEncoder = new TextEncoder();
+  let lineBuffer = "";
   let buffer = "";
   let inThink = false;
   let inToolCall = false;
-  const toolCallId = `call_lg_${Date.now()}`;
+  let hasEmittedFinishReason = false;
+  let hasEmittedToolCalls = false;
+  let streamId = `call_lg_${Date.now()}`;
+  let streamModel = "ling";
 
   function cleanControlTokens(s: string): string {
     return s
@@ -274,47 +279,95 @@ export function createLingStreamTransformer(): TransformStream<Uint8Array, Uint8
       .replace(/<\s*\/?\s*role(?::[a-zA-Z0-9_\-]+|\s*=\s*[a-zA-Z0-9_\-]+|\s+[a-zA-Z0-9_\-]+)?\s*>/gi, "");
   }
 
+  function flushPendingBuffer(controller: TransformStreamDefaultController<Uint8Array>): void {
+    if (inToolCall && buffer.length > 0) {
+      const { toolCalls, reasoningContent } = parseLingXml(buffer);
+      const tc = toolCalls[0];
+      if (tc) {
+        hasEmittedToolCalls = true;
+        hasEmittedFinishReason = true;
+        const delta = {
+          id: streamId,
+          object: "chat.completion.chunk",
+          created: Math.floor(Date.now() / 1000),
+          model: streamModel,
+          choices: [
+            {
+              index: 0,
+              delta: {
+                tool_calls: [
+                  {
+                    index: 0,
+                    id: tc.id,
+                    type: "function",
+                    function: tc.function,
+                  },
+                ],
+                ...(reasoningContent ? { reasoning_content: reasoningContent } : {}),
+              },
+              finish_reason: "tool_calls",
+            },
+          ],
+        };
+        controller.enqueue(textEncoder.encode(`data: ${JSON.stringify(delta)}\n\n`));
+      }
+      buffer = "";
+      inToolCall = false;
+    } else if (buffer.length > 0) {
+      const clean = cleanControlTokens(buffer);
+      if (clean.length > 0) {
+        const delta = {
+          id: streamId,
+          object: "chat.completion.chunk",
+          created: Math.floor(Date.now() / 1000),
+          model: streamModel,
+          choices: [
+            {
+              index: 0,
+              delta: inThink ? { reasoning_content: clean } : { content: clean },
+              finish_reason: null,
+            },
+          ],
+        };
+        controller.enqueue(textEncoder.encode(`data: ${JSON.stringify(delta)}\n\n`));
+      }
+      buffer = "";
+    }
+  }
+
+  function ensureFinishReason(controller: TransformStreamDefaultController<Uint8Array>): void {
+    if (!hasEmittedFinishReason) {
+      hasEmittedFinishReason = true;
+      const finishReason = hasEmittedToolCalls ? "tool_calls" : "stop";
+      const delta = {
+        id: streamId,
+        object: "chat.completion.chunk",
+        created: Math.floor(Date.now() / 1000),
+        model: streamModel,
+        choices: [
+          {
+            index: 0,
+            delta: {},
+            finish_reason: finishReason,
+          },
+        ],
+      };
+      controller.enqueue(textEncoder.encode(`data: ${JSON.stringify(delta)}\n\n`));
+    }
+  }
+
   return new TransformStream({
     transform(chunk, controller) {
-      const text = textDecoder.decode(chunk, { stream: true });
-      const lines = text.split("\n");
+      lineBuffer += textDecoder.decode(chunk, { stream: true });
+      const lines = lineBuffer.split("\n");
+      lineBuffer = lines.pop() ?? "";
 
       for (const line of lines) {
         const trimmed = line.trim();
         if (!trimmed) continue;
         if (trimmed === "data: [DONE]") {
-          if (inToolCall && buffer.length > 0) {
-            const { toolCalls, reasoningContent } = parseLingXml(buffer);
-            const tc = toolCalls[0];
-            if (tc) {
-              const delta = {
-                id: toolCallId,
-                object: "chat.completion.chunk",
-                created: Math.floor(Date.now() / 1000),
-                model: "ling",
-                choices: [
-                  {
-                    index: 0,
-                    delta: {
-                      tool_calls: [
-                        {
-                          index: 0,
-                          id: tc.id,
-                          type: "function",
-                          function: tc.function,
-                        },
-                      ],
-                      ...(reasoningContent ? { reasoning_content: reasoningContent } : {}),
-                    },
-                    finish_reason: "tool_calls",
-                  },
-                ],
-              };
-              controller.enqueue(textEncoder.encode(`data: ${JSON.stringify(delta)}\n\n`));
-            }
-            buffer = "";
-            inToolCall = false;
-          }
+          flushPendingBuffer(controller);
+          ensureFinishReason(controller);
           controller.enqueue(textEncoder.encode("data: [DONE]\n\n"));
           continue;
         }
@@ -334,7 +387,19 @@ export function createLingStreamTransformer(): TransformStream<Uint8Array, Uint8
             }>;
           };
 
+          if (json.id && typeof json.id === "string") {
+            streamId = json.id;
+          }
+          if (json.model && typeof json.model === "string") {
+            streamModel = json.model;
+          }
+
           const choice = json.choices?.[0];
+          const incomingFinishReason = choice?.finish_reason;
+          if (incomingFinishReason) {
+            hasEmittedFinishReason = true;
+          }
+
           const rawContent = choice?.delta?.content;
 
           if (typeof rawContent === "string") {
@@ -377,10 +442,10 @@ export function createLingStreamTransformer(): TransformStream<Uint8Array, Uint8
                     buffer = buffer.slice(partialMatch.index);
                     if (emit.length > 0) {
                       const delta = {
-                        id: json.id || toolCallId,
+                        id: streamId,
                         object: "chat.completion.chunk",
                         created: Math.floor(Date.now() / 1000),
-                        model: json.model || "ling",
+                        model: streamModel,
                         choices: [{ index: 0, delta: { content: emit }, finish_reason: null }],
                       };
                       controller.enqueue(textEncoder.encode(`data: ${JSON.stringify(delta)}\n\n`));
@@ -392,10 +457,10 @@ export function createLingStreamTransformer(): TransformStream<Uint8Array, Uint8
                   buffer = "";
                   if (emit.length > 0) {
                     const delta = {
-                      id: json.id || toolCallId,
+                      id: streamId,
                       object: "chat.completion.chunk",
                       created: Math.floor(Date.now() / 1000),
-                      model: json.model || "ling",
+                      model: streamModel,
                       choices: [{ index: 0, delta: { content: emit }, finish_reason: null }],
                     };
                     controller.enqueue(textEncoder.encode(`data: ${JSON.stringify(delta)}\n\n`));
@@ -406,10 +471,10 @@ export function createLingStreamTransformer(): TransformStream<Uint8Array, Uint8
                     const emit = buffer.slice(0, nextTagIdx);
                     buffer = buffer.slice(nextTagIdx);
                     const delta = {
-                      id: json.id || toolCallId,
+                      id: streamId,
                       object: "chat.completion.chunk",
                       created: Math.floor(Date.now() / 1000),
-                      model: json.model || "ling",
+                      model: streamModel,
                       choices: [{ index: 0, delta: { content: emit }, finish_reason: null }],
                     };
                     controller.enqueue(textEncoder.encode(`data: ${JSON.stringify(delta)}\n\n`));
@@ -438,10 +503,10 @@ export function createLingStreamTransformer(): TransformStream<Uint8Array, Uint8
 
                   if (reasoning.length > 0) {
                     const delta = {
-                      id: json.id || toolCallId,
+                      id: streamId,
                       object: "chat.completion.chunk",
                       created: Math.floor(Date.now() / 1000),
-                      model: json.model || "ling",
+                      model: streamModel,
                       choices: [{ index: 0, delta: { reasoning_content: reasoning }, finish_reason: null }],
                     };
                     controller.enqueue(textEncoder.encode(`data: ${JSON.stringify(delta)}\n\n`));
@@ -455,10 +520,10 @@ export function createLingStreamTransformer(): TransformStream<Uint8Array, Uint8
 
                   if (reasoning.length > 0) {
                     const delta = {
-                      id: json.id || toolCallId,
+                      id: streamId,
                       object: "chat.completion.chunk",
                       created: Math.floor(Date.now() / 1000),
-                      model: json.model || "ling",
+                      model: streamModel,
                       choices: [{ index: 0, delta: { reasoning_content: reasoning }, finish_reason: null }],
                     };
                     controller.enqueue(textEncoder.encode(`data: ${JSON.stringify(delta)}\n\n`));
@@ -472,10 +537,10 @@ export function createLingStreamTransformer(): TransformStream<Uint8Array, Uint8
                     buffer = buffer.slice(partialMatch.index);
                     if (emit.length > 0) {
                       const delta = {
-                        id: json.id || toolCallId,
+                        id: streamId,
                         object: "chat.completion.chunk",
                         created: Math.floor(Date.now() / 1000),
-                        model: json.model || "ling",
+                        model: streamModel,
                         choices: [{ index: 0, delta: { reasoning_content: emit }, finish_reason: null }],
                       };
                       controller.enqueue(textEncoder.encode(`data: ${JSON.stringify(delta)}\n\n`));
@@ -486,10 +551,10 @@ export function createLingStreamTransformer(): TransformStream<Uint8Array, Uint8
                   buffer = "";
                   if (emit.length > 0) {
                     const delta = {
-                      id: json.id || toolCallId,
+                      id: streamId,
                       object: "chat.completion.chunk",
                       created: Math.floor(Date.now() / 1000),
-                      model: json.model || "ling",
+                      model: streamModel,
                       choices: [{ index: 0, delta: { reasoning_content: emit }, finish_reason: null }],
                     };
                     controller.enqueue(textEncoder.encode(`data: ${JSON.stringify(delta)}\n\n`));
@@ -505,11 +570,13 @@ export function createLingStreamTransformer(): TransformStream<Uint8Array, Uint8
                   const { toolCalls, reasoningContent } = parseLingXml(buffer);
                   const tc = toolCalls[0];
                   if (tc) {
+                    hasEmittedToolCalls = true;
+                    hasEmittedFinishReason = true;
                     const delta = {
-                      id: json.id || toolCallId,
+                      id: streamId,
                       object: "chat.completion.chunk",
                       created: Math.floor(Date.now() / 1000),
-                      model: json.model || "ling",
+                      model: streamModel,
                       choices: [
                         {
                           index: 0,
@@ -546,54 +613,8 @@ export function createLingStreamTransformer(): TransformStream<Uint8Array, Uint8
       }
     },
     flush(controller) {
-      if (inToolCall && buffer.length > 0) {
-        const { toolCalls, reasoningContent } = parseLingXml(buffer);
-        const tc = toolCalls[0];
-        if (tc) {
-          const delta = {
-            id: toolCallId,
-            object: "chat.completion.chunk",
-            created: Math.floor(Date.now() / 1000),
-            model: "ling",
-            choices: [
-              {
-                index: 0,
-                delta: {
-                  tool_calls: [
-                    {
-                      index: 0,
-                      id: tc.id,
-                      type: "function",
-                      function: tc.function,
-                    },
-                  ],
-                  ...(reasoningContent ? { reasoning_content: reasoningContent } : {}),
-                },
-                finish_reason: "tool_calls",
-              },
-            ],
-          };
-          controller.enqueue(textEncoder.encode(`data: ${JSON.stringify(delta)}\n\n`));
-        }
-      } else if (buffer.length > 0) {
-        const clean = cleanControlTokens(buffer);
-        if (clean.length > 0) {
-          const delta = {
-            id: toolCallId,
-            object: "chat.completion.chunk",
-            created: Math.floor(Date.now() / 1000),
-            model: "ling",
-            choices: [
-              {
-                index: 0,
-                delta: inThink ? { reasoning_content: clean } : { content: clean },
-                finish_reason: null,
-              },
-            ],
-          };
-          controller.enqueue(textEncoder.encode(`data: ${JSON.stringify(delta)}\n\n`));
-        }
-      }
+      flushPendingBuffer(controller);
+      ensureFinishReason(controller);
     },
   });
 }

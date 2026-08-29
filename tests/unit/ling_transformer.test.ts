@@ -11,7 +11,7 @@ describe("Ling Transformer & Streaming Suite", () => {
     expect(stripLingLeakedTemplateTags(raw)).toBe("Hello World");
   });
 
-  it("streams thinking to reasoning_content and tool call to tool_calls delta", async () => {
+  it("streams thinking to reasoning_content and tool call to tool_calls delta with finish_reason: tool_calls", async () => {
     const transformer = createLingStreamTransformer();
     const encoder = new TextEncoder();
     const decoder = new TextDecoder();
@@ -57,9 +57,10 @@ describe("Ling Transformer & Streaming Suite", () => {
     expect(accumulatedOutput).toContain('"tool_calls"');
     expect(accumulatedOutput).toContain('"name":"bash"');
     expect(accumulatedOutput).toContain('{\\"command\\":\\"ls -la\\"}');
+    expect(accumulatedOutput).toContain('"finish_reason":"tool_calls"');
   });
 
-  it("streams plain text untouched without tag corruption", async () => {
+  it("streams plain text and guarantees finish_reason: stop before [DONE]", async () => {
     const transformer = createLingStreamTransformer();
     const encoder = new TextEncoder();
     const decoder = new TextDecoder();
@@ -91,5 +92,6 @@ describe("Ling Transformer & Streaming Suite", () => {
 
     expect(accumulatedOutput).toContain("Here is the strategy: 1 < 2 and 3 > 2.");
     expect(accumulatedOutput).toContain("Done!");
+    expect(accumulatedOutput).toContain('"finish_reason":"stop"');
   });
 });
