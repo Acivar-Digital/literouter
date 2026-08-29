@@ -1096,4 +1096,50 @@ describe("Dots XML Tool History Serialization", () => {
     });
     expect(result.cleanText).toBe("");
   });
+
+  it("buffers bare '<' split across chunks and prevents '</role>' leakage to client", async () => {
+    const rawChunks = [
+      'data: {"choices":[{"delta":{"content":"Thinking step 1... <"}}]}\n\n',
+      'data: {"choices":[{"delta":{"content":"/role>\\nHere is the real answer."}}]}\n\n',
+      'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n',
+      "data: [DONE]\n\n",
+    ];
+
+    const stream = new ReadableStream({
+      start(controller) {
+        for (const chunk of rawChunks) {
+          controller.enqueue(new TextEncoder().encode(chunk));
+        }
+        controller.close();
+      },
+    });
+
+    const transformer = createDotsStreamTransformer();
+    const transformedStream = stream.pipeThrough(transformer);
+    const reader = transformedStream.getReader();
+    let resultText = "";
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      resultText += new TextDecoder().decode(value);
+    }
+
+    expect(resultText).not.toContain("</role>");
+    expect(resultText).not.toContain("<role>");
+    expect(resultText).toContain("Thinking step 1... ");
+    expect(resultText).toContain("Here is the real answer.");
+  });
+
+  it("sanitizes bare '<' split in TagSanitizerStreamBuffer", () => {
+    const { TagSanitizerStreamBuffer } = require("../../src/transformers/dots");
+    const buffer = new TagSanitizerStreamBuffer();
+
+    const c1 = buffer.process("Analyzing... <");
+    const c2 = buffer.process("/role>\nDone.");
+    const flushed = buffer.flush();
+
+    expect(c1).toBe("Analyzing... ");
+    expect(c2).toBe("\nDone.");
+    expect(flushed).toBe("");
+  });
 });

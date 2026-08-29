@@ -10,7 +10,7 @@ export const LEAKED_TEMPLATE_REGEX =
   /<role>(?:HUMAN|ASSISTANT|SYSTEM|BOT|USER|human|assistant|user|system|bot)?<\/role>|<\s*\/?\s*role(?::[a-zA-Z0-9_\-]+|\s*=\s*[a-zA-Z0-9_\-]+|\s+[a-zA-Z0-9_\-]+)?\s*>|<\s*\/?\s*(?:assistant|user|system|human|bot)\s*>|<\|\s*(?:im_start|im_end|endoftext|startoftext|start_of_turn|end_of_turn|role_start|role_end|system|user|assistant|observation|bot|tool_calls?|\/?tool_calls?|eot_id|start_header_id|end_header_id|end)\b[^|]*\|>(?:\s*(?:assistant|user|system|human|bot)\b)?|<｜\s*(?:System|User|Assistant|begin of sentence|end of sentence|tool calls?|tool results?|tool outputs?)\b[^｜]*｜>|＜｜\s*(?:System|User|Assistant|begin of sentence|end of sentence|tool calls?|tool results?|tool outputs?)\b[^｜]*｜＞|\[gMASK\](?:<sop>)?|<sop>|\[\/?INST\]|<<\/?SYS>>|(?:\b(?:HUMAN|ASSISTANT|SYSTEM|BOT|USER)\b\s*)?<\s*\/\s*(?:role|im_end|end_of_turn|role_end)\s*>|<\s*(?:role|im_start|start_of_turn|role_start)\s*>\s*(?:HUMAN|ASSISTANT|SYSTEM|BOT|USER)\b|<\/?(?:im_start|im_end|endoftext|startoftext|start_of_turn|end_of_turn|role_start|role_end)(?:\s+[^>]*)?>|<\/?(?:tool_response|tool_result|tools|turn|turn_end)(?:\s+[^>]*)?>/gi;
 
 export const UNCLOSED_TEMPLATE_TAG_REGEX =
-  /<(?:\/|\s*\/?\s*[a-zA-Z_])[^>]{0,40}$|<\|[^|]{0,40}$|<｜[^｜]{0,40}$|＜｜?[^｜＞]{0,40}$|\[[a-zA-Z0-9_\-/]{1,20}$|<<[^>]{0,20}$/;
+  /<[^>]{0,40}$|<\|[^|]{0,40}$|<｜[^｜]{0,40}$|＜｜?[^｜＞]{0,40}$|\[[a-zA-Z0-9_\-/]{0,20}$|<<[^>]{0,20}$/;
 
 export function stripLeakedTemplateTags(text: string): string {
   return text.replace(LEAKED_TEMPLATE_REGEX, "");
@@ -34,7 +34,7 @@ export class TagSanitizerStreamBuffer {
     }
 
     const cleaned = stripLeakedTemplateTags(this.buffer);
-    const partialTagMatch = /(?:<(?:\/|\s*\/?\s*[a-zA-Z_])[^>]{0,40}|\[[a-zA-Z0-9_\-/]{1,20}|<<[^>]{0,20}|<\|[^|]{0,40}|＜｜?[^｜＞]{0,40}|<｜[^｜]{0,40})$/.exec(cleaned);
+    const partialTagMatch = /(?:<[^>]{0,40}|\[[a-zA-Z0-9_\-/]{0,20}|<<[^>]{0,20}|<\|[^|]{0,40}|＜｜?[^｜＞]{0,40}|<｜[^｜]{0,40})$/.exec(cleaned);
     if (partialTagMatch && partialTagMatch.index !== undefined) {
       const emitText = cleaned.slice(0, partialTagMatch.index);
       this.buffer = cleaned.slice(partialTagMatch.index);
@@ -707,7 +707,7 @@ function flushInsideThinkContent(state: DotsStreamState): string {
     return reasoningDelta + processDotsStreamChunk("", state);
   }
 
-  const potentialTag = state.buffer.search(/<(?:\/|\s*\/?\s*[a-zA-Z_])[^>]{0,40}$|<\|[^|]{0,40}$|<｜[^｜]{0,40}$|＜｜?[^｜＞]{0,40}$/);
+  const potentialTag = state.buffer.search(/<[^>]{0,40}$|<\|[^|]{0,40}$|<｜[^｜]{0,40}$|＜｜?[^｜＞]{0,40}$/);
   if (potentialTag !== -1) {
     const safeReasoning = state.buffer.slice(0, potentialTag);
     state.buffer = state.buffer.slice(potentialTag);
@@ -753,7 +753,7 @@ function flushNonTagContent(state: DotsStreamState): string {
   }
 
   if (earliestTag === -1) {
-    const potentialTag = state.buffer.search(/<(?:\/|\s*\/?\s*[a-zA-Z_])[^>]{0,40}$|<\|[^|]{0,40}$|<｜[^｜]{0,40}$|＜｜?[^｜＞]{0,40}$/);
+    const potentialTag = state.buffer.search(/<[^>]{0,40}$|<\|[^|]{0,40}$|<｜[^｜]{0,40}$|＜｜?[^｜＞]{0,40}$/);
     if (potentialTag !== -1) {
       const rawPrefix = state.buffer.slice(0, potentialTag);
       state.buffer = state.buffer.slice(potentialTag);
