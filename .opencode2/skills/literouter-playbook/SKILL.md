@@ -87,6 +87,7 @@ Fusion presets: `lr-fse-<preset>` (e.g. `lr-fse-fast`, `lr-fse-smart`, `lr-fse-c
     - **Incoming Leg**: Zero artificial client socket cutoffs; ingress traffic sequenced via conveyor belt.
     - **Outgoing Leg**: Resilient replay on upstream socket drops; key pool rotation without aborting downstream client sessions.
 16. **Universal XML Tool Calling, Trapped Thinking Extraction & Turn Compaction (`src/transformers/dots.ts`)**:
+    - **Live Incremental Thinking Streaming**: Incrementally streams `<think>` blocks as real-time `reasoning_content` deltas chunk-by-chunk rather than buffering entire thinking blocks, preventing UI freezes during long-horizon reasoning.
     - **Pre-Thinking Tool Extraction**: Searches and extracts tool calls across GLM (`<arg_key>`/`<arg_value>`), Qwen (`<function=...><parameter=...>`), DeepSeek (`<invoke name="...">`), and JSON-in-XML *before* stripping `<think>` tags. Prevents models (Ling, Qwen, DeepSeek-R1, Kimi) from prematurely stopping when tools are output inside thinking blocks.
     - **Consecutive Tool Results Compaction**: Automatically compacts consecutive `role: "tool"` responses into a single clean `role: "user"` message turn in `serializeDotsToolHistory`, preventing chat template breaks and empty EOS emissions on Chinese models.
     - **Tag Sanitization**: Lookahead stream buffering (`flushNonTagContent`) and static regex scrubbing eliminate leaked `<arg_key>`, `<arg_value>`, `<tool_call>`, and `<invoke>` tags across live deltas and outbound history.

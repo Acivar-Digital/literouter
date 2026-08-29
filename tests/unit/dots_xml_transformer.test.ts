@@ -754,6 +754,42 @@ describe("Dots XML Transformer — Streaming Chunk Handling", () => {
     expect(resultText).not.toContain("<think>");
     expect(resultText).not.toContain("</think>");
   });
+
+  it("emits live incremental reasoning deltas when <think> tag is split across multiple streaming chunks", async () => {
+    const { createDotsStreamTransformer } = await import("../../src/transformers/dots");
+    const transformer = createDotsStreamTransformer();
+
+    const chunk1 = 'data: {"id":"chat-think","choices":[{"delta":{"content":"<think>Plan step 1"}}]}\n\n';
+    const chunk2 = 'data: {"id":"chat-think","choices":[{"delta":{"content":" and step 2"}}]}\n\n';
+    const chunk3 = 'data: {"id":"chat-think","choices":[{"delta":{"content":"</think>Final answer rendered"}}]}\n\n';
+    const chunk4 = 'data: [DONE]\n\n';
+
+    const inputChunks = [chunk1, chunk2, chunk3, chunk4];
+
+    const stream = new ReadableStream({
+      start(controller) {
+        for (const chunk of inputChunks) {
+          controller.enqueue(new TextEncoder().encode(chunk));
+        }
+        controller.close();
+      },
+    });
+
+    const transformedStream = stream.pipeThrough(transformer);
+    const reader = transformedStream.getReader();
+    let resultText = "";
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      resultText += new TextDecoder().decode(value);
+    }
+
+    expect(resultText).toContain('"reasoning_content":"Plan step 1"');
+    expect(resultText).toContain('"reasoning_content":" and step 2"');
+    expect(resultText).toContain('"content":"Final answer rendered"');
+    expect(resultText).not.toContain("<think>");
+    expect(resultText).not.toContain("</think>");
+  });
 });
 
 describe("Dots XML Tool History Serialization", () => {

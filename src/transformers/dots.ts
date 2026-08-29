@@ -575,6 +575,7 @@ export interface DotsStreamState {
   toolCallIndex: number;
   hasEmittedToolCalls: boolean;
   hasEmittedFinishReason: boolean;
+  isInThinkTag: boolean;
   id?: string;
   model?: string;
   usage?: Record<string, unknown>;
@@ -587,6 +588,7 @@ export function createDotsStreamState(): DotsStreamState {
     toolCallIndex: 0,
     hasEmittedToolCalls: false,
     hasEmittedFinishReason: false,
+    isInThinkTag: false,
   };
 }
 
@@ -692,10 +694,53 @@ export function formatOpenAIFinishDelta(
   return `data: ${JSON.stringify(payload)}\n\n`;
 }
 
+function flushInsideThinkContent(state: DotsStreamState): string {
+  const endMatch = /<\/(?:think|thought|thinking)>/i.exec(state.buffer);
+  if (endMatch) {
+    const rawReasoning = state.buffer.slice(0, endMatch.index);
+    state.buffer = state.buffer.slice(endMatch.index + endMatch[0].length);
+    state.isInThinkTag = false;
+    const reasoningText = stripLeakedTemplateTags(rawReasoning);
+    const reasoningDelta = reasoningText.length > 0
+      ? formatOpenAIReasoningDelta(reasoningText, state.id, state.model)
+      : "";
+    return reasoningDelta + processDotsStreamChunk("", state);
+  }
+
+  const potentialTag = state.buffer.search(/<[^>]*$/);
+  if (potentialTag !== -1) {
+    const safeReasoning = state.buffer.slice(0, potentialTag);
+    state.buffer = state.buffer.slice(potentialTag);
+    const reasoningText = stripLeakedTemplateTags(safeReasoning);
+    return reasoningText.length > 0
+      ? formatOpenAIReasoningDelta(reasoningText, state.id, state.model)
+      : "";
+  }
+
+  const safeReasoning = state.buffer;
+  state.buffer = "";
+  const reasoningText = stripLeakedTemplateTags(safeReasoning);
+  return reasoningText.length > 0
+    ? formatOpenAIReasoningDelta(reasoningText, state.id, state.model)
+    : "";
+}
+
 function flushNonTagContent(state: DotsStreamState): string {
+  const thinkOpenMatch = /<(?:think|thought|thinking)>/i.exec(state.buffer);
+  if (thinkOpenMatch) {
+    const before = state.buffer.slice(0, thinkOpenMatch.index);
+    state.buffer = state.buffer.slice(thinkOpenMatch.index + thinkOpenMatch[0].length);
+    state.isInThinkTag = true;
+    const prefixText = stripLeakedTemplateTags(before);
+    const textDelta = prefixText.length > 0
+      ? formatOpenAITextDelta(prefixText, state.id, state.model)
+      : "";
+    return textDelta + flushInsideThinkContent(state);
+  }
+
   const glmPrefixMatch = state.buffer.search(/[a-zA-Z0-9_\-]+\s*<(?:arg_key|argument_name|parameter_name)/i);
   const tagStart = state.buffer.search(
-    /<(?:tool_calls?|function_calls?|invoke|tool_call|function_call|function=|minimax:tool_call|think|thought|thinking|arg_key|arg_value|argument_name|argument_value|parameter|parameter_name|parameter_value)/i
+    /<(?:tool_calls?|function_calls?|invoke|tool_call|function_call|function=|minimax:tool_call|arg_key|arg_value|argument_name|argument_value|parameter|parameter_name|parameter_value)/i
   );
 
   let earliestTag = -1;
@@ -734,8 +779,12 @@ export function processDotsStreamChunk(
 ): string {
   state.buffer += chunk;
 
+  if (state.isInThinkTag) {
+    return flushInsideThinkContent(state);
+  }
+
   const hasClosingTag =
-    /<\/(?:invoke|tool_call|function_call|function|tool_calls|function_calls|minimax:tool_call|think|thought|thinking|arg_value|argument_value|parameter_value)>/i.test(
+    /<\/(?:invoke|tool_call|function_call|function|tool_calls|function_calls|minimax:tool_call|arg_value|argument_value|parameter_value)>/i.test(
       state.buffer
     ) || /<\/([a-zA-Z0-9_\-]+)>\s*$/i.test(state.buffer);
   if (!hasClosingTag) {
@@ -863,8 +912,8 @@ export function createDotsStreamTransformer(): TransformStream<Uint8Array, Uint8
                 content.includes("[") ||
                 content.includes("<<"));
 
-            // FAST PASS-THROUGH: If no XML buffering is active and content has no tag chars, forward chunk
-            if (state.buffer.length === 0 && !hasPotentialTag) {
+            // FAST PASS-THROUGH: If no XML buffering or think block is active and content has no tag chars, forward chunk
+            if (state.buffer.length === 0 && !state.isInThinkTag && !hasPotentialTag) {
               if (incomingFinishReason) {
                 if (state.hasEmittedToolCalls) {
                   choice.finish_reason = "tool_calls";

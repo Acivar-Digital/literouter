@@ -4,6 +4,14 @@ All notable changes to LiteRouter will be documented in this file.
 
 ## [Unreleased]
 
+### Hardened / Incremental Thinking Streaming & Multi-Dialect XML Tool Processing
+- **Live Incremental Thinking Streaming (`src/transformers/dots.ts`, `tests/unit/dots_xml_transformer.test.ts`)**:
+  - Upgraded `createDotsStreamTransformer` and `processDotsStreamChunk` to stream inside-`<think>` tokens incrementally as `reasoning_content` deltas as each SSE chunk arrives, preventing client/TUI UI freezing during extended thinking runs.
+  - Correctly routes non-tag thinking chunks through active reasoning streaming buffers without leaking opening or closing `<think>` / `</think>` tags into `content` deltas.
+- **Model-Agnostic XML Tool Calling & Template Token Stripping**:
+  - Hardened support for Ling-3.0 / GLM-4 / Qwen / DeepSeek XML tool calls (`<tool_call>name<arg_key>k</arg_key><arg_value>v</arg_value></tool_call>`), `<tool_response>`, and `<tool_result>` observations.
+  - Verified and enhanced control token scrubbing for `<|role_end|>`, `[gMASK]`, `<|startoftext|>`, and unclosed template wrappers across streaming and non-streaming responses.
+
 ### Fixed / Universal XML Tool Calling, Trapped Thinking Extraction & Turn Compaction
 - **Pre-Thinking Tool Extraction (`src/transformers/dots.ts`, `tests/unit/dots_xml_transformer.test.ts`)**:
   - Re-ordered `parseDotsXml` to extract tool calls across all supported dialects (GLM `<arg_key>`/`<arg_value>`, Qwen `<function=...>`, DeepSeek `<invoke>`, JSON-in-XML) *before* stripping `<think>` reasoning tokens.
