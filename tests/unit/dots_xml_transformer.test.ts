@@ -1182,4 +1182,160 @@ describe("Dots XML Tool History Serialization", () => {
 
     expect(accumulatedContent).toBe("for (let i = 0; i < len; i++) { console.log(i); }");
   });
+
+  it("streams multi-parameter invoke XML without premature flush or leaking raw XML text deltas", async () => {
+    const { createDotsStreamTransformer } = await import("../../src/transformers/dots");
+    const transformer = createDotsStreamTransformer();
+
+    const rawChunks = [
+      'data: {"id":"chatcmpl-stream-multi","choices":[{"delta":{"content":"<tool_calls>\\n<invoke name=\\"read\\">\\n"}}]}\n\n',
+      'data: {"id":"chatcmpl-stream-multi","choices":[{"delta":{"content":"<parameter name=\\"path\\">/home/yapilwsl/arthityap/trend/docs/gold_jpy_strategy_report.md</parameter>\\n"}}]}\n\n',
+      'data: {"id":"chatcmpl-stream-multi","choices":[{"delta":{"content":"<parameter name=\\"offset\\">245</parameter>\\n"}}]}\n\n',
+      'data: {"id":"chatcmpl-stream-multi","choices":[{"delta":{"content":"<parameter name=\\"limit\\">10</parameter>\\n"}}]}\n\n',
+      'data: {"id":"chatcmpl-stream-multi","choices":[{"delta":{"content":"</invoke>\\n</tool_calls>"}}]}\n\n',
+      'data: {"id":"chatcmpl-stream-multi","choices":[{"delta":{},"finish_reason":"stop"}]}\n\n',
+      "data: [DONE]\n\n",
+    ];
+
+    const stream = new ReadableStream({
+      start(controller) {
+        for (const chunk of rawChunks) {
+          controller.enqueue(new TextEncoder().encode(chunk));
+        }
+        controller.close();
+      },
+    });
+
+    const transformedStream = stream.pipeThrough(transformer);
+    const reader = transformedStream.getReader();
+    let resultText = "";
+    let accumulatedContent = "";
+    const toolCalls: Array<{ name: string; arguments: string }> = [];
+
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      const text = new TextDecoder().decode(value);
+      resultText += text;
+      for (const line of text.split("\n")) {
+        const trimmed = line.trim();
+        if (trimmed.startsWith("data: ") && trimmed !== "data: [DONE]") {
+          const parsed = JSON.parse(trimmed.slice(6)) as {
+            choices?: Array<{
+              delta?: {
+                content?: string;
+                tool_calls?: Array<{
+                  function?: { name?: string; arguments?: string };
+                }>;
+              };
+            }>;
+          };
+          const delta = parsed.choices?.[0]?.delta;
+          if (delta?.content) {
+            accumulatedContent += delta.content;
+          }
+          if (delta?.tool_calls) {
+            for (const tc of delta.tool_calls) {
+              if (tc.function?.name) {
+                toolCalls.push({
+                  name: tc.function.name,
+                  arguments: tc.function.arguments || "",
+                });
+              }
+            }
+          }
+        }
+      }
+    }
+
+    // 0 raw XML emitted to the client
+    expect(accumulatedContent).toBe("");
+    expect(resultText).not.toContain("<tool_calls>");
+    expect(resultText).not.toContain("<invoke");
+    expect(resultText).not.toContain("<parameter");
+    expect(resultText).not.toContain("</parameter>");
+    expect(resultText).not.toContain("</invoke>");
+    expect(resultText).not.toContain("</tool_calls>");
+
+    // Correct tool call emitted
+    expect(toolCalls.length).toBe(1);
+    expect(toolCalls[0]?.name).toBe("read");
+    const parsedArgs = JSON.parse(toolCalls[0]?.arguments || "{}");
+    expect(parsedArgs).toEqual({
+      path: "/home/yapilwsl/arthityap/trend/docs/gold_jpy_strategy_report.md",
+      offset: 245,
+      limit: 10,
+    });
+  });
+
+  it("streams multi-parameter parameter_name / parameter_value XML without premature flush", async () => {
+    const { createDotsStreamTransformer } = await import("../../src/transformers/dots");
+    const transformer = createDotsStreamTransformer();
+
+    const rawChunks = [
+      'data: {"id":"chatcmpl-stream-param-kv","choices":[{"delta":{"content":"<tool_calls>\\n<invoke name=\\"read\\">\\n"}}]}\n\n',
+      'data: {"id":"chatcmpl-stream-param-kv","choices":[{"delta":{"content":"<parameter_name>path</parameter_name><parameter_value>/home/user/doc.md</parameter_value>\\n"}}]}\n\n',
+      'data: {"id":"chatcmpl-stream-param-kv","choices":[{"delta":{"content":"<parameter_name>offset</parameter_name><parameter_value>100</parameter_value>\\n"}}]}\n\n',
+      'data: {"id":"chatcmpl-stream-param-kv","choices":[{"delta":{"content":"</invoke>\\n</tool_calls>"}}]}\n\n',
+      'data: {"id":"chatcmpl-stream-param-kv","choices":[{"delta":{},"finish_reason":"stop"}]}\n\n',
+      "data: [DONE]\n\n",
+    ];
+
+    const stream = new ReadableStream({
+      start(controller) {
+        for (const chunk of rawChunks) {
+          controller.enqueue(new TextEncoder().encode(chunk));
+        }
+        controller.close();
+      },
+    });
+
+    const transformedStream = stream.pipeThrough(transformer);
+    const reader = transformedStream.getReader();
+    let accumulatedContent = "";
+    const toolCalls: Array<{ name: string; arguments: string }> = [];
+
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      const text = new TextDecoder().decode(value);
+      for (const line of text.split("\n")) {
+        const trimmed = line.trim();
+        if (trimmed.startsWith("data: ") && trimmed !== "data: [DONE]") {
+          const parsed = JSON.parse(trimmed.slice(6)) as {
+            choices?: Array<{
+              delta?: {
+                content?: string;
+                tool_calls?: Array<{
+                  function?: { name?: string; arguments?: string };
+                }>;
+              };
+            }>;
+          };
+          const delta = parsed.choices?.[0]?.delta;
+          if (delta?.content) {
+            accumulatedContent += delta.content;
+          }
+          if (delta?.tool_calls) {
+            for (const tc of delta.tool_calls) {
+              if (tc.function?.name) {
+                toolCalls.push({
+                  name: tc.function.name,
+                  arguments: tc.function.arguments || "",
+                });
+              }
+            }
+          }
+        }
+      }
+    }
+
+    expect(accumulatedContent).toBe("");
+    expect(toolCalls.length).toBe(1);
+    expect(toolCalls[0]?.name).toBe("read");
+    expect(JSON.parse(toolCalls[0]?.arguments || "{}")).toEqual({
+      path: "/home/user/doc.md",
+      offset: 100,
+    });
+  });
 });
