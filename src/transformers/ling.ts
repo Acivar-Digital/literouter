@@ -312,7 +312,44 @@ export function parseLingXml(rawText: string): LingParseResult {
   });
 
   // 5. Degraded / Tagless Concat Dialects (e.g. websearchquery..., shellcommand..., editpath...)
-  const websearchConcatPattern = /(?:^|\n)\s*websearchquery\s*([^\n\r]+)/gi;
+  const editConcatPattern = /(?:^|[\n\r\s])editpath\s*([^\s\n\r]+?)\s*oldString\s*([\s\S]+?)\s*newString\s*([\s\S]+?)(?:\s*replaceAll\s*(true|false))?(?=(?:(?:^|[\n\r\s])(?:shellcommand|readpath|editpath|writepath|websearchquery|greppattern|globpattern))|$)/gi;
+  remainingText = remainingText.replace(editConcatPattern, (_m, path, oldStr, newStr, replaceAllVal) => {
+    const editArgs: Record<string, unknown> = {
+      path: path.trim(),
+      oldString: oldStr.trim(),
+      newString: newStr.trim(),
+    };
+    if (replaceAllVal) {
+      editArgs.replaceAll = replaceAllVal.toLowerCase() === "true";
+    }
+    toolCalls.push({
+      id: generateCallId(),
+      type: "function",
+      function: {
+        name: "edit",
+        arguments: JSON.stringify(editArgs),
+      },
+    });
+    return "";
+  });
+
+  const writeConcatPattern = /(?:^|[\n\r\s])writepath\s*([^\s\n\r]+?)\s*content\s*([\s\S]+?)(?=(?:(?:^|[\n\r\s])(?:shellcommand|readpath|editpath|writepath|websearchquery|greppattern|globpattern))|$)/gi;
+  remainingText = remainingText.replace(writeConcatPattern, (_m, path, content) => {
+    toolCalls.push({
+      id: generateCallId(),
+      type: "function",
+      function: {
+        name: "write",
+        arguments: JSON.stringify({
+          path: path.trim(),
+          content: content.trim(),
+        }),
+      },
+    });
+    return "";
+  });
+
+  const websearchConcatPattern = /(?:^|[\n\r\s])websearchquery\s*([^\n\r]+)/gi;
   remainingText = remainingText.replace(websearchConcatPattern, (_m, query) => {
     const q = query.trim();
     if (q.length > 0) {
@@ -329,16 +366,18 @@ export function parseLingXml(rawText: string): LingParseResult {
     return _m;
   });
 
-  const shellConcatPattern = /(?:^|\n)\s*shellcommand\s*([\s\S]+?)(?=(?:\n\s*(?:shellcommand|readpath|editpath|writepath|websearchquery))|$)/gi;
-  remainingText = remainingText.replace(shellConcatPattern, (_m, cmd) => {
+  const shellConcatPattern = /(?:^|[\n\r\s])shellcommand\s*([\s\S]+?)(?:\s*timeout\s*(\d+))?(?=(?:(?:^|[\n\r\s])(?:shellcommand|readpath|editpath|writepath|websearchquery|greppattern|globpattern))|$)/gi;
+  remainingText = remainingText.replace(shellConcatPattern, (_m, cmd, timeout) => {
     const c = cmd.trim();
     if (c.length > 0) {
+      const shellArgs: Record<string, unknown> = { command: c };
+      if (timeout) shellArgs.timeout = parseInt(timeout, 10);
       toolCalls.push({
         id: generateCallId(),
         type: "function",
         function: {
           name: "shell",
-          arguments: JSON.stringify({ command: c }),
+          arguments: JSON.stringify(shellArgs),
         },
       });
       return "";
@@ -346,24 +385,7 @@ export function parseLingXml(rawText: string): LingParseResult {
     return _m;
   });
 
-  const editConcatPattern = /(?:^|\n)\s*editpath\s*([^\n\r]+?)\s*oldString\s*([\s\S]+?)\s*newString\s*([\s\S]+?)(?=(?:\n\s*(?:shellcommand|readpath|editpath|writepath|websearchquery))|$)/gi;
-  remainingText = remainingText.replace(editConcatPattern, (_m, path, oldStr, newStr) => {
-    toolCalls.push({
-      id: generateCallId(),
-      type: "function",
-      function: {
-        name: "edit",
-        arguments: JSON.stringify({
-          path: path.trim(),
-          oldString: oldStr.trim(),
-          newString: newStr.trim(),
-        }),
-      },
-    });
-    return "";
-  });
-
-  const readConcatPattern = /(?:^|\n)\s*readpath\s*([^\n\r\s]+)(?:\s*offset\s*(\d+))?(?:\s*limit\s*(\d+))?/gi;
+  const readConcatPattern = /(?:^|[\n\r\s])readpath\s*([^\n\r\s]+)(?:\s*offset\s*(\d+))?(?:\s*limit\s*(\d+))?(?=(?:(?:^|[\n\r\s])(?:shellcommand|readpath|editpath|writepath|websearchquery|greppattern|globpattern))|$)/gi;
   remainingText = remainingText.replace(readConcatPattern, (_m, path, offset, limit) => {
     const args: Record<string, unknown> = { path: path.trim() };
     if (offset) args.offset = parseInt(offset, 10);
@@ -373,6 +395,37 @@ export function parseLingXml(rawText: string): LingParseResult {
       type: "function",
       function: {
         name: "read",
+        arguments: JSON.stringify(args),
+      },
+    });
+    return "";
+  });
+
+  const grepConcatPattern = /(?:^|[\n\r\s])greppattern\s*([^\n\r]+?)(?:\s*path\s*([^\n\r\s]+))?(?:\s*include\s*([^\n\r\s]+))?(?=(?:(?:^|[\n\r\s])(?:shellcommand|readpath|editpath|writepath|websearchquery|greppattern|globpattern))|$)/gi;
+  remainingText = remainingText.replace(grepConcatPattern, (_m, pat, path, include) => {
+    const args: Record<string, unknown> = { pattern: pat.trim() };
+    if (path) args.path = path.trim();
+    if (include) args.include = include.trim();
+    toolCalls.push({
+      id: generateCallId(),
+      type: "function",
+      function: {
+        name: "grep",
+        arguments: JSON.stringify(args),
+      },
+    });
+    return "";
+  });
+
+  const globConcatPattern = /(?:^|[\n\r\s])globpattern\s*([^\n\r]+?)(?:\s*path\s*([^\n\r\s]+))?(?=(?:(?:^|[\n\r\s])(?:shellcommand|readpath|editpath|writepath|websearchquery|greppattern|globpattern))|$)/gi;
+  remainingText = remainingText.replace(globConcatPattern, (_m, pat, path) => {
+    const args: Record<string, unknown> = { pattern: pat.trim() };
+    if (path) args.path = path.trim();
+    toolCalls.push({
+      id: generateCallId(),
+      type: "function",
+      function: {
+        name: "glob",
         arguments: JSON.stringify(args),
       },
     });
@@ -579,9 +632,12 @@ export function createLingStreamTransformer(): TransformStream<Uint8Array, Uint8
     }
 
     // 2. Check for Tool Tag Detection and Completion
+    const CONCAT_TOOL_START_REGEX = /(?:^|[\n\r\s])(?:editpath|writepath|readpath|shellcommand|websearchquery|greppattern|globpattern)/i;
+
     const hasToolTagStart =
       /<(?:tool_calls?|invoke|function=|tool_call)/i.test(textBuffer) ||
-      /[a-zA-Z0-9_\-]+\s*<arg_key>/i.test(textBuffer);
+      /[a-zA-Z0-9_\-]+\s*<arg_key>/i.test(textBuffer) ||
+      CONCAT_TOOL_START_REGEX.test(textBuffer);
 
     const hasToolClosure =
       /<\/(?:tool_calls?|invoke|function|tool_call)>/i.test(textBuffer) ||
@@ -606,9 +662,11 @@ export function createLingStreamTransformer(): TransformStream<Uint8Array, Uint8
       // If tool tag has started but not closed, emit any leading non-tool text and hold the rest
       const tagMatch = /<(?:tool_calls?|invoke|function=|tool_call)/i.exec(textBuffer);
       const glmMatch = /[a-zA-Z0-9_\-]+\s*<arg_key>/i.exec(textBuffer);
+      const concatMatch = CONCAT_TOOL_START_REGEX.exec(textBuffer);
       let earliest = -1;
       if (tagMatch) earliest = tagMatch.index;
       if (glmMatch && (earliest === -1 || glmMatch.index < earliest)) earliest = glmMatch.index;
+      if (concatMatch && (earliest === -1 || concatMatch.index < earliest)) earliest = concatMatch.index;
 
       if (earliest > 0) {
         const lead = textBuffer.slice(0, earliest);
@@ -616,7 +674,7 @@ export function createLingStreamTransformer(): TransformStream<Uint8Array, Uint8
         const clean = lead.replace(LING_LEAKED_TEMPLATE_REGEX, "");
         if (clean) out += emitContent(clean);
       }
-      // Hold remainder in textBuffer until closure
+      // Hold remainder in textBuffer until closure or flushPending
       return out;
     }
 

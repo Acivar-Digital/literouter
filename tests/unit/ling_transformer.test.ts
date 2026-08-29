@@ -188,14 +188,15 @@ describe("Ling Transformer & Streaming Suite", () => {
       command: "git status && git push",
     });
 
-    const rawEdit = "Editing code:\neditpath /path/to/file.py oldString def foo(): pass newString def foo(): return 42\n";
+    const rawEdit = "Editing code:\neditpath/home/yapilwsl/arthityap/trend/scripts/bt/kelly_backtest.pyoldStringdef run_backtest(gold_df): passnewStringdef run_backtest(gold_df): return 42replaceAllfalse";
     const resEdit = parseLingXml(rawEdit);
     expect(resEdit.toolCalls.length).toBe(1);
     expect(resEdit.toolCalls[0]!.function.name).toBe("edit");
     expect(JSON.parse(resEdit.toolCalls[0]!.function.arguments)).toEqual({
-      path: "/path/to/file.py",
-      oldString: "def foo(): pass",
-      newString: "def foo(): return 42",
+      path: "/home/yapilwsl/arthityap/trend/scripts/bt/kelly_backtest.py",
+      oldString: "def run_backtest(gold_df): pass",
+      newString: "def run_backtest(gold_df): return 42",
+      replaceAll: false,
     });
   });
 
@@ -232,6 +233,49 @@ describe("Ling Transformer & Streaming Suite", () => {
 
     expect(accumulatedOutput).toContain('"id":"call_123"');
     expect(accumulatedOutput).toContain('{\\"command\\":\\"ls\\"}');
+    expect(accumulatedOutput).toContain('"finish_reason":"tool_calls"');
+  });
+
+  it("buffers streaming tagless concat tools (e.g. editpath...) and emits OpenCode2 tool_calls deltas instead of raw content", async () => {
+    const transformer = createLingStreamTransformer();
+    const encoder = new TextEncoder();
+    const decoder = new TextDecoder();
+
+    const inputChunks = [
+      'data: {"choices":[{"delta":{"content":"Now applying changes:\\n\\neditpath/home/yapilwsl/trend/bt.py"}}]}\n\n',
+      'data: {"choices":[{"delta":{"content":"oldStringdef foo(): pass"}}]}\n\n',
+      'data: {"choices":[{"delta":{"content":"newStringdef foo(): return 42replaceAllfalse"}}]}\n\n',
+      'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n',
+      "data: [DONE]\n\n",
+    ];
+
+    const stream = new ReadableStream({
+      start(controller) {
+        for (const chunk of inputChunks) {
+          controller.enqueue(encoder.encode(chunk));
+        }
+        controller.close();
+      },
+    });
+
+    const transformedStream = stream.pipeThrough(transformer);
+    const reader = transformedStream.getReader();
+    let accumulatedOutput = "";
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      accumulatedOutput += decoder.decode(value);
+    }
+
+    // Must emit the leading text
+    expect(accumulatedOutput).toContain("Now applying changes:");
+    // Must NOT leak raw editpath into content delta
+    expect(accumulatedOutput).not.toContain('"content":"editpath');
+    // Must emit discrete tool_calls chunks
+    expect(accumulatedOutput).toContain('"name":"edit"');
+    expect(accumulatedOutput).toContain('\\"path\\":\\"/home/yapilwsl/trend/bt.py\\"');
+    expect(accumulatedOutput).toContain('\\"replaceAll\\":false');
     expect(accumulatedOutput).toContain('"finish_reason":"tool_calls"');
   });
 
