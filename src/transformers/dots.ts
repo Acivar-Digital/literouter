@@ -5,9 +5,11 @@ export interface DotsParseResult {
   readonly toolCalls: readonly OpenAIToolCall[];
 }
 
-interface ParsedParameter {
-  readonly name: string;
-  readonly value: string;
+export const LEAKED_TEMPLATE_REGEX =
+  /<\/?(?:role|im_start|im_end|endoftext)(?:\s+[^>]*)?>|<\|(?:im_start|im_end|endoftext)\|>/gi;
+
+export function stripLeakedTemplateTags(text: string): string {
+  return text.replace(LEAKED_TEMPLATE_REGEX, "");
 }
 
 const INVOKE_BLOCK_REGEX =
@@ -108,7 +110,8 @@ function createToolCallFromInvoke(
 }
 
 export function parseDotsXml(content: string): DotsParseResult {
-  const lower = content.toLowerCase();
+  const sanitized = stripLeakedTemplateTags(content);
+  const lower = sanitized.toLowerCase();
   if (
     !lower.includes("<invoke") &&
     !lower.includes("<tool_call") &&
@@ -116,12 +119,12 @@ export function parseDotsXml(content: string): DotsParseResult {
     !lower.includes("<function_calls") &&
     !lower.includes("<tool_calls")
   ) {
-    return { cleanText: content, toolCalls: [] };
+    return { cleanText: sanitized, toolCalls: [] };
   }
 
   const toolCalls: OpenAIToolCall[] = [];
   const regex = new RegExp(INVOKE_BLOCK_REGEX.source, "gi");
-  let match = regex.exec(content);
+  let match = regex.exec(sanitized);
   let index = 0;
 
   while (match !== null) {
@@ -129,12 +132,12 @@ export function parseDotsXml(content: string): DotsParseResult {
     const body = match[2] ?? "";
     toolCalls.push(createToolCallFromInvoke(rawFnName, body, index));
     index += 1;
-    match = regex.exec(content);
+    match = regex.exec(sanitized);
   }
 
-  const cleanText = content
+  const cleanText = sanitized
     .replace(new RegExp(INVOKE_BLOCK_REGEX.source, "gi"), "")
-    .replace(/<\/?(?:tool_calls|function_calls|invoke|tool_call|function_call|parameter|arg_key|arg_value|parameter_value|argument_name|argument_value)[^>]*>/gi, "")
+    .replace(/<\/?(?:tool_calls|function_calls|invoke|tool_call|function_call|parameter|arg_key|arg_value|parameter_value|argument_name|argument_value|role)[^>]*>/gi, "")
     .trim();
 
   return { cleanText, toolCalls };
@@ -316,20 +319,22 @@ export function formatOpenAIFinishDelta(
 function flushNonTagContent(state: DotsStreamState): string {
   const tagStart = state.buffer.search(/<(?:tool_calls?|function_calls?|invoke|tool_call|function_call)/i);
   if (tagStart === -1) {
-    const potentialTag = state.buffer.search(/<[a-zA-Z0-9_]*$/);
+    const potentialTag = state.buffer.search(/<[^>]*$/);
     if (potentialTag !== -1) {
-      const textToEmit = state.buffer.slice(0, potentialTag);
+      const rawPrefix = state.buffer.slice(0, potentialTag);
       state.buffer = state.buffer.slice(potentialTag);
+      const textToEmit = stripLeakedTemplateTags(rawPrefix);
       return textToEmit.length > 0 ? formatOpenAITextDelta(textToEmit, state.id, state.model) : "";
     }
-    const textToEmit = state.buffer;
+    const textToEmit = stripLeakedTemplateTags(state.buffer);
     state.buffer = "";
     return textToEmit.length > 0 ? formatOpenAITextDelta(textToEmit, state.id, state.model) : "";
   }
   if (tagStart > 0) {
-    const prefix = state.buffer.slice(0, tagStart);
+    const rawPrefix = state.buffer.slice(0, tagStart);
     state.buffer = state.buffer.slice(tagStart);
-    return formatOpenAITextDelta(prefix, state.id, state.model);
+    const prefix = stripLeakedTemplateTags(rawPrefix);
+    return prefix.length > 0 ? formatOpenAITextDelta(prefix, state.id, state.model) : "";
   }
   return "";
 }
@@ -392,7 +397,7 @@ export function createDotsStreamTransformer(): TransformStream<Uint8Array, Uint8
     return "";
   }
 
-  return new TransformStream<Uint8Array, Uint8Array>({
+  return new TransformStream<Uint8Array, Uint8Array>(({
     transform(chunk, controller) {
       lineBuffer += decoder.decode(chunk, { stream: true });
       const lines = lineBuffer.split("\n");
@@ -501,5 +506,5 @@ export function createDotsStreamTransformer(): TransformStream<Uint8Array, Uint8
         controller.enqueue(encoder.encode(lineBuffer));
       }
     },
-  });
+  }));
 }

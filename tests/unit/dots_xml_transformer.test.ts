@@ -10,6 +10,53 @@ import { sanitizeAndTransformPayload } from "../../src/transformers/payload";
 import type { OpenAIMessage, OpenAIRequestPayload } from "../../src/transformers/nuances";
 
 describe("Dots XML Transformer — Static Parsing", () => {
+  it("strips leaked </role>, <role assistant>, and chat template delimiters in static parsing", () => {
+    const input = "</role>The risk-budget approach made DD WORSE (-79% vs baseline -68%).";
+    const result = parseDotsXml(input);
+    expect(result.cleanText).toBe("The risk-budget approach made DD WORSE (-79% vs baseline -68%).");
+    expect(result.toolCalls).toHaveLength(0);
+
+    const inputWithRoleBlock = "<role assistant>Hello user!</role>";
+    const result2 = parseDotsXml(inputWithRoleBlock);
+    expect(result2.cleanText).toBe("Hello user!");
+  });
+
+  it("strips leaked </role> across streaming chunks", async () => {
+    const { createDotsStreamTransformer } = await import("../../src/transformers/dots");
+    const transformer = createDotsStreamTransformer();
+
+    const chunk1 = 'data: {"id":"chat-1","choices":[{"delta":{"content":"</ro"}}]}\n\n';
+    const chunk2 = 'data: {"id":"chat-1","choices":[{"delta":{"content":"le>The risk-budget approach"}}]}\n\n';
+    const chunk3 = 'data: {"id":"chat-1","choices":[{"delta":{"content":" is working."}}]}\n\n';
+    const chunk4 = 'data: {"id":"chat-1","choices":[{"delta":{},"finish_reason":"stop"}]}\n\n';
+    const chunk5 = 'data: [DONE]\n\n';
+
+    const inputChunks = [chunk1, chunk2, chunk3, chunk4, chunk5];
+
+    const stream = new ReadableStream({
+      start(controller) {
+        for (const chunk of inputChunks) {
+          controller.enqueue(new TextEncoder().encode(chunk));
+        }
+        controller.close();
+      },
+    });
+
+    const transformedStream = stream.pipeThrough(transformer);
+    const reader = transformedStream.getReader();
+    let resultText = "";
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      resultText += new TextDecoder().decode(value);
+    }
+
+    expect(resultText).not.toContain("</role>");
+    expect(resultText).not.toContain("</ro");
+    expect(resultText).toContain("The risk-budget approach");
+    expect(resultText).toContain(" is working.");
+  });
+
   it("parses single XML function invocation into OpenAI tool_calls structure", () => {
     const input =
       'I will look up the weather for you: <invoke name="get_weather"><parameter name="location">Tokyo</parameter></invoke>';

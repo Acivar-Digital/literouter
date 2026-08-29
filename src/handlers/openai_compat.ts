@@ -316,10 +316,12 @@ async function executeDirectCall(
       const choice = (json.choices as Array<{ message?: { content?: string | null; tool_calls?: unknown }; finish_reason?: string }>)?.[0];
       if (choice?.message?.content && typeof choice.message.content === "string") {
         const { cleanText, toolCalls } = parseDotsXml(choice.message.content);
-        if (toolCalls.length > 0) {
+        if (toolCalls.length > 0 || cleanText !== choice.message.content) {
           choice.message.content = cleanText || null;
-          choice.message.tool_calls = toolCalls;
-          choice.finish_reason = "tool_calls";
+          if (toolCalls.length > 0) {
+            choice.message.tool_calls = toolCalls;
+            choice.finish_reason = "tool_calls";
+          }
           finalBody = new TextEncoder().encode(JSON.stringify(json));
         }
       }
