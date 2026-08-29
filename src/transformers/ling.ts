@@ -181,7 +181,7 @@ export function transformLingRequest(req: OpenAIRequestPayload): OpenAIRequestPa
     const toolSystemPrompt =
       `\n\n# Tools\nYou have access to the following tools:\n<tools>\n` +
       toolDefs +
-      `\n</tools>\nTo invoke a tool, output:\n<tool_call>tool_name<arg_key>key</arg_key><arg_value>value</arg_value></tool_call>`;
+      `\n</tools>\nTo invoke a tool, output:\n<tool_call>tool_name<arg_key>key</arg_key><arg_value>value</arg_value></tool_call>\n\n# Execution Rules\n1. When calling tools, output ONLY the <tool_call> block.\n2. When receiving <tool_response>, analyze the result and continue your task immediately with more tool calls or provide your final response to the user. Do NOT repeat 'continue' or output empty messages.`;
 
     const sysIdx = serializedMessages.findIndex((m) => m.role === "system");
     if (sysIdx >= 0) {
@@ -202,14 +202,10 @@ export function transformLingRequest(req: OpenAIRequestPayload): OpenAIRequestPa
   delete transformed.tools;
   delete transformed.tool_choice;
 
-  // Enforce Ling-3.0 EOS stop tokens
-  const existingStop = Array.isArray(req.stop)
-    ? (req.stop as string[])
-    : typeof req.stop === "string"
-      ? [req.stop]
-      : [];
-  const stopSet = new Set([...existingStop, "<|role_end|>", "<|endoftext|>"]);
-  transformed.stop = Array.from(stopSet);
+  // Do not force <|role_end|> into stop tokens so thinking/tool output is not terminated prematurely
+  if (req.stop) {
+    transformed.stop = req.stop;
+  }
 
   return transformed as unknown as OpenAIRequestPayload;
 }

@@ -62,15 +62,16 @@ describe("Ling Transformer & Streaming Suite", () => {
     expect((transformed as Record<string, unknown>).tools).toBeUndefined();
     expect((transformed as Record<string, unknown>).tool_choice).toBeUndefined();
 
-    // 2. Stop tokens must be set
-    expect(transformed.stop).toEqual(["<|role_end|>", "<|endoftext|>"]);
+    // 2. Stop tokens are not forcefully overwritten unless provided in request
+    expect(transformed.stop).toBeUndefined();
 
-    // 3. System prompt must include <tools> definition
+    // 3. System prompt must include <tools> definition and execution rules
     const sysMsg = transformed.messages.find((m) => m.role === "system");
     expect(typeof sysMsg?.content).toBe("string");
     expect(sysMsg?.content as string).toContain("<tools>");
     expect(sysMsg?.content as string).toContain('"name":"bash"');
     expect(sysMsg?.content as string).toContain("<tool_call>tool_name<arg_key>key</arg_key><arg_value>value</arg_value></tool_call>");
+    expect(sysMsg?.content as string).toContain("Execution Rules");
 
     // 4. Assistant message must have tool_calls serialized to XML and tool_calls property removed
     const assistantMsg = transformed.messages.find((m) => m.role === "assistant");
