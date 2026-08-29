@@ -4,6 +4,13 @@ All notable changes to LiteRouter will be documented in this file.
 
 ## [Unreleased]
 
+### Hardened / Unadorned GLM/Ling Tool Calling Thinking Breakout & Parameter Splitting
+- **Unadorned Tool Breakout from Thinking Mode (`src/transformers/dots.ts`, `tests/unit/dots_xml_transformer.test.ts`)**:
+  - Enhanced `flushInsideThinkContent` and `parseDotsXml` to immediately break out of `<think>` mode upon encountering unadorned function invocation syntax (e.g. `bash<arg_key>...`, `run_command<parameter_name>...`), preventing tool calls from getting trapped inside `reasoning_content` and stripped by downstream client filters.
+  - Added support for `<tool_response>` / `<tool_result>` closing tags in thinking termination patterns.
+- **Accurate Tool Parameter Chunk Boundaries (`src/transformers/dots.ts`)**:
+  - Refined stream chunk boundary detection (`hasIntermediateTagOnly`) so intermediate argument tags (`<arg_key>`, `<parameter name="...">`, `<parameter_name>`) are held until their closing value tags (`</arg_value>`, `</parameter_value>`, `</invoke>`, `</tool_call>`) arrive, preventing fragmented tool call emission.
+
 ### Fixed / Elimination of Leaked `</role>` and Template Tags on TUI
 - **Universal Template Tag Scrubbing & Bounded Prefix Matching (`src/transformers/dots.ts`, `tests/unit/dots_xml_transformer.test.ts`)**:
   - Expanded `LEAKED_TEMPLATE_REGEX` to cover all role, delimiter, and turn-boundary variations (`</role>`, `<role>`, `<role assistant>`, `<|startoftext|>`, `<|eot_id|>`, `<|tool_calls|>`, `<|/tool_call|>`, `<turn_end>`).

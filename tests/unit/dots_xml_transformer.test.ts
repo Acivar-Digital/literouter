@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import {
   createDotsStreamState,
+  createDotsStreamTransformer,
   parseDotsXml,
   processDotsStreamChunk,
   serializeDotsToolCalls,
@@ -1010,5 +1011,89 @@ describe("Dots XML Tool History Serialization", () => {
     expect(transformed.messages[1]?.role).toBe("user");
     expect(transformed.messages[1]?.content).toContain('<tool_result id="call_xyz">');
     expect(transformed.messages[1]?.content).toContain("found results");
+  });
+
+  it("handles unadorned GLM/Ling tool calls breaking out of streaming thinking mode without </think>", async () => {
+    const rawChunks = [
+      'data: {"choices":[{"delta":{"content":"<think>Let me list the files "}}]}\n\n',
+      'data: {"choices":[{"delta":{"content":"in the workspace\\nbash<arg_key>command</arg_key>"}}]}\n\n',
+      'data: {"choices":[{"delta":{"content":"<arg_value>ls -la</arg_value><|role_end|>"}}]}\n\n',
+      "data: [DONE]\n\n",
+    ];
+
+    const stream = new ReadableStream({
+      start(controller) {
+        for (const chunk of rawChunks) {
+          controller.enqueue(new TextEncoder().encode(chunk));
+        }
+        controller.close();
+      },
+    });
+
+    const transformer = createDotsStreamTransformer();
+    const transformedStream = stream.pipeThrough(transformer);
+    const reader = transformedStream.getReader();
+    let resultText = "";
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      resultText += new TextDecoder().decode(value);
+    }
+
+    expect(resultText).toContain('"reasoning_content":"Let me list the files "');
+    expect(resultText).toContain('"reasoning_content":"in the workspace\\n"');
+    expect(resultText).toContain('"tool_calls"');
+    expect(resultText).toContain('"name":"bash"');
+    expect(resultText).toContain('ls -la');
+    expect(resultText).toContain('"finish_reason":"tool_calls"');
+    expect(resultText).not.toContain("<arg_key>");
+    expect(resultText).not.toContain("<arg_value>");
+  });
+
+  it("handles e2e invoke stream chunks with parameter split", async () => {
+    const rawChunks = [
+      'data: {"choices":[{"delta":{"content":"Checking status:\\n<tool_"},"finish_reason":null}]}\n\n',
+      'data: {"choices":[{"delta":{"content":"calls>\\n<invoke name=\\"shell\\">\\n"},"finish_reason":null}]}\n\n',
+      'data: {"choices":[{"delta":{"content":"<parameter name=\\"command\\">\\n"},"finish_reason":null}]}\n\n',
+      'data: {"choices":[{"delta":{"content":"git status\\n</parameter>\\n"},"finish_reason":null}]}\n\n',
+      'data: {"choices":[{"delta":{"content":"</invoke>\\n</tool_calls>"},"finish_reason":null}]}\n\n',
+      'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n',
+      "data: [DONE]\n\n",
+    ];
+
+    const stream = new ReadableStream({
+      start(controller) {
+        for (const chunk of rawChunks) {
+          controller.enqueue(new TextEncoder().encode(chunk));
+        }
+        controller.close();
+      },
+    });
+
+    const transformer = createDotsStreamTransformer();
+    const transformedStream = stream.pipeThrough(transformer);
+    const reader = transformedStream.getReader();
+    let resultText = "";
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      resultText += new TextDecoder().decode(value);
+    }
+
+    expect(resultText).toContain('"tool_calls"');
+    expect(resultText).toContain('"name":"shell"');
+    expect(resultText).toContain('git status');
+  });
+
+  it("parses dots xml with unadorned GLM tool call immediately following think block", () => {
+    const raw = `<think>Analyzing the directory structure</think>bash<arg_key>command</arg_key><arg_value>ls -lh</arg_value><|role_end|>`;
+    const result = parseDotsXml(raw);
+    expect(result.reasoningContent).toBe("Analyzing the directory structure");
+    expect(result.toolCalls.length).toBe(1);
+    expect(result.toolCalls[0]?.function?.name).toBe("bash");
+    expect(JSON.parse(result.toolCalls[0]?.function?.arguments || "{}")).toEqual({
+      command: "ls -lh",
+    });
+    expect(result.cleanText).toBe("");
   });
 });

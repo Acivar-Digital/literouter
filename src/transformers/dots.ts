@@ -402,7 +402,7 @@ export function parseDotsXml(content: string): DotsParseResult {
 
   // STEP 2: Extract Thinking / Reasoning tokens from remaining text
   let reasoningContent: string | undefined = undefined;
-  const thinkMatch = /<(?:think|thought|thinking)>([\s\S]*?)(?:<\/(?:think|thought|thinking|role)>|<\|\s*(?:role_end|im_end|end_of_turn|end)\s*\|>|(?=<(?:tool_calls?|function_calls?|invoke|tool_call|function_call|function=))|$)/i.exec(remainingText);
+  const thinkMatch = /<(?:think|thought|thinking)>([\s\S]*?)(?:<\/(?:think|thought|thinking|role|tool_response|tool_result)>|<\|\s*(?:role_end|im_end|end_of_turn|end)\s*\|>|(?=<(?:tool_calls?|function_calls?|invoke|tool_call|function_call|function=|tool_response|tool_result|arg_key))|(?=[a-zA-Z0-9_\-]+\s*<(?:arg_key|argument_name|parameter_name))|$)/i.exec(remainingText);
   if (thinkMatch) {
     const rawThink = (thinkMatch[1] ?? "").trim();
     if (rawThink.length > 0) {
@@ -411,7 +411,7 @@ export function parseDotsXml(content: string): DotsParseResult {
   }
 
   // STEP 3: Remove <think> blocks and strip residual markup
-  const contentWithoutThink = remainingText.replace(/<(?:think|thought|thinking)>[\s\S]*?(?:<\/(?:think|thought|thinking|role)>|<\|\s*(?:role_end|im_end|end_of_turn|end)\s*\|>|(?=<(?:tool_calls?|function_calls?|invoke|tool_call|function_call|function=))|$)/gi, "");
+  const contentWithoutThink = remainingText.replace(/<(?:think|thought|thinking)>[\s\S]*?(?:<\/(?:think|thought|thinking|role|tool_response|tool_result)>|<\|\s*(?:role_end|im_end|end_of_turn|end)\s*\|>|(?=<(?:tool_calls?|function_calls?|invoke|tool_call|function_call|function=|tool_response|tool_result|arg_key))|(?=[a-zA-Z0-9_\-]+\s*<(?:arg_key|argument_name|parameter_name))|$)/gi, "");
   const cleanText = stripResidualTags(contentWithoutThink);
 
   return { cleanText, toolCalls, reasoningContent };
@@ -426,7 +426,7 @@ function stripResidualTags(text: string): string {
     .replace(/<([a-zA-Z0-9_\-]+)>\s*<[a-zA-Z0-9_\-]+>[^<]*<\/[a-zA-Z0-9_\-]+>[\s\S]*?<\/\1>/gi, (match, tag) => {
       return EXCLUDED_TAG_NAMES.has(String(tag).toLowerCase()) ? match : "";
     })
-    .replace(/<\/?(?:tool_calls|function_calls|invoke|tool_call|function_call|minimax:tool_call|parameter|arg_key|arg_value|parameter_value|argument_name|argument_value|parameter_name|role|think|thought|thinking)[^>]*>/gi, "")
+    .replace(/<\/?(?:tool_calls|function_calls|invoke|tool_call|function_call|minimax:tool_call|parameter|arg_key|arg_value|parameter_value|argument_name|argument_value|parameter_name|role|think|thought|thinking|tool_response|tool_result)[^>]*>/gi, "")
     .trim();
 }
 
@@ -695,7 +695,7 @@ export function formatOpenAIFinishDelta(
 }
 
 function flushInsideThinkContent(state: DotsStreamState): string {
-  const endMatch = /<\/(?:think|thought|thinking|role)>|<\|\s*(?:role_end|im_end|end_of_turn|end)\s*\|>|(?=<(?:tool_calls?|function_calls?|invoke|tool_call|function_call|function=))/i.exec(state.buffer);
+  const endMatch = /<\/(?:think|thought|thinking|role|tool_response|tool_result)>|<\|\s*(?:role_end|im_end|end_of_turn|end)\s*\|>|(?=<(?:tool_calls?|function_calls?|invoke|tool_call|function_call|function=|tool_response|tool_result|arg_key))|(?=[a-zA-Z0-9_\-]+\s*<(?:arg_key|argument_name|parameter_name))/i.exec(state.buffer);
   if (endMatch) {
     const rawReasoning = state.buffer.slice(0, endMatch.index);
     state.buffer = state.buffer.slice(endMatch.index + endMatch[0].length);
@@ -783,10 +783,20 @@ export function processDotsStreamChunk(
     return flushInsideThinkContent(state);
   }
 
-  const hasClosingTag =
-    /<\/(?:invoke|tool_call|function_call|function|tool_calls|function_calls|minimax:tool_call|arg_value|argument_value|parameter_value)>/i.test(
+  const hasIntermediateTagOnly =
+    /<(?:arg_key|argument_name|parameter_name|parameter)[^>]*>[^<]*<\/(?:arg_key|argument_name|parameter_name|parameter)>\s*$/i.test(
       state.buffer
-    ) || /<\/([a-zA-Z0-9_\-]+)>\s*$/i.test(state.buffer);
+    ) || /<(?:arg_key|argument_name|parameter_name|parameter)[^>]*$/i.test(state.buffer);
+
+  const hasToolClosingTag =
+    /<\/(?:invoke|tool_call|function_call|function|tool_calls|function_calls|minimax:tool_call|arg_value|argument_value|parameter_value|tool_response|tool_result)>/i.test(
+      state.buffer
+    );
+
+  const hasGenericClosingTag =
+    !hasIntermediateTagOnly && /<\/([a-zA-Z0-9_\-]+)>\s*$/i.test(state.buffer);
+
+  const hasClosingTag = hasToolClosingTag || hasGenericClosingTag;
   if (!hasClosingTag) {
     return flushNonTagContent(state);
   }
