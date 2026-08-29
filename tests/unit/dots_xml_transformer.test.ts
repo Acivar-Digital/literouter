@@ -1142,4 +1142,44 @@ describe("Dots XML Tool History Serialization", () => {
     expect(c2).toBe("\nDone.");
     expect(flushed).toBe("");
   });
+
+  it("preserves code comparisons and loops with '<' without truncation or stream stalls", async () => {
+    const rawChunks = [
+      'data: {"choices":[{"delta":{"content":"for (let i = 0; i <"}}]}\n\n',
+      'data: {"choices":[{"delta":{"content":" len; i++) {"}}]}\n\n',
+      'data: {"choices":[{"delta":{"content":" console.log(i); }"}}]}\n\n',
+      'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n',
+      "data: [DONE]\n\n",
+    ];
+
+    const stream = new ReadableStream({
+      start(controller) {
+        for (const chunk of rawChunks) {
+          controller.enqueue(new TextEncoder().encode(chunk));
+        }
+        controller.close();
+      },
+    });
+
+    const transformer = createDotsStreamTransformer();
+    const transformedStream = stream.pipeThrough(transformer);
+    const reader = transformedStream.getReader();
+    let accumulatedContent = "";
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      const text = new TextDecoder().decode(value);
+      for (const line of text.split("\n")) {
+        const trimmed = line.trim();
+        if (trimmed.startsWith("data: ") && trimmed !== "data: [DONE]") {
+          const parsed = JSON.parse(trimmed.slice(6)) as { choices?: Array<{ delta?: { content?: string } }> };
+          if (parsed.choices?.[0]?.delta?.content) {
+            accumulatedContent += parsed.choices[0].delta.content;
+          }
+        }
+      }
+    }
+
+    expect(accumulatedContent).toBe("for (let i = 0; i < len; i++) { console.log(i); }");
+  });
 });

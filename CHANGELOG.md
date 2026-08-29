@@ -19,9 +19,9 @@ All notable changes to LiteRouter will be documented in this file.
 
 ### Fixed / Elimination of Leaked `</role>` and Template Tags on TUI
 - **Universal Template Tag Scrubbing & Bounded Prefix Matching (`src/transformers/dots.ts`, `tests/unit/dots_xml_transformer.test.ts`)**:
-  - Fixed token-boundary leak where upstream tokenizers split `<` into one chunk and `/role>` into the subsequent chunk. Stream lookahead (`UNCLOSED_TEMPLATE_TAG_REGEX`, `partialTagMatch`, and `potentialTag` in `TagSanitizerStreamBuffer` and `processDotsStreamChunk`) now safely buffers trailing bare `<` tokens until resolved, preventing `</role>` from slipping past regex filters to client terminal UIs.
+  - Fixed token-boundary leak where upstream tokenizers split `<` into one chunk and `/role>` into the subsequent chunk. Stream lookahead (`STREAM_PARTIAL_TAG_REGEX` and `TagSanitizerStreamBuffer`) safely buffers trailing bare `<` or tag prefixes until resolved, preventing `</role>` from slipping past regex filters to client terminal UIs.
+  - Hardened partial tag and unclosed tag matching to strictly require alphanumeric tag identifiers or delimiters immediately after `<` (`/<(?:\/|[a-zA-Z_])[a-zA-Z0-9_\-: ="]{0,50}$/i`), preventing normal code expressions (`for (let i = 0; i < len; i++)`, `if (x < y)`) and brackets from stalling the stream or being stripped at `[DONE]`.
   - Expanded `LEAKED_TEMPLATE_REGEX` to cover all role, delimiter, and turn-boundary variations (`</role>`, `<role>`, `<role assistant>`, `<|startoftext|>`, `<|eot_id|>`, `<|tool_calls|>`, `<|/tool_call|>`, `<turn_end>`).
-  - Switched unclosed tag streaming lookahead (`UNCLOSED_TEMPLATE_TAG_REGEX`) to bounded alpha/slash prefix matching so math operators like `x < 5` are preserved while incomplete tag fragments (`</ro`, `</role`, `<role`) are safely buffered until resolved or stripped at `[DONE]`.
   - Added role/transition tag awareness in `flushInsideThinkContent` and `parseDotsXml` (`</role>`, `<|role_end|>`, `<tool_call>`), preventing thinking state locks and reasoning delta leakage into the TUI.
 
 ### Fixed / Upstream H2 Zombie Session Purge & Downstream Socket Reset on Stream Abort
