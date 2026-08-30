@@ -602,6 +602,16 @@ describe("Anthropic Error Response Helper", () => {
       },
     });
   });
+
+  it("handles rate_limit_error and overloaded_error types", async () => {
+    const res429 = createAnthropicErrorResponse(429, "Rate limit exceeded", "rate_limit_error");
+    expect(res429.status).toBe(429);
+    const json429 = (await res429.json()) as Record<string, unknown>;
+    expect(json429.type).toBe("error");
+
+    const res529 = createAnthropicErrorResponse(529, "Provider overloaded", "overloaded_error");
+    expect(res529.status).toBe(529);
+  });
 });
 
 describe("Anthropic Count Tokens Endpoint (/v1/messages/count_tokens)", () => {

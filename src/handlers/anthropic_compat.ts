@@ -1053,42 +1053,90 @@ async function executeAnthropicDirectCall(
     });
   }
 
-  breaker?.recordSuccess();
-
-  globalKeyPool.reportSuccess(directive.provider, selected.index);
-  logTtft(reqId, ttftMs, isStream ? "Stream established" : "First chunk streamed downstream", protocol);
-
   if (!isStream) {
     const fullBody = await collectFullBody(firstChunk, rawReader);
+    let isErrorPayload = false;
+    let errorStatus = response.status >= 400 ? response.status : 400;
+    let errorMessage = "";
+    let errorType = "invalid_request_error";
+
     try {
       const decoded = new TextDecoder().decode(fullBody);
       const json = JSON.parse(decoded) as Record<string, unknown>;
-      if (json.usage && typeof json.usage === "object") {
-        const u = json.usage as Record<string, unknown>;
-        const promptTokens = typeof u.input_tokens === "number" ? u.input_tokens : 0;
-        const completionTokens = typeof u.output_tokens === "number" ? u.output_tokens : 0;
-        const totalTokens = promptTokens + completionTokens;
-        let reasoningTokens: number | undefined;
-        if (u.output_tokens_details && typeof u.output_tokens_details === "object") {
-          const details = u.output_tokens_details as Record<string, unknown>;
-          if (typeof details.thinking_tokens === "number") {
-            reasoningTokens = details.thinking_tokens;
+
+      if (json.type === "error" || json.error) {
+        isErrorPayload = true;
+        if (json.error && typeof json.error === "object") {
+          const errObj = json.error as Record<string, unknown>;
+          errorMessage = typeof errObj.message === "string" ? errObj.message : JSON.stringify(errObj);
+          if (errObj.type === "rate_limit_error" || errObj.error_type === "rate_limit") {
+            errorStatus = 429;
+            errorType = "rate_limit_error";
+          } else if (errObj.type === "overloaded_error") {
+            errorStatus = 529;
+            errorType = "overloaded_error";
+          } else if (errObj.type === "authentication_error") {
+            errorStatus = 401;
+            errorType = "authentication_error";
+          } else if (errObj.type === "permission_error") {
+            errorStatus = 403;
+            errorType = "permission_error";
+          } else if (errObj.type === "not_found_error") {
+            errorStatus = 404;
+            errorType = "not_found_error";
+          } else if (errObj.type === "api_error") {
+            errorStatus = 500;
+            errorType = "api_error";
+          } else {
+            errorStatus = 400;
+            errorType = typeof errObj.type === "string" ? errObj.type : "invalid_request_error";
           }
+        } else if (typeof json.error === "string") {
+          errorMessage = json.error;
+          errorStatus = 400;
+          errorType = "invalid_request_error";
         }
-        logUsage({
-          reqId,
-          provider: directive.provider,
-          keyIndex: selected.index,
-          totalKeys: selected.totalKeys,
-          promptTokens,
-          reasoningTokens,
-          completionTokens,
-          totalTokens,
-          durationMs: duration,
-        });
+      }
+
+      if (!isErrorPayload) {
+        breaker?.recordSuccess();
+        globalKeyPool.reportSuccess(directive.provider, selected.index);
+        logTtft(reqId, ttftMs, "First chunk streamed downstream", protocol);
+
+        if (json.usage && typeof json.usage === "object") {
+          const u = json.usage as Record<string, unknown>;
+          const promptTokens = typeof u.input_tokens === "number" ? u.input_tokens : 0;
+          const completionTokens = typeof u.output_tokens === "number" ? u.output_tokens : 0;
+          const totalTokens = promptTokens + completionTokens;
+          let reasoningTokens: number | undefined;
+          if (u.output_tokens_details && typeof u.output_tokens_details === "object") {
+            const details = u.output_tokens_details as Record<string, unknown>;
+            if (typeof details.thinking_tokens === "number") {
+              reasoningTokens = details.thinking_tokens;
+            }
+          }
+          logUsage({
+            reqId,
+            provider: directive.provider,
+            keyIndex: selected.index,
+            totalKeys: selected.totalKeys,
+            promptTokens,
+            reasoningTokens,
+            completionTokens,
+            totalTokens,
+            durationMs: duration,
+          });
+        }
       }
     } catch (parseErr) {
       void parseErr;
+    }
+
+    if (isErrorPayload) {
+      logError(reqId, `Direct Anthropic non-streaming error [HTTP ${errorStatus}]: ${errorMessage}`);
+      logServed(reqId, duration, errorStatus, attempt, maxAttempts);
+      logSeparator();
+      return createAnthropicErrorResponse(errorStatus, errorMessage, errorType);
     }
 
     logServed(reqId, duration, response.status, attempt, maxAttempts);
@@ -1099,6 +1147,10 @@ async function executeAnthropicDirectCall(
       headers: sanitizeDownstreamHeaders(response.headers, fullBody.byteLength),
     });
   }
+
+  breaker?.recordSuccess();
+  globalKeyPool.reportSuccess(directive.provider, selected.index);
+  logTtft(reqId, ttftMs, "Stream established", protocol);
 
   let currentKeyIndex = selected.index;
   let currentAttempt = attempt;
