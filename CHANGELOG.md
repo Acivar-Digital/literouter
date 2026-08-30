@@ -4,6 +4,17 @@ All notable changes to LiteRouter will be documented in this file.
 
 ## [Unreleased]
 
+### Upgraded / Bun v1.4.0 & Simultaneous Dual ALPN (`h2` + `http/1.1`) Gateway
+- **Runtime Upgrade to Bun v1.4.0**:
+  - Upgraded gateway runtime from Bun v1.3.13 to **Bun v1.4.0**, unlocking native TLS ALPN negotiation fixes.
+- **Simultaneous Dual HTTP/2 (`h2`) & HTTP/1.1 on Port 7766 (`https://localhost:7766`)**:
+  - Resolved TLS ALPN negotiation conflict where pure HTTP/1.1 clients (Node `fetch` in OpenCode2 and Claude Code) were previously rejected with `TLS alert: no application protocol (632)` (`UNKNOWN_CERTIFICATE_VERIFICATION_ERROR`).
+  - Single unified port 7766 now simultaneously serves:
+    - **HTTP/2 (`h2`)**: Binary multiplexed streaming for Python, Pydantic AI (`httpx.AsyncClient(http2=True)`), `curl --http2`, and `node:http2`.
+    - **HTTP/1.1 over TLS**: Persistent keep-alive connections for OpenCode2, Claude Code, and standard REST tooling.
+  - Enabled `LITEROUTER_TLS_ENABLED=true` and `LITEROUTER_HTTP2=true` in `.env`.
+  - Upstream connections remain persistently multiplexed over HTTP/2 via `src/network/h2_pool.ts`.
+
 ### Added / Dedicated `lg` Nuance & Clean Zero-Overhead Passthrough
 - **Pure Zero-Overhead Default Passthrough (`src/handlers/openai_compat.ts`)**:
   - Removed blanket XML/dots transformation from standard `openai_compat` streaming and non-streaming pipelines. Default OpenAI, Claude, Gemini, Qwen, DeepSeek, and other model requests now pass through with 100% untouched raw bytes and 0ms buffering.

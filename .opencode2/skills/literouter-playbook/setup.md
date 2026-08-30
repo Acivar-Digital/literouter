@@ -30,6 +30,8 @@ literouter/
 | Variable | Default Value | Description |
 |---|---|---|
 | `LITEROUTER_PORT` | `7766` | Listening port for the Bun gateway server. |
+| `LITEROUTER_TLS_ENABLED` | `true` | Enables TLS on port 7766 using certificates in `certs/localhost.pem`. |
+| `LITEROUTER_HTTP2` | `true` | Enables dual HTTP/2 (`h2`) ALPN and HTTP/1.1 TLS negotiation on port 7766. |
 | `LITEROUTER_AUTH_KEY` | `""` (disabled) | Optional master gateway auth key. When omitted, declarative directive keys are used directly. |
 | `LITEROUTER_HTTP_TIMEOUT_MS` | `300000` | Upstream total HTTP request timeout in milliseconds (5 minutes). |
 | `LITEROUTER_NO_RESPONSE_TIMEOUT_MS` | `5000` | First-byte response / TTFT guard timeout (5 seconds). |

@@ -129,3 +129,11 @@ curl -sk -X POST https://localhost:7766/reset
 - **Symptom**: Upstream model rejects `role: "tool"` turns with HTTP 400 (`content must be string`), or a spawned subagent exits with empty success status upon encountering a network hiccup or empty SSE stream.
 - **Cause**: Array-based tool response payloads in multi-turn agent history or unhandled `network_error` events in streaming sessions.
 - **Handling / Solution**: `scripts/opencode2_autopatch.sh` automatically patches tool message format normalization (ensuring `role: "tool"` content arrays are flattened to strings) and validates network error handling to ensure subagent transport failures fail loudly rather than silently terminating.
+
+### Pattern 14: `UNKNOWN_CERTIFICATE_VERIFICATION_ERROR` or TLS Alert 120 in Node / OpenCode Clients
+- **Symptom**: Node.js clients, OpenCode2, or Claude Code fail connecting to `https://localhost:7766` with `UNKNOWN_CERTIFICATE_VERIFICATION_ERROR: unknown certificate verification error` or `SSL alert 120: tlsv1 alert no application protocol`.
+- **Cause**: Node's `fetch` (undici) connects with `http/1.1` ALPN by default and requires the local `mkcert` development root CA in its trust store.
+- **Handling / Solution**:
+  1. Ensure Bun runtime is on **v1.4.0+** (`bun --version`), which natively supports simultaneous `h2` and `http/1.1` TLS ALPN negotiation on port 7766.
+  2. Ensure `export NODE_EXTRA_CA_CERTS="${HOME}/.local/share/opencode2/mkcert/rootCA.pem"` is set in your shell profile or wrapper launcher (`~/.local/bin/opencode2`).
+  3. If OpenCode was running prior to the TLS/cert refresh, kill any stale background daemon: `pkill -f 'opencode2 serve'`.
