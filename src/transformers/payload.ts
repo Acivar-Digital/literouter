@@ -18,6 +18,17 @@ import {
   scrubReasoningFromMessage,
   scrubReasoningFromMessages,
 } from "./opencode_adapter";
+import {
+  DEFAULT_SAFE_CONTEXT_TOKENS,
+  DEFAULT_MAX_CONTEXT_TOKENS,
+  estimateTextTokens,
+  estimateAnthropicTokens,
+  estimateOpenAITokens,
+  isContextLengthError,
+  extractContextLimit,
+  pruneAnthropicPayload,
+  pruneOpenAIPayload,
+} from "./context_pruner";
 
 export {
   normalizeToolContent,
@@ -25,6 +36,15 @@ export {
   stripToolMetadata,
   scrubReasoningFromMessage,
   scrubReasoningFromMessages,
+  DEFAULT_SAFE_CONTEXT_TOKENS,
+  DEFAULT_MAX_CONTEXT_TOKENS,
+  estimateTextTokens,
+  estimateAnthropicTokens,
+  estimateOpenAITokens,
+  isContextLengthError,
+  extractContextLimit,
+  pruneAnthropicPayload,
+  pruneOpenAIPayload,
 };
 
 export interface ModelCapabilities {

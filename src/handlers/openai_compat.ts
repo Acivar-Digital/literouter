@@ -36,8 +36,17 @@ import {
   logServed,
   logTtft,
   logUsage,
+  logWarn,
   type UsageLogDetails,
 } from "../ui/logger";
+import {
+  DEFAULT_MAX_CONTEXT_TOKENS,
+  DEFAULT_SAFE_CONTEXT_TOKENS,
+  estimateOpenAITokens,
+  extractContextLimit,
+  isContextLengthError,
+  pruneOpenAIPayload,
+} from "../transformers/context_pruner";
 
 interface ProviderEndpointConfig {
   readonly code: string;
@@ -284,6 +293,16 @@ async function executeDirectCall(
     const rawErrorMsg = extractErrorMessage(bodyText);
     const ttlSec = classification.quarantineTtlSec > 0 ? classification.quarantineTtlSec : (response.status === 429 ? 60 : undefined);
     logLimit(reqId, directive.provider, selected.index, response.status, ttlSec, selected.totalKeys, rawErrorMsg);
+
+    if (isContextLengthError(response.status, bodyText) && !clientSignal?.aborted) {
+      const detectedLimit = extractContextLimit(bodyText);
+      const targetLimit = detectedLimit ? Math.floor(detectedLimit * 0.75) : DEFAULT_SAFE_CONTEXT_TOKENS;
+      const pruned = pruneOpenAIPayload(payload, targetLimit);
+      if (pruned.messages.length < payload.messages.length || estimateOpenAITokens(pruned) < estimateOpenAITokens(payload)) {
+        logWarn("✂️", `[PRUNE ${reqId}] Context length exceeded upstream (${detectedLimit ?? "unknown"} tokens). Auto-pruned message turns and retrying...`);
+        return executeDirectCall(directive, pruned, clientSignal, selected, reqId, attempt, maxAttempts, clientOptions);
+      }
+    }
 
     const canRetry = classification.action === "retry_rotate" && attempt < maxAttempts && !clientSignal?.aborted;
     if (canRetry) {
@@ -844,14 +863,21 @@ export async function handleOpenAICompat(
     });
   }
 
+  let effectiveBody = body;
+  const initialTokens = estimateOpenAITokens(body);
+  if (initialTokens > DEFAULT_MAX_CONTEXT_TOKENS) {
+    effectiveBody = pruneOpenAIPayload(body, DEFAULT_SAFE_CONTEXT_TOKENS);
+    logWarn("✂️", `[PRUNE ${reqId}] Proactively pruned OpenAI messages: ${initialTokens} -> ${estimateOpenAITokens(effectiveBody)} tokens.`);
+  }
+
   const clientOptions: RequestClientOptions = {
     userAgent: req.headers.get("user-agent") || undefined,
     headers: req.headers,
   };
 
   if (directive.type === "fusion") {
-    return executeFusionFlow(directive.preset, body, req.signal, reqId, clientOptions);
+    return executeFusionFlow(directive.preset, effectiveBody, req.signal, reqId, clientOptions);
   }
 
-  return executeDirectRequest(directive, body, req.signal, reqId, clientOptions);
+  return executeDirectRequest(directive, effectiveBody, req.signal, reqId, clientOptions);
 }

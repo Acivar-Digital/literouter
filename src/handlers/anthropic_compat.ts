@@ -21,6 +21,7 @@ import {
   logServed,
   logTtft,
   logUsage,
+  logWarn,
 } from "../ui/logger";
 import {
   createResilientStream,
@@ -29,6 +30,14 @@ import {
   sanitizeDownstreamHeaders,
 } from "../network/fetcher";
 import { scrubUnsupportedParameters } from "../transformers/payload";
+import {
+  DEFAULT_MAX_CONTEXT_TOKENS,
+  DEFAULT_SAFE_CONTEXT_TOKENS,
+  estimateAnthropicTokens,
+  extractContextLimit,
+  isContextLengthError,
+  pruneAnthropicPayload,
+} from "../transformers/context_pruner";
 import { getEnv } from "../config/env";
 import { getPacerForProvider, PacerQueueOverflowError } from "../network/pacer";
 import { getCircuitBreakerForProvider } from "../network/circuit_breaker";
@@ -1035,6 +1044,16 @@ async function executeAnthropicDirectCall(
     const ttlSec = classification.quarantineTtlSec > 0 ? classification.quarantineTtlSec : (response.status === 429 ? 60 : undefined);
     logLimit(reqId, directive.provider, selected.index, response.status, ttlSec, selected.totalKeys, rawErrorMsg);
 
+    if (isContextLengthError(response.status, bodyText) && !clientSignal?.aborted) {
+      const detectedLimit = extractContextLimit(bodyText);
+      const targetLimit = detectedLimit ? Math.floor(detectedLimit * 0.75) : DEFAULT_SAFE_CONTEXT_TOKENS;
+      const pruned = pruneAnthropicPayload(payload, targetLimit);
+      if (pruned.messages.length < payload.messages.length || estimateAnthropicTokens(pruned) < estimateAnthropicTokens(payload)) {
+        logWarn("✂️", `[PRUNE ${reqId}] Context length exceeded upstream (${detectedLimit ?? "unknown"} tokens). Auto-pruned message turns and retrying...`);
+        return executeAnthropicDirectCall(directive, pruned, clientSignal, selected, reqId, attempt, maxAttempts);
+      }
+    }
+
     const canRetry = classification.action === "retry_rotate" && attempt < maxAttempts && !clientSignal?.aborted;
     if (canRetry) {
       throw new UpstreamRetryableError(
@@ -1133,6 +1152,16 @@ async function executeAnthropicDirectCall(
     }
 
     if (isErrorPayload) {
+      if (isContextLengthError(errorStatus, errorMessage) && !clientSignal?.aborted) {
+        const detectedLimit = extractContextLimit(errorMessage);
+        const targetLimit = detectedLimit ? Math.floor(detectedLimit * 0.75) : DEFAULT_SAFE_CONTEXT_TOKENS;
+        const pruned = pruneAnthropicPayload(payload, targetLimit);
+        if (pruned.messages.length < payload.messages.length || estimateAnthropicTokens(pruned) < estimateAnthropicTokens(payload)) {
+          logWarn("✂️", `[PRUNE ${reqId}] Context length exceeded upstream (${detectedLimit ?? "unknown"} tokens). Auto-pruned message turns and retrying...`);
+          return executeAnthropicDirectCall(directive, pruned, clientSignal, selected, reqId, attempt, maxAttempts);
+        }
+      }
+
       logError(reqId, `Direct Anthropic non-streaming error [HTTP ${errorStatus}]: ${errorMessage}`);
       logServed(reqId, duration, errorStatus, attempt, maxAttempts);
       logSeparator();
@@ -1409,16 +1438,23 @@ export async function handleAnthropicCompat(
     nuances: directive.type === "direct" ? directive.nuances : undefined,
   });
 
+  let effectiveAnthropicBody = anthropicBody;
+  const initialTokens = estimateAnthropicTokens(anthropicBody);
+  if (initialTokens > DEFAULT_MAX_CONTEXT_TOKENS) {
+    effectiveAnthropicBody = pruneAnthropicPayload(anthropicBody, DEFAULT_SAFE_CONTEXT_TOKENS);
+    logWarn("✂️", `[PRUNE ${reqId}] Proactively pruned Anthropic messages: ${initialTokens} -> ${estimateAnthropicTokens(effectiveAnthropicBody)} tokens.`);
+  }
+
   if (directive.type === "direct" && directive.payload === "cl" && directive.completion === "ms") {
     const payload = scrubUnsupportedParameters(
-      anthropicBody as unknown as OpenAIRequestPayload,
+      effectiveAnthropicBody as unknown as OpenAIRequestPayload,
       undefined,
       getEnv().LITEROUTER_ENABLE_SCRUBBING
     ) as unknown as AnthropicMessagesRequest;
     return executeAnthropicDirectLoop(directive, payload, req.signal, reqId);
   }
 
-  const openAiPayload = translateAnthropicToOpenAI(anthropicBody);
+  const openAiPayload = translateAnthropicToOpenAI(effectiveAnthropicBody);
 
   const cleanHeaders = new Headers(req.headers);
   cleanHeaders.delete("authorization");
@@ -1463,76 +1499,7 @@ export async function handleAnthropicCompat(
   return handleNonStreamingResult(openAiRes, anthropicBody.model);
 }
 
-export function estimateTextTokens(text: string): number {
-  if (!text) return 0;
-  const cjkMatches = text.match(/[\u4e00-\u9fa5\u3040-\u30ff\uac00-\ud7af]/g);
-  const cjkCount = cjkMatches ? cjkMatches.length : 0;
-  const nonCjkLen = text.length - cjkCount;
-  const latinTokens = Math.ceil(nonCjkLen / 3.7);
-  const cjkTokens = Math.ceil(cjkCount * 1.5);
-  return Math.max(1, latinTokens + cjkTokens);
-}
-
-export function estimateAnthropicInputTokens(req: AnthropicMessagesRequest): number {
-  let total = 3;
-
-  if (req.system) {
-    total += 4;
-    if (typeof req.system === "string") {
-      total += estimateTextTokens(req.system);
-    } else if (Array.isArray(req.system)) {
-      for (const block of req.system) {
-        if (typeof block === "string") {
-          total += estimateTextTokens(block);
-        } else if (block && typeof block === "object" && "text" in block && typeof block.text === "string") {
-          total += estimateTextTokens(block.text);
-        }
-      }
-    }
-  }
-
-  if (Array.isArray(req.messages)) {
-    for (const msg of req.messages) {
-      total += 4;
-      if (typeof msg.content === "string") {
-        total += estimateTextTokens(msg.content);
-      } else if (Array.isArray(msg.content)) {
-        for (const block of msg.content) {
-          if (block.type === "text" && block.text) {
-            total += estimateTextTokens(block.text);
-          } else if (block.type === "thinking" && block.thinking) {
-            total += estimateTextTokens(block.thinking);
-          } else if (block.type === "image") {
-            total += 1600;
-          } else if (block.type === "tool_use") {
-            total += 8;
-            if (block.name) total += estimateTextTokens(block.name);
-            if (block.input) {
-              const inputStr = typeof block.input === "string" ? block.input : JSON.stringify(block.input);
-              total += estimateTextTokens(inputStr);
-            }
-          } else if (block.type === "tool_result") {
-            total += 8;
-            if (typeof block.content === "string") {
-              total += estimateTextTokens(block.content);
-            } else if (Array.isArray(block.content)) {
-              total += estimateTextTokens(JSON.stringify(block.content));
-            }
-          }
-        }
-      }
-    }
-  }
-
-  if (Array.isArray(req.tools)) {
-    for (const tool of req.tools) {
-      total += 10;
-      total += estimateTextTokens(JSON.stringify(tool));
-    }
-  }
-
-  return total;
-}
+export { estimateTextTokens, estimateAnthropicTokens as estimateAnthropicInputTokens } from "../transformers/context_pruner";
 
 export async function handleAnthropicCountTokens(
   req: Request,
@@ -1572,7 +1539,7 @@ export async function handleAnthropicCountTokens(
     nuances: directive.type === "direct" ? directive.nuances : undefined,
   });
 
-  const inputTokens = estimateAnthropicInputTokens(anthropicBody);
+  const inputTokens = estimateAnthropicTokens(anthropicBody);
   logServed(reqId, Date.now() - startTime, 200);
 
   return Response.json(
