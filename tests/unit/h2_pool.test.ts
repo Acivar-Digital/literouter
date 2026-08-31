@@ -417,4 +417,53 @@ describe("Outbound HTTP/2 Multiplexed Session Pool", () => {
     expect((pool as any).sessions.get(origin)?.length).toBe(1);
     expect(pool.isSessionHealthy(healthySession)).toBe(true);
   });
+
+  it("isolates HTTP/2 connection pools per provider API key", async () => {
+    const pool = new Http2SessionPool();
+    const origin = "https://openrouter.ai";
+    const key1PoolKey = `${origin}#openrouter:1`;
+    const key2PoolKey = `${origin}#openrouter:2`;
+
+    const session1 = {
+      closed: false,
+      destroyed: false,
+      connecting: false,
+      socket: { destroyed: false },
+      close: () => {},
+      destroy: () => {},
+    } as unknown as http2.ClientHttp2Session;
+
+    const session2 = {
+      closed: false,
+      destroyed: false,
+      connecting: false,
+      socket: { destroyed: false },
+      close: () => {},
+      destroy: () => {},
+    } as unknown as http2.ClientHttp2Session;
+
+    (pool as any).createSession = async (poolKey: string, connectOrigin: string) => {
+      expect(connectOrigin).toBe(origin);
+      if (poolKey === key1PoolKey) {
+        const item = { session: session1, activeStreams: 0, origin: connectOrigin, isDraining: false };
+        (pool as any).sessions.set(poolKey, [item]);
+        return session1;
+      }
+      const item = { session: session2, activeStreams: 0, origin: connectOrigin, isDraining: false };
+      (pool as any).sessions.set(poolKey, [item]);
+      return session2;
+    };
+
+    const acquired1 = await pool.acquireSession(key1PoolKey, origin);
+    const acquired2 = await pool.acquireSession(key2PoolKey, origin);
+
+    expect(acquired1).toBe(session1);
+    expect(acquired2).toBe(session2);
+    expect(acquired1).not.toBe(acquired2);
+
+    // Purging key 1 does NOT touch key 2
+    pool.purgeSession(key1PoolKey, session1);
+    expect((pool as any).sessions.get(key1PoolKey)).toBeUndefined();
+    expect((pool as any).sessions.get(key2PoolKey)?.length).toBe(1);
+  });
 });

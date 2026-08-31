@@ -410,8 +410,12 @@ export async function executeH2Fetch(
 ): Promise<Response> {
   const url = new URL(options.url);
   const origin = url.origin;
+  const poolKey =
+    options.provider !== undefined && options.keyIndex !== undefined
+      ? `${origin}#${options.provider}:${options.keyIndex}`
+      : origin;
   const pool = getHttp2Pool();
-  const session = await pool.acquireSession(origin);
+  const session = await pool.acquireSession(poolKey, origin);
 
   return new Promise<Response>((resolve, reject) => {
     let settled = false;
@@ -436,7 +440,7 @@ export async function executeH2Fetch(
       return reject(reqErr);
     }
 
-    pool.attachStreamGuard(origin, session, stream);
+    pool.attachStreamGuard(poolKey, session, stream);
 
     const abortListener = () => {
       if (!settled) {
@@ -486,7 +490,7 @@ export async function executeH2Fetch(
           });
           stream.on("error", (err) => {
             if (!pool.isSessionHealthy(session)) {
-              pool.purgeSession(origin, session);
+              pool.purgeSession(poolKey, session);
             }
             safeError(controller, err, isClosedRef);
           });
@@ -510,7 +514,7 @@ export async function executeH2Fetch(
 
     stream.on("error", (err) => {
       if (!pool.isSessionHealthy(session)) {
-        pool.purgeSession(origin, session);
+        pool.purgeSession(poolKey, session);
       }
       if (!settled) {
         settled = true;
@@ -521,7 +525,7 @@ export async function executeH2Fetch(
 
     stream.on("frameError", () => {
       if (!pool.isSessionHealthy(session)) {
-        pool.purgeSession(origin, session);
+        pool.purgeSession(poolKey, session);
       }
     });
 
