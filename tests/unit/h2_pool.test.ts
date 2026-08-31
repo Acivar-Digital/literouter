@@ -116,6 +116,19 @@ describe("Outbound HTTP/2 Multiplexed Session Pool", () => {
     expect(stats1.activeSessions).toBe(2);
     expect(stats1.totalActiveStreams).toBe(8);
 
+    // Test compound key prefix aggregation
+    (pool as any).sessions.set(`${origin1}#openrouter:1`, [
+      { session: { closed: false } as any, activeStreams: 2, origin: origin1, isDraining: false },
+    ]);
+    (pool as any).sessions.set(`${origin1}#openrouter:2`, [
+      { session: { closed: false } as any, activeStreams: 1, origin: origin1, isDraining: false },
+    ]);
+
+    const aggregatedStats = pool.getSessionStats(origin1) as any;
+    expect(aggregatedStats.sessionCount).toBe(4);
+    expect(aggregatedStats.activeSessions).toBe(4);
+    expect(aggregatedStats.totalActiveStreams).toBe(11);
+
     const allStats = pool.getSessionStats() as any;
     expect(allStats[origin1]?.totalActiveStreams).toBe(8);
     expect(allStats[origin2]?.totalActiveStreams).toBe(1);

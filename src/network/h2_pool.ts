@@ -33,7 +33,7 @@ export class Http2SessionPool {
 
   constructor(config?: Http2PoolConfig) {
     this.maxStreamsPerSession = config?.maxStreamsPerSession ?? 80;
-    this.sessionsPerOrigin = config?.sessionsPerOrigin ?? 4;
+    this.sessionsPerOrigin = config?.sessionsPerOrigin ?? 1;
     this.maxSessionAgeMs = config?.maxSessionAgeMs ?? 180000;
     this.drainTimeoutMs = config?.drainTimeoutMs ?? 30000;
     this.connectTimeoutMs = config?.connectTimeoutMs ?? 10000;
@@ -151,12 +151,23 @@ export class Http2SessionPool {
 
   public getSessionStats(poolKey?: string) {
     if (poolKey) {
-      const pool = this.sessions.get(poolKey) ?? [];
+      let sessionCount = 0;
+      let activeSessions = 0;
+      let totalActiveStreams = 0;
+
+      for (const [key, pool] of this.sessions.entries()) {
+        if (key === poolKey || key.startsWith(`${poolKey}#`)) {
+          sessionCount += pool.length;
+          activeSessions += pool.filter((p) => !p.isDraining && !p.session.closed).length;
+          totalActiveStreams += pool.reduce((acc, p) => acc + p.activeStreams, 0);
+        }
+      }
+
       return {
         origin: poolKey,
-        sessionCount: pool.length,
-        activeSessions: pool.filter((p) => !p.isDraining && !p.session.closed).length,
-        totalActiveStreams: pool.reduce((acc, p) => acc + p.activeStreams, 0),
+        sessionCount,
+        activeSessions,
+        totalActiveStreams,
       };
     }
     const allStats: Record<string, { sessionCount: number; activeSessions: number; totalActiveStreams: number }> = {};
