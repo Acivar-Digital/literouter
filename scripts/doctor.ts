@@ -263,7 +263,7 @@ async function probeZenKey(key: string): Promise<ProbeResult> {
   const masked = maskKey(key);
   const url = "https://opencode.ai/zen/v1/chat/completions";
   const payload = {
-    model: "hy3-free",
+    model: "big-pickle",
     messages: [{ role: "user", content: "ping" }],
     max_tokens: 10,
   };
@@ -276,7 +276,7 @@ async function probeZenKey(key: string): Promise<ProbeResult> {
         "Content-Type": "application/json",
       },
       body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(10000),
+      signal: AbortSignal.timeout(20000),
     });
 
     if (res.status === 200) {
@@ -286,7 +286,14 @@ async function probeZenKey(key: string): Promise<ProbeResult> {
       return { provider: "Zen", maskedKey: masked, status: "FAIL", message: `HTTP ${res.status} Unauthorized / Forbidden`, statusCode: res.status };
     }
     if (res.status === 429) {
-      return { provider: "Zen", maskedKey: masked, status: "WARN", message: "HTTP 429 Rate Limited (Active)", statusCode: 429 };
+      let msg = "HTTP 429 Rate Limited (Active)";
+      try {
+        const body = (await res.json()) as { error?: { message?: string } };
+        if (body?.error?.message) msg = `HTTP 429: ${body.error.message}`;
+      } catch (err) {
+        void err;
+      }
+      return { provider: "Zen", maskedKey: masked, status: "WARN", message: msg, statusCode: 429 };
     }
     return { provider: "Zen", maskedKey: masked, status: "WARN", message: `HTTP ${res.status} Upstream Warning`, statusCode: res.status };
   } catch (err) {
@@ -345,10 +352,22 @@ async function runDoctor(): Promise<void> {
 
   console.log("\n--- [2/2] Upstream API Key Health Probes (1s delay between keys) ---");
 
+  const rawArgs = process.argv.slice(2).map((a) => a.toLowerCase().replace(/^--?/, ""));
+  let targetProvider: "gg" | "nv" | "or" | "zn" | null = null;
+  for (const arg of rawArgs) {
+    const clean = (arg.startsWith("provider=") ? arg.split("=")[1] : arg) ?? "";
+    if (["gg", "google", "gemini"].includes(clean)) targetProvider = "gg";
+    else if (["nv", "nvidia", "nim"].includes(clean)) targetProvider = "nv";
+    else if (["or", "openrouter"].includes(clean)) targetProvider = "or";
+    else if (["zn", "zen"].includes(clean)) targetProvider = "zn";
+  }
+
   const probeResults: ProbeResult[] = [];
 
   const googleKeys = pools.get("gg") ?? [];
-  if (googleKeys.length > 0) {
+  if (targetProvider && targetProvider !== "gg") {
+    console.log("\n[Google Gemini] ⏭️ Skipped (filter active).");
+  } else if (googleKeys.length > 0) {
     console.log(`\n[Google Gemini] Probing ${googleKeys.length} key(s)...`);
     const res = await probePoolSequential("Google Gemini", googleKeys, probeGoogleKey, 1000);
     probeResults.push(...res);
@@ -357,7 +376,9 @@ async function runDoctor(): Promise<void> {
   }
 
   const nvidiaKeys = pools.get("nv") ?? [];
-  if (nvidiaKeys.length > 0) {
+  if (targetProvider && targetProvider !== "nv") {
+    console.log("\n[NVIDIA NIM] ⏭️ Skipped (filter active).");
+  } else if (nvidiaKeys.length > 0) {
     console.log(`\n[NVIDIA NIM] Probing ${nvidiaKeys.length} key(s)...`);
     const res = await probePoolSequential("NVIDIA NIM", nvidiaKeys, probeNvidiaKey, 1000);
     probeResults.push(...res);
@@ -366,7 +387,9 @@ async function runDoctor(): Promise<void> {
   }
 
   const openrouterKeys = pools.get("or") ?? [];
-  if (openrouterKeys.length > 0) {
+  if (targetProvider && targetProvider !== "or") {
+    console.log("\n[OpenRouter] ⏭️ Skipped (filter active).");
+  } else if (openrouterKeys.length > 0) {
     console.log(`\n[OpenRouter] Probing ${openrouterKeys.length} key(s)...`);
     const res = await probePoolSequential("OpenRouter", openrouterKeys, probeOpenrouterKey, 1000);
     probeResults.push(...res);
@@ -375,7 +398,9 @@ async function runDoctor(): Promise<void> {
   }
 
   const zenKeys = pools.get("zn") ?? [];
-  if (zenKeys.length > 0) {
+  if (targetProvider && targetProvider !== "zn") {
+    console.log("\n[Zen] ⏭️ Skipped (filter active).");
+  } else if (zenKeys.length > 0) {
     console.log(`\n[Zen] Probing ${zenKeys.length} key(s)...`);
     const res = await probePoolSequential("Zen", zenKeys, probeZenKey, 1000);
     probeResults.push(...res);

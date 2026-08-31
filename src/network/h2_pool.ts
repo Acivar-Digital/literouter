@@ -9,12 +9,15 @@ export interface PooledSession {
   activeStreams: number;
   origin: string;
   isDraining: boolean;
+  createdAt?: number;
+  ageTimer?: ReturnType<typeof setTimeout>;
   drainTimer?: ReturnType<typeof setTimeout>;
 }
 
 export interface Http2PoolConfig {
   readonly maxStreamsPerSession?: number;
   readonly sessionsPerOrigin?: number;
+  readonly maxSessionAgeMs?: number;
   readonly drainTimeoutMs?: number;
   readonly connectTimeoutMs?: number;
 }
@@ -24,12 +27,14 @@ export class Http2SessionPool {
   private readonly connectionLocks = new Map<string, Promise<ClientHttp2Session>>();
   private readonly maxStreamsPerSession: number;
   private readonly sessionsPerOrigin: number;
+  private readonly maxSessionAgeMs: number;
   private readonly drainTimeoutMs: number;
   private readonly connectTimeoutMs: number;
 
   constructor(config?: Http2PoolConfig) {
     this.maxStreamsPerSession = config?.maxStreamsPerSession ?? 80;
     this.sessionsPerOrigin = config?.sessionsPerOrigin ?? 4;
+    this.maxSessionAgeMs = config?.maxSessionAgeMs ?? 180000;
     this.drainTimeoutMs = config?.drainTimeoutMs ?? 30000;
     this.connectTimeoutMs = config?.connectTimeoutMs ?? 10000;
   }
@@ -103,15 +108,14 @@ export class Http2SessionPool {
       }
     }
 
-    // 4. Fallback to least loaded active non-draining session
-    const leastLoaded = activeNonDraining.sort((a, b) => a.activeStreams - b.activeStreams)[0];
-    if (leastLoaded) {
-      leastLoaded.activeStreams++;
-      return leastLoaded.session;
+    // 4. Fallback: all sessions are maxed out, but we still need to route traffic.
+    // We create an emergency session. [SRE FIX: Must increment activeStreams!]
+    const emergencySession = await this.createSession(origin);
+    const item = (this.sessions.get(origin) ?? []).find((p) => p.session === emergencySession);
+    if (item) {
+      item.activeStreams++;
     }
-
-    // Emergency new session
-    return this.createSession(origin);
+    return emergencySession;
   }
 
   /**
@@ -168,6 +172,7 @@ export class Http2SessionPool {
   public closeAll(): void {
     for (const [origin, pool] of this.sessions.entries()) {
       for (const item of pool) {
+        if (item.ageTimer) clearTimeout(item.ageTimer);
         if (item.drainTimer) clearTimeout(item.drainTimer);
         try {
           if (!item.session.closed && !item.session.destroyed) {
@@ -180,6 +185,22 @@ export class Http2SessionPool {
     }
     this.sessions.clear();
     this.connectionLocks.clear();
+  }
+
+  private startDraining(origin: string, item: PooledSession): void {
+    if (item.isDraining) return;
+    item.isDraining = true;
+    if (item.ageTimer) {
+      clearTimeout(item.ageTimer);
+      item.ageTimer = undefined;
+    }
+    if (item.activeStreams === 0) {
+      this.destroySession(origin, item);
+      return;
+    }
+    item.drainTimer = setTimeout(() => {
+      this.destroySession(origin, item);
+    }, this.drainTimeoutMs);
   }
 
   private async createSession(origin: string): Promise<ClientHttp2Session> {
@@ -201,6 +222,7 @@ export class Http2SessionPool {
         activeStreams: 0,
         origin,
         isDraining: false,
+        createdAt: Date.now(),
       };
 
       const cleanupListeners = () => {
@@ -214,6 +236,15 @@ export class Http2SessionPool {
         const pool = this.sessions.get(origin) ?? [];
         pool.push(pooled);
         this.sessions.set(origin, pool);
+
+        // Schedule proactive rotation timer with jitter to prevent simultaneous pool drains
+        if (this.maxSessionAgeMs > 0) {
+          const jitter = (Math.random() - 0.5) * 30000;
+          const ttl = Math.max(10000, this.maxSessionAgeMs + jitter);
+          pooled.ageTimer = setTimeout(() => {
+            this.startDraining(origin, pooled);
+          }, ttl);
+        }
 
         // Attach permanent runtime error and lifecycle listeners to purge zombie sessions
         session.on("error", (err: Error) => {
@@ -248,16 +279,16 @@ export class Http2SessionPool {
 
       // Upstream GOAWAY Handler: Keep session in pool for active stream releases, but mark isDraining
       session.on("goaway", () => {
-        pooled.isDraining = true;
-        // Start hard drain timeout fallback
-        pooled.drainTimer = setTimeout(() => {
-          this.destroySession(origin, pooled);
-        }, this.drainTimeoutMs);
+        this.startDraining(origin, pooled);
       });
     });
   }
 
   private destroySession(origin: string, item: PooledSession): void {
+    if (item.ageTimer) {
+      clearTimeout(item.ageTimer);
+      item.ageTimer = undefined;
+    }
     if (item.drainTimer) {
       clearTimeout(item.drainTimer);
       item.drainTimer = undefined;

@@ -4,6 +4,20 @@ All notable changes to LiteRouter will be documented in this file.
 
 ## [Unreleased]
 
+### Added / Stream-Safe HTTP/2 Connection Pool with Staggered Socket Aging & Anti-Pinning 429 Protection
+- **Outbound HTTP/2 Staggered Connection Lifecycle & Aging (`src/network/h2_pool.ts`)**:
+  - Implemented proactive connection aging via `maxSessionAgeMs` (default: 3 minutes) with $\pm 15\text{s}$ random jitter to prevent simultaneous socket draining across the pool.
+  - Mitigates the Layer 4 (L4) / HTTP/2 connection pinning trap where long-lived persistent TCP connections get glued to a single upstream load balancer blade / edge proxy node, draining local token buckets and triggering recurrent `429 Too Many Requests`.
+- **Stream-Safe Graceful Socket Draining (`startDraining`, `releaseStream`)**:
+  - Aging sessions transition to `isDraining = true`, stopping new request acquisitions and allowing new traffic to acquire/spawn fresh TCP connections with new ephemeral ports and full rate-limit buckets.
+  - Active in-flight LLM token streams and SSE completions continue reading to EOF without disruption; the retiring session only invokes `session.close()` / destruction once `activeStreams === 0`.
+  - Added fallback hard-drain timeout (`drainTimeoutMs`) to guarantee zero zombie sockets or memory leaks.
+- **Multi-Session Origin Balancing & Emergency Overflow Synchronization**:
+  - Balances outbound traffic across `sessionsPerOrigin` (default: 4) parallel TCP sockets per origin using least-loaded stream dispatch.
+  - Synchronized stream tracking on emergency overflow sessions (`item.activeStreams++`) and hardened single-flight connection mutexes against thundering-herd concurrency spikes.
+- **Drop-In Telemetry & Diagnostic Script (`debug.ts`)**:
+  - Added standalone Bun network diagnostic script with high-performance native File I/O (`Bun.file().writer()`), `DEBUG=on` gating, and real-time upstream routing header tracking (`cf-ray`, `x-amz-cf-id`, `x-served-by`, `x-ratelimit-remaining`, `retry-after`).
+
 ### Added / OpenCode 2 Outbound Reasoning History Scrubber Plugin & Auto-Patcher Integration
 - **Outbound Reasoning History Scrubber V2 Plugin (`.opencode2/plugins/collapse-reasoning.ts`, `~/.config/opencode2/plugins/collapse-reasoning.ts`)**:
   - Implemented OpenCode 2 native V2 plugin hooked into `ctx.session.hook("context")` to strip historical `<think>...</think>`, `<thought>`, and reasoning parts from prior assistant messages before dispatching turns to upstream providers.

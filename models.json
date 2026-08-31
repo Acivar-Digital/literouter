@@ -154,6 +154,13 @@
     "max_output": 65536
   },
   {
+    "system_id": "zen/big-pickle",
+    "provider": "zen",
+    "upstream_id": "big-pickle",
+    "context": 262144,
+    "max_output": 32768
+  },
+  {
     "system_id": "zen/hy3-free",
     "provider": "zen",
     "upstream_id": "hy3-free",

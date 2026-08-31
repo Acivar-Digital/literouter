@@ -179,6 +179,79 @@ describe("Outbound HTTP/2 Multiplexed Session Pool", () => {
     expect((pool as any).sessions.get(origin)).toBeUndefined();
   });
 
+  it("handles startDraining gracefully with zero active streams", () => {
+    const pool = new Http2SessionPool({ maxSessionAgeMs: 60000 });
+    let isClosed = false;
+
+    const fakeSession = {
+      closed: false,
+      destroyed: false,
+      close: () => {
+        isClosed = true;
+      },
+      destroy: () => {
+        isClosed = true;
+      },
+    } as unknown as http2.ClientHttp2Session;
+
+    const origin = "https://api.openai.com";
+    const pooledItem = {
+      session: fakeSession,
+      activeStreams: 0,
+      origin,
+      isDraining: false,
+      ageTimer: setTimeout(() => {}, 60000),
+    };
+
+    (pool as any).sessions.set(origin, [pooledItem]);
+
+    // Invoke startDraining when age limit triggers with 0 streams
+    (pool as any).startDraining(origin, pooledItem);
+
+    expect(isClosed).toBe(true);
+    expect((pool as any).sessions.get(origin)).toBeUndefined();
+  });
+
+  it("handles startDraining with active streams by deferring destruction until releaseStream", () => {
+    const pool = new Http2SessionPool({ maxSessionAgeMs: 60000, drainTimeoutMs: 10000 });
+    let isClosed = false;
+
+    const fakeSession = {
+      closed: false,
+      destroyed: false,
+      close: () => {
+        isClosed = true;
+      },
+      destroy: () => {
+        isClosed = true;
+      },
+    } as unknown as http2.ClientHttp2Session;
+
+    const origin = "https://api.openai.com";
+    const pooledItem = {
+      session: fakeSession,
+      activeStreams: 1,
+      origin,
+      isDraining: false,
+      ageTimer: setTimeout(() => {}, 60000),
+    };
+
+    (pool as any).sessions.set(origin, [pooledItem]);
+
+    // Age timer triggers startDraining while stream is in-flight
+    (pool as any).startDraining(origin, pooledItem);
+
+    expect(pooledItem.isDraining).toBe(true);
+    expect(isClosed).toBe(false); // Must NOT close while stream is active!
+    expect((pool as any).sessions.get(origin)?.length).toBe(1);
+
+    // Stream completes and releases
+    pool.releaseStream(origin, fakeSession);
+
+    expect(isClosed).toBe(true); // Now closed cleanly!
+    expect((pool as any).sessions.get(origin)).toBeUndefined();
+  });
+
   it("acquireSession evicts dead/destroyed sessions and creates a fresh session", async () => {
     const pool = new Http2SessionPool();
     const deadSession = {
@@ -218,5 +291,54 @@ describe("Outbound HTTP/2 Multiplexed Session Pool", () => {
 
     const acquired = await pool.acquireSession(origin);
     expect(acquired).toBe(freshSession);
+    expect((pool as any).sessions.get(origin)[0].activeStreams).toBe(1);
+  });
+
+  it("increments activeStreams on emergency fallback session when all sessions are maxed out", async () => {
+    const origin = "https://mock-origin.local";
+    const pool = new Http2SessionPool({ maxStreamsPerSession: 2, sessionsPerOrigin: 1 });
+
+    const maxedSession = {
+      closed: false,
+      destroyed: false,
+      destroy: () => {},
+    } as unknown as http2.ClientHttp2Session;
+
+    // Existing session is at maxStreamsPerSession (2) and sessionsPerOrigin (1) is reached
+    (pool as any).sessions.set(origin, [
+      {
+        session: maxedSession,
+        activeStreams: 2,
+        origin,
+        isDraining: false,
+      },
+    ]);
+
+    const emergencySession = {
+      closed: false,
+      destroyed: false,
+      destroy: () => {},
+    } as unknown as http2.ClientHttp2Session;
+
+    (pool as any).createSession = async () => {
+      const emergencyItem = {
+        session: emergencySession,
+        activeStreams: 0,
+        origin,
+        isDraining: false,
+      };
+      const existing = (pool as any).sessions.get(origin) ?? [];
+      existing.push(emergencyItem);
+      (pool as any).sessions.set(origin, existing);
+      return emergencySession;
+    };
+
+    const acquired = await pool.acquireSession(origin);
+    expect(acquired).toBe(emergencySession);
+
+    // Verify SRE fix: activeStreams on the emergency session item must be 1, NOT 0!
+    const poolItems = (pool as any).sessions.get(origin);
+    const emergencyPooled = poolItems.find((p: any) => p.session === emergencySession);
+    expect(emergencyPooled.activeStreams).toBe(1);
   });
 });
