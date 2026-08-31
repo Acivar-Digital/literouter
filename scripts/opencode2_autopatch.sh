@@ -63,10 +63,27 @@ BIN_DIR="${CLI_DIR}/bin"
 STAMP_FILE="${CLI_DIR}/.autopatch_verified"
 SCRIPT_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
 
-# 2. Fast Path (< 5ms): Check if already verified and untouched
-if [ -f "$STAMP_FILE" ] && [ -x "${BIN_DIR}/opencode2" ]; then
-  # If stamp is newer than bin/opencode2 and the patch script itself, exit immediately
-  if [ "$STAMP_FILE" -nt "${BIN_DIR}/opencode2" ] && [ "$STAMP_FILE" -nt "$SCRIPT_PATH" ]; then
+# 2. Dummy Script & Integrity Detection
+is_dummy_placeholder() {
+  local target="$1"
+  [ ! -f "$target" ] && return 0
+  if grep -q "postinstall script was not run" "$target" 2>/dev/null; then
+    return 0
+  fi
+  local sz
+  sz="$(stat -c%s "$target" 2>/dev/null || stat -f%z "$target" 2>/dev/null || echo 0)"
+  if [ "$sz" -lt 1024 ]; then
+    return 0
+  fi
+  return 1
+}
+
+PRIMARY_BIN="${BIN_DIR}/opencode2"
+EXE_BIN="${BIN_DIR}/opencode2.exe"
+
+# Fast Path (< 5ms): Check if already verified, valid binary, and untouched
+if [ -f "$STAMP_FILE" ] && [ -x "$PRIMARY_BIN" ] && ! is_dummy_placeholder "$PRIMARY_BIN"; then
+  if [ "$STAMP_FILE" -nt "$PRIMARY_BIN" ] && [ "$STAMP_FILE" -nt "$SCRIPT_PATH" ]; then
     log "Already patched and verified (fast-path skip)."
     exit 0
   fi
@@ -75,13 +92,15 @@ fi
 # 3. Ensure bin directory exists
 mkdir -p "$BIN_DIR"
 
-# 4. Resolve source binary if needed (e.g. from optionalDependencies)
-PRIMARY_BIN="${BIN_DIR}/opencode2"
-EXE_BIN="${BIN_DIR}/opencode2.exe"
+# 4. Resolve source binary if needed (e.g. from optionalDependencies or .exe)
+if is_dummy_placeholder "$PRIMARY_BIN"; then
+  rm -f "$PRIMARY_BIN" 2>/dev/null || true
+fi
 
-# If opencode2.exe exists but opencode2 doesn't, or vice-versa, ensure both are available
-if [ -f "$EXE_BIN" ] && [ ! -f "$PRIMARY_BIN" ]; then
-  cp -p "$EXE_BIN" "$PRIMARY_BIN" 2>/dev/null || ln -sf "$EXE_BIN" "$PRIMARY_BIN" 2>/dev/null || true
+if [ -f "$EXE_BIN" ] && ! is_dummy_placeholder "$EXE_BIN"; then
+  if [ ! -f "$PRIMARY_BIN" ]; then
+    cp -pf "$EXE_BIN" "$PRIMARY_BIN" 2>/dev/null || ln -sf "$EXE_BIN" "$PRIMARY_BIN" 2>/dev/null || true
+  fi
 elif [ -f "$PRIMARY_BIN" ] && [ ! -f "$EXE_BIN" ]; then
   ln -sf "opencode2" "$EXE_BIN" 2>/dev/null || true
 fi
@@ -89,8 +108,8 @@ fi
 # If neither exists in bin/, search platform package
 if [ ! -f "$PRIMARY_BIN" ]; then
   for plat_pkg in "${CLI_DIR}"/node_modules/@opencode-ai/cli-*; do
-    if [ -f "${plat_pkg}/bin/opencode2" ]; then
-      cp -p "${plat_pkg}/bin/opencode2" "$PRIMARY_BIN" 2>/dev/null || true
+    if [ -f "${plat_pkg}/bin/opencode2" ] && ! is_dummy_placeholder "${plat_pkg}/bin/opencode2"; then
+      cp -pf "${plat_pkg}/bin/opencode2" "$PRIMARY_BIN" 2>/dev/null || true
       ln -sf "opencode2" "$EXE_BIN" 2>/dev/null || true
       break
     fi
@@ -144,8 +163,100 @@ patch_network_error_handling() {
   return 0
 }
 
+# 8. Patching Routine: Outbound Reasoning History Scrubber Plugin
+# Ensures collapse-reasoning V2 plugin is active in ~/.config/opencode2/plugins/
+# to scrub historical <think>/reasoning blocks from outbound messages to all providers
+# while keeping live streaming observability intact on the terminal.
+patch_outbound_reasoning_scrubber() {
+  log "Verifying outbound reasoning scrubber plugin in OpenCode2 config..."
+  local global_cfg_dir="${HOME}/.config/opencode2"
+  local plugin_dst="${global_cfg_dir}/plugins/collapse-reasoning.ts"
+  local repo_plugin="${SCRIPT_PATH%/*}/../.opencode2/plugins/collapse-reasoning.ts"
+
+  mkdir -p "${global_cfg_dir}/plugins" 2>/dev/null || true
+
+  if [ -f "$repo_plugin" ]; then
+    if [ ! -f "$plugin_dst" ] || [ "$repo_plugin" -nt "$plugin_dst" ]; then
+      cp -pf "$repo_plugin" "$plugin_dst" 2>/dev/null || true
+      log "Synchronized collapse-reasoning plugin from repo to ${plugin_dst}"
+    fi
+  elif [ ! -f "$plugin_dst" ]; then
+    # Inline fallback if repo is not found
+    cat << 'EOF' > "$plugin_dst"
+import { Plugin } from "@opencode-ai/plugin";
+
+function cleanText(text: string): string {
+  if (!text) return "";
+  return text
+    .replace(/<(?:think|thought|thinking)>[\s\S]*?<\/(?:think|thought|thinking)>/gi, "")
+    .replace(/\[(?:think|thought|thinking)\][\s\S]*?\[\/(?:think|thought|thinking)\]/gi, "")
+    .trim();
+}
+
+function cleanPart(part: unknown): unknown {
+  if (!part || typeof part !== "object") return part;
+  const obj = part as Record<string, unknown>;
+  if (obj.type === "reasoning") return null;
+  if (obj.type === "text" && typeof obj.text === "string") {
+    return { ...obj, text: cleanText(obj.text) };
+  }
+  return part;
+}
+
+function cleanMessage(msg: unknown): unknown {
+  if (!msg || typeof msg !== "object") return msg;
+  const m = msg as Record<string, unknown>;
+  if (m.role !== "assistant") return msg;
+  if (Array.isArray(m.content)) {
+    const cleanedParts = m.content.map(cleanPart).filter((p) => p !== null);
+    return { ...m, content: cleanedParts };
+  }
+  if (typeof m.content === "string") {
+    return { ...m, content: cleanText(m.content) };
+  }
+  return msg;
+}
+
+export default Plugin.define({
+  id: "collapse-reasoning",
+  setup: async (ctx) => {
+    await ctx.session.hook("context", async (event) => {
+      try {
+        if (Array.isArray(event.messages)) {
+          event.messages = event.messages.map(cleanMessage) as typeof event.messages;
+        }
+      } catch (err) {
+        console.error("[Plugin:collapse-reasoning] Context hook error:", err);
+      }
+    });
+  },
+});
+EOF
+    log "Generated collapse-reasoning plugin at ${plugin_dst}"
+  fi
+
+  # Ensure plugin is registered in ~/.config/opencode2/config.json
+  local cfg_file="${global_cfg_dir}/config.json"
+  if [ -f "$cfg_file" ] && command -v node >/dev/null 2>&1; then
+    node -e '
+      const fs = require("fs");
+      const cfgPath = process.argv[1];
+      try {
+        const cfg = JSON.parse(fs.readFileSync(cfgPath, "utf8"));
+        if (!Array.isArray(cfg.plugins)) cfg.plugins = [];
+        const entry = "./plugins/collapse-reasoning.ts";
+        if (!cfg.plugins.includes(entry)) {
+          cfg.plugins.push(entry);
+          fs.writeFileSync(cfgPath, JSON.stringify(cfg, null, 2), "utf8");
+        }
+      } catch (_) {}
+    ' "$cfg_file" 2>/dev/null || true
+  fi
+}
+
 patch_tool_message_formatting
 patch_network_error_handling
+patch_outbound_reasoning_scrubber
 
 # 8. Verify and enforce executable permissions
 chmod +x "$PRIMARY_BIN" 2>/dev/null || true

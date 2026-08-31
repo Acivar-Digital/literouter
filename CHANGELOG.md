@@ -4,6 +4,17 @@ All notable changes to LiteRouter will be documented in this file.
 
 ## [Unreleased]
 
+### Added / OpenCode 2 Outbound Reasoning History Scrubber Plugin & Auto-Patcher Integration
+- **Outbound Reasoning History Scrubber V2 Plugin (`.opencode2/plugins/collapse-reasoning.ts`, `~/.config/opencode2/plugins/collapse-reasoning.ts`)**:
+  - Implemented OpenCode 2 native V2 plugin hooked into `ctx.session.hook("context")` to strip historical `<think>...</think>`, `<thought>`, and reasoning parts from prior assistant messages before dispatching turns to upstream providers.
+  - Enforces the core architectural policy: preserves full live streaming reasoning observability on the terminal in real time, while preventing SQLite reasoning delta accumulation from bloating subsequent prompt turns from 40k to 300k+ tokens.
+  - Universal provider coverage: operates synchronously in-memory (< 0.1ms) across all configured endpoints (Antigravity on `10.32.34.243:8045`, Zen, OpenRouter, Google, NVIDIA) with zero UI disruption and zero async process blocking.
+- **Auto-Patcher Integration & Self-Healing (`scripts/opencode2_autopatch.sh`)**:
+  - Enhanced pre-launch auto-patcher to verify and synchronize `collapse-reasoning.ts` into `~/.config/opencode2/plugins/` and guarantee automatic registration in `~/.config/opencode2/config.json` (`"plugins": ["./plugins/collapse-reasoning.ts"]`).
+  - Added dummy postinstall script detection (`is_dummy_placeholder`) to automatically self-heal and replace placeholder scripts with real ELF binaries on `@opencode-ai/cli` upgrades.
+- **Playbook Documentation & Lazy-Loaded Topic Sheet (`.opencode2/skills/literouter-playbook/opencode2-reasoning-scrubber.md`)**:
+  - Created lazy-loaded reference sheet detailing the streaming observability vs outbound history scrubbing policy, plugin hook lifecycle, and auto-patcher deployment.
+
 ### Upgraded / Bun v1.4.0 & Simultaneous Dual ALPN (`h2` + `http/1.1`) Gateway
 - **Runtime Upgrade to Bun v1.4.0**:
   - Upgraded gateway runtime from Bun v1.3.13 to **Bun v1.4.0**, unlocking native TLS ALPN negotiation fixes.
