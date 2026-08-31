@@ -6,32 +6,31 @@ This guide documents the architecture, lifecycle hooks, and self-healing deploym
 
 ## 1. Core Architectural Intent
 
-The reasoning management policy balances real-time developer observability with strict token parsimony:
+The reasoning management policy balances real-time developer observability with strict token parsimony and upstream tool-call stability:
 
 ```
 ┌────────────────────────────────────────────────────────────────────────┐
 │                        CORE ARCHITECTURAL POLICY                       │
 │                                                                        │
 │ 1. INBOUND LIVE STREAMING  ──> PASS THROUGH to Terminal (Observability)│
-│ 2. OUTBOUND NEXT-TURN MAP  ──> SCRUB from History (Token Savings)      │
+│ 2. OUTBOUND CONVERSATIONAL ──> SCRUB from History (Token Savings)      │
+│ 3. OUTBOUND TOOL CALLS     ──> PRESERVE Reasoning (Provider Stability) │
 └────────────────────────────────────────────────────────────────────────┘
 ```
 
-| Direction | Stage | Behavior | Rationale |
+| Direction | Turn Type | Behavior | Rationale |
 |---|---|---|---|
-| **Inbound (Downstream)** | Provider $\rightarrow$ OpenCode2 TUI | **Full Passthrough** | User sees live `<think>` / reasoning streams on terminal in real-time. |
-| **Outbound (Upstream)** | OpenCode2 $\rightarrow$ Provider | **Scrub / Collapse** | Strips prior assistant reasoning blocks before dispatch to save tokens. |
+| **Inbound (Downstream)** | Any Turn | **Full Passthrough** | User sees live `<think>` / reasoning streams on terminal in real-time. |
+| **Outbound (Upstream)** | Conversational Turn | **Scrub / Collapse** | Strips prior assistant reasoning blocks before dispatch to save tokens. |
+| **Outbound (Upstream)** | Tool Call Turn | **Preserve Reasoning** | Upstream models (Minimax, DeepSeek, Qwen) require reasoning context to validate tool arguments. |
 
 ---
 
-## 2. Why Outbound Scrubbing is Required
+## 2. Why Selective Tool Reasoning Retention is Required
 
-In multi-turn agentic conversations, reasoning models (DeepSeek-R1, Qwen-Thinking, Gemini, etc.) produce long reasoning chains (e.g. 5,000–15,000 tokens per turn). 
-
-If retained in session history:
-1. OpenCode re-injects all past thinking chains into subsequent turns.
-2. Prompt token volume balloons from ~40K to 300K+ tokens within 3–4 turns.
-3. This exhausts provider context limits and inflates inference costs without adding actionable context to the LLM.
+In multi-turn agentic conversations:
+1. **Conversational Turns**: Internal thinking monologue is irrelevant for future turns and accounts for 80%+ of prompt bloat (5,000–15,000 tokens per turn). Scrubbing them keeps the context lean.
+2. **Tool Calling Turns**: When an assistant generates a `tool-call`, upstream providers (especially strict Chinese LLMs like Minimax-M3, DeepSeek, Ling, Qwen) validate the generated function call against its immediate preceding reasoning chain. Stripping reasoning from a tool-call turn can cause upstream HTTP 500 errors (`"Provider returned error"`).
 
 ---
 
@@ -65,17 +64,52 @@ function cleanPart(part: unknown): unknown {
   return part;
 }
 
+function hasToolCalls(msg: Record<string, unknown>): boolean {
+  if (Array.isArray(msg.tool_calls) && msg.tool_calls.length > 0) {
+    return true;
+  }
+  if (Array.isArray(msg.content)) {
+    return msg.content.some(
+      (p: unknown) =>
+        p !== null &&
+        typeof p === "object" &&
+        ((p as Record<string, unknown>).type === "tool-call" ||
+          (p as Record<string, unknown>).type === "tool_call" ||
+          (p as Record<string, unknown>).type === "tool-result" ||
+          (p as Record<string, unknown>).type === "tool_result")
+    );
+  }
+  if (typeof msg.content === "string") {
+    return (
+      msg.content.includes("<tool_call>") ||
+      msg.content.includes("<invoke") ||
+      msg.content.includes("<function=")
+    );
+  }
+  return false;
+}
+
 function cleanMessage(msg: unknown): unknown {
   if (!msg || typeof msg !== "object") return msg;
   const m = msg as Record<string, unknown>;
+
+  // Only sanitize prior assistant turns
   if (m.role !== "assistant") return msg;
+
+  // Selective Retention: Preserve reasoning for assistant turns that made tool calls
+  if (hasToolCalls(m)) return msg;
+
+  // Handle array content (Effect-TS AI schema)
   if (Array.isArray(m.content)) {
     const cleanedParts = m.content.map(cleanPart).filter((p) => p !== null);
     return { ...m, content: cleanedParts };
   }
+
+  // Handle string content
   if (typeof m.content === "string") {
     return { ...m, content: cleanText(m.content) };
   }
+
   return msg;
 }
 

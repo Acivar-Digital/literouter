@@ -181,7 +181,6 @@ patch_outbound_reasoning_scrubber() {
       log "Synchronized collapse-reasoning plugin from repo to ${plugin_dst}"
     fi
   elif [ ! -f "$plugin_dst" ]; then
-    # Inline fallback if repo is not found
     cat << 'EOF' > "$plugin_dst"
 import { Plugin } from "@opencode-ai/plugin";
 
@@ -203,10 +202,36 @@ function cleanPart(part: unknown): unknown {
   return part;
 }
 
+function hasToolCalls(msg: Record<string, unknown>): boolean {
+  if (Array.isArray(msg.tool_calls) && msg.tool_calls.length > 0) {
+    return true;
+  }
+  if (Array.isArray(msg.content)) {
+    return msg.content.some(
+      (p: unknown) =>
+        p !== null &&
+        typeof p === "object" &&
+        ((p as Record<string, unknown>).type === "tool-call" ||
+          (p as Record<string, unknown>).type === "tool_call" ||
+          (p as Record<string, unknown>).type === "tool-result" ||
+          (p as Record<string, unknown>).type === "tool_result")
+    );
+  }
+  if (typeof msg.content === "string") {
+    return (
+      msg.content.includes("<tool_call>") ||
+      msg.content.includes("<invoke") ||
+      msg.content.includes("<function=")
+    );
+  }
+  return false;
+}
+
 function cleanMessage(msg: unknown): unknown {
   if (!msg || typeof msg !== "object") return msg;
   const m = msg as Record<string, unknown>;
   if (m.role !== "assistant") return msg;
+  if (hasToolCalls(m)) return msg;
   if (Array.isArray(m.content)) {
     const cleanedParts = m.content.map(cleanPart).filter((p) => p !== null);
     return { ...m, content: cleanedParts };
