@@ -396,6 +396,50 @@ describe("Error Classifier — classifyUpstreamError & classifyTransportError", 
     });
   });
 
+  describe("HTTP/2 Stream Cancellations & Zero-Quarantine Retries", () => {
+    it("classifies 'The pending stream has been canceled' in transport error as retry_rotate with 0s quarantine", () => {
+      const result = classifyTransportError(new Error("The pending stream has been canceled"));
+      expect(result.action).toBe("retry_rotate");
+      expect(result.quarantineTtlSec).toBe(0);
+      expect(result.reason).toBe("transport_stream_canceled_immediate_retry");
+      expect(result.isRetryable).toBe(true);
+    });
+
+    it("classifies 'The pending stream has been canceled' in HTTP 500 body as retry_rotate with 0s quarantine", () => {
+      const result = classifyUpstreamError({
+        provider: "or",
+        status: 500,
+        headers: {},
+        bodyText: JSON.stringify({ error: { message: "The pending stream has been canceled" } }),
+      });
+      expect(result.action).toBe("retry_rotate");
+      expect(result.quarantineTtlSec).toBe(0);
+      expect(result.reason).toBe("transport_stream_canceled_immediate_retry");
+      expect(result.isRetryable).toBe(true);
+    });
+
+    it("classifies ERR_HTTP2_STREAM_CANCEL as retry_rotate with 0s quarantine", () => {
+      const result = classifyTransportError(new Error("ERR_HTTP2_STREAM_CANCEL: stream was reset"));
+      expect(result.action).toBe("retry_rotate");
+      expect(result.quarantineTtlSec).toBe(0);
+      expect(result.reason).toBe("transport_stream_canceled_immediate_retry");
+      expect(result.isRetryable).toBe(true);
+    });
+
+    it("classifies RST_STREAM in body as retry_rotate with 0s quarantine", () => {
+      const result = classifyUpstreamError({
+        provider: "or",
+        status: 502,
+        headers: {},
+        bodyText: "Upstream sent RST_STREAM frame",
+      });
+      expect(result.action).toBe("retry_rotate");
+      expect(result.quarantineTtlSec).toBe(0);
+      expect(result.reason).toBe("transport_stream_canceled_immediate_retry");
+      expect(result.isRetryable).toBe(true);
+    });
+  });
+
   describe("Robustness & Bounded parsing", () => {
     it("handles undefined bodyText gracefully", () => {
       const result = classifyUpstreamError({

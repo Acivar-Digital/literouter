@@ -341,4 +341,80 @@ describe("Outbound HTTP/2 Multiplexed Session Pool", () => {
     const emergencyPooled = poolItems.find((p: any) => p.session === emergencySession);
     expect(emergencyPooled.activeStreams).toBe(1);
   });
+
+  it("accurately reports session health via isSessionHealthy", () => {
+    const pool = new Http2SessionPool();
+
+    const healthySession = {
+      closed: false,
+      destroyed: false,
+      connecting: false,
+      socket: { destroyed: false },
+    } as unknown as http2.ClientHttp2Session;
+    expect(pool.isSessionHealthy(healthySession)).toBe(true);
+
+    const closedSession = {
+      closed: true,
+      destroyed: false,
+      connecting: false,
+    } as unknown as http2.ClientHttp2Session;
+    expect(pool.isSessionHealthy(closedSession)).toBe(false);
+
+    const destroyedSession = {
+      closed: false,
+      destroyed: true,
+      connecting: false,
+    } as unknown as http2.ClientHttp2Session;
+    expect(pool.isSessionHealthy(destroyedSession)).toBe(false);
+
+    const socketDeadSession = {
+      closed: false,
+      destroyed: false,
+      connecting: false,
+      socket: { destroyed: true },
+    } as unknown as http2.ClientHttp2Session;
+    expect(pool.isSessionHealthy(socketDeadSession)).toBe(false);
+  });
+
+  it("preserves healthy session in pool when an individual stream errors without session destruction", () => {
+    const pool = new Http2SessionPool();
+    const origin = "https://mock-origin.local";
+
+    const healthySession = {
+      closed: false,
+      destroyed: false,
+      connecting: false,
+      socket: { destroyed: false },
+      close: () => {},
+      destroy: () => {},
+    } as unknown as http2.ClientHttp2Session;
+
+    const pooledItem = {
+      session: healthySession,
+      activeStreams: 2,
+      origin,
+      isDraining: false,
+    };
+    (pool as any).sessions.set(origin, [pooledItem]);
+
+    // Mock two streams
+    const stream1Handlers: Record<string, Function[]> = {};
+    const stream1 = {
+      once: (event: string, fn: Function) => {
+        stream1Handlers[event] = stream1Handlers[event] || [];
+        stream1Handlers[event].push(fn);
+      },
+    } as unknown as http2.ClientHttp2Stream;
+
+    pool.attachStreamGuard(origin, healthySession, stream1);
+
+    // Stream 1 experiences an error (e.g. client abort / cancel)
+    stream1Handlers["error"]?.[0]?.(new Error("Stream canceled"));
+
+    // Verify stream 1 released its stream count from 2 to 1
+    expect(pooledItem.activeStreams).toBe(1);
+    // Verify healthy session was NOT purged or destroyed
+    expect((pool as any).sessions.get(origin)?.length).toBe(1);
+    expect(pool.isSessionHealthy(healthySession)).toBe(true);
+  });
 });

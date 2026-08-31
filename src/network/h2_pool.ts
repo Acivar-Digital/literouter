@@ -39,7 +39,7 @@ export class Http2SessionPool {
     this.connectTimeoutMs = config?.connectTimeoutMs ?? 10000;
   }
 
-  private isSessionHealthy(session: ClientHttp2Session): boolean {
+  public isSessionHealthy(session: ClientHttp2Session): boolean {
     if (session.closed || session.destroyed || session.connecting) {
       return false;
     }

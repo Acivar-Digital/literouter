@@ -8,10 +8,14 @@ All notable changes to LiteRouter will be documented in this file.
 - **Outbound HTTP/2 Staggered Connection Lifecycle & Aging (`src/network/h2_pool.ts`)**:
   - Implemented proactive connection aging via `maxSessionAgeMs` (default: 3 minutes) with $\pm 15\text{s}$ random jitter to prevent simultaneous socket draining across the pool.
   - Mitigates the Layer 4 (L4) / HTTP/2 connection pinning trap where long-lived persistent TCP connections get glued to a single upstream load balancer blade / edge proxy node, draining local token buckets and triggering recurrent `429 Too Many Requests`.
-- **Stream-Safe Graceful Socket Draining (`startDraining`, `releaseStream`)**:
+- **Stream-Safe Graceful Socket Draining & True Transport Isolation (`startDraining`, `releaseStream`, `fetcher.ts`)**:
   - Aging sessions transition to `isDraining = true`, stopping new request acquisitions and allowing new traffic to acquire/spawn fresh TCP connections with new ephemeral ports and full rate-limit buckets.
-  - Active in-flight LLM token streams and SSE completions continue reading to EOF without disruption; the retiring session only invokes `session.close()` / destruction once `activeStreams === 0`.
+  - Individual stream errors and client-side aborts (`stream.destroy()`) are strictly isolated from the parent `ClientHttp2Session`; healthy shared connections remain in the pool and continue serving neighboring in-flight streams without cascading drops.
+  - Session purging (`pool.purgeSession`) is strictly gated to true transport fatalities (`session.destroyed`, `session.closed`, `!isSessionHealthy`, or unrecoverable `error`/`close`/`goaway` events).
   - Added fallback hard-drain timeout (`drainTimeoutMs`) to guarantee zero zombie sockets or memory leaks.
+- **Zero-Quarantine Stream Cancellation & Transport Classification (`classifier.ts`, `openai_compat.ts`, `anthropic_compat.ts`)**:
+  - Reclassified stream-level transport resets (`"The pending stream has been canceled"`, `"ERR_HTTP2_STREAM_CANCEL"`, `"RST_STREAM"`) as immediate 0s retries in `classifyTransportError` and `classifyUpstreamError`.
+  - Removed blanket 60s hardcoded mid-stream failure key penalties in `openai_compat.ts` and `anthropic_compat.ts`, dynamically classifying failures to prevent valid API keys in multi-key pools from being falsely quarantined during network blips or socket rotations.
 - **Multi-Session Origin Balancing & Emergency Overflow Synchronization**:
   - Balances outbound traffic across `sessionsPerOrigin` (default: 4) parallel TCP sockets per origin using least-loaded stream dispatch.
   - Synchronized stream tracking on emergency overflow sessions (`item.activeStreams++`) and hardened single-flight connection mutexes against thundering-herd concurrency spikes.

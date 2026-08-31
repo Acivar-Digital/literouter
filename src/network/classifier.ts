@@ -35,9 +35,30 @@ function isQuotaExhausted429(text: string): boolean {
   );
 }
 
+function isStreamCanceledError(text: string): boolean {
+  return (
+    text.includes("the pending stream has been canceled") ||
+    text.includes("the pending stream has been cancelled") ||
+    text.includes("stream canceled") ||
+    text.includes("stream cancelled") ||
+    text.includes("err_http2_stream_cancel") ||
+    text.includes("err_http2_stream_error") ||
+    text.includes("rst_stream")
+  );
+}
+
 export function classifyTransportError(error: unknown): ErrorDisposition {
   const message = error instanceof Error ? error.message : String(error ?? "");
   const lower = message.toLowerCase();
+
+  if (isStreamCanceledError(lower)) {
+    return {
+      action: "retry_rotate",
+      quarantineTtlSec: 0,
+      reason: "transport_stream_canceled_immediate_retry",
+      isRetryable: true,
+    };
+  }
 
   if (
     lower.includes("ttft") ||
@@ -65,7 +86,17 @@ export function classifyUpstreamError(input: UpstreamErrorInfo): ErrorDispositio
   const rawBody = bodyText ?? "";
   const text = rawBody.slice(0, MAX_BODY_SCAN_BYTES).toLowerCase();
 
-  // 0. Status 0: Network / transport error before response headers
+  // 0. Stream cancellation or transport abort in body/message -> immediate 0s retry
+  if (isStreamCanceledError(text)) {
+    return {
+      action: "retry_rotate",
+      quarantineTtlSec: 0,
+      reason: "transport_stream_canceled_immediate_retry",
+      isRetryable: true,
+    };
+  }
+
+  // 0b. Status 0: Network / transport error before response headers
   if (status === 0) {
     if (text.includes("ttft") || text.includes("timeout") || text.includes("noresponse")) {
       return {

@@ -9,7 +9,7 @@ import {
   UpstreamRetryableError,
   waitAndSelectKey,
 } from "./openai_compat";
-import { classifyUpstreamError } from "../network/classifier";
+import { classifyTransportError, classifyUpstreamError } from "../network/classifier";
 import {
   extractErrorMessage,
   logError,
@@ -1206,8 +1206,11 @@ async function executeAnthropicDirectCall(
       if (hasEmittedTokens) {
         return null;
       }
-      globalKeyPool.reportFailure(directive.provider, currentKeyIndex, 500, undefined, reason, Date.now(), 60);
-      logLimit(reqId, directive.provider, currentKeyIndex, 500, 60, selected.totalKeys, reason);
+      const classification = classifyTransportError(reason);
+      if (classification.quarantineTtlSec > 0) {
+        globalKeyPool.reportFailure(directive.provider, currentKeyIndex, 500, undefined, reason, Date.now(), classification.quarantineTtlSec);
+      }
+      logLimit(reqId, directive.provider, currentKeyIndex, 500, classification.quarantineTtlSec > 0 ? classification.quarantineTtlSec : undefined, selected.totalKeys, reason);
 
       while (currentAttempt < maxAttempts) {
         currentAttempt++;
