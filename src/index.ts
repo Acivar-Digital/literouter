@@ -274,6 +274,10 @@ async function pipeWebResponseToNode(
   nodeReq: http2.Http2ServerRequest,
   nodeRes: http2.Http2ServerResponse
 ): Promise<void> {
+  if (nodeRes.destroyed || nodeReq.destroyed) {
+    return;
+  }
+
   nodeRes.statusCode = webRes.status;
   webRes.headers.forEach((val, key) => {
     const lower = key.toLowerCase();
@@ -283,40 +287,67 @@ async function pipeWebResponseToNode(
   });
 
   if (!webRes.body) {
-    nodeRes.end();
+    if (!nodeRes.writableEnded && !nodeRes.destroyed) {
+      nodeRes.end();
+    }
     return;
   }
 
   const reader = webRes.body.getReader();
   let isAborted = false;
 
-  nodeReq.on("close", () => {
+  const cancelReader = () => {
+    if (isAborted) return;
     isAborted = true;
-    reader.cancel().catch((err: unknown) => {
-      logError("STREAM", "Failed to cancel stream on client close", err);
-    });
-  });
+    reader.cancel().catch(() => {});
+  };
+
+  nodeReq.once("close", cancelReader);
+  nodeReq.once("aborted", cancelReader);
+  nodeRes.once("close", cancelReader);
 
   try {
-    while (!isAborted) {
+    while (!isAborted && !nodeRes.destroyed && !nodeRes.writableEnded) {
       const { done, value } = await reader.read();
       if (done) {
         break;
       }
-      if (value) {
-        nodeRes.write(value);
+      if (value && !nodeRes.destroyed && !nodeRes.writableEnded) {
+        const canContinue = nodeRes.write(value);
+        if (!canContinue && !nodeRes.destroyed) {
+          await new Promise<void>((resolve) => nodeRes.once("drain", resolve));
+        }
       }
     }
   } catch (err: unknown) {
-    if (!isAborted) {
+    const msg = err instanceof Error ? err.message : String(err ?? "");
+    const isStreamAbort =
+      isAborted ||
+      nodeRes.destroyed ||
+      msg.includes("The pending stream has been canceled") ||
+      msg.includes("ERR_HTTP2_STREAM_CANCEL") ||
+      msg.includes("aborted");
+
+    if (!isStreamAbort) {
       logError("STREAM", "Stream read error during HTTP/2 response piping", err);
-      if (!nodeRes.destroyed) {
+    }
+    if (!nodeRes.destroyed) {
+      try {
         nodeRes.destroy(err instanceof Error ? err : new Error(String(err)));
+      } catch (destroyErr: unknown) {
+        console.debug("[H2 Server] Error destroying nodeRes stream:", destroyErr);
       }
     }
   } finally {
+    nodeReq.removeListener("close", cancelReader);
+    nodeReq.removeListener("aborted", cancelReader);
+    nodeRes.removeListener("close", cancelReader);
     if (!nodeRes.writableEnded && !nodeRes.destroyed) {
-      nodeRes.end();
+      try {
+        nodeRes.end();
+      } catch (endErr: unknown) {
+        console.debug("[H2 Server] Error ending nodeRes stream:", endErr);
+      }
     }
   }
 }
@@ -354,6 +385,19 @@ export function createServer(portOverride?: number): Server<unknown> | LiteRoute
         ALPNProtocols: ["h2", "http/1.1"],
       },
       async (nodeReq, nodeRes) => {
+        nodeReq.on("error", () => {});
+        nodeRes.on("error", () => {});
+
+        const abortController = new AbortController();
+        const onAbort = () => {
+          if (!nodeRes.writableEnded) {
+            abortController.abort();
+          }
+        };
+        nodeReq.once("close", onAbort);
+        nodeReq.once("aborted", onAbort);
+        nodeRes.once("close", onAbort);
+
         const chunks: Buffer[] = [];
         nodeReq.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
         nodeReq.on("end", async () => {
@@ -371,16 +415,31 @@ export function createServer(portOverride?: number): Server<unknown> | LiteRoute
               method: nodeReq.method,
               headers: fetchHeaders,
               body,
+              signal: abortController.signal,
             });
 
             const rawKey = extractDirectiveToken(req) || "";
             const webRes = await dispatchRoute(req, rawKey, reqId);
             await pipeWebResponseToNode(webRes, nodeReq, nodeRes);
           } catch (err) {
-            logError(reqId, "Unhandled exception in HTTP/2 server route dispatch", err);
-            if (!nodeRes.headersSent) {
-              nodeRes.writeHead(500, { "content-type": "application/json" });
-              nodeRes.end(JSON.stringify({ error: { message: "Internal Gateway Error", type: "server_error" } }));
+            const msg = err instanceof Error ? err.message : String(err ?? "");
+            const isClientAbort =
+              abortController.signal.aborted ||
+              nodeReq.destroyed ||
+              nodeRes.destroyed ||
+              msg.includes("The pending stream has been canceled") ||
+              msg.includes("ERR_HTTP2_STREAM_CANCEL") ||
+              msg.includes("aborted") ||
+              msg.includes("premature close");
+
+            if (isClientAbort) {
+              logAmber(reqId, `Downstream HTTP/2 client stream aborted/canceled: ${msg}`);
+            } else {
+              logError(reqId, "Unhandled exception in HTTP/2 server route dispatch", err);
+              if (!nodeRes.headersSent && !nodeRes.destroyed) {
+                nodeRes.writeHead(500, { "content-type": "application/json" });
+                nodeRes.end(JSON.stringify({ error: { message: "Internal Gateway Error", type: "server_error" } }));
+              }
             }
           }
         });

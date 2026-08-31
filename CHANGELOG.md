@@ -13,6 +13,10 @@ All notable changes to LiteRouter will be documented in this file.
   - Individual stream errors and client-side aborts (`stream.destroy()`) are strictly isolated from the parent `ClientHttp2Session`; healthy shared connections remain in the pool and continue serving neighboring in-flight streams without cascading drops.
   - Session purging (`pool.purgeSession`) is strictly gated to true transport fatalities (`session.destroyed`, `session.closed`, `!isSessionHealthy`, or unrecoverable `error`/`close`/`goaway` events).
   - Added fallback hard-drain timeout (`drainTimeoutMs`) to guarantee zero zombie sockets or memory leaks.
+- **Downstream HTTP/2 Client Abort Propagation & Route Dispatch Boundary (`src/index.ts`)**:
+  - Linked inbound downstream `nodeReq` / `nodeRes` abort lifecycles (`close`, `aborted`) directly to `AbortController` signals passed to `Request` and upstream handlers.
+  - Hardened `pipeWebResponseToNode` with client cancel event cleanup and graceful backpressure drain handling.
+  - Distinguishes standard downstream client disconnects/aborts from gateway faults, preventing benign client-side cancellations from generating false "Unhandled exception" error logs.
 - **Zero-Quarantine Stream Cancellation & Transport Classification (`classifier.ts`, `openai_compat.ts`, `anthropic_compat.ts`)**:
   - Reclassified stream-level transport resets (`"The pending stream has been canceled"`, `"ERR_HTTP2_STREAM_CANCEL"`, `"RST_STREAM"`) as immediate 0s retries in `classifyTransportError` and `classifyUpstreamError`.
   - Removed blanket 60s hardcoded mid-stream failure key penalties in `openai_compat.ts` and `anthropic_compat.ts`, dynamically classifying failures to prevent valid API keys in multi-key pools from being falsely quarantined during network blips or socket rotations.

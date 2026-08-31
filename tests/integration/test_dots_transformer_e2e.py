@@ -115,11 +115,11 @@ def _wait_for_health(url: str, timeout_sec: float = 6.0) -> bool:
     headers = {"Authorization": f"Bearer {AUTH_KEY}"}
     while time.time() < deadline:
         try:
-            with httpx.Client(verify=False) as client:
+            with httpx.Client(http2=True, verify=False) as client:
                 resp = client.get(f"{url}/health", headers=headers, timeout=0.5)
                 if resp.status_code in (200, 401):
                     return True
-        except Exception as err:
+        except (httpx.ConnectError, httpx.TimeoutException, httpx.HTTPError) as err:
             logger.debug(f"Health probe waiting: {err}")
         time.sleep(0.1)
     return False
@@ -178,7 +178,7 @@ def test_dots_non_streaming_converts_to_tool_calls(dots_e2e_stack: Dict[str, Any
         "stream": False,
     }
 
-    with httpx.Client(verify=False, timeout=10.0) as client:
+    with httpx.Client(http2=True, verify=False, timeout=10.0) as client:
         resp = client.post(f"{gw_url}/v1/chat/completions", headers=headers, json=payload)
         assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
 
@@ -209,7 +209,7 @@ def test_dots_streaming_converts_to_tool_calls(dots_e2e_stack: Dict[str, Any]) -
         "stream": True,
     }
 
-    with httpx.Client(verify=False, timeout=10.0) as client:
+    with httpx.Client(http2=True, verify=False, timeout=10.0) as client:
         with client.stream("POST", f"{gw_url}/v1/chat/completions", headers=headers, json=payload) as response:
             assert response.status_code == 200
 
