@@ -271,10 +271,10 @@ function nodeHeadersToFetchHeaders(rawHeaders: NodeJS.Dict<string | string[]>): 
 
 async function pipeWebResponseToNode(
   webRes: Response,
-  nodeReq: http2.Http2ServerRequest,
+  _nodeReq: http2.Http2ServerRequest,
   nodeRes: http2.Http2ServerResponse
 ): Promise<void> {
-  if (nodeRes.destroyed || nodeReq.destroyed) {
+  if (nodeRes.destroyed || nodeRes.writableEnded) {
     return;
   }
 
@@ -299,12 +299,18 @@ async function pipeWebResponseToNode(
   const cancelReader = () => {
     if (isAborted) return;
     isAborted = true;
-    reader.cancel().catch(() => {});
+    reader.cancel().catch((cancelErr: unknown) => {
+      console.debug("[H2 Server] Reader cancel error:", cancelErr);
+    });
   };
 
-  nodeReq.once("close", cancelReader);
-  nodeReq.once("aborted", cancelReader);
-  nodeRes.once("close", cancelReader);
+  const onResClose = () => {
+    if (!nodeRes.writableEnded) {
+      cancelReader();
+    }
+  };
+
+  nodeRes.once("close", onResClose);
 
   try {
     while (!isAborted && !nodeRes.destroyed && !nodeRes.writableEnded) {
@@ -314,7 +320,7 @@ async function pipeWebResponseToNode(
       }
       if (value && !nodeRes.destroyed && !nodeRes.writableEnded) {
         const canContinue = nodeRes.write(value);
-        if (!canContinue && !nodeRes.destroyed) {
+        if (!canContinue && !nodeRes.destroyed && !nodeRes.writableEnded) {
           await new Promise<void>((resolve) => nodeRes.once("drain", resolve));
         }
       }
@@ -331,7 +337,7 @@ async function pipeWebResponseToNode(
     if (!isStreamAbort) {
       logError("STREAM", "Stream read error during HTTP/2 response piping", err);
     }
-    if (!nodeRes.destroyed) {
+    if (!nodeRes.destroyed && !nodeRes.writableEnded) {
       try {
         nodeRes.destroy(err instanceof Error ? err : new Error(String(err)));
       } catch (destroyErr: unknown) {
@@ -339,9 +345,7 @@ async function pipeWebResponseToNode(
       }
     }
   } finally {
-    nodeReq.removeListener("close", cancelReader);
-    nodeReq.removeListener("aborted", cancelReader);
-    nodeRes.removeListener("close", cancelReader);
+    nodeRes.removeListener("close", onResClose);
     if (!nodeRes.writableEnded && !nodeRes.destroyed) {
       try {
         nodeRes.end();
@@ -394,7 +398,6 @@ export function createServer(portOverride?: number): Server<unknown> | LiteRoute
             abortController.abort();
           }
         };
-        nodeReq.once("close", onAbort);
         nodeReq.once("aborted", onAbort);
         nodeRes.once("close", onAbort);
 
@@ -425,7 +428,6 @@ export function createServer(portOverride?: number): Server<unknown> | LiteRoute
             const msg = err instanceof Error ? err.message : String(err ?? "");
             const isClientAbort =
               abortController.signal.aborted ||
-              nodeReq.destroyed ||
               nodeRes.destroyed ||
               msg.includes("The pending stream has been canceled") ||
               msg.includes("ERR_HTTP2_STREAM_CANCEL") ||
@@ -441,6 +443,9 @@ export function createServer(portOverride?: number): Server<unknown> | LiteRoute
                 nodeRes.end(JSON.stringify({ error: { message: "Internal Gateway Error", type: "server_error" } }));
               }
             }
+          } finally {
+            nodeReq.removeListener("aborted", onAbort);
+            nodeRes.removeListener("close", onAbort);
           }
         });
       }
