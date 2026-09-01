@@ -272,6 +272,25 @@
           "tpm": 10000000
         }
       }
+    },
+    "gcp": {
+      "code": "gc",
+      "base_url": "https://generativelanguage.googleapis.com",
+      "auth_header": "Bearer",
+      "endpoints": {
+        "ch": "/v1beta/openai/chat/completions",
+        "ob": "/v1beta/openai/chat/completions",
+        "gc": "/v1beta/models/{model}:generateContent",
+        "em": "/v1beta/models/{model}:embedContent",
+        "md": "/v1beta/models"
+      },
+      "limits": {
+        "default": {
+          "rpm": 30,
+          "rpd": 14400,
+          "tpm": 16000
+        }
+      }
     }
   }
 }

@@ -10,7 +10,8 @@ export type ProviderCode =
   | "ms"
   | "tg"
   | "zn"
-  | "tp";
+  | "tp"
+  | "gc";
 
 export type PayloadCode = "oa" | "cl" | "gg" | "rs" | "ao";
 
@@ -56,6 +57,7 @@ const VALID_PROVIDERS: ReadonlySet<string> = new Set([
   "tg",
   "zn",
   "tp",
+  "gc",
 ]);
 
 const VALID_PAYLOADS: ReadonlySet<string> = new Set(["oa", "cl", "gg", "rs", "ao"]);

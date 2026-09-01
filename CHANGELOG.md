@@ -4,6 +4,26 @@ All notable changes to LiteRouter will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed / GCP Conveyor Bypass & Gateway-Edge Hoist — 429 Storm Resolved
+- **`src/handlers/gcp_compat.ts` — Restored Ingress Conveyor (2000ms/240s) Before `waitAndSelectKey` and `fetch`** (mirrors `openai_compat.ts:648`): Re-inserted `acquireGcpPacer()` (2000ms `GCP_MIN_DELAY_MS` / 240s `GCP_PACER_MAX_QUEUE_WAIT_MS`) at the top of `executeGcpAttemptLoop` before `waitAndSelectKey` and again before every `fetchWithTtftGuard` in `executeGcpDirectCall` + mid-stream `retryProvider`; added explicit `shouldLoadShed` → `503 Service Unavailable` (with `Retry-After`) and `PacerQueueOverflowError` → `429 Too Many Requests` (with `Retry-After`) plus `499 Client Closed Request` abort handling on `signal.aborted`; fixes instant firing → 429 storm on 18-key `gc` bursts.
+- **`src/index.ts` — Hoisted Ingress Conveyor to Gateway Edge (`handleAppRequest`/`dispatchRoute`)**: Added `ingressPacedRequests: WeakSet<Request>` deduplication guard and `acquireIngressPacer(req, rawKey)` calling `getPacerForProvider(provider).acquire(req.signal)` **before** dispatch for `or`/`nv`/`zn`/`gg` (covers both `handleAppRequest` and `dispatchRoute`); `gc` remains handler-paced to avoid double pacing (`2000ms × 2`); de-duplicated `openai_compat.ts`/`anthropic_compat.ts` handler ingress via `shouldPaceIngress` guard (`!["or","nv","zn","gg"].includes(provider)` → only non-edge providers pace inside handler).
+- **`src/ui/logger.ts` — Added `logPacer` 🐢 `[PACER]` Telemetry**: New `logPacer(reqId, provider, dwellMs, { queueDepth, avgDwellMs, minIntervalMs })` emitting `🐢 [PACER reqId] Provider dwell=…ms depth=… avg=…ms interval=…ms` for every conveyor dispatch; now visible in `tmux` alongside `TTFT`/`USAGE`/`SERVED`.
+- **`src/handlers/google_native.ts` — Paced `handleGoogleInteractionsPassthrough` (`gg`)**: Added `getPacerForProvider("gg").acquire(req.signal)` with `PacerQueueOverflowError` → `429 Retry-After` and abort → `499` handling before `globalKeyPool.selectNextKey("gg")`; prevents `H2` pinning bypass where native `gg` interactions previously skipped the conveyor entirely.
+- **`tests` — `tests/unit/gcp_pacer_conveyor.test.ts` (13 tests)**: Covers singleton dwell enforcement (2000ms/240s, `pacerA===pacerB===pacerC`, 3-parallel acquire spacing ≥1700ms), conveyor ordering (`pacer-acquire` before `waitForKeyAvailable`), overflow `429 Retry-After`, abort `499` (fast <1000ms), billing guardrail (`403` for non-Gemma, `200` for Gemma), and `normalizeGcpModel` stripping (`gcp/`/`google/` prefixes).
+- **Live verification**: `549 tests pass, 0 fail` (`bun test`); `tmux` `PACER` telemetry now visible; 18-key `gc` burst spaced `≥1700ms` (conveyor enforced); 429 storm resolved.
+
+### Added / GCP Provider (`gc`) Onboarding & Zero-Cost Gemma Billing Guardrail
+- **Dedicated GCP Compatibility Handler (`src/handlers/gcp_compat.ts`)**:
+  - Implemented dedicated GCP compatibility handler with a strict zero-cost Gemma billing guardrail, rejecting requests for non-Gemma models with `403 Forbidden`.
+- **Provider Registration & Pacer Configuration (`src/index.ts`, `src/network/pacer.ts`)**:
+  - Registered provider `gc` with 30 RPM conveyor-belt pacing (2,000ms delay between dispatches) and a 240s queue dwell timeout.
+- **Multi-Key Pool Support (`src/config/env.ts`)**:
+  - Added support for 18 pooled keys loaded from `GCP_KEYS` (with fallback to `GCP_API_KEYS`).
+- **Gemma 4 Models Catalog Onboarding (`fusion.json`)**:
+  - Added Gemma 4 models (`gemma-4-31b-it`, `gemma-4-26b-a4b-it`) configured with a 16k context window and a 14.4k RPD quota.
+- **Live Upstream Diagnostic Probe (`scripts/doctor.ts`)**:
+  - Added live upstream diagnostic probe in `scripts/doctor.ts` (18/18 keys verified 200 OK).
+
 ### Added / Stream-Safe HTTP/2 Connection Pool with Staggered Socket Aging & Anti-Pinning 429 Protection
 - **Outbound HTTP/2 Staggered Connection Lifecycle & Aging (`src/network/h2_pool.ts`)**:
   - Implemented proactive connection aging via `maxSessionAgeMs` (default: 3 minutes) with $\pm 15\text{s}$ random jitter to prevent simultaneous socket draining across the pool.

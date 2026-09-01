@@ -13,6 +13,7 @@ const PROVIDER_ENV_MAP: Readonly<Record<ProviderCode, string>> = {
   tg: "TOGETHER_API_KEYS",
   zn: "ZEN_API_KEYS",
   tp: "TESTPROVIDER_API_KEYS",
+  gc: "GCP_KEYS",
 };
 
 const INVALID_PLACEHOLDERS = new Set([
@@ -66,7 +67,10 @@ export function loadKeyPools(
   const poolMap = new Map<ProviderCode, readonly string[]>();
   const entries = Object.entries(PROVIDER_ENV_MAP) as Array<[ProviderCode, string]>;
   for (const [code, envName] of entries) {
-    const rawVal = envSource[envName];
+    let rawVal = envSource[envName];
+    if (code === "gc" && !rawVal) {
+      rawVal = envSource.GCP_API_KEYS;
+    }
     const parsedKeys = parseKeyList(rawVal);
     poolMap.set(code, parsedKeys);
   }

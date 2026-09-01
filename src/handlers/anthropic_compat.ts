@@ -1311,31 +1311,35 @@ async function executeAnthropicDirectLoop(
       );
     }
 
-    try {
-      await acquireProviderPacer(directive.provider, clientSignal);
-    } catch (err: unknown) {
-      if (clientSignal?.aborted || (err instanceof Error && err.message.includes("aborted"))) {
-        return createAnthropicErrorResponse(499, "Request aborted by client", "invalid_request_error");
-      }
-      if (err instanceof PacerQueueOverflowError) {
-        return Response.json(
-          {
-            type: "error",
-            error: {
-              type: "rate_limit_error",
-              message: err.message,
+    const shouldPaceIngress =
+      !["or", "nv", "zn", "gg"].includes(directive.provider) || !env.LITEROUTER_PACER_ENABLED;
+    if (shouldPaceIngress) {
+      try {
+        await acquireProviderPacer(directive.provider, clientSignal);
+      } catch (err: unknown) {
+        if (clientSignal?.aborted || (err instanceof Error && err.message.includes("aborted"))) {
+          return createAnthropicErrorResponse(499, "Request aborted by client", "invalid_request_error");
+        }
+        if (err instanceof PacerQueueOverflowError) {
+          return Response.json(
+            {
+              type: "error",
+              error: {
+                type: "rate_limit_error",
+                message: err.message,
+              },
             },
-          },
-          {
-            status: 429,
-            headers: {
-              "Retry-After": String(err.retryAfterSec),
-              "Content-Type": "application/json",
-            },
-          }
-        );
+            {
+              status: 429,
+              headers: {
+                "Retry-After": String(err.retryAfterSec),
+                "Content-Type": "application/json",
+              },
+            }
+          );
+        }
+        throw err;
       }
-      throw err;
     }
 
     const selected = await waitAndSelectKey(directive.provider, startTime, maxWaitMs, clientSignal);

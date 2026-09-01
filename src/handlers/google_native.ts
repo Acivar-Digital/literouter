@@ -1,5 +1,7 @@
 import type { OpenAIMessage, OpenAIRequestPayload } from "../transformers/nuances";
+import { getEnv } from "../config/env";
 import { createUnauthorizedResponse, validateDirective } from "../directive/validator";
+import { getPacerForProvider, PacerQueueOverflowError } from "../network/pacer";
 import { logError, logInbound } from "../ui/logger";
 import { globalKeyPool, handleOpenAICompat, resolveUpstreamEndpoint } from "./openai_compat";
 
@@ -161,6 +163,39 @@ export async function handleGoogleInteractionsPassthrough(
   const url = new URL(req.url);
   const base = process.env.GOOGLE_NATIVE_BASE_URL || "https://generativelanguage.googleapis.com";
   const upstreamUrl = new URL(`${base}${url.pathname}${url.search}`);
+
+  if (getEnv().LITEROUTER_PACER_ENABLED) {
+    try {
+      const env = getEnv();
+      const dynamicMaxQueueDepth = globalKeyPool.getDynamicMaxQueueDepth("gg");
+      const maxQueueDepth = env.LITEROUTER_PACER_MAX_QUEUE_DEPTH > 0 ? env.LITEROUTER_PACER_MAX_QUEUE_DEPTH : dynamicMaxQueueDepth;
+      const pacer = getPacerForProvider("gg", 0, { maxQueueDepth });
+      await pacer.acquire(req.signal);
+    } catch (err) {
+      if (req.signal?.aborted || (err instanceof Error && err.message.includes("aborted"))) {
+        return Response.json(
+          { error: { message: "Request aborted", type: "client_closed_request" } },
+          { status: 499 }
+        );
+      }
+      if (err instanceof PacerQueueOverflowError) {
+        return Response.json(
+          {
+            error: {
+              message: err.message,
+              type: "rate_limit_exceeded",
+              code: "rate_limit_exceeded",
+            },
+          },
+          {
+            status: 429,
+            headers: { "Retry-After": String(err.retryAfterSec) },
+          }
+        );
+      }
+      throw err;
+    }
+  }
 
   const selected = globalKeyPool.selectNextKey("gg");
   if (!selected) {

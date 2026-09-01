@@ -273,6 +273,88 @@
         "rpd": 20,
         "tpm": 250000
       }
+    },
+    {
+      "id": "gemma-2-2b-it",
+      "provider": "gcp",
+      "category": "open-weights",
+      "supports_thinking": false,
+      "supports_tools": false,
+      "context_window": 16384
+    },
+    {
+      "id": "gemma-2-9b-it",
+      "provider": "gcp",
+      "category": "open-weights",
+      "supports_thinking": false,
+      "supports_tools": false,
+      "context_window": 16384
+    },
+    {
+      "id": "gemma-2-27b-it",
+      "provider": "gcp",
+      "category": "open-weights",
+      "supports_thinking": false,
+      "supports_tools": false,
+      "context_window": 16384
+    },
+    {
+      "id": "gemma-3-1b-it",
+      "provider": "gcp",
+      "category": "open-weights",
+      "supports_thinking": false,
+      "supports_tools": false,
+      "context_window": 16384
+    },
+    {
+      "id": "gemma-3-4b-it",
+      "provider": "gcp",
+      "category": "open-weights",
+      "supports_thinking": false,
+      "supports_tools": false,
+      "context_window": 16384
+    },
+    {
+      "id": "gemma-3-12b-it",
+      "provider": "gcp",
+      "category": "open-weights",
+      "supports_thinking": false,
+      "supports_tools": false,
+      "context_window": 16384
+    },
+    {
+      "id": "gemma-3-27b-it",
+      "provider": "gcp",
+      "category": "open-weights",
+      "supports_thinking": false,
+      "supports_tools": false,
+      "context_window": 16384
+    },
+    {
+      "id": "gemma-4-26b-a4b-it",
+      "provider": "gcp",
+      "category": "open-weights",
+      "supports_thinking": false,
+      "supports_tools": false,
+      "context_window": 16384,
+      "quota": {
+        "rpm": 30,
+        "rpd": 14400,
+        "tpm": 16000
+      }
+    },
+    {
+      "id": "gemma-4-31b-it",
+      "provider": "gcp",
+      "category": "open-weights",
+      "supports_thinking": false,
+      "supports_tools": false,
+      "context_window": 16384,
+      "quota": {
+        "rpm": 30,
+        "rpd": 14400,
+        "tpm": 16000
+      }
     }
   ]
 }

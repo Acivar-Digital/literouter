@@ -302,6 +302,43 @@ async function probeZenKey(key: string): Promise<ProbeResult> {
   }
 }
 
+async function probeGcpKey(key: string): Promise<ProbeResult> {
+  const masked = maskKey(key);
+  const url = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions";
+  const payload = {
+    model: "gemma-4-31b-it",
+    messages: [{ role: "user", content: "ping" }],
+    max_tokens: 10,
+  };
+
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${key}`,
+        "x-goog-api-key": key,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(15000),
+    });
+
+    if (res.status === 200) {
+      return { provider: "GCP (Gemma)", maskedKey: masked, status: "PASS", message: "200 OK (Healthy)", statusCode: 200 };
+    }
+    if (res.status === 401 || res.status === 403) {
+      return { provider: "GCP (Gemma)", maskedKey: masked, status: "FAIL", message: `HTTP ${res.status} Unauthorized / Forbidden`, statusCode: res.status };
+    }
+    if (res.status === 429) {
+      return { provider: "GCP (Gemma)", maskedKey: masked, status: "WARN", message: "HTTP 429 Rate Limited (Active)", statusCode: 429 };
+    }
+    return { provider: "GCP (Gemma)", maskedKey: masked, status: "WARN", message: `HTTP ${res.status} Upstream Warning`, statusCode: res.status };
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    return { provider: "GCP (Gemma)", maskedKey: masked, status: "WARN", message: `Connection error: ${detail}` };
+  }
+}
+
 async function probePoolSequential(
   providerLabel: string,
   keys: readonly string[],
@@ -353,13 +390,14 @@ async function runDoctor(): Promise<void> {
   console.log("\n--- [2/2] Upstream API Key Health Probes (1s delay between keys) ---");
 
   const rawArgs = process.argv.slice(2).map((a) => a.toLowerCase().replace(/^--?/, ""));
-  let targetProvider: "gg" | "nv" | "or" | "zn" | null = null;
+  let targetProvider: "gg" | "nv" | "or" | "zn" | "gc" | null = null;
   for (const arg of rawArgs) {
     const clean = (arg.startsWith("provider=") ? arg.split("=")[1] : arg) ?? "";
     if (["gg", "google", "gemini"].includes(clean)) targetProvider = "gg";
     else if (["nv", "nvidia", "nim"].includes(clean)) targetProvider = "nv";
     else if (["or", "openrouter"].includes(clean)) targetProvider = "or";
     else if (["zn", "zen"].includes(clean)) targetProvider = "zn";
+    else if (["gc", "gcp", "gemma"].includes(clean)) targetProvider = "gc";
   }
 
   const probeResults: ProbeResult[] = [];
@@ -406,6 +444,17 @@ async function runDoctor(): Promise<void> {
     probeResults.push(...res);
   } else {
     console.log("\n[Zen] ⏭️ Skipped: No keys configured.");
+  }
+
+  const gcpKeys = pools.get("gc") ?? [];
+  if (targetProvider && targetProvider !== "gc") {
+    console.log("\n[GCP (Gemma)] ⏭️ Skipped (filter active).");
+  } else if (gcpKeys.length > 0) {
+    console.log(`\n[GCP (Gemma)] Probing ${gcpKeys.length} key(s)...`);
+    const res = await probePoolSequential("GCP (Gemma)", gcpKeys, probeGcpKey, 1000);
+    probeResults.push(...res);
+  } else {
+    console.log("\n[GCP (Gemma)] ⏭️ Skipped: No keys configured.");
   }
 
   const systemFails = checks.filter((c) => c.status === "FAIL").length;

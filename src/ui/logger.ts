@@ -29,6 +29,7 @@ export const PROVIDER_NAMES: Readonly<Record<string, string>> = Object.freeze({
   ms: "Mistral",
   tg: "Together",
   tp: "TestProvider",
+  gc: "GCP (Gemma)",
 });
 
 export const WIRE_NAMES: Readonly<Record<string, string>> = Object.freeze({
@@ -267,6 +268,19 @@ export function logExhausted(
 export function logAmber(reqId: string, message: string): void {
   const ts = formatTimestamp();
   console.warn(`🟡 ${ts} [AMBER ${reqId}] ${message}`);
+}
+
+export function logPacer(
+  reqId: string,
+  provider: string,
+  dwellMs: number,
+  stats: { queueDepth: number; avgDwellMs: number; minIntervalMs: number }
+): void {
+  const ts = formatTimestamp();
+  const provName = getProviderDisplayName(provider);
+  console.log(
+    `🐢 ${ts} [PACER ${reqId}] ${provName} dwell=${dwellMs}ms depth=${stats.queueDepth} avg=${stats.avgDwellMs}ms interval=${stats.minIntervalMs}ms`
+  );
 }
 
 export function logServed(

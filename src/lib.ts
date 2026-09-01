@@ -29,6 +29,7 @@ export * from "./fusion/engine";
 export * from "./fusion/sticky";
 export * from "./handlers/anthropic_compat";
 export * from "./handlers/discovery";
+export * from "./handlers/gcp_compat";
 export * from "./handlers/google_native";
 export * from "./handlers/openai_compat";
 export * from "./network/classifier";

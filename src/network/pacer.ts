@@ -76,6 +76,7 @@ export interface PacerConfig {
   readonly minIntervalMs?: number; // Minimum wait between consecutive request dispatches
   readonly maxRpm?: number; // Optional backwards compatibility / fallback calculation
   readonly maxQueueDepth?: number; // Optional queue depth limit
+  readonly maxQueueWaitMs?: number; // Maximum queue dwell before timeout
 }
 
 export class RequestPacer {
@@ -98,6 +99,10 @@ export class RequestPacer {
 
   public get maxQueueDepth(): number {
     return this.config.maxQueueDepth ?? 1000;
+  }
+
+  public get maxQueueWaitMs(): number {
+    return this.config.maxQueueWaitMs ?? 15000;
   }
 
   public async acquire(signal?: AbortSignal): Promise<{ queueDwellMs: number }> {
@@ -231,6 +236,8 @@ function getProviderMinDelayFromEnv(provider: string): number {
       return env.ZEN_MIN_DELAY_MS;
     case "gg":
       return env.GOOGLE_MIN_DELAY_MS;
+    case "gc":
+      return env.GCP_MIN_DELAY_MS;
     case "tp":
       return env.TEST_PROVIDER_MIN_DELAY_MS;
     default:
@@ -251,10 +258,13 @@ export function getPacerForProvider(
   if (!pacer) {
     const env = getEnv();
     const envDelay = getProviderMinDelayFromEnv(provider);
+    const minIntervalMs = config?.minIntervalMs ?? (provider === "gc" ? env.GCP_MIN_DELAY_MS : envDelay);
+    const maxQueueWaitMs = config?.maxQueueWaitMs ?? (provider === "gc" ? env.GCP_PACER_MAX_QUEUE_WAIT_MS : env.LITEROUTER_PACER_MAX_QUEUE_WAIT_MS);
     pacer = new RequestPacer({
-      minIntervalMs: config?.minIntervalMs ?? envDelay,
+      minIntervalMs,
       maxQueueDepth: config?.maxQueueDepth ?? env.LITEROUTER_PACER_MAX_QUEUE_DEPTH ?? 100,
       maxRpm: config?.maxRpm ?? env.LITEROUTER_PACER_MAX_RPM ?? 30,
+      maxQueueWaitMs,
     });
     pacerRegistry.set(pacerKey, pacer);
   }

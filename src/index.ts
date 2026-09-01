@@ -8,6 +8,7 @@ import { parseDirective } from "./directive/parser";
 import { extractDirectiveToken } from "./directive/validator";
 import { handleAnthropicCompat, handleAnthropicCountTokens } from "./handlers/anthropic_compat";
 import { handleModelsDiscovery } from "./handlers/discovery";
+import { handleGcpCompat } from "./handlers/gcp_compat";
 import {
   handleGoogleInteractionsPassthrough,
   handleGoogleNative,
@@ -21,7 +22,11 @@ import {
 } from "./handlers/openai_compat";
 import { getHttp2Pool, resetHttp2Pool } from "./network/h2_pool";
 import { getAllCircuitBreakers, clearCircuitBreakerRegistry } from "./network/circuit_breaker";
-import { clearPacerRegistry } from "./network/pacer";
+import {
+  clearPacerRegistry,
+  getPacerForProvider,
+  PacerQueueOverflowError,
+} from "./network/pacer";
 import { type BannerOptions, printBanner } from "./ui/banner";
 import { logAmber, logError } from "./ui/logger";
 
@@ -195,6 +200,56 @@ function dispatchGoogleBeta(path: string, req: Request, rawKey: string, reqId: s
   return null;
 }
 
+const ingressPacedRequests = new WeakSet<Request>();
+
+async function acquireIngressPacer(req: Request, rawKey: string): Promise<Response | null> {
+  if (ingressPacedRequests.has(req)) {
+    return null;
+  }
+  const parsed = parseDirective(rawKey);
+  const provider = parsed?.type === "direct" ? parsed.provider : null;
+  // Skip "gc" here because S1 already paces gc ingress in handler to avoid double-pacing (2000ms x2)
+  // For future unification, gc edge will replace handler ingress — for now keep gc handler-paced
+  if (
+    provider === null ||
+    (provider !== "or" && provider !== "nv" && provider !== "zn" && provider !== "gg") ||
+    !getEnv().LITEROUTER_PACER_ENABLED
+  ) {
+    return null;
+  }
+  try {
+    await getPacerForProvider(provider, 0).acquire(req.signal);
+    ingressPacedRequests.add(req);
+    return null;
+  } catch (err: unknown) {
+    if (req.signal?.aborted || (err instanceof Error && err.message.includes("aborted"))) {
+      return Response.json(
+        { error: { message: "Request aborted by client", type: "client_closed_request" } },
+        { status: 499 }
+      );
+    }
+    if (err instanceof PacerQueueOverflowError) {
+      return Response.json(
+        {
+          error: {
+            message: err.message,
+            type: "rate_limit_exceeded",
+            code: "rate_limit_exceeded",
+          },
+        },
+        {
+          status: 429,
+          headers: {
+            "Retry-After": String(err.retryAfterSec),
+            "Content-Type": "application/json",
+          },
+        }
+      );
+    }
+    throw err;
+  }
+}
+
 async function dispatchRoute(req: Request, rawKey: string, reqId: string): Promise<Response> {
   const url = new URL(req.url);
   const path = url.pathname;
@@ -211,6 +266,20 @@ async function dispatchRoute(req: Request, rawKey: string, reqId: string): Promi
   const modelsRes = dispatchModelsRoute(path, req, rawKey);
   if (modelsRes !== null) {
     return modelsRes;
+  }
+
+  const pacerGate = await acquireIngressPacer(req, rawKey);
+  if (pacerGate !== null) {
+    return pacerGate;
+  }
+
+  const isGcpDirective = rawKey.startsWith("lr-gc-") || (() => {
+    const parsed = parseDirective(rawKey);
+    return parsed !== null && parsed.type === "direct" && parsed.provider === "gc";
+  })();
+
+  if (isGcpDirective && (path === "/v1/chat/completions" || path.startsWith("/v1beta/openai/"))) {
+    return handleGcpCompat(req, rawKey, reqId);
   }
 
   const directHandler = ROUTE_MAP[path];
@@ -244,6 +313,10 @@ export async function handleAppRequest(req: Request): Promise<Response> {
   initializeKeyPools();
   const reqId = `req_${Math.random().toString(36).slice(2, 9)}`;
   const rawKey = extractDirectiveToken(req) || "";
+  const pacerGate = await acquireIngressPacer(req, rawKey);
+  if (pacerGate !== null) {
+    return pacerGate;
+  }
   try {
     return await dispatchRoute(req, rawKey, reqId);
   } catch (err) {
@@ -421,8 +494,7 @@ export function createServer(portOverride?: number): Server<unknown> | LiteRoute
               signal: abortController.signal,
             });
 
-            const rawKey = extractDirectiveToken(req) || "";
-            const webRes = await dispatchRoute(req, rawKey, reqId);
+            const webRes = await handleAppRequest(req);
             await pipeWebResponseToNode(webRes, nodeReq, nodeRes);
           } catch (err) {
             const msg = err instanceof Error ? err.message : String(err ?? "");
@@ -480,14 +552,7 @@ export function createServer(portOverride?: number): Server<unknown> | LiteRoute
     idleTimeout: env.LITEROUTER_IDLE_TIMEOUT_SEC,
     tls: tls ? { cert: tls.cert, key: tls.key } : undefined,
     async fetch(req: Request) {
-      const reqId = `req_${Math.random().toString(36).slice(2, 9)}`;
-      const rawKey = extractDirectiveToken(req) || "";
-      try {
-        return await dispatchRoute(req, rawKey, reqId);
-      } catch (err) {
-        logError(reqId, "Unhandled exception in server route dispatch", err);
-        return Response.json({ error: { message: "Internal Gateway Error", type: "server_error" } }, { status: 500 });
-      }
+      return handleAppRequest(req);
     },
   });
 }
