@@ -232,7 +232,7 @@ async function executeGcpDirectCall(
     const ttlSec = classification.quarantineTtlSec > 0 ? classification.quarantineTtlSec : (response.status === 429 ? 60 : undefined);
     logLimit(reqId, "gc", selected.index, response.status, ttlSec, selected.totalKeys, rawErrorMsg);
 
-    if (isContextLengthError(response.status, bodyText) && !clientSignal?.aborted) {
+    if (env.GCP_ENABLE_RETRIES && isContextLengthError(response.status, bodyText) && !clientSignal?.aborted) {
       const detectedLimit = extractContextLimit(bodyText);
       const targetLimit = detectedLimit ? Math.floor(detectedLimit * 0.75) : DEFAULT_SAFE_CONTEXT_TOKENS;
       const pruned = pruneOpenAIPayload(payload, targetLimit);
@@ -242,13 +242,21 @@ async function executeGcpDirectCall(
       }
     }
 
-    const canRetry = classification.action === "retry_rotate" && attempt < maxAttempts && !clientSignal?.aborted;
+    const canRetry =
+      env.GCP_ENABLE_RETRIES &&
+      classification.action === "retry_rotate" &&
+      attempt < maxAttempts &&
+      !clientSignal?.aborted;
     if (canRetry) {
       throw new UpstreamRetryableError(
         `Upstream error ${response.status}: ${classification.reason}`,
         response.status,
         classification
       );
+    }
+
+    if (!env.GCP_ENABLE_RETRIES && classification.action === "retry_rotate") {
+      logWarn("⚡", `[GCP ${reqId}] Single-flight mode (GCP_ENABLE_RETRIES=false): Passing HTTP ${response.status} directly downstream.`);
     }
 
     logServed(reqId, duration, response.status, attempt, maxAttempts);
@@ -333,6 +341,11 @@ async function executeGcpDirectCall(
       }
       logLimit(reqId, "gc", currentKeyIndex, 500, classification.quarantineTtlSec > 0 ? classification.quarantineTtlSec : undefined, selected.totalKeys, reason);
 
+      if (!env.GCP_ENABLE_RETRIES) {
+        logWarn("⚡", `[GCP ${reqId}] Mid-stream drop occurred. Retries disabled via GCP_ENABLE_RETRIES=false. Closing stream.`);
+        return null;
+      }
+
       while (currentAttempt < maxAttempts) {
         currentAttempt++;
         if (clientSignal?.aborted) {
@@ -406,6 +419,7 @@ async function tryGcpAttempt(
   maxAttempts: number,
   clientOptions?: RequestClientOptions
 ): Promise<AttemptExecutionResult> {
+  const env = getEnv();
   try {
     const res = await executeGcpDirectCall(directive, transformed, clientSignal, selected, reqId, attempt, maxAttempts, clientOptions);
     return { success: true, response: res, retryable: false };
@@ -443,6 +457,25 @@ async function tryGcpAttempt(
     }
     if (err instanceof NoResponseError) {
       globalKeyPool.reportFailure("gc", selected.index, 0, undefined, err.message, Date.now(), 2);
+      if (!env.GCP_ENABLE_RETRIES) {
+        return {
+          success: true,
+          response: Response.json(
+            {
+              error: {
+                message: `GCP upstream connection failed: ${err.message}`,
+                type: "upstream_connection_error",
+                code: 502,
+              },
+            },
+            {
+              status: 502,
+              headers: { "Content-Type": "application/json" },
+            }
+          ),
+          retryable: false,
+        };
+      }
       return { success: false, error: err, retryable: true };
     }
     logError(reqId, "Direct GCP request error", err);
@@ -457,12 +490,14 @@ async function executeGcpAttemptLoop(
   reqId: string,
   clientOptions?: RequestClientOptions
 ): Promise<Response> {
+  const env = getEnv();
   const poolSize = globalKeyPool.getPoolSize("gc");
-  const maxAttempts = Math.min(3, Math.max(1, poolSize));
+  const maxAttempts = env.GCP_ENABLE_RETRIES
+    ? Math.min(3, Math.max(1, poolSize))
+    : 1;
   let lastError: unknown = null;
   let prevKeyIndex = -1;
   const startTime = Date.now();
-  const env = getEnv();
   const maxWaitMs = env.GCP_PACER_MAX_QUEUE_WAIT_MS || 240000;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {

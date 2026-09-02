@@ -4,6 +4,20 @@ All notable changes to LiteRouter will be documented in this file.
 
 ## [Unreleased]
 
+### Added / GCP Retry Toggle & Single-Flight Pass-Through (`GCP_ENABLE_RETRIES`)
+- **Configurable In-Flight Retry Toggle (`src/config/schema.ts`, `src/config/env.ts`, `.env`)**:
+  - Added `GCP_ENABLE_RETRIES` environment flag (default: `true`, with flexible boolean coercion accepting `true`/`false`/`1`/`0`/`yes`/`no`).
+  - When set to `true` (default), maintains full multi-key pool rotation and retry resilience on 429 rate limits, 5xx server errors, and transport failures.
+- **Single-Flight Pass-Through Mode for Google Cloud Vertex (`gc`) (`src/handlers/gcp_compat.ts`)**:
+  - When `GCP_ENABLE_RETRIES=false`, terminates immediately on attempt 1 and passes upstream 4xx/5xx responses (such as 429 Too Many Requests, 400 Context Length Overflow, 500/503 errors) directly downstream to the caller without attempting in-flight rotation across alternate keys.
+  - Automatically preserves key health tracking and cooldown isolation in `globalKeyPool` (respecting upstream `Retry-After` headers and rate-limit TTLs) so subsequent requests seamlessly pick up healthy keys.
+- **Transport Error Synthesis (HTTP 502 Bad Gateway)**:
+  - When `GCP_ENABLE_RETRIES=false` and a network drop or `NoResponseError` occurs, synthesizes an OpenAI-compatible JSON error response (`502 Bad Gateway`) rather than looping or hanging.
+- **Clean Mid-Stream Termination**:
+  - Closes SSE streams cleanly upon mid-stream drops without attempting redundant resends when retries are disabled.
+- **Unit & Integration Test Suite (`tests/handlers/gcp_retry.test.ts`)**:
+  - Added full test suite verifying default retry rotation on 429, single-flight 429 pass-through, key quarantine preservation across sequential requests, transport fail-safe 502 synthesis, context length overflow 400 pass-through, and non-GCP provider isolation.
+
 ### Fixed / GCP Conveyor Bypass & Gateway-Edge Hoist — 429 Storm Resolved
 - **`src/handlers/gcp_compat.ts` — Restored Ingress Conveyor (2000ms/240s) Before `waitAndSelectKey` and `fetch`** (mirrors `openai_compat.ts:648`): Re-inserted `acquireGcpPacer()` (2000ms `GCP_MIN_DELAY_MS` / 240s `GCP_PACER_MAX_QUEUE_WAIT_MS`) at the top of `executeGcpAttemptLoop` before `waitAndSelectKey` and again before every `fetchWithTtftGuard` in `executeGcpDirectCall` + mid-stream `retryProvider`; added explicit `shouldLoadShed` → `503 Service Unavailable` (with `Retry-After`) and `PacerQueueOverflowError` → `429 Too Many Requests` (with `Retry-After`) plus `499 Client Closed Request` abort handling on `signal.aborted`; fixes instant firing → 429 storm on 18-key `gc` bursts.
 - **`src/index.ts` — Hoisted Ingress Conveyor to Gateway Edge (`handleAppRequest`/`dispatchRoute`)**: Added `ingressPacedRequests: WeakSet<Request>` deduplication guard and `acquireIngressPacer(req, rawKey)` calling `getPacerForProvider(provider).acquire(req.signal)` **before** dispatch for `or`/`nv`/`zn`/`gg` (covers both `handleAppRequest` and `dispatchRoute`); `gc` remains handler-paced to avoid double pacing (`2000ms × 2`); de-duplicated `openai_compat.ts`/`anthropic_compat.ts` handler ingress via `shouldPaceIngress` guard (`!["or","nv","zn","gg"].includes(provider)` → only non-edge providers pace inside handler).

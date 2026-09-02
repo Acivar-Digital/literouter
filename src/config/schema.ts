@@ -152,6 +152,7 @@ export const EnvConfigSchema = z.object({
   GOOGLE_MIN_DELAY_MS: z.coerce.number().int().nonnegative().default(200),
   GCP_MIN_DELAY_MS: z.coerce.number().int().nonnegative().default(2000),
   GCP_PACER_MAX_QUEUE_WAIT_MS: z.coerce.number().int().positive().default(240000),
+  GCP_ENABLE_RETRIES: BooleanCoerceSchema.default(true),
   TEST_PROVIDER_MIN_DELAY_MS: z.coerce.number().int().nonnegative().default(0),
   MOCK_TP_PORT: z.coerce.number().int().positive().default(8999),
   LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("info"),

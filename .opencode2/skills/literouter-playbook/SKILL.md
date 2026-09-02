@@ -29,7 +29,7 @@ description: LiteRouter API Gateway operational guide for Bun/TypeScript proxy o
 ## Environment Architecture
 
 - **`.env.local`** (git-ignored secrets): live upstream API key pools (`OPENROUTER_API_KEYS`, `NVIDIA_API_KEYS`, `ZEN_API_KEYS`, `GOOGLE_API_KEYS`)
-- **`.env`** (tracked): operational parameters (port, timeouts, TTFT guards, reasoning defaults)
+- **`.env`** (tracked): operational parameters (port, timeouts, TTFT guards, reasoning defaults, GCP retry toggle `GCP_ENABLE_RETRIES`)
 
 ## Directive Key Format
 
@@ -97,6 +97,7 @@ Fusion presets: `lr-fse-<preset>` (e.g. `lr-fse-fast`, `lr-fse-smart`, `lr-fse-c
     - **Tag Sanitization**: Lookahead stream buffering (`flushNonTagContent`) and static regex scrubbing eliminate leaked `<arg_key>`, `<arg_value>`, `<tool_call>`, and `<invoke>` tags across live deltas and outbound history.
     - **Gold Test Verification (`tests/unit/gold_xml_bidirectional_translation.test.ts`)**: Permanent canonical bidirectional test suite verifying 1-to-1 conversion between Chinese XML tool dialects (Ling-3.0 `<arg_key>/<arg_value>`, Qwen `<function=...>`, DeepSeek `<invoke name="...">`, trapped thinking breakout) and standard OpenAI JSON tool calls, plus outbound JSON schema & history compaction.
 18. **Selective Tool Reasoning Retention & Outbound Scrubbing (`opencode2-reasoning-scrubber.md`, `.opencode2/plugins/collapse-reasoning.ts`)**: Inbound live thinking streams are fully passed through for real-time terminal observability. Outbound request histories are scrubbed of reasoning for purely conversational assistant turns to eliminate token bloat, **BUT reasoning MUST be strictly preserved on assistant turns containing tool calls** to ensure upstream providers (Minimax, DeepSeek, Qwen, GLM) do not reject payloads with `HTTP 500 "Provider returned error"`.
+19. **GCP Single-Flight & In-Flight Retry Toggle (`GCP_ENABLE_RETRIES`)**: Configurable resilience parameter (default: `true`, supports boolean coercion `true`/`false`/`1`/`0`/`yes`/`no`). When set to `true`, enables full in-flight key rotation and retry resilience for Google Cloud Vertex (`gc`) on 429 rate limits, 5xx server errors, and transport failures. When set to `false`, activates single-flight pass-through mode: passes upstream 4xx/5xx responses (e.g. 429 Too Many Requests, 400 Context Length Overflow, 500/503 errors) directly downstream on attempt 1 while preserving key health and quarantine tracking in `globalKeyPool` for subsequent requests, synthesizing HTTP 502 Bad Gateway on transport drops (`NoResponseError`), and closing SSE streams cleanly on mid-stream drops.
 
 ## Connection Diagnostics & Protocol Inspection
 
