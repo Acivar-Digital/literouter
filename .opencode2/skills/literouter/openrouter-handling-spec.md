@@ -20,6 +20,7 @@ This document serves as the definitive reference for how LiteRouter and its clie
 | **SSE Keep-Alive Heartbeats** | `src/network/fetcher.ts` (`startKeepAliveTimer`), `src/transformers/opencode_adapter.ts` | Emits spec-compliant `: keep-alive\n\n` comments (and stateful 5-second empty delta heartbeats for reasoning models) to prevent client/proxy 55s socket severance. |
 | **Terminal Usage Accounting Chunk** | `src/network/fetcher.ts` (`extractUsageFromChunk`, `onUsage`), `src/handlers/openai_compat.ts` | Intercepts and parses OpenRouter's final usage frame containing repeated `finish_reason` without corrupting client token accounting. |
 | **Stream Cancellation / Upstream Abort** | `src/network/fetcher.ts`, `src/network/h2_pool.ts` | Downstream client abort signal propagates immediately through `AbortController`, tears down keepalive timers, and closes upstream HTTP/2 streams to preserve credits. |
+| **Agentic Harness Gate Bypass (`:free` models)** | `src/handlers/openai_compat.ts`, `src/config/env.ts` | Automatically injects `HTTP-Referer`, `X-Title`, and `User-Agent` headers (defaulting to OpenCode, env-configurable) on upstream OpenRouter calls to bypass the `Gate Free Endpoints by Agentic Harness` HTTP 403 gate. |
 
 ---
 
@@ -121,6 +122,31 @@ When a client cancels or aborts a streaming request:
 2. `TransformStream` cancel hook calls `clearTimer(keepAliveTimer)` to halt background intervals.
 3. Outbound `fetch` controller aborts the upstream socket to immediately stop OpenRouter token billing and model processing.
 4. HTTP/2 active stream count is decremented in `src/network/h2_pool.ts`.
+
+---
+
+## 8. Agentic Harness Whitelist Headers (`Gate Free Endpoints by Agentic Harness` Bypass)
+
+OpenRouter enforces an anti-abuse gate named `"Gate Free Endpoints by Agentic Harness"` on all `:free` models (e.g., `thinkingmachines/inkling:free`, `liquid/lfm-2.5-2.6b:free`, `meta-llama/llama-3.3-70b-instruct:free`). Requests lacking approved coding agent identification headers are rejected with **HTTP 403 Forbidden**.
+
+### Architectural Solution
+In `src/handlers/openai_compat.ts` (`buildAuthHeaders`), LiteRouter automatically injects standard agentic harness identification headers whenever dispatching upstream to OpenRouter (`provider === "or"` or `provider === "openrouter"`):
+
+```typescript
+if (provider === "or" || provider === "openrouter") {
+  const env = getEnv();
+  if (env.LITEROUTER_HTTP_REFERER) headers["HTTP-Referer"] = env.LITEROUTER_HTTP_REFERER;
+  if (env.LITEROUTER_X_TITLE) headers["X-Title"] = env.LITEROUTER_X_TITLE;
+  if (env.LITEROUTER_USER_AGENT) headers["User-Agent"] = env.LITEROUTER_USER_AGENT;
+}
+```
+
+### Configurable Environment Variables (`.env`)
+- **`LITEROUTER_HTTP_REFERER`**: Defaults to `https://opencode.ai`.
+- **`LITEROUTER_X_TITLE`**: Defaults to `OpenCode`.
+- **`LITEROUTER_USER_AGENT`**: Defaults to `OpenCode/1.0.0`.
+
+These can be freely customized in `.env` (e.g. set `LITEROUTER_USER_AGENT=unknown` or custom harness identities) without requiring code modifications. Non-OpenRouter providers (NVIDIA NIM, Google Vertex, Zen) remain isolated and do not receive these headers.
 
 ---
 

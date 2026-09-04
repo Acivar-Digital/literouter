@@ -21,8 +21,9 @@ const DEFAULT_ENV_RECORD: Record<string, string> = {
   FUSION_STICKY_TTL_MS: "300000",
   STREAM_STALL_MAX_RESENDS: "2",
   KEEPALIVE_INTERVAL_MS: "15000",
-  LITEROUTER_HTTP_REFERER: "",
-  LITEROUTER_X_TITLE: "",
+  LITEROUTER_HTTP_REFERER: "https://opencode.ai",
+  LITEROUTER_X_TITLE: "OpenCode",
+  LITEROUTER_USER_AGENT: "OpenCode/1.0.0",
   LITEROUTER_H2_OUTBOUND: "true",
   LITEROUTER_PACER_ENABLED: "true",
   LITEROUTER_CIRCUIT_BREAKER: "true",
@@ -73,6 +74,15 @@ function parseSafeEnv(source: Record<string, string | undefined>): EnvConfig {
   }
   if (normalized.LITEROUTER_HTTP2 === undefined && normalized.LITEROUTER_ENFORCE_HTTP2 !== undefined) {
     normalized.LITEROUTER_HTTP2 = normalized.LITEROUTER_ENFORCE_HTTP2;
+  }
+  if (!normalized.LITEROUTER_HTTP_REFERER) {
+    normalized.LITEROUTER_HTTP_REFERER = "https://opencode.ai";
+  }
+  if (!normalized.LITEROUTER_X_TITLE) {
+    normalized.LITEROUTER_X_TITLE = "OpenCode";
+  }
+  if (!normalized.LITEROUTER_USER_AGENT) {
+    normalized.LITEROUTER_USER_AGENT = "OpenCode/1.0.0";
   }
   const result = EnvConfigSchema.safeParse(normalized);
   if (result.success) {

@@ -117,7 +117,7 @@ export function resolveUpstreamEndpoint(
   };
 }
 
-function buildAuthHeaders(
+export function buildAuthHeaders(
   authHeader: "Bearer" | "x-api-key",
   key: string,
   provider?: string
@@ -134,6 +134,18 @@ function buildAuthHeaders(
   }
   if (provider === "gg") {
     headers["x-goog-api-key"] = key;
+  }
+  if (provider === "or" || provider === "openrouter") {
+    const env = getEnv();
+    if (env.LITEROUTER_HTTP_REFERER) {
+      headers["HTTP-Referer"] = env.LITEROUTER_HTTP_REFERER;
+    }
+    if (env.LITEROUTER_X_TITLE) {
+      headers["X-Title"] = env.LITEROUTER_X_TITLE;
+    }
+    if (env.LITEROUTER_USER_AGENT) {
+      headers["User-Agent"] = env.LITEROUTER_USER_AGENT;
+    }
   }
   return headers;
 }

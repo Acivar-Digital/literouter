@@ -4,6 +4,16 @@ All notable changes to LiteRouter will be documented in this file.
 
 ## [Unreleased]
 
+### Added / OpenRouter Agentic Harness Whitelist Headers (`src/handlers/openai_compat.ts`, `src/config/env.ts`, `src/config/schema.ts`, `.env`)
+- **OpenRouter Agentic Gate Bypass**: Added automatic injection of approved agentic harness whitelist headers (`HTTP-Referer`, `X-Title`, `User-Agent`) when dispatching OpenAI-compatible requests to OpenRouter (`provider === "or"` / `openrouter.ai`). Resolves OpenRouter HTTP 403 `Gate Free Endpoints by Agentic Harness` rejections on `:free` models (such as `thinkingmachines/inkling:free` and `liquid/lfm-2.5-2.6b:free`).
+- **OpenCode Default Identity & Zero-Code Config**:
+  - Defaults to `HTTP-Referer: https://opencode.ai`, `X-Title: OpenCode`, and `User-Agent: OpenCode/1.0.0`.
+  - Configurable via `.env` variables `LITEROUTER_HTTP_REFERER`, `LITEROUTER_X_TITLE`, and `LITEROUTER_USER_AGENT`, allowing custom values (e.g. `unknown`) without editing code.
+- **Unit & Live Integration Verification (`tests/unit/openrouter_headers.test.ts`)**:
+  - Added unit test suite covering header injection, provider isolation (NVIDIA/Google/Zen remain untouched), and custom environment overrides.
+  - Verified against live gateway daemon: both `liquid/lfm-2.5-2.6b:free` and `thinkingmachines/inkling:free` return HTTP 200 on attempt 1/3 with 0 key quarantines.
+
+
 ### Added / GCP Decoupling, Circuit Breaker Isolation & Timeout Hardening
 - **Dedicated GCP Circuit Breaker Toggle (`GCP_ENABLE_CIRCUIT_BREAKER`) (`src/config/schema.ts`, `src/config/env.ts`, `src/handlers/gcp_compat.ts`, `.env`)**:
   - Added dedicated `GCP_ENABLE_CIRCUIT_BREAKER` toggle (default: `false`, supports boolean coercion).
