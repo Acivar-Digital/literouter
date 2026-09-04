@@ -24,10 +24,10 @@ For all system design, folder maps, design decisions, and architectural constrai
 👉 `docs/ARCHITECTURE.md`
 👉 `docs/Longrunning_Mode.md` (Fusion Sticky Fallback details)
 👉 `CHANGELOG.md` (Release & change log - fixed path: `/home/yapilwsl/arthityap/literouter/CHANGELOG.md`)
-👉 `literouter-playbook` Skill (Fixed path: `/home/yapilwsl/arthityap/literouter/.opencode2/skills/literouter-playbook/`)
+👉 `literouter` Skill (Fixed path: `/home/yapilwsl/arthityap/literouter/.opencode2/skills/literouter/SKILL.md`)
 
 ### ⚡ FIXED CORE PATHS (DO NOT SEARCH DISK)
-- **Literouter Playbook Skill**: `.opencode2/skills/literouter-playbook/` (Root: `.opencode2/skills/literouter-playbook/SKILL.md`)
+- **LiteRouter Skill**: `.opencode2/skills/literouter/` (Root: `.opencode2/skills/literouter/SKILL.md`)
 - **Changelog**: `CHANGELOG.md`
 - **Architecture**: `docs/ARCHITECTURE.md`
 - **Routing & Streaming Spec**: `docs/Fix_Streaming_01.md`
@@ -48,15 +48,40 @@ When editing configs, verify which variant you are targeting. Using the wrong ke
 
 ## MANDATORY WORKFLOW ENFORCEMENT
 
-**Before writing any code or answering any request, you MUST initialize the beads workflow.**
+**Before writing any code or answering any request, you MUST initialize the beads workflow AND load the LiteRouter skill.**
 
 ### Session Start Protocol
 1. **Run**: `bd prime` (or `bd ready` if prime is unavailable) immediately upon session start.
-2. **Verify**: Ensure you have the latest issue context.
-3. **Ticket**: If the user's request is not already an issue, create it: `bd create "..." -t task -p 2`.
-4. **Claim**: `bd update <id> --claim`.
+2. **Load Skill (MANDATORY)**: You **MUST** load the `literouter` skill at the beginning of every conversation:
+   ```bash
+   skill load "literouter"
+   ```
+3. **Verify**: Ensure you have the latest issue context.
+4. **Ticket**: If the user's request is not already an issue, create it: `bd create "..." -t task -p 2`.
+5. **Claim**: `bd update <id> --claim`.
 
-> **DO NOT PROCEED** without tracking the task in beads. Markdown TODOs and mental notes are PROHIBITED.
+> **DO NOT PROCEED** without tracking the task in beads and loading the `literouter` skill.
+
+---
+
+## 🧭 LITEROUTER SKILL INVOCATION & KEYWORD TRIGGERS
+
+The `literouter` skill (`.opencode2/skills/literouter/SKILL.md`) is the canonical operational manual for this repository.
+
+### Mandatory Conversation Rule
+- **Every conversation** in this workspace MUST load the `literouter` skill (`skill load "literouter"`) during the Session Start Protocol.
+
+### Fallback Keyword Triggers
+If for any reason the skill was not loaded at session start, you **MUST immediately load `skill load "literouter"`** whenever any of the following topics or keywords appear in the user prompt or task context:
+
+| Category | Trigger Keywords |
+|---|---|
+| **Core & Gateway** | `literouter`, `gateway`, `proxy`, `port 7766`, `bun run src/index.ts`, `scripts/start.sh`, `scripts/doctor.ts` |
+| **Routing & Keys** | `directive key`, `lr-`, `routing`, `provider`, `model`, `fusion`, `fusion.json`, `globalKeyPool`, `key rotation`, `cooldown`, `quarantine` |
+| **Client Integrations** | `claude code`, `opencode2`, `antigravity`, `agy-gemini`, `agy-claude`, `OpenRouter`, `NVIDIA NIM`, `Zen`, `Google Vertex` |
+| **Streaming & Protocol** | `streaming`, `TTFT`, `SSE`, `keep-alive`, `h2_pool`, `HTTP/2`, `ALPN`, `pacer`, `circuit_breaker`, `network_error`, `content: null`, `Zod` |
+| **Reasoning & Tools** | `reasoning scrubber`, `collapse-reasoning`, `dots`, `XML tool calling`, `<think>`, `trapped thinking`, `tool compaction` |
+| **Errors & Limits** | `429`, `500`, `502`, `503`, `NoResponseError`, `ghosting`, `fast-canning`, `Retry-After`, `GCP_ENABLE_RETRIES` |
 
 ---
 
@@ -115,17 +140,17 @@ I understand you want: [one sentence restatement in your own words]
 
 Before adding, modifying, or removing providers or models, you MUST:
 
-### 1. Load Literouter-Playbook Skill
-> **MANDATORY**: Always load the `literouter-playbook` skill before any provider/model changes:
+### 1. Load LiteRouter Skill
+> **MANDATORY**: Always load the `literouter` skill before any provider/model changes:
 > ```bash
-> skill load "literouter-playbook"
+> skill load "literouter"
 > ```
 
 ### 2. Validation Workflow
 > Execute this sequence for ALL provider/model changes:
 > 
 > 1. **Pre-Edit Checkpoint**: Run `uv run python admin/code_hygiene/agent_guardrail.py checkpoint <path>` on modified files
-> 2. **Load Playbook**: `skill load "literouter-playbook"`
+> 2. **Load Playbook**: `skill load "literouter"`
 > 3. **Backup Verification**: Verify gateway health with `bun run scripts/doctor.ts`
 > 4. **Test Suite**: Run `bun test && uv run pytest tests/integration/`
 > 5. **Post-Edit Validation**: Run `uv run python admin/code_hygiene/agent_guardrail.py validate <path>`

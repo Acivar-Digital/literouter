@@ -98,9 +98,10 @@ function createMockErrorResponse(status: number, message: string, code?: string)
   });
 }
 
-describe("GCP Retry Toggle & Resilience Handler (GCP_ENABLE_RETRIES)", () => {
+describe("GCP Retry Toggle & Resilience Handler (GCP_ENABLE_RETRIES & GCP_ENABLE_QUARANTINE)", () => {
   const originalFetch = globalThis.fetch;
   const originalGcpRetries = process.env.GCP_ENABLE_RETRIES;
+  const originalGcpQuarantine = process.env.GCP_ENABLE_QUARANTINE;
   const originalGcpKeys = process.env.GCP_KEYS;
   const originalNvKeys = process.env.NVIDIA_API_KEYS;
   const originalPacer = process.env.LITEROUTER_PACER_ENABLED;
@@ -117,6 +118,11 @@ describe("GCP Retry Toggle & Resilience Handler (GCP_ENABLE_RETRIES)", () => {
       process.env.GCP_ENABLE_RETRIES = originalGcpRetries;
     } else {
       delete process.env.GCP_ENABLE_RETRIES;
+    }
+    if (originalGcpQuarantine !== undefined) {
+      process.env.GCP_ENABLE_QUARANTINE = originalGcpQuarantine;
+    } else {
+      delete process.env.GCP_ENABLE_QUARANTINE;
     }
     if (originalGcpKeys !== undefined) {
       process.env.GCP_KEYS = originalGcpKeys;
@@ -204,6 +210,7 @@ describe("GCP Retry Toggle & Resilience Handler (GCP_ENABLE_RETRIES)", () => {
 
   it("3. Key quarantine preservation: records failure for key 0 so subsequent request picks key 1", async () => {
     process.env.GCP_ENABLE_RETRIES = "false";
+    process.env.GCP_ENABLE_QUARANTINE = "true";
     process.env.GCP_KEYS = "mock-gcp-key-1,mock-gcp-key-2";
     resetEnvCache();
     resetAllState();
@@ -326,5 +333,113 @@ describe("GCP Retry Toggle & Resilience Handler (GCP_ENABLE_RETRIES)", () => {
     expect(fetchCalls.length).toBe(2);
     expect(fetchCalls[0]?.authHeader).toContain("nvapi-mock-key-1");
     expect(fetchCalls[1]?.authHeader).toContain("nvapi-mock-key-2");
+  });
+
+  it("7. Dumb forwarder mode (GCP_ENABLE_QUARANTINE=false): fails key on 429 without placing key into quarantine", async () => {
+    process.env.GCP_ENABLE_QUARANTINE = "false";
+    process.env.GCP_KEYS = "mock-gcp-key-1,mock-gcp-key-2";
+    resetEnvCache();
+    resetAllState();
+
+    globalThis.fetch = (async () => {
+      return createMockErrorResponse(429, "Rate limit reached on key 1");
+    }) as unknown as typeof fetch;
+
+    const res = await handleAppRequest(createGcpRequest());
+    expect(res.status).toBe(429);
+
+    // CRITICAL: Neither key must be in quarantine
+    const status = globalKeyPool.getStatus("gc");
+    expect(status.total).toBe(2);
+    expect(status.quarantined).toBe(0);
+    expect(status.active).toBe(2);
+  });
+
+  it("8. Combined dumb forwarder (GCP_ENABLE_RETRIES=false + GCP_ENABLE_QUARANTINE=false): transparent pass-through without lockout", async () => {
+    process.env.GCP_ENABLE_RETRIES = "false";
+    process.env.GCP_ENABLE_QUARANTINE = "false";
+    process.env.GCP_KEYS = "mock-single-gcp-key";
+    resetEnvCache();
+    resetAllState();
+
+    let attempts = 0;
+    globalThis.fetch = (async () => {
+      attempts += 1;
+      if (attempts === 1) {
+        return createMockErrorResponse(429, "Temporary 1-second burst rate limit");
+      }
+      return createMockSuccessResponse("Immediate recovery without 503 load shedding");
+    }) as unknown as typeof fetch;
+
+    // Request 1: single flight, passes 429 directly downstream
+    const res1 = await handleAppRequest(createGcpRequest());
+    expect(res1.status).toBe(429);
+    expect(attempts).toBe(1);
+
+    // Key must NOT be quarantined
+    const status = globalKeyPool.getStatus("gc");
+    expect(status.total).toBe(1);
+    expect(status.quarantined).toBe(0);
+    expect(status.active).toBe(1);
+
+    // Request 2: should immediately re-use the key rather than shedding load with 503
+    const res2 = await handleAppRequest(createGcpRequest());
+    expect(res2.status).toBe(200);
+    expect(attempts).toBe(2);
+    const data2 = (await res2.json()) as MockSuccessPayload;
+    expect(data2.choices[0]?.message.content).toBe("Immediate recovery without 503 load shedding");
+  });
+
+  it("9. KeyPool provider isolation: GCP_ENABLE_QUARANTINE=false only disables quarantine for gc, not other providers", async () => {
+    process.env.GCP_ENABLE_QUARANTINE = "false";
+    resetEnvCache();
+    resetAllState();
+
+    globalKeyPool.setPool("gc", ["mock-gc-key"]);
+    globalKeyPool.setPool("nv", ["mock-nv-key"]);
+
+    // Report failure for GCP
+    globalKeyPool.reportFailure("gc", 0, 429);
+    const gcStatus = globalKeyPool.getStatus("gc");
+    expect(gcStatus.quarantined).toBe(0);
+    expect(gcStatus.active).toBe(1);
+
+    // Report failure for NV
+    globalKeyPool.reportFailure("nv", 0, 429);
+    const nvStatus = globalKeyPool.getStatus("nv");
+    expect(nvStatus.quarantined).toBe(1);
+    expect(nvStatus.active).toBe(0);
+  });
+
+  it("10. Circuit breaker isolation (GCP_ENABLE_CIRCUIT_BREAKER=false): 5 consecutive 503s do not trip breaker or block subsequent requests", async () => {
+    process.env.GCP_ENABLE_RETRIES = "false";
+    process.env.GCP_ENABLE_QUARANTINE = "false";
+    process.env.GCP_ENABLE_CIRCUIT_BREAKER = "false";
+    process.env.GCP_KEYS = "mock-gcp-key";
+    resetEnvCache();
+    resetAllState();
+
+    let calls = 0;
+    globalThis.fetch = (async () => {
+      calls += 1;
+      if (calls <= 5) {
+        return createMockErrorResponse(503, "High demand spike");
+      }
+      return createMockSuccessResponse("GCP recovered on call 6");
+    }) as unknown as typeof fetch;
+
+    // Send 5 requests that fail with 503
+    for (let i = 0; i < 5; i++) {
+      const res = await handleAppRequest(createGcpRequest());
+      expect(res.status).toBe(503);
+    }
+    expect(calls).toBe(5);
+
+    // Call 6: breaker must NOT be open, request must reach upstream and succeed
+    const res6 = await handleAppRequest(createGcpRequest());
+    expect(res6.status).toBe(200);
+    expect(calls).toBe(6);
+    const data6 = (await res6.json()) as MockSuccessPayload;
+    expect(data6.choices[0]?.message.content).toBe("GCP recovered on call 6");
   });
 });

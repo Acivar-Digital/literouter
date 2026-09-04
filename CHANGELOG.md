@@ -4,10 +4,40 @@ All notable changes to LiteRouter will be documented in this file.
 
 ## [Unreleased]
 
-### Added / GCP Retry Toggle & Single-Flight Pass-Through (`GCP_ENABLE_RETRIES`)
+### Added / GCP Decoupling, Circuit Breaker Isolation & Timeout Hardening
+- **Dedicated GCP Circuit Breaker Toggle (`GCP_ENABLE_CIRCUIT_BREAKER`) (`src/config/schema.ts`, `src/config/env.ts`, `src/handlers/gcp_compat.ts`, `.env`)**:
+  - Added dedicated `GCP_ENABLE_CIRCUIT_BREAKER` toggle (default: `false`, supports boolean coercion).
+  - Decoupled GCP from the global gateway circuit breaker (`LITEROUTER_CIRCUIT_BREAKER=true`). When set to `false`, upstream Google capacity spikes (503 Service Unavailable / high demand) are passed directly downstream without tripping an internal circuit breaker that locks out all 24 pooled keys.
+  - Eliminated false "Quarantined Key #X for 60s" ghost log messages previously emitted by `logLimit` when a circuit breaker opened.
+- **Dedicated GCP Pacer Toggle & Double-Pacing Resolution (`GCP_ENABLE_PACER`) (`src/handlers/gcp_compat.ts`)**:
+  - Added `GCP_ENABLE_PACER` toggle (default: `true`).
+  - Resolved double-pacing bug where `acquireGcpPacer` was executed twice per request (both in `executeGcpAttemptLoop` and `executeGcpDirectCall`). Pacing is now enforced strictly once in `executeGcpAttemptLoop` before key selection, preserving the S5 conveyor belt guarantees without queuing latency duplication.
+- **Strict Quarantine Guards for Key Metrics**:
+  - Wrapped all `globalKeyPool.reportFailure("gc", ...)` calls with `if (env.GCP_ENABLE_QUARANTINE)` across single-flight, mid-stream retry, and transport failure paths to prevent phantom penalty records when quarantine is disabled.
+- **Operational Timeout Hardening (`.env`)**:
+  - Increased `LITEROUTER_HTTP_TIMEOUT=300` and `LITEROUTER_NO_RESPONSE_TIMEOUT=300` (5 minutes) to ensure long-running, non-streaming structured tasks (such as Gemma 31B on complex batch operations) complete without premature socket timeout drops.
+- **Single-Flight 502 Observability in Live Terminal (`src/handlers/gcp_compat.ts`)**:
+  - Added explicit terminal logging (`logWarn`, `logServed`, `logSeparator`) for single-flight upstream transport errors (`NoResponseError`) and attempt loop exhaustion.
+- **Unit & Regression Testing (`tests/handlers/gcp_retry.test.ts`)**:
+  - Added test case 10 verifying that 5 consecutive 503 errors from Google do not trip the circuit breaker or block subsequent requests when `GCP_ENABLE_CIRCUIT_BREAKER=false`. Full suite passes (559/559 tests).
+
+### Added / Skill Harmonization & Workflow Hardening
+- **Skill Renamed to Canonical `literouter` (`.opencode2/skills/literouter/`)**:
+  - Harmonized and renamed skill directory to `.opencode2/skills/literouter/` (single source of truth).
+  - Purged all stale duplicate copies across the workspace/filesystem.
+  - Consolidated `opencode2-streaming-troubleshooting.md` into the canonical playbook.
+- **Workflow Enforcement & AGENTS.md Hardening**:
+  - Updated `AGENTS.md` to mandate loading `literouter` (`skill load "literouter"`) at the start of all conversations.
+  - Added explicit fallback trigger keywords table across core gateway, routing, client integration, streaming, reasoning/tools, and error classification domains.
+  - Hardened OpenCode / OpenCode2 workflow reminder plugins (`remind-workflow.ts`) to inject the mandatory skill loading rule and fallback keyword triggers into every conversational turn context.
 - **Configurable In-Flight Retry Toggle (`src/config/schema.ts`, `src/config/env.ts`, `.env`)**:
   - Added `GCP_ENABLE_RETRIES` environment flag (default: `true`, with flexible boolean coercion accepting `true`/`false`/`1`/`0`/`yes`/`no`).
   - When set to `true` (default), maintains full multi-key pool rotation and retry resilience on 429 rate limits, 5xx server errors, and transport failures.
+- **Configurable Key Quarantine Toggle & Dumb-Forwarder Mode (`src/config/schema.ts`, `src/config/env.ts`, `src/network/pool.ts`, `src/handlers/gcp_compat.ts`)**:
+  - Added `GCP_ENABLE_QUARANTINE` environment flag (default: `true`, supports boolean coercion `true`/`false`/`1`/`0`/`yes`/`no`).
+  - When `GCP_ENABLE_QUARANTINE=false`, disables all cooldown, quarantine, and 503 load-shedding mechanisms for GCP (`gc`) keys across all error types (429, 5xx, 401, 403, and transport resets).
+  - Failed keys remain immediately eligible in `globalKeyPool` round-robin selection.
+  - Paired with `GCP_ENABLE_RETRIES=false`, LiteRouter functions as a pure, transparent dumb forwarder for GCP keys, passing upstream requests and responses directly downstream without key lockouts or 65s wait penalties.
 - **Single-Flight Pass-Through Mode for Google Cloud Vertex (`gc`) (`src/handlers/gcp_compat.ts`)**:
   - When `GCP_ENABLE_RETRIES=false`, terminates immediately on attempt 1 and passes upstream 4xx/5xx responses (such as 429 Too Many Requests, 400 Context Length Overflow, 500/503 errors) directly downstream to the caller without attempting in-flight rotation across alternate keys.
   - Automatically preserves key health tracking and cooldown isolation in `globalKeyPool` (respecting upstream `Retry-After` headers and rate-limit TTLs) so subsequent requests seamlessly pick up healthy keys.

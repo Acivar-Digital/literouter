@@ -105,7 +105,7 @@ async function collectFullBody(
 
 async function acquireGcpPacer(clientSignal: AbortSignal | undefined): Promise<number> {
   const env = getEnv();
-  if (!env.LITEROUTER_PACER_ENABLED) {
+  if (!env.LITEROUTER_PACER_ENABLED || !env.GCP_ENABLE_PACER) {
     return 0;
   }
   const dynamicMaxQueueDepth = globalKeyPool.getDynamicMaxQueueDepth("gc");
@@ -135,12 +135,12 @@ async function executeGcpDirectCall(
   _clientOptions?: RequestClientOptions
 ): Promise<Response> {
   const env = getEnv();
-  const breaker = env.LITEROUTER_CIRCUIT_BREAKER
+  const breaker = (env.LITEROUTER_CIRCUIT_BREAKER && env.GCP_ENABLE_CIRCUIT_BREAKER)
     ? getCircuitBreakerForProvider("gc")
     : null;
 
   if (breaker && !breaker.isAvailable()) {
-    logLimit(reqId, "gc", selected.index, 503, 60, selected.totalKeys);
+    logWarn("💥", `[BREAKER ${reqId}] Provider 'gc' circuit breaker is OPEN. Fast-failing GCP request.`);
     throw new UpstreamRetryableError(
       "Provider 'gc' circuit breaker is OPEN",
       503,
@@ -165,46 +165,16 @@ async function executeGcpDirectCall(
 
   const startTime = Date.now();
 
-  try {
-    await acquireGcpPacer(clientSignal);
-  } catch (err: unknown) {
-    if (clientSignal?.aborted || (err instanceof Error && err.message.includes("aborted"))) {
-      return Response.json(
-        { error: { message: "Request aborted by client", type: "client_closed_request" } },
-        { status: 499 }
-      );
-    }
-    if (err instanceof PacerQueueOverflowError) {
-      return Response.json(
-        {
-          error: {
-            message: err.message,
-            type: "rate_limit_exceeded",
-            code: "rate_limit_exceeded",
-          },
-        },
-        {
-          status: 429,
-          headers: {
-            "Retry-After": String(err.retryAfterSec),
-            "Content-Type": "application/json",
-          },
-        }
-      );
-    }
-    throw err;
-  }
-
   const { response, ttftMs, firstChunk, rawReader, protocol } = await fetchWithTtftGuard(fetchOpts);
   const duration = Date.now() - startTime;
 
   const isStream = Boolean(payload.stream);
 
   if (response.status >= 400) {
-    if (response.status >= 500 || response.status === 529) {
-      breaker?.recordFailure(true);
-    } else {
-      breaker?.recordFailure(false);
+    if (breaker && (response.status >= 500 || response.status === 529)) {
+      breaker.recordFailure(true);
+    } else if (breaker) {
+      breaker.recordFailure(false);
     }
 
     const fullBody = await collectFullBody(firstChunk, rawReader);
@@ -216,7 +186,7 @@ async function executeGcpDirectCall(
       bodyText,
     });
 
-    if (classification.quarantineTtlSec > 0) {
+    if (env.GCP_ENABLE_QUARANTINE && classification.quarantineTtlSec > 0) {
       globalKeyPool.reportFailure(
         "gc",
         selected.index,
@@ -226,10 +196,14 @@ async function executeGcpDirectCall(
         Date.now(),
         classification.quarantineTtlSec
       );
+    } else if (!env.GCP_ENABLE_QUARANTINE && classification.quarantineTtlSec > 0) {
+      logWarn("⚡", `[GCP ${reqId}] Dumb-forwarder mode (GCP_ENABLE_QUARANTINE=false): Key ${selected.index} quarantine bypassed.`);
     }
 
     const rawErrorMsg = extractErrorMessage(bodyText);
-    const ttlSec = classification.quarantineTtlSec > 0 ? classification.quarantineTtlSec : (response.status === 429 ? 60 : undefined);
+    const ttlSec = env.GCP_ENABLE_QUARANTINE
+      ? (classification.quarantineTtlSec > 0 ? classification.quarantineTtlSec : (response.status === 429 ? 60 : undefined))
+      : undefined;
     logLimit(reqId, "gc", selected.index, response.status, ttlSec, selected.totalKeys, rawErrorMsg);
 
     if (env.GCP_ENABLE_RETRIES && isContextLengthError(response.status, bodyText) && !clientSignal?.aborted) {
@@ -336,10 +310,13 @@ async function executeGcpDirectCall(
     },
     retryProvider: async (reason: string, _hasEmittedTokens?: boolean) => {
       const classification = classifyTransportError(reason);
-      if (classification.quarantineTtlSec > 0) {
+      if (env.GCP_ENABLE_QUARANTINE && classification.quarantineTtlSec > 0) {
         globalKeyPool.reportFailure("gc", currentKeyIndex, 500, undefined, reason, Date.now(), classification.quarantineTtlSec);
       }
-      logLimit(reqId, "gc", currentKeyIndex, 500, classification.quarantineTtlSec > 0 ? classification.quarantineTtlSec : undefined, selected.totalKeys, reason);
+      const ttlSec = env.GCP_ENABLE_QUARANTINE && classification.quarantineTtlSec > 0
+        ? classification.quarantineTtlSec
+        : undefined;
+      logLimit(reqId, "gc", currentKeyIndex, 500, ttlSec, selected.totalKeys, reason);
 
       if (!env.GCP_ENABLE_RETRIES) {
         logWarn("⚡", `[GCP ${reqId}] Mid-stream drop occurred. Retries disabled via GCP_ENABLE_RETRIES=false. Closing stream.`);
@@ -370,14 +347,16 @@ async function executeGcpDirectCall(
           model: activePayload.model,
         };
 
-        if (env.LITEROUTER_PACER_ENABLED) {
+        if (env.LITEROUTER_PACER_ENABLED && env.GCP_ENABLE_PACER) {
           await acquireGcpPacer(clientSignal);
         }
 
         try {
           const nextResult = await fetchWithTtftGuard(nextFetchOpts);
           if (nextResult.response.status >= 400) {
-            globalKeyPool.reportFailure("gc", nextSelected.index, nextResult.response.status);
+            if (env.GCP_ENABLE_QUARANTINE) {
+              globalKeyPool.reportFailure("gc", nextSelected.index, nextResult.response.status);
+            }
             continue;
           }
           globalKeyPool.reportSuccess("gc", nextSelected.index);
@@ -386,7 +365,7 @@ async function executeGcpDirectCall(
             rawReader: nextResult.rawReader,
           };
         } catch (retryErr: unknown) {
-          if (retryErr instanceof NoResponseError) {
+          if (retryErr instanceof NoResponseError && env.GCP_ENABLE_QUARANTINE) {
             globalKeyPool.reportFailure("gc", nextSelected.index, 0, undefined, retryErr.message, Date.now(), 2);
           }
           continue;
@@ -417,6 +396,7 @@ async function tryGcpAttempt(
   reqId: string,
   attempt: number,
   maxAttempts: number,
+  startTime: number,
   clientOptions?: RequestClientOptions
 ): Promise<AttemptExecutionResult> {
   const env = getEnv();
@@ -431,6 +411,9 @@ async function tryGcpAttempt(
       return { success: false, error: err, retryable: false };
     }
     if (err instanceof PacerQueueOverflowError) {
+      logWarn("⏳", `[PACER ${reqId}] GCP Pacer queue overflow: ${err.message} (Retry-After: ${err.retryAfterSec}s)`);
+      logServed(reqId, Date.now() - startTime, 429, attempt, maxAttempts);
+      logSeparator();
       return {
         success: true,
         response: Response.json(
@@ -456,8 +439,13 @@ async function tryGcpAttempt(
       return { success: false, error: err, retryable: true };
     }
     if (err instanceof NoResponseError) {
-      globalKeyPool.reportFailure("gc", selected.index, 0, undefined, err.message, Date.now(), 2);
+      if (env.GCP_ENABLE_QUARANTINE) {
+        globalKeyPool.reportFailure("gc", selected.index, 0, undefined, err.message, Date.now(), 2);
+      }
       if (!env.GCP_ENABLE_RETRIES) {
+        logWarn("⚡", `[GCP ${reqId}] Single-flight mode (GCP_ENABLE_RETRIES=false): Upstream transport error: ${err.message}`);
+        logServed(reqId, Date.now() - startTime, 502, attempt, maxAttempts);
+        logSeparator();
         return {
           success: true,
           response: Response.json(
@@ -509,7 +497,7 @@ async function executeGcpAttemptLoop(
     }
 
     const dwellMs = Date.now() - startTime;
-    if (globalKeyPool.shouldLoadShed("gc", dwellMs, maxWaitMs)) {
+    if (env.GCP_ENABLE_QUARANTINE && globalKeyPool.shouldLoadShed("gc", dwellMs, maxWaitMs)) {
       const minTtl = globalKeyPool.getMinQuarantineTtlMs("gc");
       const retryAfterSec = Math.max(1, Math.ceil(minTtl / 1000));
       return Response.json(
@@ -533,6 +521,9 @@ async function executeGcpAttemptLoop(
         );
       }
       if (err instanceof PacerQueueOverflowError) {
+        logWarn("⏳", `[PACER ${reqId}] GCP Pacer queue overflow: ${err.message} (Retry-After: ${err.retryAfterSec}s)`);
+        logServed(reqId, Date.now() - startTime, 429, attempt, maxAttempts);
+        logSeparator();
         return Response.json(
           {
             error: {
@@ -592,7 +583,7 @@ async function executeGcpAttemptLoop(
     }
     prevKeyIndex = selected.index;
 
-    const outcome = await tryGcpAttempt(directive, transformed, clientSignal, selected, reqId, attempt, maxAttempts, clientOptions);
+    const outcome = await tryGcpAttempt(directive, transformed, clientSignal, selected, reqId, attempt, maxAttempts, startTime, clientOptions);
     if (outcome.success && outcome.response) {
       return outcome.response;
     }
@@ -611,6 +602,8 @@ async function executeGcpAttemptLoop(
   logError(reqId, "GCP request attempts exhausted", lastError);
   const errMsg = lastError instanceof Error ? lastError.message : "All GCP request attempts failed";
   const statusCode = lastError instanceof UpstreamRetryableError ? lastError.status : 502;
+  logServed(reqId, Date.now() - startTime, statusCode, maxAttempts, maxAttempts);
+  logSeparator();
   return Response.json(
     { error: { message: `GCP request attempts exhausted - ${errMsg}`, type: "gateway_error" } },
     { status: statusCode }

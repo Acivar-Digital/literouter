@@ -1,6 +1,7 @@
 import { EventEmitter } from "node:events";
 import type { ProviderCode } from "../directive/parser";
 import { CooldownManager, type KeyCooldownState } from "./cooldown";
+import { getEnv } from "../config/env";
 
 export interface SelectedKey {
   readonly key: string;
@@ -50,6 +51,13 @@ export class KeyPool extends EventEmitter {
     this.pointers.set(provider, (curr + 1) % total);
   }
 
+  private isQuarantineEnabled(provider: string): boolean {
+    if (provider === "gc") {
+      return getEnv().GCP_ENABLE_QUARANTINE;
+    }
+    return true;
+  }
+
   private tryPickIndex(
     provider: string,
     idx: number,
@@ -57,7 +65,7 @@ export class KeyPool extends EventEmitter {
     now: number
   ): SelectedKey | null {
     const keyId = this.makeKeyId(provider, idx);
-    if (this.cooldownManager.isQuarantined(keyId, now)) {
+    if (this.isQuarantineEnabled(provider) && this.cooldownManager.isQuarantined(keyId, now)) {
       return null;
     }
     const key = keys[idx];
@@ -135,6 +143,13 @@ export class KeyPool extends EventEmitter {
     now: number = Date.now(),
     customTtlSec?: number
   ): KeyCooldownState {
+    if (!this.isQuarantineEnabled(provider)) {
+      return {
+        quarantinedUntil: 0,
+        reason: "quarantine_disabled",
+        lastErrorStatus: status,
+      };
+    }
     const keyId = this.makeKeyId(provider, index);
     let effectiveTtlSec = customTtlSec;
     if ((status === 401 || status === 403) && customTtlSec === undefined) {
@@ -153,6 +168,13 @@ export class KeyPool extends EventEmitter {
     status?: number,
     now: number = Date.now()
   ): KeyCooldownState {
+    if (!this.isQuarantineEnabled(provider)) {
+      return {
+        quarantinedUntil: 0,
+        reason: reason ?? "quarantine_disabled",
+        lastErrorStatus: status,
+      };
+    }
     const keyId = this.makeKeyId(provider, index);
     const state = this.cooldownManager.quarantineKeyWithTtl(keyId, ttlSec, reason, status, now);
     this.scheduleAvailabilityTimer(keyId, provider, state.quarantinedUntil - now);
@@ -224,6 +246,9 @@ export class KeyPool extends EventEmitter {
   public getStatus(provider: string, now: number = Date.now()): PoolStatus {
     const keys = this.getKeys(provider);
     const total = keys.length;
+    if (!this.isQuarantineEnabled(provider)) {
+      return { total, active: total, quarantined: 0 };
+    }
     let quarantined = 0;
     for (let i = 0; i < total; i += 1) {
       const keyId = this.makeKeyId(provider, i);
@@ -235,6 +260,9 @@ export class KeyPool extends EventEmitter {
   }
 
   public getMinQuarantineTtlMs(provider: string, now: number = Date.now()): number {
+    if (!this.isQuarantineEnabled(provider)) {
+      return 0;
+    }
     return this.cooldownManager.getMinQuarantineTtlMs(provider, now);
   }
 
