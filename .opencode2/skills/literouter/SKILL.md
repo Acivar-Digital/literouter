@@ -131,6 +131,10 @@ Fusion presets: `lr-fse-<preset>` (e.g. `lr-fse-fast`, `lr-fse-smart`, `lr-fse-c
 - **Real-Time Terminal Protocol Tagging**:
   The TTFT line in live stdout explicitly logs the upstream protocol:
   `🟢 [TTFT req_id] TTFT = 320ms | Stream established [Upstream: HTTP/2]`
+- **Terminal Telemetry Contract (per-line icons + Ref lookup)**:
+  - Directive line carries 🎯 (`EMOJI.directive`); Model line carries 🤖 (`EMOJI.model`).
+  - Model line appends `| Ref: <User-Agent> @ <Referer>` when registry provides headers; `InboundLogDetails.referrer` is sourced from `config/providers.json` headers via `resolveUpstreamEndpoint`/`buildAuthHeaders` (lookup-only, no hardcoded values).
+  - `logLimit` continuation lines (`Parsed Retry-After`, `Upstream Error`) carry ⚠️ (`EMOJI.limit`) with 4-space indent.
 - **Inspect OS Sockets**:
   ```bash
   # Downstream client connections (port 7766)
