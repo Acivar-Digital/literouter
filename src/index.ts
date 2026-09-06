@@ -4,7 +4,7 @@ import { resolve } from "node:path";
 import type { Server } from "bun";
 import { getEnv } from "./config/env";
 import { loadKeyPools } from "./config/keys";
-import { parseDirective } from "./directive/parser";
+import { parseDirective, type ParsedDirective } from "./directive/parser";
 import { extractDirectiveToken } from "./directive/validator";
 import { handleAnthropicCompat, handleAnthropicCountTokens } from "./handlers/anthropic_compat";
 import { handleModelsDiscovery } from "./handlers/discovery";
@@ -21,6 +21,11 @@ import {
   initializeKeyPools,
   resetProvidersRegistryCache,
 } from "./handlers/openai_compat";
+import {
+  type Directive,
+  type GatewayState,
+  handleOpenAiOriginal,
+} from "./handlers/openai_original";
 import { getHttp2Pool, resetHttp2Pool } from "./network/h2_pool";
 import { getAllCircuitBreakers, clearCircuitBreakerRegistry } from "./network/circuit_breaker";
 import {
@@ -138,7 +143,6 @@ type RouteHandler = (req: Request, rawKey: string, reqId: string) => Promise<Res
 
 const ROUTE_MAP: Readonly<Record<string, RouteHandler>> = {
   "/v1/chat/completions": handleOpenAICompat,
-  "/v1/responses": handleOpenAICompat,
   "/v1/messages": handleAnthropicCompat,
   "/messages": handleAnthropicCompat,
   "/api/v1/messages": handleAnthropicCompat,
@@ -253,9 +257,93 @@ async function acquireIngressPacer(req: Request, rawKey: string): Promise<Respon
   }
 }
 
-async function dispatchRoute(req: Request, rawKey: string, reqId: string): Promise<Response> {
-  const url = new URL(req.url);
-  const path = url.pathname;
+function parseDirectiveWithEndpoint(
+  rawKey: string
+): (ParsedDirective & { readonly endpoint?: string }) | null {
+  const parsed = parseDirective(rawKey);
+  if (!parsed) {
+    return null;
+  }
+  if (parsed.type === "direct") {
+    return {
+      ...parsed,
+      endpoint: parsed.completion,
+    };
+  }
+  return parsed;
+}
+
+export function validateEndpointMatch(
+  pathname: string,
+  directive?: { readonly endpoint?: string } | null
+): Response | null {
+  if (pathname === "/v1/chat/completions" && directive?.endpoint === "rs") {
+    return new Response(
+      JSON.stringify({
+        error: {
+          message: "Endpoint mismatch: Directive specifies Responses API (-rs-). Use /v1/responses.",
+          type: "invalid_request_error",
+        },
+      }),
+      { status: 400, headers: { "Content-Type": "application/json" } }
+    );
+  }
+  if (pathname === "/v1/responses" && directive?.endpoint === "ch") {
+    return new Response(
+      JSON.stringify({
+        error: {
+          message: "Endpoint mismatch: Directive specifies Chat Completions (-ch-). Use /v1/chat/completions.",
+          type: "invalid_request_error",
+        },
+      }),
+      { status: 400, headers: { "Content-Type": "application/json" } }
+    );
+  }
+  return null;
+}
+
+function isGcpRequest(rawKey: string, parsed: ParsedDirective | null): boolean {
+  if (rawKey.startsWith("lr-gc-")) {
+    return true;
+  }
+  return parsed?.type === "direct" && parsed.provider === "gc";
+}
+
+function dispatchGcpRoute(
+  path: string,
+  req: Request,
+  rawKey: string,
+  reqId: string,
+  parsed: ParsedDirective | null
+): Promise<Response> | null {
+  if (!isGcpRequest(rawKey, parsed)) {
+    return null;
+  }
+  if (path === "/v1/chat/completions" || path.startsWith("/v1beta/openai/")) {
+    return handleGcpCompat(req, rawKey, reqId);
+  }
+  return null;
+}
+
+function dispatchResponsesRoute(
+  req: Request,
+  path: string,
+  directive: Directive,
+  state?: GatewayState
+): Promise<Response> | null {
+  if (req.method === "POST" && path === "/v1/responses") {
+    return handleOpenAiOriginal(req, directive, state);
+  }
+  return null;
+}
+
+export async function dispatchRoute(
+  req: Request,
+  rawKey: string,
+  reqId: string,
+  state?: GatewayState
+): Promise<Response> {
+  const path = new URL(req.url).pathname;
 
   if (path === "/admin/pool/reset") {
     return handleAdminPoolReset(req, rawKey);
@@ -271,18 +359,26 @@ async function dispatchRoute(req: Request, rawKey: string, reqId: string): Promi
     return modelsRes;
   }
 
+  const directive = parseDirectiveWithEndpoint(rawKey);
+  const mismatchRes = validateEndpointMatch(path, directive);
+  if (mismatchRes !== null) {
+    return mismatchRes;
+  }
+
   const pacerGate = await acquireIngressPacer(req, rawKey);
   if (pacerGate !== null) {
     return pacerGate;
   }
 
-  const isGcpDirective = rawKey.startsWith("lr-gc-") || (() => {
-    const parsed = parseDirective(rawKey);
-    return parsed !== null && parsed.type === "direct" && parsed.provider === "gc";
-  })();
+  const directiveObj = directive ?? { provider: "", raw: rawKey };
+  const responsesRes = dispatchResponsesRoute(req, path, directiveObj, state);
+  if (responsesRes !== null) {
+    return responsesRes;
+  }
 
-  if (isGcpDirective && (path === "/v1/chat/completions" || path.startsWith("/v1beta/openai/"))) {
-    return handleGcpCompat(req, rawKey, reqId);
+  const gcpRes = dispatchGcpRoute(path, req, rawKey, reqId, directive);
+  if (gcpRes !== null) {
+    return gcpRes;
   }
 
   const directHandler = ROUTE_MAP[path];
@@ -317,6 +413,12 @@ export async function handleAppRequest(req: Request): Promise<Response> {
   initializeKeyPools();
   const reqId = `req_${Math.random().toString(36).slice(2, 9)}`;
   const rawKey = extractDirectiveToken(req) || "";
+  const path = new URL(req.url).pathname;
+  const directive = parseDirectiveWithEndpoint(rawKey);
+  const mismatchRes = validateEndpointMatch(path, directive);
+  if (mismatchRes !== null) {
+    return mismatchRes;
+  }
   const pacerGate = await acquireIngressPacer(req, rawKey);
   if (pacerGate !== null) {
     return pacerGate;

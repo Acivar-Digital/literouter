@@ -13,7 +13,9 @@ export type ProviderCode =
   | "tp"
   | "gc";
 
-export type PayloadCode = "oa" | "cl" | "gg" | "rs" | "ao";
+export type WireProtocol = "oa" | "oo" | "cl" | "gg" | "rs" | "ao";
+
+export type PayloadCode = WireProtocol;
 
 export type CompletionCode =
   | "ch"
@@ -33,8 +35,11 @@ export interface DirectDirective {
   readonly raw: string;
   readonly provider: ProviderCode;
   readonly payload: PayloadCode;
+  readonly wire?: WireProtocol;
   readonly completion: CompletionCode;
+  readonly endpoint?: CompletionCode;
   readonly nuances: readonly NuanceCode[];
+  readonly reasoning?: string;
 }
 
 export interface FusionDirective {
@@ -61,7 +66,7 @@ const VALID_PROVIDERS: ReadonlySet<string> = new Set([
   "gc",
 ]);
 
-const VALID_PAYLOADS: ReadonlySet<string> = new Set(["oa", "cl", "gg", "rs", "ao"]);
+const VALID_PAYLOADS: ReadonlySet<string> = new Set(["oa", "oo", "cl", "gg", "rs", "ao"]);
 
 const VALID_COMPLETIONS: ReadonlySet<string> = new Set([
   "ch",
@@ -120,13 +125,18 @@ function createDirectDirective(
   raw: string,
   nuances: readonly NuanceCode[]
 ): DirectDirective {
+  const payload = parts[2] as PayloadCode;
+  const completion = parts[3] as CompletionCode;
   return {
     type: "direct",
     raw,
     provider: parts[1] as ProviderCode,
-    payload: parts[2] as PayloadCode,
-    completion: parts[3] as CompletionCode,
+    payload,
+    wire: payload,
+    completion,
+    endpoint: completion,
     nuances,
+    reasoning: parts[4],
   };
 }
 

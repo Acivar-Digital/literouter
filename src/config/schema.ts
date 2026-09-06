@@ -16,7 +16,7 @@ export const ProviderCodeSchema = z.enum([
   "gc",
 ]);
 
-export const PayloadCodeSchema = z.enum(["oa", "cl", "gg", "rs", "ao"]);
+export const PayloadCodeSchema = z.enum(["oa", "oo", "cl", "gg", "rs", "ao"]);
 
 export const CompletionCodeSchema = z.enum([
   "ch",

@@ -4,6 +4,16 @@ All notable changes to LiteRouter will be documented in this file.
 
 ## [Unreleased]
 
+### Added / OpenAI Original Wire Protocol (`oo`), Native `/v1/responses` Handler & 30s Timeout Standard (`.opencode2/skills/literouter/SKILL.md`, `CHANGELOG.md`, `src/handlers/openai_original.ts`)
+- **OpenAI Original (`oo`) Wire Protocol**: Added `oo` to the directive key format (`lr-<provider>-oo-<completion>-<nuances>`) representing native OpenAI Original protocol passthrough without schema translation.
+- **Native `POST /v1/responses` Handler (`src/handlers/openai_original.ts`)**:
+  - Implemented native handler for `POST /v1/responses` supporting direct Responses API client payloads with Zen (`lr-zn-oo-rs-no`) and OpenRouter (`lr-or-oo-rs-no`).
+  - Supports multi-key rotation, quarantine cooldowns, circuit breaking, pacer ingress, SSE streaming passthrough, and lifecycle teardown.
+  - Distinguishes native passthrough (`oo-rs`) from Chat Completion bidirectional translation (`oa-rs`).
+  - Enforces strict fail-fast validation against wire and endpoint mismatches.
+- **Standardized 30-Second Client Chunk Timeout (`chunkTimeout: 30000`)**:
+  - Documented and standardized `chunkTimeout: 30000` (30s) alignment across OpenCode 2 client providers (`~/.config/opencode2/config.json`), harmonized with gateway `LITEROUTER_STREAM_IDLE_TIMEOUT=30` to prevent premature client-side socket drops during deep reasoning.
+
 ### Added / Directive `lr-zn-oa-rs-no` & Bidirectional Responses API Translation (`config/providers.json`, `src/config/schema.ts`, `src/directive/parser.ts`, `src/transformers/responses.ts`, `src/handlers/openai_compat.ts`, `src/network/fetcher.ts`, `tests/unit/responses_transformer.test.ts`)
 - **Directive `lr-zn-oa-rs-no`**: Added support for completion code `rs` across `src/config/schema.ts` (`CompletionCodeSchema`), `src/directive/parser.ts` (`CompletionCode`, `VALID_COMPLETIONS`), and `config/providers.json` (`"rs": "/v1/responses"` under `zen`), mapping OpenAI chat completion requests (`oa`) to upstream Zen Responses API endpoint (`/v1/responses`).
 - **Bidirectional Responses Transformer (`src/transformers/responses.ts`)**:

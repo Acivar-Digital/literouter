@@ -171,7 +171,7 @@ function normalizeToolChoiceGoogle(toolChoice: unknown): unknown {
 
 export function normalizeToolChoice(
   toolChoice: unknown,
-  targetWire: "oa" | "cl" | "gg" | "rs" | "ao"
+  targetWire: "oa" | "oo" | "cl" | "gg" | "rs" | "ao"
 ): unknown {
   if (toolChoice === undefined || toolChoice === null) {
     return undefined;
@@ -188,7 +188,7 @@ export function normalizeToolChoice(
 export function applyNuanceModifiers(
   payload: OpenAIRequestPayload,
   nuances: readonly string[],
-  targetWire: "oa" | "cl" | "gg" | "rs" | "ao" = "oa"
+  targetWire: "oa" | "oo" | "cl" | "gg" | "rs" | "ao" = "oa"
 ): OpenAIRequestPayload {
   let modified: Record<string, unknown> = { ...payload };
 
