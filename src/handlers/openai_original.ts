@@ -12,7 +12,12 @@ import {
   formatTimestamp,
   logError,
   logInbound,
+  logInfo,
+  logLimit,
+  logSeparator,
+  logServed,
   logTtft,
+  logUsage,
   logWarn,
 } from "../ui/logger";
 
@@ -110,6 +115,131 @@ export function buildSseHeaders(): Headers {
   return headers;
 }
 
+export interface ResponsesTelemetry {
+  readonly reqId: string;
+  readonly provider: string;
+  readonly keyIndex: number;
+  readonly totalKeys?: number;
+  readonly startTime: number;
+  readonly status: number;
+}
+
+function extractReasoningEffort(body: { readonly [key: string]: unknown }): string | undefined {
+  const reasoning = body.reasoning;
+  if (reasoning && typeof reasoning === "object") {
+    const effort = (reasoning as Record<string, unknown>).effort;
+    return typeof effort === "string" && effort.length > 0 ? effort : undefined;
+  }
+  return undefined;
+}
+
+function extractDirectiveNuances(directiveOrRawKey: Directive | string): readonly string[] | undefined {
+  if (typeof directiveOrRawKey === "string") {
+    return undefined;
+  }
+  const nuances = (directiveOrRawKey as Record<string, unknown>).nuances;
+  const isStringArray = Array.isArray(nuances) && nuances.every((n) => typeof n === "string");
+  return isStringArray ? (nuances as readonly string[]) : undefined;
+}
+
+function logPrepLine(reqId: string, model: string | undefined, inputBytes: number, effort: string | undefined, stream: boolean): void {
+  const effortStr = effort ? ` effort=${effort}` : "";
+  const msg = `[PREP ${reqId}] model=${model ?? "unknown"} input=${inputBytes}B${effortStr} stream=${stream}`;
+  if (model) {
+    logInfo("📦", msg);
+  } else {
+    logWarn("📦", msg);
+  }
+}
+
+function logUpstreamLine(reqId: string, provider: string, upstreamUrl: string, isStream: boolean): void {
+  logInfo("🔌", `[UPSTREAM ${reqId}] ${provider} -> ${upstreamUrl} stream=${isStream}`);
+}
+
+function getRetryAfterSec(res: Response): number | undefined {
+  const raw = res.headers.get("retry-after");
+  if (!raw) {
+    return undefined;
+  }
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+}
+
+async function logUpstreamError(reqId: string, route: ResolvedRoute, totalKeys: number | undefined, res: Response): Promise<void> {
+  try {
+    const bodyText = await res.clone().text();
+    const rawMsg = extractErrorMessage(bodyText);
+    const ttl = getRetryAfterSec(res) ?? (res.status === 429 ? 60 : undefined);
+    logLimit(reqId, route.provider, route.keyIndex, res.status, ttl, totalKeys, rawMsg);
+  } catch (err: unknown) {
+    logWarn("body", `Failed to inspect upstream error body: ${err}`);
+  }
+}
+
+interface ParsedResponsesUsage {
+  readonly promptTokens: number;
+  readonly completionTokens: number;
+  readonly totalTokens: number;
+  readonly reasoningTokens?: number;
+}
+
+function tryParseResponsesUsage(text: string): ParsedResponsesUsage | null {
+  try {
+    const json = JSON.parse(text) as Record<string, unknown>;
+    const usage = json.usage;
+    if (!usage || typeof usage !== "object") {
+      return null;
+    }
+    const u = usage as Record<string, unknown>;
+    const prompt = typeof u.prompt_tokens === "number" ? u.prompt_tokens : typeof u.input_tokens === "number" ? u.input_tokens : null;
+    const completion = typeof u.completion_tokens === "number" ? u.completion_tokens : typeof u.output_tokens === "number" ? u.output_tokens : null;
+    if (prompt === null || completion === null) {
+      return null;
+    }
+    const total = typeof u.total_tokens === "number" ? u.total_tokens : prompt + completion;
+    let reasoning: number | undefined;
+    const details = u.completion_tokens_details ?? u.output_tokens_details;
+    if (details && typeof details === "object") {
+      const r = (details as Record<string, unknown>).reasoning_tokens;
+      if (typeof r === "number") {
+        reasoning = r;
+      }
+    }
+    return { promptTokens: prompt, completionTokens: completion, totalTokens: total, reasoningTokens: reasoning };
+  } catch {
+    return null;
+  }
+}
+
+function emitNonStreamCompletion(telemetry: ResponsesTelemetry, bodyText: string, byteLength: number): void {
+  const durationMs = Date.now() - telemetry.startTime;
+  const usage = tryParseResponsesUsage(bodyText);
+  if (usage) {
+    logUsage({
+      reqId: telemetry.reqId,
+      provider: telemetry.provider,
+      keyIndex: telemetry.keyIndex,
+      totalKeys: telemetry.totalKeys,
+      promptTokens: usage.promptTokens,
+      reasoningTokens: usage.reasoningTokens,
+      completionTokens: usage.completionTokens,
+      totalTokens: usage.totalTokens,
+      durationMs,
+    });
+  } else {
+    logInfo("📊", `[COMPLETE ${telemetry.reqId}] bytes=${byteLength} duration=${durationMs}ms (usage unavailable)`);
+  }
+  logServed(telemetry.reqId, durationMs, telemetry.status);
+  logSeparator();
+}
+
+function emitStreamCompletion(telemetry: ResponsesTelemetry, bytes: number): void {
+  const durationMs = Date.now() - telemetry.startTime;
+  logInfo("📊", `[STREAM-DONE ${telemetry.reqId}] bytes=${bytes} duration=${durationMs}ms`);
+  logServed(telemetry.reqId, durationMs, telemetry.status);
+  logSeparator();
+}
+
 function safeCloseController(controller: ReadableStreamDefaultController<Uint8Array>): void {
   try {
     controller.close();
@@ -128,7 +258,8 @@ function releaseReaderLock(reader: ReadableStreamDefaultReader<Uint8Array>): voi
 
 async function readLoop(
   reader: ReadableStreamDefaultReader<Uint8Array>,
-  controller: ReadableStreamDefaultController<Uint8Array>
+  controller: ReadableStreamDefaultController<Uint8Array>,
+  bytesRef?: { value: number }
 ): Promise<void> {
   let reading = true;
   while (reading) {
@@ -137,6 +268,9 @@ async function readLoop(
       reading = false;
       safeCloseController(controller);
     } else if (value) {
+      if (bytesRef) {
+        bytesRef.value += value.byteLength;
+      }
       controller.enqueue(value);
     }
   }
@@ -183,11 +317,16 @@ async function pumpStream(
   reader: ReadableStreamDefaultReader<Uint8Array>,
   controller: ReadableStreamDefaultController<Uint8Array>,
   clientSignal?: AbortSignal,
-  abortController?: AbortController
+  abortController?: AbortController,
+  telemetry?: ResponsesTelemetry,
+  bytesRef?: { value: number }
 ): Promise<void> {
   const cleanup = setupAbortHandler(reader, controller, clientSignal, abortController);
   try {
-    await readLoop(reader, controller);
+    await readLoop(reader, controller, bytesRef);
+    if (telemetry && bytesRef) {
+      emitStreamCompletion(telemetry, bytesRef.value);
+    }
   } catch (err: unknown) {
     handleStreamError(err, controller, clientSignal);
   } finally {
@@ -199,7 +338,8 @@ async function pumpStream(
 export function createStreamingResponse(
   upstreamResponse: Response,
   clientSignal?: AbortSignal,
-  abortController?: AbortController
+  abortController?: AbortController,
+  telemetry?: ResponsesTelemetry
 ): Response {
   const upstreamBody = upstreamResponse.body;
   if (!upstreamBody) {
@@ -210,9 +350,10 @@ export function createStreamingResponse(
   }
 
   const reader = upstreamBody.getReader();
+  const bytesRef = { value: 0 };
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
-      void pumpStream(reader, controller, clientSignal, abortController);
+      void pumpStream(reader, controller, clientSignal, abortController, telemetry, bytesRef);
     },
     cancel(reason) {
       abortController?.abort();
@@ -227,13 +368,18 @@ export function createStreamingResponse(
 }
 
 export async function createNonStreamingResponse(
-  upstreamResponse: Response
+  upstreamResponse: Response,
+  telemetry?: ResponsesTelemetry
 ): Promise<Response> {
   const arrayBuffer = await upstreamResponse.arrayBuffer();
   const sanitizedHeaders = sanitizeDownstreamHeaders(
     upstreamResponse.headers,
     arrayBuffer.byteLength
   );
+  if (telemetry) {
+    const bodyText = new TextDecoder().decode(arrayBuffer);
+    emitNonStreamCompletion(telemetry, bodyText, arrayBuffer.byteLength);
+  }
   return new Response(arrayBuffer, {
     status: upstreamResponse.status,
     headers: sanitizedHeaders,
@@ -488,6 +634,7 @@ export async function handleOpenAiOriginal(
   const clientAgent = req.headers.get("user-agent") ?? "unknown";
   const protocol = req.headers.get("x-http-version") ?? "HTTP/1.1";
   const targetProvider = route.provider;
+  const totalKeys = globalKeyPool.getPoolSize(route.provider);
 
   logInbound({
     reqId,
@@ -497,10 +644,15 @@ export async function handleOpenAiOriginal(
     protocol,
     directiveStr,
     targetProvider,
-    wireFormat: "oo",
+    wireFormat: "rs",
     endpoint: "/v1/responses",
     model: body.model,
+    keyIndex: route.keyIndex,
+    totalKeys,
+    nuances: extractDirectiveNuances(directiveOrRawKey),
   });
+
+  logPrepLine(reqId, body.model, bodyText.length, extractReasoningEffort(body), clientStream);
 
   const abortController = new AbortController();
   const cleanup = bindAbortSignal(req.signal, abortController);
@@ -521,12 +673,26 @@ export async function handleOpenAiOriginal(
   const ttftMs = Date.now() - startTime;
   const upstreamRes = fetchResult.response as Response;
   const isStream = shouldStreamResponse(upstreamRes, clientStream);
-  logTtft(reqId, ttftMs, isStream ? "Stream established" : "First chunk streamed downstream");
+  if (upstreamRes.status >= 400) {
+    await logUpstreamError(reqId, route, totalKeys, upstreamRes);
+  } else {
+    logUpstreamLine(reqId, route.provider, route.upstreamUrl, isStream);
+  }
+  logTtft(reqId, ttftMs, isStream ? "Stream established" : "First chunk streamed downstream", protocol);
+
+  const telemetry: ResponsesTelemetry = {
+    reqId,
+    provider: route.provider,
+    keyIndex: route.keyIndex,
+    totalKeys,
+    startTime,
+    status: upstreamRes.status,
+  };
 
   if (isStream) {
-    return createStreamingResponse(upstreamRes, req.signal, abortController);
+    return createStreamingResponse(upstreamRes, req.signal, abortController, telemetry);
   }
 
   cleanup();
-  return createNonStreamingResponse(upstreamRes);
+  return createNonStreamingResponse(upstreamRes, telemetry);
 }

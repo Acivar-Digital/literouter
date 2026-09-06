@@ -4,6 +4,13 @@ All notable changes to LiteRouter will be documented in this file.
 
 ## [Unreleased]
 
+### Added / `/v1/responses` rich telemetry parity with chat completions (`src/handlers/openai_original.ts`)
+- Inbound now shows key idx/pool (`Key [#n/m]`) with rs wire attribution on par with chat completions.
+- `PREP` line logs model, input bytes, reasoning effort, and stream flag for native Responses payloads.
+- `UPSTREAM zn -> https://opencode.ai/zen/v1/responses` line emitted before dispatch with stream flag.
+- `USAGE` (non-stream) / `STREAM-DONE` + `SERVED` lines with separator close the request lifecycle.
+- Upstream 429/5xx errors route through `logLimit` so rich logs survive even on rate-limit probes.
+
 ## 2026-09-07 - /v1/responses telemetry + opencode2 verification (2026-09-06T17:09:57Z)
 
 ### Fixed / `POST /v1/responses` now emits inbound + TTFT telemetry (`src/handlers/openai_original.ts`)
