@@ -40,6 +40,9 @@ fi
 # Ensure logs directory exists
 mkdir -p logs
 
+# Prune gateway log to last 30 days (safe no-op when fresh)
+if [ -f logs/gateway.log ]; then bash scripts/prune-logs.sh || true; fi
+
 echo "🚀 Starting LiteRouter v3.1 (Bun) on ${HOST}:${PORT} (${PROTOCOL})..."
 
 # Launch Bun process in detached tmux session
