@@ -138,6 +138,7 @@ type RouteHandler = (req: Request, rawKey: string, reqId: string) => Promise<Res
 
 const ROUTE_MAP: Readonly<Record<string, RouteHandler>> = {
   "/v1/chat/completions": handleOpenAICompat,
+  "/v1/responses": handleOpenAICompat,
   "/v1/messages": handleAnthropicCompat,
   "/messages": handleAnthropicCompat,
   "/api/v1/messages": handleAnthropicCompat,

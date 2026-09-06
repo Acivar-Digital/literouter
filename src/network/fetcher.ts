@@ -711,6 +711,7 @@ export interface StreamTokenState {
 
 export function isLikelySSEDoneMarker(chunkText: string): boolean {
   if (chunkText.includes("[DONE]")) return true;
+  if (chunkText.includes("response.completed")) return true;
   if (
     chunkText.includes('"finish_reason":"stop"') ||
     chunkText.includes('"finish_reason":"tool_calls"') ||
@@ -741,7 +742,9 @@ export function inspectChunkMarkers(
     chunkText.includes('"content":') ||
     chunkText.includes('"reasoning":') ||
     chunkText.includes('"reasoning_content":') ||
-    chunkText.includes('"tool_calls":')
+    chunkText.includes('"tool_calls":') ||
+    chunkText.includes('"output_text"') ||
+    chunkText.includes('"delta":')
   ) {
     state.hasSeenDataToken = true;
   }

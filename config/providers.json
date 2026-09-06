@@ -256,7 +256,8 @@
       },
       "endpoints": {
         "ch": "/v1/chat/completions",
-        "md": "/v1/models"
+        "md": "/v1/models",
+        "rs": "/v1/responses"
       },
       "limits": {
         "default": {

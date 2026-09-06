@@ -4,6 +4,21 @@ All notable changes to LiteRouter will be documented in this file.
 
 ## [Unreleased]
 
+### Added / Directive `lr-zn-oa-rs-no` & Bidirectional Responses API Translation (`config/providers.json`, `src/config/schema.ts`, `src/directive/parser.ts`, `src/transformers/responses.ts`, `src/handlers/openai_compat.ts`, `src/network/fetcher.ts`, `tests/unit/responses_transformer.test.ts`)
+- **Directive `lr-zn-oa-rs-no`**: Added support for completion code `rs` across `src/config/schema.ts` (`CompletionCodeSchema`), `src/directive/parser.ts` (`CompletionCode`, `VALID_COMPLETIONS`), and `config/providers.json` (`"rs": "/v1/responses"` under `zen`), mapping OpenAI chat completion requests (`oa`) to upstream Zen Responses API endpoint (`/v1/responses`).
+- **Bidirectional Responses Transformer (`src/transformers/responses.ts`)**:
+  - Implemented `transformOpenAiToResponses` converting standard OpenAI `messages` and params into Responses API `input` format.
+  - Implemented `transformResponsesToOpenAi` converting non-streaming Responses API JSON (`output` array with `reasoning` and `message` items or fallback `output_text`) into OpenAI `chat.completion` envelope with token usage and reasoning tokens mapped to `completion_tokens_details.reasoning_tokens`.
+  - Implemented `createResponsesStreamTransformer` converting Responses API SSE events (`response.created`, `response.output_text.delta`, `response.completed`, `ping`) into standard OpenAI `chat.completion.chunk` SSE events and `data: [DONE]`.
+- **Stream Ingress & Resiliency (`src/handlers/openai_compat.ts`, `src/network/fetcher.ts`, `src/index.ts`)**:
+  - Wired `directive.completion === "rs"` to pipe outbound stream through `createResponsesStreamTransformer`.
+  - Updated `isLikelySSEDoneMarker` and `inspectChunkMarkers` in `src/network/fetcher.ts` to recognize `response.completed`, `output_text`, and `delta` markers to prevent false premature EOF detections during Responses API streams.
+  - Registered `/v1/responses` in `ROUTE_MAP` in `src/index.ts`.
+- **Quality Gates & Live Verification**:
+  - 100% test pass: TypeScript typecheck (`bun run typecheck`), 572 Bun unit tests (`bun test`), Python smoke tests (`uv run pytest tests/integration/`), and Ruff (`uv run ruff check .`).
+  - Verified against live gateway daemon with model `muse-spark-1.3-contributor-free` for both non-streaming and streaming requests returning HTTP 200 with complete responses and usage details.
+
+
 ### Added / Declarative Provider Headers & OpenCode Identity Modernization (`config/providers.json`, `src/handlers/openai_compat.ts`, `src/handlers/anthropic_compat.ts`, `src/index.ts`, `tests/unit/openrouter_headers.test.ts`)
 - **Declarative Per-Provider Attribution Headers (`config/providers.json`)**: Configured attribution and agentic harness whitelist headers directly in `config/providers.json` for OpenRouter (`or`) and Zen (`zn`).
 - **Dynamic Header Resolution & Merging (`src/handlers/openai_compat.ts`)**: Outbound requests dynamically merge provider headers from `config/providers.json` via `resolveUpstreamEndpoint` and `buildAuthHeaders`.

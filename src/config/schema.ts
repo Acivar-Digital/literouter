@@ -27,6 +27,7 @@ export const CompletionCodeSchema = z.enum([
   "em",
   "au",
   "md",
+  "rs",
 ]);
 
 export const NuanceCodeSchema = z.enum([

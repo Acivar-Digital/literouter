@@ -19,6 +19,11 @@ import { sanitizeAndTransformPayload } from "../transformers/payload";
 import type { OpenAIRequestPayload } from "../transformers/nuances";
 import { createDotsStreamTransformer, parseDotsXml, stripLeakedTemplateTags } from "../transformers/dots";
 import { createLingStreamTransformer, parseLingXml, transformLingResponse } from "../transformers/ling";
+import {
+  createResponsesStreamTransformer,
+  transformOpenAiToResponses,
+  transformResponsesToOpenAi,
+} from "../transformers/responses";
 
 import type { FusionConfig, FusionTier } from "../config/schema";
 import { getEnv } from "../config/env";
@@ -263,11 +268,16 @@ async function executeDirectCall(
 
   const endpoint = resolveUpstreamEndpoint(directive.provider, directive.completion, activePayload.model);
   const headers = buildAuthHeaders(endpoint.authHeader, selected.key, directive.provider);
+  const isResponses = directive.completion === "rs";
+  const outboundBody = isResponses
+    ? JSON.stringify(transformOpenAiToResponses(activePayload))
+    : JSON.stringify(activePayload);
+
   const fetchOpts: FetcherOptions = {
     url: endpoint.url,
     method: "POST",
     headers,
-    body: JSON.stringify(activePayload),
+    body: outboundBody,
     clientSignal,
     provider: directive.provider,
     keyIndex: selected.index,
@@ -359,58 +369,78 @@ async function executeDirectCall(
       const decoded = new TextDecoder().decode(fullBody);
       const json = JSON.parse(decoded) as Record<string, unknown>;
 
-      const choice = (json.choices as Array<{ message?: { content?: string | null; reasoning_content?: string | null; thought?: string | null; tool_calls?: unknown }; finish_reason?: string }>)?.[0];
-      if (choice?.message && isLing) {
-        const transformedResponse = transformLingResponse(json);
+      if (isResponses) {
+        const transformedResponse = transformResponsesToOpenAi(json, activePayload.model);
         finalBody = new TextEncoder().encode(JSON.stringify(transformedResponse));
-      } else if (choice?.message && isXmlTranslationActive) {
-        let msgModified = false;
-        if (typeof choice.message.content === "string") {
-          const { cleanText, toolCalls, reasoningContent } = parseDotsXml(choice.message.content);
-          if (toolCalls.length > 0 || cleanText !== choice.message.content || reasoningContent) {
-            choice.message.content = cleanText || null;
-            if (toolCalls.length > 0) {
-              choice.message.tool_calls = toolCalls;
-              choice.finish_reason = "tool_calls";
+      } else {
+        const choice = (json.choices as Array<{ message?: { content?: string | null; reasoning_content?: string | null; thought?: string | null; tool_calls?: unknown }; finish_reason?: string }>)?.[0];
+        if (choice?.message && isLing) {
+          const transformedResponse = transformLingResponse(json);
+          finalBody = new TextEncoder().encode(JSON.stringify(transformedResponse));
+        } else if (choice?.message && isXmlTranslationActive) {
+          let msgModified = false;
+          if (typeof choice.message.content === "string") {
+            const { cleanText, toolCalls, reasoningContent } = parseDotsXml(choice.message.content);
+            if (toolCalls.length > 0 || cleanText !== choice.message.content || reasoningContent) {
+              choice.message.content = cleanText || null;
+              if (toolCalls.length > 0) {
+                choice.message.tool_calls = toolCalls;
+                choice.finish_reason = "tool_calls";
+              }
+              if (reasoningContent && !choice.message.reasoning_content) {
+                choice.message.reasoning_content = reasoningContent;
+              }
+              msgModified = true;
             }
-            if (reasoningContent && !choice.message.reasoning_content) {
-              choice.message.reasoning_content = reasoningContent;
+          }
+          if (typeof choice.message.reasoning_content === "string") {
+            const cleaned = stripLeakedTemplateTags(choice.message.reasoning_content);
+            if (cleaned !== choice.message.reasoning_content) {
+              choice.message.reasoning_content = cleaned || null;
+              msgModified = true;
             }
-            msgModified = true;
           }
-        }
-        if (typeof choice.message.reasoning_content === "string") {
-          const cleaned = stripLeakedTemplateTags(choice.message.reasoning_content);
-          if (cleaned !== choice.message.reasoning_content) {
-            choice.message.reasoning_content = cleaned || null;
-            msgModified = true;
+          if (typeof choice.message.thought === "string") {
+            const cleaned = stripLeakedTemplateTags(choice.message.thought);
+            if (cleaned !== choice.message.thought) {
+              choice.message.thought = cleaned || null;
+              msgModified = true;
+            }
           }
-        }
-        if (typeof choice.message.thought === "string") {
-          const cleaned = stripLeakedTemplateTags(choice.message.thought);
-          if (cleaned !== choice.message.thought) {
-            choice.message.thought = cleaned || null;
-            msgModified = true;
+          if (msgModified) {
+            finalBody = new TextEncoder().encode(JSON.stringify(json));
           }
-        }
-        if (msgModified) {
-          finalBody = new TextEncoder().encode(JSON.stringify(json));
         }
       }
 
-      const choiceForFinish = (json.choices as Array<{ finish_reason?: string | null }>)?.[0];
+      const choiceForFinish = isResponses
+        ? { finish_reason: "stop" }
+        : (json.choices as Array<{ finish_reason?: string | null }>)?.[0];
       if (choiceForFinish?.finish_reason) {
         logFinishReason(reqId, choiceForFinish.finish_reason);
       }
 
       if (json.usage && typeof json.usage === "object") {
         const u = json.usage as Record<string, unknown>;
-        const promptTokens = typeof u.prompt_tokens === "number" ? u.prompt_tokens : 0;
-        const completionTokens = typeof u.completion_tokens === "number" ? u.completion_tokens : 0;
+        const promptTokens = typeof u.prompt_tokens === "number"
+          ? u.prompt_tokens
+          : typeof u.input_tokens === "number"
+          ? u.input_tokens
+          : 0;
+        const completionTokens = typeof u.completion_tokens === "number"
+          ? u.completion_tokens
+          : typeof u.output_tokens === "number"
+          ? u.output_tokens
+          : 0;
         const totalTokens = typeof u.total_tokens === "number" ? u.total_tokens : promptTokens + completionTokens;
         let reasoningTokens: number | undefined;
         if (u.completion_tokens_details && typeof u.completion_tokens_details === "object") {
           const details = u.completion_tokens_details as Record<string, unknown>;
+          if (typeof details.reasoning_tokens === "number") {
+            reasoningTokens = details.reasoning_tokens;
+          }
+        } else if (u.output_tokens_details && typeof u.output_tokens_details === "object") {
+          const details = u.output_tokens_details as Record<string, unknown>;
           if (typeof details.reasoning_tokens === "number") {
             reasoningTokens = details.reasoning_tokens;
           }
@@ -488,7 +518,7 @@ async function executeDirectCall(
           url: endpoint.url,
           method: "POST",
           headers: nextHeaders,
-          body: JSON.stringify(activePayload),
+          body: outboundBody,
           clientSignal,
           provider: directive.provider,
           keyIndex: nextSelected.index,
@@ -528,7 +558,9 @@ async function executeDirectCall(
     },
   });
 
-  if (isLing) {
+  if (isResponses) {
+    resilientStream = resilientStream.pipeThrough(createResponsesStreamTransformer(activePayload.model));
+  } else if (isLing) {
     resilientStream = resilientStream.pipeThrough(createLingStreamTransformer());
   } else if (isXmlTranslationActive) {
     resilientStream = resilientStream.pipeThrough(createDotsStreamTransformer());

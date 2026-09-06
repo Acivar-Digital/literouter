@@ -42,15 +42,16 @@ lr-<provider>-<payload>-<completions>-<nuances>
 |---|---|
 | Provider | `or` (OpenRouter), `nv` (NVIDIA), `gg` (Google), `zn` (Zen), `oa` (OpenAI), `an` (Anthropic), `gq` (Groq), `cb` (Cerebras), `ds` (DeepSeek), `ms` (Mistral), `tg` (Together) |
 | Payload (wire) | `oa` (OpenAI), `cl` (Claude/Anthropic), `ao` (Anthropic->OpenAI cross-wire), `gg` (Google), `rs` (Responses) |
-| Completion (endpoint) | `ch` (Chat `/v1/chat/completions`), `ms` (Messages `/v1/messages`), `ob` (OpenAI Beta), `gc` (GenerateContent), `em` (Embeddings), `md` (Models discovery) |
+| Completion (endpoint) | `ch` (Chat `/v1/chat/completions`), `ms` (Messages `/v1/messages`), `ob` (OpenAI Beta), `gc` (GenerateContent), `em` (Embeddings), `md` (Models discovery), `rs` (Responses `/v1/responses`) |
 | Nuances | `no`, `dp`, `ts`, `sb`, `gm`, `g3`, `tc` (compound with `+`, e.g. `dp+ts`) |
 
 - `ts` (Thinking Support): Explicitly preserves reasoning chunks for OpenCode clients (overrides automatic reasoning stripping).
 - `sb` (Strip Budget / Reasoning): Explicitly forces reasoning stream stripping regardless of client.
 
-### Claude Code Routing Rules:
+### Claude Code & Model-Specific Routing Rules:
 - **Native Claude models on OpenRouter/Anthropic**: Use `lr-or-cl-ms-no` (payload: `cl`, endpoint: `ms`).
 - **OpenAI-compat / open-weights models on OpenRouter (e.g. `dots-studio/dots-3-note-preview:free`, DeepSeek, Qwen)**: Use `lr-or-ao-ch-no` (payload: `ao`, endpoint: `ch`). This triggers full bidirectional tool calling and SSE streaming translation into OpenAI Chat Completions without triggering OpenRouter's broken `/api/v1/messages` translator.
+- **Muse Spark / Responses API on Zen (e.g. `muse-spark-1.3-contributor-free`)**: Use `lr-zn-oa-rs-no` (payload: `oa`, endpoint: `rs`). Upstream Zen rejects Chat Completions with HTTP 500 for Muse Spark but succeeds on `/v1/responses`. This directive maps inbound OpenAI `messages` to Responses `input`, strips encrypted reasoning from content deltas while mapping reasoning tokens to `usage.completion_tokens_details.reasoning_tokens`, and streams standard `chat.completion.chunk` events.
 
 Fusion presets: `lr-fse-<preset>` (e.g. `lr-fse-fast`, `lr-fse-smart`, `lr-fse-code`, `lr-fse-cheap`).
 
@@ -111,6 +112,7 @@ Fusion presets: `lr-fse-<preset>` (e.g. `lr-fse-fast`, `lr-fse-smart`, `lr-fse-c
       - `Referer: https://opencode.ai` (or `LITEROUTER_HTTP_REFERER`)
       - `X-Title: OpenCode` (or `LITEROUTER_X_TITLE`)
 24. **NVIDIA NIM EOL Catalog & Reasoning Treatment (KIV - `literouter-v479`)**: NVIDIA NIM is an infrastructure host and does not use agentic harness headers, but aggressively sunsets models with strict `HTTP 410 Gone` deprecations (e.g. `meta/llama-3.1-8b-instruct` EOL on 2026-08-26; active flagship is `nvidia/nemotron-3-super-120b-a12b`). Flagship reasoning models emit exclusively `reasoning_content` deltas during initial stream chunks (`content` null), requiring thinking preservation (`ts` nuance, client `reasoning_content` extraction) and keepalive frames to prevent false client-side ghosting timeouts.
+25. **Zen Responses API Translation (`lr-zn-oa-rs-no`, `literouter-whk3`)**: Provides bidirectional translation between OpenAI wire format (`POST /v1/chat/completions`) and Zen's `/v1/responses` endpoint (`src/transformers/responses.ts`). Converts standard `messages` array to Responses `input`, sanitizes encrypted reasoning items, maps reasoning tokens to standard usage objects, converts Responses SSE events (`response.output_text.delta`, `response.completed`) into standard `chat.completion.chunk` events, and prevents false premature stream EOF stalls in `src/network/fetcher.ts`.
 
 ## Connection Diagnostics & Protocol Inspection
 

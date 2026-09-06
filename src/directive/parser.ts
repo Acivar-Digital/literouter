@@ -23,7 +23,8 @@ export type CompletionCode =
   | "im"
   | "em"
   | "au"
-  | "md";
+  | "md"
+  | "rs";
 
 export type NuanceCode = "no" | "dp" | "ts" | "gm" | "g3" | "sb" | "tc" | "lg";
 
@@ -71,6 +72,7 @@ const VALID_COMPLETIONS: ReadonlySet<string> = new Set([
   "em",
   "au",
   "md",
+  "rs",
 ]);
 
 const VALID_NUANCES: ReadonlySet<string> = new Set([
