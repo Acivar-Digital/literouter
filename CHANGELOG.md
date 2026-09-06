@@ -4,6 +4,22 @@ All notable changes to LiteRouter will be documented in this file.
 
 ## [Unreleased]
 
+## 2026-09-07 - /v1/responses telemetry + opencode2 verification (2026-09-06T17:09:57Z)
+
+### Fixed / `POST /v1/responses` now emits inbound + TTFT telemetry (`src/handlers/openai_original.ts`)
+- `src/handlers/openai_original.ts` now emits `logInbound` + `logTtft` for `POST /v1/responses` (previously silent vs `/v1/chat/completions`).
+- Uses `ParsedRequestBody` + `resolveDirectiveString` for directive attribution and `Date.now()` TTFT (`startTime` → `ttftMs`) with `logTtft(reqId, ttftMs, ...)` on stream/non-stream path.
+
+### Verified / opencode2 native Responses passthrough (`lr-zn-oo-rs-no`)
+- `aisdk:@ai-sdk/openai` defaults to `/v1/responses` (baseURL `https://localhost:7766/v1` + path `/responses`); directive `lr-zn-oo-rs-no` matched, upstream `https://opencode.ai/zen/v1/responses`.
+- TTFT 752ms (curl) and 1175ms (opencode2 run). strace proof: CLI -> 49374 daemon -> 7766 gateway.
+
+### Gates
+- `clean_ts` valid:true, `tsc --noEmit` exit 0, `bun test` 625 passed / 55 files, live curl SSE streaming passed, tmux inbound log confirmed.
+
+### Known limitation
+- `openai_original.ts` is single-attempt with no retry loop on 429 vs `openai_compat.ts` `executeSingleAttemptLoop` (future work).
+
 ### Added / OpenAI Original Wire Protocol (`oo`), Native `/v1/responses` Handler & 30s Timeout Standard (`.opencode2/skills/literouter/SKILL.md`, `CHANGELOG.md`, `src/handlers/openai_original.ts`)
 - **OpenAI Original (`oo`) Wire Protocol**: Added `oo` to the directive key format (`lr-<provider>-oo-<completion>-<nuances>`) representing native OpenAI Original protocol passthrough without schema translation.
 - **Native `POST /v1/responses` Handler (`src/handlers/openai_original.ts`)**:

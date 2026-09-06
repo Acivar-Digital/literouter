@@ -7,7 +7,14 @@ import {
   initializeKeyPools,
   overrideProviderUrl,
 } from "./openai_compat";
-import { extractErrorMessage, logError, logWarn } from "../ui/logger";
+import {
+  extractErrorMessage,
+  formatTimestamp,
+  logError,
+  logInbound,
+  logTtft,
+  logWarn,
+} from "../ui/logger";
 
 export type Directive =
   | ParsedDirective
@@ -271,19 +278,33 @@ export function extractProvider(
   return null;
 }
 
+interface ParsedRequestBody {
+  readonly bodyText: string;
+  readonly clientStream: boolean;
+  readonly body: {
+    readonly model?: string;
+    readonly [key: string]: unknown;
+  };
+}
+
 async function parseRequestBody(
   req: Request
-): Promise<{ bodyText: string; clientStream: boolean }> {
+): Promise<ParsedRequestBody> {
   try {
     const bodyText = await req.text();
     if (!bodyText) {
-      return { bodyText: "", clientStream: false };
+      return { bodyText: "", clientStream: false, body: {} };
     }
     const parsed = JSON.parse(bodyText) as Record<string, unknown>;
-    return { bodyText, clientStream: Boolean(parsed.stream) };
+    const model = typeof parsed.model === "string" ? parsed.model : undefined;
+    return {
+      bodyText,
+      clientStream: Boolean(parsed.stream),
+      body: { ...parsed, model },
+    };
   } catch (err: unknown) {
     logWarn("body", `Failed to inspect request body JSON: ${err}`);
-    return { bodyText: "", clientStream: false };
+    return { bodyText: "", clientStream: false, body: {} };
   }
 }
 
@@ -422,6 +443,18 @@ function bindAbortSignal(
   return () => clientSignal.removeEventListener("abort", onAbort);
 }
 
+function resolveDirectiveString(
+  directiveOrRawKey: Directive | string,
+  fallback: string
+): string {
+  if (typeof directiveOrRawKey === "string") {
+    return directiveOrRawKey;
+  }
+  return typeof directiveOrRawKey.raw === "string"
+    ? directiveOrRawKey.raw
+    : fallback;
+}
+
 export async function handleOpenAiOriginal(
   req: Request,
   directive: Directive,
@@ -448,10 +481,31 @@ export async function handleOpenAiOriginal(
     return createClientAbortedResponse();
   }
 
-  const { bodyText, clientStream } = await parseRequestBody(req);
+  const { bodyText, clientStream, body } = await parseRequestBody(req);
+  const directiveStr = resolveDirectiveString(directiveOrRawKey, route.provider);
+  const method = req.method;
+  const path = new URL(req.url, "http://localhost").pathname;
+  const clientAgent = req.headers.get("user-agent") ?? "unknown";
+  const protocol = req.headers.get("x-http-version") ?? "HTTP/1.1";
+  const targetProvider = route.provider;
+
+  logInbound({
+    reqId,
+    method,
+    path,
+    clientAgent,
+    protocol,
+    directiveStr,
+    targetProvider,
+    wireFormat: "oo",
+    endpoint: "/v1/responses",
+    model: body.model,
+  });
+
   const abortController = new AbortController();
   const cleanup = bindAbortSignal(req.signal, abortController);
 
+  const startTime = Date.now();
   const fetchResult = await dispatchUpstreamFetch(
     route,
     bodyText,
@@ -464,8 +518,12 @@ export async function handleOpenAiOriginal(
     return req.signal.aborted ? createClientAbortedResponse() : fetchResult.errorResponse;
   }
 
+  const ttftMs = Date.now() - startTime;
   const upstreamRes = fetchResult.response as Response;
-  if (shouldStreamResponse(upstreamRes, clientStream)) {
+  const isStream = shouldStreamResponse(upstreamRes, clientStream);
+  logTtft(reqId, ttftMs, isStream ? "Stream established" : "First chunk streamed downstream");
+
+  if (isStream) {
     return createStreamingResponse(upstreamRes, req.signal, abortController);
   }
 
