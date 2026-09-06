@@ -4,6 +4,10 @@ All notable changes to LiteRouter will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed / Streaming `/v1/responses` USAGE with Reasoning/Speed (literouter-6i72)
+- `src/handlers/openai_original.ts`: `readLoop`/`pumpStream` accumulate SSE text (decoder streaming, 1MB cap tail-kept 256KB, loop log-free); `emitStreamCompletion` parses last `response.completed` `response.usage` via `tryParseStreamedResponsesUsage` (reuses `tryParseResponsesUsage`: prompt|input, completion|output, reasoning via details) then `logUsage` with Reasoning/Speed before `SERVED`. Honest bytes-only fallback when usage absent. `EMOJI.stats` for STREAM-DONE, `EMOJI.usage` for USAGE.
+- Gates: `clean_ts` valid:true, `tsc --noEmit` exit 0, `bun test` 625 pass.
+
 ### Added / Per-line icons + Ref from registry lookup (literouter-p71n)
 - `src/ui/logger.ts`: `EMOJI.directive` 🎯 on Directive line, `EMOJI.model` 🤖 on Model line with `| Ref:`; `EMOJI.limit` ⚠️ on Parsed Retry-After + Upstream Error continuations.
 - Handlers thread `InboundLogDetails.referrer` from `resolveUpstreamEndpoint(...).headers` (`config/providers.json` headers via `resolveUpstreamEndpoint`/`buildAuthHeaders`, lookup-only, no hardcoded values) in `openai_compat.ts`, `openai_original.ts`, `gcp_compat.ts`, `anthropic_compat.ts`, `google_native.ts`.

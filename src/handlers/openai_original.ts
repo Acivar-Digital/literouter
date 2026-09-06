@@ -235,9 +235,66 @@ function emitNonStreamCompletion(telemetry: ResponsesTelemetry, bodyText: string
   logSeparator();
 }
 
-function emitStreamCompletion(telemetry: ResponsesTelemetry, bytes: number): void {
+function tryParseStreamedResponsesUsage(sseText: string): ParsedResponsesUsage | null {
+  let last: ParsedResponsesUsage | null = null;
+  const lines = sseText.split("\n");
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith("data:")) {
+      continue;
+    }
+    const payload = trimmed.slice(5).trim();
+    if (!payload || payload === "[DONE]") {
+      continue;
+    }
+    let evt: Record<string, unknown> | null = null;
+    try {
+      evt = JSON.parse(payload) as Record<string, unknown>;
+    } catch {
+      continue;
+    }
+    const response = evt.response;
+    if (response && typeof response === "object") {
+      const candidate = tryParseResponsesUsage(JSON.stringify(response));
+      if (candidate) {
+        last = candidate;
+      }
+      continue;
+    }
+    const direct = tryParseResponsesUsage(payload);
+    if (direct) {
+      last = direct;
+    }
+  }
+  if (last) {
+    return last;
+  }
+  const trimmedBody = sseText.trim();
+  if (!trimmedBody) {
+    return null;
+  }
+  return tryParseResponsesUsage(trimmedBody);
+}
+
+function emitStreamCompletion(telemetry: ResponsesTelemetry, bytes: number, accumulatedText?: string): void {
   const durationMs = Date.now() - telemetry.startTime;
   logInfo(EMOJI.stats, `[STREAM-DONE ${telemetry.reqId}] bytes=${bytes} duration=${durationMs}ms`);
+  if (accumulatedText) {
+    const usage = tryParseStreamedResponsesUsage(accumulatedText);
+    if (usage) {
+      logUsage({
+        reqId: telemetry.reqId,
+        provider: telemetry.provider,
+        keyIndex: telemetry.keyIndex,
+        totalKeys: telemetry.totalKeys,
+        promptTokens: usage.promptTokens,
+        reasoningTokens: usage.reasoningTokens,
+        completionTokens: usage.completionTokens,
+        totalTokens: usage.totalTokens,
+        durationMs,
+      });
+    }
+  }
   logServed(telemetry.reqId, durationMs, telemetry.status);
   logSeparator();
 }
@@ -261,17 +318,39 @@ function releaseReaderLock(reader: ReadableStreamDefaultReader<Uint8Array>): voi
 async function readLoop(
   reader: ReadableStreamDefaultReader<Uint8Array>,
   controller: ReadableStreamDefaultController<Uint8Array>,
-  bytesRef?: { value: number }
+  bytesRef?: { value: number },
+  textRef?: { value: string }
 ): Promise<void> {
+  const decoder = textRef ? new TextDecoder() : null;
   let reading = true;
   while (reading) {
     const { done, value } = await reader.read();
     if (done) {
+      if (decoder) {
+        try {
+          const tail = decoder.decode();
+          if (tail && textRef) {
+            textRef.value += tail;
+          }
+        } catch (decodeErr: unknown) {
+          void decodeErr;
+        }
+      }
       reading = false;
       safeCloseController(controller);
     } else if (value) {
       if (bytesRef) {
         bytesRef.value += value.byteLength;
+      }
+      if (textRef && decoder) {
+        try {
+          textRef.value += decoder.decode(value, { stream: true });
+          if (textRef.value.length > 1048576) {
+            textRef.value = textRef.value.slice(-262144);
+          }
+        } catch (chunkErr: unknown) {
+          void chunkErr;
+        }
       }
       controller.enqueue(value);
     }
@@ -321,13 +400,14 @@ async function pumpStream(
   clientSignal?: AbortSignal,
   abortController?: AbortController,
   telemetry?: ResponsesTelemetry,
-  bytesRef?: { value: number }
+  bytesRef?: { value: number },
+  textRef?: { value: string }
 ): Promise<void> {
   const cleanup = setupAbortHandler(reader, controller, clientSignal, abortController);
   try {
-    await readLoop(reader, controller, bytesRef);
+    await readLoop(reader, controller, bytesRef, textRef);
     if (telemetry && bytesRef) {
-      emitStreamCompletion(telemetry, bytesRef.value);
+      emitStreamCompletion(telemetry, bytesRef.value, textRef?.value);
     }
   } catch (err: unknown) {
     handleStreamError(err, controller, clientSignal);
@@ -353,9 +433,10 @@ export function createStreamingResponse(
 
   const reader = upstreamBody.getReader();
   const bytesRef = { value: 0 };
+  const textRef = { value: "" };
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
-      void pumpStream(reader, controller, clientSignal, abortController, telemetry, bytesRef);
+      void pumpStream(reader, controller, clientSignal, abortController, telemetry, bytesRef, textRef);
     },
     cancel(reason) {
       abortController?.abort();
