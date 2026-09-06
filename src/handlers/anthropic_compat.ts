@@ -1419,6 +1419,10 @@ export async function handleAnthropicCompat(
     ? resolveUpstreamEndpoint(directive.provider, directive.completion, anthropicBody.model)
     : undefined;
   const poolSize = directive.type === "direct" ? globalKeyPool.getPoolSize(directive.provider) : 1;
+  const refHeaders = endpoint?.headers;
+  const refUa = refHeaders?.["User-Agent"];
+  const refUrl = refHeaders?.["HTTP-Referer"] ?? refHeaders?.["Referer"];
+  const referrer = refUa && refUrl ? `${refUa} @ ${refUrl}` : (refUa ?? refUrl ?? undefined);
 
   logInbound({
     reqId,
@@ -1433,6 +1437,7 @@ export async function handleAnthropicCompat(
     model: anthropicBody.model,
     totalKeys: poolSize,
     nuances: directive.type === "direct" ? directive.nuances : undefined,
+    referrer,
   });
 
   let effectiveAnthropicBody = anthropicBody;
@@ -1522,6 +1527,13 @@ export async function handleAnthropicCountTokens(
   }
 
   const clientAgent = req.headers.get("user-agent") || "unknown";
+  const countEndpoint = directive.type === "direct"
+    ? resolveUpstreamEndpoint(directive.provider, directive.completion, anthropicBody.model)
+    : undefined;
+  const countRefHeaders = countEndpoint?.headers;
+  const countRefUa = countRefHeaders?.["User-Agent"];
+  const countRefUrl = countRefHeaders?.["HTTP-Referer"] ?? countRefHeaders?.["Referer"];
+  const referrer = countRefUa && countRefUrl ? `${countRefUa} @ ${countRefUrl}` : (countRefUa ?? countRefUrl ?? undefined);
   logInbound({
     reqId,
     method: req.method,
@@ -1534,6 +1546,7 @@ export async function handleAnthropicCountTokens(
     model: anthropicBody.model,
     totalKeys: directive.type === "direct" ? globalKeyPool.getPoolSize(directive.provider) : 1,
     nuances: directive.type === "direct" ? directive.nuances : undefined,
+    referrer,
   });
 
   const inputTokens = estimateAnthropicTokens(anthropicBody);

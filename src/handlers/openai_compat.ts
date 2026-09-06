@@ -904,6 +904,10 @@ export async function handleOpenAICompat(
       ? resolveUpstreamEndpoint(directive.provider, directive.completion, body.model)
       : undefined;
     const poolSize = directive.type === "direct" ? globalKeyPool.getPoolSize(directive.provider) : 1;
+    const refHeaders = endpoint?.headers;
+    const refUa = refHeaders?.["User-Agent"];
+    const refUrl = refHeaders?.["HTTP-Referer"] ?? refHeaders?.["Referer"];
+    const referrer = refUa && refUrl ? `${refUa} @ ${refUrl}` : (refUa ?? refUrl ?? undefined);
 
     logInbound({
       reqId,
@@ -918,6 +922,7 @@ export async function handleOpenAICompat(
       model: body.model,
       totalKeys: poolSize,
       nuances: directive.type === "direct" ? directive.nuances : undefined,
+      referrer,
     });
   }
 

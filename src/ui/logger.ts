@@ -63,6 +63,8 @@ export const EMOJI = Object.freeze({
   prune: "✂️",
   zap: "⚡",
   hourglass: "⏳",
+  directive: "🎯",
+  model: "🤖",
 });
 
 export function getProviderDisplayName(code: string): string {
@@ -89,6 +91,7 @@ export interface InboundLogDetails {
   readonly keyIndex?: number;
   readonly totalKeys?: number;
   readonly nuances?: readonly string[];
+  readonly referrer?: string;
 }
 
 export function logInbound(
@@ -110,7 +113,7 @@ export function logInbound(
       const target = d.targetProvider ? getProviderDisplayName(d.targetProvider) : "Direct";
       const wire = d.wireFormat ? getWireDisplayName(d.wireFormat) : "OpenAI";
       const ep = d.endpoint ? ` | EP: ${d.endpoint}` : "";
-      console.log(`    Directive : ${d.directiveStr} -> Target: ${target} | Wire: ${wire}${ep}`);
+      console.log(`    ${EMOJI.directive} Directive : ${d.directiveStr} -> Target: ${target} | Wire: ${wire}${ep}`);
     }
 
     if (d.model) {
@@ -126,7 +129,8 @@ export function logInbound(
       const nuanceInfo = d.nuances && d.nuances.length > 0 && d.nuances[0] !== "no"
         ? ` | Nuances: [${d.nuances.join(", ")}]`
         : "";
-      console.log(`    Model     : ${d.model}${keyInfo}${nuanceInfo}`);
+      const refInfo = d.referrer ? ` | Ref: ${d.referrer}` : "";
+      console.log(`    ${EMOJI.model} Model     : ${d.model}${keyInfo}${nuanceInfo}${refInfo}`);
     }
     return;
   }
@@ -261,10 +265,10 @@ export function logLimit(
   const statusText = getHttpStatusText(status);
   console.warn(`${EMOJI.limit} ${ts} [LIMIT ${reqId}] ${provName} [Key #${keyIdx + 1}${keyTotal}] returned ${statusText}`);
   if (retryAfterSec) {
-    console.warn(`    Parsed Retry-After: ${retryAfterSec}s -> Quarantined Key #${keyIdx + 1} for ${retryAfterSec}s`);
+    console.warn(`    ${EMOJI.limit} Parsed Retry-After: ${retryAfterSec}s -> Quarantined Key #${keyIdx + 1} for ${retryAfterSec}s`);
   }
   if (rawMessage) {
-    console.warn(`    Upstream Error: "${rawMessage.slice(0, 300)}"`);
+    console.warn(`    ${EMOJI.limit} Upstream Error: "${rawMessage.slice(0, 300)}"`);
   }
 }
 

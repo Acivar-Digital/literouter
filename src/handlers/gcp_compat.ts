@@ -692,6 +692,10 @@ export async function handleGcpCompat(
     const clientAgent = req.headers.get("user-agent") || "unknown";
     const endpoint = resolveUpstreamEndpoint("gc", directive.completion || "ch", body.model);
     const poolSize = globalKeyPool.getPoolSize("gc");
+    const refHeaders = endpoint?.headers;
+    const refUa = refHeaders?.["User-Agent"];
+    const refUrl = refHeaders?.["HTTP-Referer"] ?? refHeaders?.["Referer"];
+    const referrer = refUa && refUrl ? `${refUa} @ ${refUrl}` : (refUa ?? refUrl ?? undefined);
 
     logInbound({
       reqId,
@@ -706,6 +710,7 @@ export async function handleGcpCompat(
       model: body.model,
       totalKeys: poolSize,
       nuances: directive.nuances,
+      referrer,
     });
   }
 

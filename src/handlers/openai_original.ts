@@ -6,6 +6,7 @@ import {
   globalKeyPool,
   initializeKeyPools,
   overrideProviderUrl,
+  resolveUpstreamEndpoint,
 } from "./openai_compat";
 import {
   EMOJI,
@@ -636,6 +637,10 @@ export async function handleOpenAiOriginal(
   const protocol = req.headers.get("x-http-version") ?? "HTTP/1.1";
   const targetProvider = route.provider;
   const totalKeys = globalKeyPool.getPoolSize(route.provider);
+  const refHeaders = resolveUpstreamEndpoint(route.provider, "ch", body.model ?? "").headers;
+  const refUa = refHeaders?.["User-Agent"];
+  const refUrl = refHeaders?.["HTTP-Referer"] ?? refHeaders?.["Referer"];
+  const referrer = refUa && refUrl ? `${refUa} @ ${refUrl}` : (refUa ?? refUrl ?? undefined);
 
   logInbound({
     reqId,
@@ -651,6 +656,7 @@ export async function handleOpenAiOriginal(
     keyIndex: route.keyIndex,
     totalKeys,
     nuances: extractDirectiveNuances(directiveOrRawKey),
+    referrer,
   });
 
   logPrepLine(reqId, body.model, bodyText.length, extractReasoningEffort(body), clientStream);

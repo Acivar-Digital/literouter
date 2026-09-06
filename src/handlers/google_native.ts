@@ -82,6 +82,10 @@ export async function handleGoogleNative(
     ? resolveUpstreamEndpoint(directive.provider, directive.completion, model)
     : undefined;
   const poolSize = directive.type === "direct" ? globalKeyPool.getPoolSize(directive.provider) : 1;
+  const refHeaders = endpoint?.headers;
+  const refUa = refHeaders?.["User-Agent"];
+  const refUrl = refHeaders?.["HTTP-Referer"] ?? refHeaders?.["Referer"];
+  const referrer = refUa && refUrl ? `${refUa} @ ${refUrl}` : (refUa ?? refUrl ?? undefined);
 
   logInbound({
     reqId,
@@ -96,6 +100,7 @@ export async function handleGoogleNative(
     model,
     totalKeys: poolSize,
     nuances: directive.type === "direct" ? directive.nuances : undefined,
+    referrer,
   });
 
   const googleBody = await parseGoogleRequestBody(req);
@@ -219,6 +224,11 @@ export async function handleGoogleInteractionsPassthrough(
   // make the client try (and fail) to decompress the plaintext body.
   upstreamHeaders.set("Accept-Encoding", "identity");
 
+  const ggRefHeaders = resolveUpstreamEndpoint("gg", "gc", "antigravity").headers;
+  const ggRefUa = ggRefHeaders?.["User-Agent"];
+  const ggRefUrl = ggRefHeaders?.["HTTP-Referer"] ?? ggRefHeaders?.["Referer"];
+  const ggReferrer = ggRefUa && ggRefUrl ? `${ggRefUa} @ ${ggRefUrl}` : (ggRefUa ?? ggRefUrl ?? undefined);
+
   logInbound({
     reqId,
     method: req.method,
@@ -231,6 +241,7 @@ export async function handleGoogleInteractionsPassthrough(
     endpoint: url.pathname,
     model: "antigravity",
     totalKeys: selected.totalKeys,
+    referrer: ggReferrer,
   });
 
   try {

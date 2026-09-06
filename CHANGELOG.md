@@ -4,6 +4,11 @@ All notable changes to LiteRouter will be documented in this file.
 
 ## [Unreleased]
 
+### Added / Per-line icons + Ref from registry lookup (literouter-p71n)
+- `src/ui/logger.ts`: `EMOJI.directive` 🎯 + `EMOJI.model` 🤖 on Directive/Model lines; `referrer` field on `InboundLogDetails` rendered as `| Ref:`; `logLimit` continuations carry ⚠️ prefix.
+- Handlers thread `Ref:` from `resolveUpstreamEndpoint(...).headers` registry lookup (User-Agent @ Referer) — lookup-only, no hardcoded values — in `openai_compat.ts`, `openai_original.ts`, `gcp_compat.ts`, `anthropic_compat.ts`, `google_native.ts`.
+- Gates: `clean_ts` valid:true x6, `tsc --noEmit` exit 0, `bun test` 625 pass.
+
 ### Fixed / Restore dropped telemetry glyphs + standardise (literouter-aqv8)
 - `src/ui/logger.ts`: restored `zap:"⚡"` + `hourglass:"⏳"` to frozen EMOJI map.
 - `src/handlers/gcp_compat.ts`: 4x `[GCP]` amber→zap, 2x `[PACER]` pacer→hourglass; 💥/✂️ untouched.
