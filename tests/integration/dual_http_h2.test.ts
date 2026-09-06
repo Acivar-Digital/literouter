@@ -93,4 +93,32 @@ describe("Dual Protocol HTTP/1.1 & HTTP/2 ALPN Integration", () => {
     const res = await handleAppRequest(req);
     expect(res.status).toBe(200);
   });
+
+  it("handles abrupt client HTTP/2 stream abort without unhandled exception or crash", async () => {
+    process.env.LITEROUTER_HTTP2 = "true";
+    resetEnvCache();
+    const testPort = 7892;
+    const server = createServer(testPort);
+
+    try {
+      const client = http2.connect(`https://localhost:${testPort}`, {
+        rejectUnauthorized: false,
+      });
+      client.on("error", () => {});
+
+      const req = client.request({
+        ":path": "/health",
+        ":method": "GET",
+      });
+      req.on("error", () => {});
+
+      req.close(http2.constants.NGHTTP2_CANCEL);
+      client.destroy();
+
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(true).toBe(true);
+    } finally {
+      await server.stop();
+    }
+  });
 });

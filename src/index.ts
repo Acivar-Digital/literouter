@@ -574,7 +574,13 @@ export function createServer(portOverride?: number): Server<unknown> | LiteRoute
         const abortController = new AbortController();
         const onAbort = () => {
           if (!nodeRes.writableEnded) {
-            abortController.abort();
+            try {
+              if (!abortController.signal.aborted) {
+                abortController.abort();
+              }
+            } catch (abortErr: unknown) {
+              console.debug("[H2 Server] Client abort exception:", abortErr);
+            }
           }
         };
         nodeReq.once("aborted", onAbort);
@@ -662,6 +668,35 @@ export function createServer(portOverride?: number): Server<unknown> | LiteRoute
     },
   });
 }
+
+const isClientAbortReason = (reason: unknown): boolean => {
+  const isAbort = reason instanceof Error && reason.name === "AbortError";
+  if (isAbort) {
+    return true;
+  }
+  const msg = reason instanceof Error ? reason.message : String(reason ?? "");
+  return (
+    msg.includes("aborted") ||
+    msg.includes("ECONNRESET") ||
+    msg.includes("EPIPE") ||
+    msg.includes("ERR_HTTP2_STREAM_CANCEL")
+  );
+};
+
+process.on("uncaughtException", (err) => {
+  if (isClientAbortReason(err)) {
+    return;
+  }
+  console.error("FATAL: Uncaught exception in gateway process:", err);
+  process.exit(1);
+});
+
+process.on("unhandledRejection", (reason) => {
+  if (isClientAbortReason(reason)) {
+    return;
+  }
+  console.error("Unhandled promise rejection in gateway process:", reason);
+});
 
 if (import.meta.main) {
   createServer();
