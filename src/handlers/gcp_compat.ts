@@ -16,6 +16,7 @@ import { getEnv } from "../config/env";
 import { getPacerForProvider, PacerQueueOverflowError } from "../network/pacer";
 import { getCircuitBreakerForProvider } from "../network/circuit_breaker";
 import {
+  EMOJI,
   extractErrorMessage,
   logError,
   logExhausted,
@@ -140,7 +141,7 @@ async function executeGcpDirectCall(
     : null;
 
   if (breaker && !breaker.isAvailable()) {
-    logWarn("💥", `[BREAKER ${reqId}] Provider 'gc' circuit breaker is OPEN. Fast-failing GCP request.`);
+    logWarn(EMOJI.error, `[BREAKER ${reqId}] Provider 'gc' circuit breaker is OPEN. Fast-failing GCP request.`);
     throw new UpstreamRetryableError(
       "Provider 'gc' circuit breaker is OPEN",
       503,
@@ -197,7 +198,7 @@ async function executeGcpDirectCall(
         classification.quarantineTtlSec
       );
     } else if (!env.GCP_ENABLE_QUARANTINE && classification.quarantineTtlSec > 0) {
-      logWarn("⚡", `[GCP ${reqId}] Dumb-forwarder mode (GCP_ENABLE_QUARANTINE=false): Key ${selected.index} quarantine bypassed.`);
+      logWarn(EMOJI.amber, `[GCP ${reqId}] Dumb-forwarder mode (GCP_ENABLE_QUARANTINE=false): Key ${selected.index} quarantine bypassed.`);
     }
 
     const rawErrorMsg = extractErrorMessage(bodyText);
@@ -211,7 +212,7 @@ async function executeGcpDirectCall(
       const targetLimit = detectedLimit ? Math.floor(detectedLimit * 0.75) : DEFAULT_SAFE_CONTEXT_TOKENS;
       const pruned = pruneOpenAIPayload(payload, targetLimit);
       if (pruned.messages.length < payload.messages.length || estimateOpenAITokens(pruned) < estimateOpenAITokens(payload)) {
-        logWarn("✂️", `[PRUNE ${reqId}] Context length exceeded upstream (${detectedLimit ?? "unknown"} tokens). Auto-pruned message turns and retrying...`);
+        logWarn(EMOJI.prune, `[PRUNE ${reqId}] Context length exceeded upstream (${detectedLimit ?? "unknown"} tokens). Auto-pruned message turns and retrying...`);
         return executeGcpDirectCall(directive, pruned, clientSignal, selected, reqId, attempt, maxAttempts, _clientOptions);
       }
     }
@@ -230,7 +231,7 @@ async function executeGcpDirectCall(
     }
 
     if (!env.GCP_ENABLE_RETRIES && classification.action === "retry_rotate") {
-      logWarn("⚡", `[GCP ${reqId}] Single-flight mode (GCP_ENABLE_RETRIES=false): Passing HTTP ${response.status} directly downstream.`);
+      logWarn(EMOJI.amber, `[GCP ${reqId}] Single-flight mode (GCP_ENABLE_RETRIES=false): Passing HTTP ${response.status} directly downstream.`);
     }
 
     logServed(reqId, duration, response.status, attempt, maxAttempts);
@@ -319,7 +320,7 @@ async function executeGcpDirectCall(
       logLimit(reqId, "gc", currentKeyIndex, 500, ttlSec, selected.totalKeys, reason);
 
       if (!env.GCP_ENABLE_RETRIES) {
-        logWarn("⚡", `[GCP ${reqId}] Mid-stream drop occurred. Retries disabled via GCP_ENABLE_RETRIES=false. Closing stream.`);
+        logWarn(EMOJI.amber, `[GCP ${reqId}] Mid-stream drop occurred. Retries disabled via GCP_ENABLE_RETRIES=false. Closing stream.`);
         return null;
       }
 
@@ -411,7 +412,7 @@ async function tryGcpAttempt(
       return { success: false, error: err, retryable: false };
     }
     if (err instanceof PacerQueueOverflowError) {
-      logWarn("⏳", `[PACER ${reqId}] GCP Pacer queue overflow: ${err.message} (Retry-After: ${err.retryAfterSec}s)`);
+      logWarn(EMOJI.pacer, `[PACER ${reqId}] GCP Pacer queue overflow: ${err.message} (Retry-After: ${err.retryAfterSec}s)`);
       logServed(reqId, Date.now() - startTime, 429, attempt, maxAttempts);
       logSeparator();
       return {
@@ -443,7 +444,7 @@ async function tryGcpAttempt(
         globalKeyPool.reportFailure("gc", selected.index, 0, undefined, err.message, Date.now(), 2);
       }
       if (!env.GCP_ENABLE_RETRIES) {
-        logWarn("⚡", `[GCP ${reqId}] Single-flight mode (GCP_ENABLE_RETRIES=false): Upstream transport error: ${err.message}`);
+        logWarn(EMOJI.amber, `[GCP ${reqId}] Single-flight mode (GCP_ENABLE_RETRIES=false): Upstream transport error: ${err.message}`);
         logServed(reqId, Date.now() - startTime, 502, attempt, maxAttempts);
         logSeparator();
         return {
@@ -521,7 +522,7 @@ async function executeGcpAttemptLoop(
         );
       }
       if (err instanceof PacerQueueOverflowError) {
-        logWarn("⏳", `[PACER ${reqId}] GCP Pacer queue overflow: ${err.message} (Retry-After: ${err.retryAfterSec}s)`);
+        logWarn(EMOJI.pacer, `[PACER ${reqId}] GCP Pacer queue overflow: ${err.message} (Retry-After: ${err.retryAfterSec}s)`);
         logServed(reqId, Date.now() - startTime, 429, attempt, maxAttempts);
         logSeparator();
         return Response.json(
@@ -712,7 +713,7 @@ export async function handleGcpCompat(
   const initialTokens = estimateOpenAITokens(body);
   if (initialTokens > DEFAULT_MAX_CONTEXT_TOKENS) {
     effectiveBody = pruneOpenAIPayload(body, DEFAULT_SAFE_CONTEXT_TOKENS);
-    logWarn("✂️", `[PRUNE ${reqId}] Proactively pruned OpenAI messages: ${initialTokens} -> ${estimateOpenAITokens(effectiveBody)} tokens.`);
+    logWarn(EMOJI.prune, `[PRUNE ${reqId}] Proactively pruned OpenAI messages: ${initialTokens} -> ${estimateOpenAITokens(effectiveBody)} tokens.`);
   }
 
   const clientOptions: RequestClientOptions = {

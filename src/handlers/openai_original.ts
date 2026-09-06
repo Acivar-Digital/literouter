@@ -8,6 +8,7 @@ import {
   overrideProviderUrl,
 } from "./openai_compat";
 import {
+  EMOJI,
   extractErrorMessage,
   formatTimestamp,
   logError,
@@ -146,14 +147,14 @@ function logPrepLine(reqId: string, model: string | undefined, inputBytes: numbe
   const effortStr = effort ? ` effort=${effort}` : "";
   const msg = `[PREP ${reqId}] model=${model ?? "unknown"} input=${inputBytes}B${effortStr} stream=${stream}`;
   if (model) {
-    logInfo("📦", msg);
+    logInfo(EMOJI.prep, msg);
   } else {
-    logWarn("📦", msg);
+    logWarn(EMOJI.prep, msg);
   }
 }
 
 function logUpstreamLine(reqId: string, provider: string, upstreamUrl: string, isStream: boolean): void {
-  logInfo("🔌", `[UPSTREAM ${reqId}] ${provider} -> ${upstreamUrl} stream=${isStream}`);
+  logInfo(EMOJI.upstream, `[UPSTREAM ${reqId}] ${provider} -> ${upstreamUrl} stream=${isStream}`);
 }
 
 function getRetryAfterSec(res: Response): number | undefined {
@@ -172,7 +173,7 @@ async function logUpstreamError(reqId: string, route: ResolvedRoute, totalKeys: 
     const ttl = getRetryAfterSec(res) ?? (res.status === 429 ? 60 : undefined);
     logLimit(reqId, route.provider, route.keyIndex, res.status, ttl, totalKeys, rawMsg);
   } catch (err: unknown) {
-    logWarn("body", `Failed to inspect upstream error body: ${err}`);
+    logWarn(EMOJI.limit, `[WARN ${reqId}] Failed to inspect upstream error body: ${err}`);
   }
 }
 
@@ -227,7 +228,7 @@ function emitNonStreamCompletion(telemetry: ResponsesTelemetry, bodyText: string
       durationMs,
     });
   } else {
-    logInfo("📊", `[COMPLETE ${telemetry.reqId}] bytes=${byteLength} duration=${durationMs}ms (usage unavailable)`);
+    logInfo(EMOJI.stats, `[COMPLETE ${telemetry.reqId}] bytes=${byteLength} duration=${durationMs}ms (usage unavailable)`);
   }
   logServed(telemetry.reqId, durationMs, telemetry.status);
   logSeparator();
@@ -235,7 +236,7 @@ function emitNonStreamCompletion(telemetry: ResponsesTelemetry, bodyText: string
 
 function emitStreamCompletion(telemetry: ResponsesTelemetry, bytes: number): void {
   const durationMs = Date.now() - telemetry.startTime;
-  logInfo("📊", `[STREAM-DONE ${telemetry.reqId}] bytes=${bytes} duration=${durationMs}ms`);
+  logInfo(EMOJI.stats, `[STREAM-DONE ${telemetry.reqId}] bytes=${bytes} duration=${durationMs}ms`);
   logServed(telemetry.reqId, durationMs, telemetry.status);
   logSeparator();
 }
@@ -244,7 +245,7 @@ function safeCloseController(controller: ReadableStreamDefaultController<Uint8Ar
   try {
     controller.close();
   } catch (err: unknown) {
-    logWarn("stream", `Controller close warning: ${err}`);
+    logWarn(EMOJI.limit, `Controller close warning: ${err}`);
   }
 }
 
@@ -252,7 +253,7 @@ function releaseReaderLock(reader: ReadableStreamDefaultReader<Uint8Array>): voi
   try {
     reader.releaseLock();
   } catch (err: unknown) {
-    logWarn("stream", `Reader release lock warning: ${err}`);
+    logWarn(EMOJI.limit, `Reader release lock warning: ${err}`);
   }
 }
 
@@ -305,11 +306,11 @@ function handleStreamError(
   if (clientSignal?.aborted) {
     return;
   }
-  logWarn("stream", `Stream pump error: ${err}`);
+  logWarn(EMOJI.limit, `Stream pump error: ${err}`);
   try {
     controller.error(err);
   } catch (controllerErr: unknown) {
-    logWarn("stream", `Controller error warning: ${controllerErr}`);
+    logWarn(EMOJI.limit, `Controller error warning: ${controllerErr}`);
   }
 }
 
@@ -449,7 +450,7 @@ async function parseRequestBody(
       body: { ...parsed, model },
     };
   } catch (err: unknown) {
-    logWarn("body", `Failed to inspect request body JSON: ${err}`);
+    logWarn(EMOJI.limit, `Failed to inspect request body JSON: ${err}`);
     return { bodyText: "", clientStream: false, body: {} };
   }
 }

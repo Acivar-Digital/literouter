@@ -30,6 +30,7 @@ import { getEnv } from "../config/env";
 import { getPacerForProvider, PacerQueueOverflowError } from "../network/pacer";
 import { getCircuitBreakerForProvider } from "../network/circuit_breaker";
 import {
+  EMOJI,
   extractErrorMessage,
   logError,
   logExhausted,
@@ -327,7 +328,7 @@ async function executeDirectCall(
       const targetLimit = detectedLimit ? Math.floor(detectedLimit * 0.75) : DEFAULT_SAFE_CONTEXT_TOKENS;
       const pruned = pruneOpenAIPayload(payload, targetLimit);
       if (pruned.messages.length < payload.messages.length || estimateOpenAITokens(pruned) < estimateOpenAITokens(payload)) {
-        logWarn("✂️", `[PRUNE ${reqId}] Context length exceeded upstream (${detectedLimit ?? "unknown"} tokens). Auto-pruned message turns and retrying...`);
+        logWarn(EMOJI.prune, `[PRUNE ${reqId}] Context length exceeded upstream (${detectedLimit ?? "unknown"} tokens). Auto-pruned message turns and retrying...`);
         return executeDirectCall(directive, pruned, clientSignal, selected, reqId, attempt, maxAttempts, clientOptions);
       }
     }
@@ -924,7 +925,7 @@ export async function handleOpenAICompat(
   const initialTokens = estimateOpenAITokens(body);
   if (initialTokens > DEFAULT_MAX_CONTEXT_TOKENS) {
     effectiveBody = pruneOpenAIPayload(body, DEFAULT_SAFE_CONTEXT_TOKENS);
-    logWarn("✂️", `[PRUNE ${reqId}] Proactively pruned OpenAI messages: ${initialTokens} -> ${estimateOpenAITokens(effectiveBody)} tokens.`);
+    logWarn(EMOJI.prune, `[PRUNE ${reqId}] Proactively pruned OpenAI messages: ${initialTokens} -> ${estimateOpenAITokens(effectiveBody)} tokens.`);
   }
 
   const clientOptions: RequestClientOptions = {

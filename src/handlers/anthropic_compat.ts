@@ -12,6 +12,7 @@ import {
 } from "./openai_compat";
 import { classifyTransportError, classifyUpstreamError } from "../network/classifier";
 import {
+  EMOJI,
   extractErrorMessage,
   logError,
   logExhausted,
@@ -1044,7 +1045,7 @@ async function executeAnthropicDirectCall(
       const targetLimit = detectedLimit ? Math.floor(detectedLimit * 0.75) : DEFAULT_SAFE_CONTEXT_TOKENS;
       const pruned = pruneAnthropicPayload(payload, targetLimit);
       if (pruned.messages.length < payload.messages.length || estimateAnthropicTokens(pruned) < estimateAnthropicTokens(payload)) {
-        logWarn("✂️", `[PRUNE ${reqId}] Context length exceeded upstream (${detectedLimit ?? "unknown"} tokens). Auto-pruned message turns and retrying...`);
+        logWarn(EMOJI.prune, `[PRUNE ${reqId}] Context length exceeded upstream (${detectedLimit ?? "unknown"} tokens). Auto-pruned message turns and retrying...`);
         return executeAnthropicDirectCall(directive, pruned, clientSignal, selected, reqId, attempt, maxAttempts);
       }
     }
@@ -1152,7 +1153,7 @@ async function executeAnthropicDirectCall(
         const targetLimit = detectedLimit ? Math.floor(detectedLimit * 0.75) : DEFAULT_SAFE_CONTEXT_TOKENS;
         const pruned = pruneAnthropicPayload(payload, targetLimit);
         if (pruned.messages.length < payload.messages.length || estimateAnthropicTokens(pruned) < estimateAnthropicTokens(payload)) {
-          logWarn("✂️", `[PRUNE ${reqId}] Context length exceeded upstream (${detectedLimit ?? "unknown"} tokens). Auto-pruned message turns and retrying...`);
+          logWarn(EMOJI.prune, `[PRUNE ${reqId}] Context length exceeded upstream (${detectedLimit ?? "unknown"} tokens). Auto-pruned message turns and retrying...`);
           return executeAnthropicDirectCall(directive, pruned, clientSignal, selected, reqId, attempt, maxAttempts);
         }
       }
@@ -1438,7 +1439,7 @@ export async function handleAnthropicCompat(
   const initialTokens = estimateAnthropicTokens(anthropicBody);
   if (initialTokens > DEFAULT_MAX_CONTEXT_TOKENS) {
     effectiveAnthropicBody = pruneAnthropicPayload(anthropicBody, DEFAULT_SAFE_CONTEXT_TOKENS);
-    logWarn("✂️", `[PRUNE ${reqId}] Proactively pruned Anthropic messages: ${initialTokens} -> ${estimateAnthropicTokens(effectiveAnthropicBody)} tokens.`);
+    logWarn(EMOJI.prune, `[PRUNE ${reqId}] Proactively pruned Anthropic messages: ${initialTokens} -> ${estimateAnthropicTokens(effectiveAnthropicBody)} tokens.`);
   }
 
   if (directive.type === "direct" && directive.payload === "cl" && directive.completion === "ms") {

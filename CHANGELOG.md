@@ -11,6 +11,17 @@ All notable changes to LiteRouter will be documented in this file.
 - `USAGE` (non-stream) / `STREAM-DONE` + `SERVED` lines with separator close the request lifecycle.
 - Upstream 429/5xx errors route through `logLimit` so rich logs survive even on rate-limit probes.
 
+### Refactor / Central EMOJI map + gateway-wide swap (S1-S5, zero output change)
+- S1: Added frozen central `EMOJI` map in `src/ui/logger.ts` (prep, upstream, prune, pacer, amber, error, limit).
+- S2: Swapped literals in `src/handlers/openai_compat.ts` to `EMOJI.prune` (2 prune sites).
+- S3: Swapped literals in `src/handlers/openai_original.ts` to `EMOJI.prep/upstream/limit` (4 sites).
+- S4: Swapped literals in `src/handlers/gcp_compat.ts` to `EMOJI.error/amber/pacer/prune` (9 sites).
+- S5: Swapped literals in `src/handlers/anthropic_compat.ts` to `EMOJI.prune` (3 sites).
+- Zero output change: identical emoji glyphs emitted, byte-for-byte log parity preserved.
+- Gates: `clean_ts` valid:true x5, `tsc --noEmit` exit 0, `bun test` 625 pass / 0 fail.
+- Closes literouter-943t, literouter-pun9, literouter-4jiw, literouter-nmcu, literouter-3wsb.
+- Parent audit: literouter-5gdd; consolidation: literouter-uk3o.
+
 ## 2026-09-07 - /v1/responses telemetry + opencode2 verification (2026-09-06T17:09:57Z)
 
 ### Fixed / `POST /v1/responses` now emits inbound + TTFT telemetry (`src/handlers/openai_original.ts`)

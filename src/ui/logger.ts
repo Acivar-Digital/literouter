@@ -39,6 +39,30 @@ export const WIRE_NAMES: Readonly<Record<string, string>> = Object.freeze({
   rs: "Responses",
 });
 
+export const EMOJI = Object.freeze({
+  inbound: "🔵",
+  ttft: "🟢",
+  usage: "🟢",
+  servedOk: "🟢",
+  servedErr: "⚠️",
+  rotate: "🔄",
+  limit: "⚠️",
+  retry: "🟠",
+  exhausted: "🔴",
+  amber: "🟡",
+  pacer: "🐢",
+  boot: "🚀",
+  error: "💥",
+  fusion: "🔗",
+  finish: "🏁",
+  finishTrunc: "⚠️",
+  trace: "📝",
+  prep: "📦",
+  upstream: "🔌",
+  stats: "📊",
+  prune: "✂️",
+});
+
 export function getProviderDisplayName(code: string): string {
   const normalized = code.toLowerCase();
   return PROVIDER_NAMES[normalized] || code.toUpperCase();
@@ -78,7 +102,7 @@ export function logInbound(
     const d = reqIdOrDetails;
     const client = d.clientAgent || "Unknown";
     const protoStr = d.protocol ? ` [${d.protocol}]` : "";
-    console.log(`🔵 ${ts} [${d.reqId}] Inbound ${d.method} ${d.path}${protoStr} from ${client}`);
+    console.log(`${EMOJI.inbound} ${ts} [${d.reqId}] Inbound ${d.method} ${d.path}${protoStr} from ${client}`);
     
     if (d.directiveStr) {
       const target = d.targetProvider ? getProviderDisplayName(d.targetProvider) : "Direct";
@@ -107,7 +131,7 @@ export function logInbound(
 
   const reqId = reqIdOrDetails;
   const dir = directiveStr ? ` | Directive: ${directiveStr}` : "";
-  console.log(`🔵 ${ts} [${reqId}] Inbound ${method || "POST"} ${path || "/"} (${clientAgent || "Client"})${dir}`);
+  console.log(`${EMOJI.inbound} ${ts} [${reqId}] Inbound ${method || "POST"} ${path || "/"} (${clientAgent || "Client"})${dir}`);
 }
 
 export function logTtft(
@@ -118,7 +142,7 @@ export function logTtft(
 ): void {
   const ts = formatTimestamp();
   const protoStr = protocol ? ` [Upstream: ${protocol}]` : "";
-  console.log(`🟢 ${ts} [TTFT ${reqId}] TTFT = ${ttftMs}ms | ${details}${protoStr}`);
+  console.log(`${EMOJI.ttft} ${ts} [TTFT ${reqId}] TTFT = ${ttftMs}ms | ${details}${protoStr}`);
 }
 
 export interface UsageLogDetails {
@@ -154,7 +178,7 @@ export function logUsage(details: UsageLogDetails): void {
     ? ` | Reasoning=${formatTokenNumber(details.reasoningTokens)}`
     : "";
 
-  console.log(`🟢 ${ts} [USAGE ${details.reqId}] ${provName} (Key #${keyIdx}${totalKeysStr})`);
+  console.log(`${EMOJI.usage} ${ts} [USAGE ${details.reqId}] ${provName} (Key #${keyIdx}${totalKeysStr})`);
   console.log(
     `    Tokens: Prompt=${formatTokenNumber(details.promptTokens)}${reasoningStr} | Completion=${formatTokenNumber(details.completionTokens)} | Total=${formatTokenNumber(details.totalTokens)}${speedStr}`
   );
@@ -172,7 +196,7 @@ export function logRotate(
   const ts = formatTimestamp();
   const provName = getProviderDisplayName(provider);
   const attemptStr = attempt && maxAttempts ? ` (Attempt ${attempt}/${maxAttempts})` : "";
-  console.log(`🔄 ${ts} [ROTATE ${reqId}] Advancing to ${provName} [Key #${newIdx + 1}/${total}] -> Retrying immediately${attemptStr}`);
+  console.log(`${EMOJI.rotate} ${ts} [ROTATE ${reqId}] Advancing to ${provName} [Key #${newIdx + 1}/${total}] -> Retrying immediately${attemptStr}`);
 }
 
 export function getHttpStatusText(status: number): string {
@@ -233,7 +257,7 @@ export function logLimit(
   const provName = getProviderDisplayName(provider);
   const keyTotal = totalKeys !== undefined ? `/${totalKeys}` : "";
   const statusText = getHttpStatusText(status);
-  console.warn(`⚠️ ${ts} [LIMIT ${reqId}] ${provName} [Key #${keyIdx + 1}${keyTotal}] returned ${statusText}`);
+  console.warn(`${EMOJI.limit} ${ts} [LIMIT ${reqId}] ${provName} [Key #${keyIdx + 1}${keyTotal}] returned ${statusText}`);
   if (retryAfterSec) {
     console.warn(`    Parsed Retry-After: ${retryAfterSec}s -> Quarantined Key #${keyIdx + 1} for ${retryAfterSec}s`);
   }
@@ -252,7 +276,7 @@ export function logRetry(
 ): void {
   const ts = formatTimestamp();
   const provName = getProviderDisplayName(provider);
-  console.log(`🟠 ${ts} [RETRY ${reqId}] ${provName} [Key #${keyIdx + 1}] attempt ${attempt}/${maxAttempts} (${reason})`);
+  console.log(`${EMOJI.retry} ${ts} [RETRY ${reqId}] ${provName} [Key #${keyIdx + 1}] attempt ${attempt}/${maxAttempts} (${reason})`);
 }
 
 export function logExhausted(
@@ -262,12 +286,12 @@ export function logExhausted(
 ): void {
   const ts = formatTimestamp();
   const provName = getProviderDisplayName(provider);
-  console.error(`🔴 ${ts} [EXHAUSTED ${reqId}] All keys in ${provName} cooling down. Applying backoff: ${backoffMs}ms`);
+  console.error(`${EMOJI.exhausted} ${ts} [EXHAUSTED ${reqId}] All keys in ${provName} cooling down. Applying backoff: ${backoffMs}ms`);
 }
 
 export function logAmber(reqId: string, message: string): void {
   const ts = formatTimestamp();
-  console.warn(`🟡 ${ts} [AMBER ${reqId}] ${message}`);
+  console.warn(`${EMOJI.amber} ${ts} [AMBER ${reqId}] ${message}`);
 }
 
 export function logPacer(
@@ -279,7 +303,7 @@ export function logPacer(
   const ts = formatTimestamp();
   const provName = getProviderDisplayName(provider);
   console.log(
-    `🐢 ${ts} [PACER ${reqId}] ${provName} dwell=${dwellMs}ms depth=${stats.queueDepth} avg=${stats.avgDwellMs}ms interval=${stats.minIntervalMs}ms`
+    `${EMOJI.pacer} ${ts} [PACER ${reqId}] ${provName} dwell=${dwellMs}ms depth=${stats.queueDepth} avg=${stats.avgDwellMs}ms interval=${stats.minIntervalMs}ms`
   );
 }
 
@@ -292,7 +316,7 @@ export function logServed(
 ): void {
   const ts = formatTimestamp();
   const attemptStr = attempt && maxAttempts && maxAttempts > 1 ? ` (attempt ${attempt}/${maxAttempts})` : "";
-  const icon = status >= 400 ? "⚠️" : "🟢";
+  const icon = status >= 400 ? EMOJI.servedErr : EMOJI.servedOk;
   if (status >= 400) {
     console.warn(`${icon} ${ts} [SERVED ${reqId}] HTTP ${status} in ${durationMs}ms${attemptStr}`);
   } else {
@@ -302,7 +326,7 @@ export function logServed(
 
 export function logBoot(message: string): void {
   const ts = formatTimestamp();
-  console.log(`🚀 ${ts} BOOT ${message}`);
+  console.log(`${EMOJI.boot} ${ts} BOOT ${message}`);
 }
 
 export function logError(
@@ -312,7 +336,7 @@ export function logError(
 ): void {
   const ts = formatTimestamp();
   const errDetail = error instanceof Error ? ` - ${error.message}` : "";
-  console.error(`💥 ${ts} [ERROR ${reqId}] ${message}${errDetail}`);
+  console.error(`${EMOJI.error} ${ts} [ERROR ${reqId}] ${message}${errDetail}`);
 }
 
 export function logFusion(
@@ -324,14 +348,16 @@ export function logFusion(
 ): void {
   const ts = formatTimestamp();
   const provName = getProviderDisplayName(provider);
-  console.log(`🔗 ${ts} [FUSION ${reqId}] Preset: ${preset} | Model: ${model} -> Tier ${tier} (${provName})`);
+  console.log(`${EMOJI.fusion} ${ts} [FUSION ${reqId}] Preset: ${preset} | Model: ${model} -> Tier ${tier} (${provName})`);
 }
 
+/** Log an info line. Prefer a value from EMOJI for the first argument. */
 export function logInfo(emoji: string, message: string): void {
   const ts = formatTimestamp();
   console.log(`${emoji} ${ts} ${message}`);
 }
 
+/** Log a warning line. Prefer a value from EMOJI for the first argument. */
 export function logWarn(emoji: string, message: string): void {
   const ts = formatTimestamp();
   console.warn(`${emoji} ${ts} ${message}`);
@@ -345,15 +371,15 @@ export function logFinishReason(
     return;
   }
   if (finishReason === "length") {
-    logWarn("⚠️", `[FINISH ${reqId}] Upstream token truncation occurred (finish_reason=length)`);
+    logWarn(EMOJI.finishTrunc, `[FINISH ${reqId}] Upstream token truncation occurred (finish_reason=length)`);
   } else {
-    logInfo("🏁", `[FINISH ${reqId}] Stream finished: finish_reason=${finishReason}`);
+    logInfo(EMOJI.finish, `[FINISH ${reqId}] Stream finished: finish_reason=${finishReason}`);
   }
 }
 
 export function logTrace(reqId: string, tracePath: string): void {
   const ts = formatTimestamp();
-  console.log(`📝 ${ts} [TRACE ${reqId}] Saved audit trace -> ${tracePath}`);
+  console.log(`${EMOJI.trace} ${ts} [TRACE ${reqId}] Saved audit trace -> ${tracePath}`);
 }
 
 export function logSeparator(): void {
