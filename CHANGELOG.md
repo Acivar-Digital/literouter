@@ -4,6 +4,11 @@ All notable changes to LiteRouter will be documented in this file.
 
 ## [Unreleased]
 
+### Added / Zen Provider OpenCode Identity & Referer Gating (`src/handlers/openai_compat.ts`, `scripts/doctor.ts`, `tests/unit/openrouter_headers.test.ts`)
+- **Zen Gateway OpenCode Authentication & Referer Injection**: Injected OpenCode identity headers (`User-Agent: OpenCode/1.0.0`, `HTTP-Referer: https://opencode.ai`, and `Referer: https://opencode.ai`) in `buildAuthHeaders` when provider is `zn` or `zen`. Resolves synthetic HTTP 429 `FreeUsageLimitError: Rate limit exceeded` returned by `opencode.ai/zen/v1` when called with standard runtime User-Agents.
+- **Diagnostic Doctor Probe Hardening (`scripts/doctor.ts`)**: Updated `probeZenKey` and `probeOpenrouterKey` in `scripts/doctor.ts` to include `User-Agent`, `HTTP-Referer`, and `Referer` headers so diagnostic probes testing `big-pickle` succeed with 200 OK.
+- **Unit Test Coverage (`tests/unit/openrouter_headers.test.ts`)**: Added unit tests verifying `zn` and `zen` receive the appropriate OpenCode `User-Agent` and `Referer` headers while other providers (`nv`, `gg`) remain isolated.
+
 ### Added / OpenRouter Agentic Harness Whitelist Headers (`src/handlers/openai_compat.ts`, `src/config/env.ts`, `src/config/schema.ts`, `.env`)
 - **OpenRouter Agentic Gate Bypass**: Added automatic injection of approved agentic harness whitelist headers (`HTTP-Referer`, `X-Title`, `User-Agent`) when dispatching OpenAI-compatible requests to OpenRouter (`provider === "or"` / `openrouter.ai`). Resolves OpenRouter HTTP 403 `Gate Free Endpoints by Agentic Harness` rejections on `:free` models (such as `thinkingmachines/inkling:free` and `liquid/lfm-2.5-2.6b:free`).
 - **OpenCode Default Identity & Zero-Code Config**:

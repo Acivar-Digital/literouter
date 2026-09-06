@@ -147,6 +147,19 @@ export function buildAuthHeaders(
       headers["User-Agent"] = env.LITEROUTER_USER_AGENT;
     }
   }
+  if (provider === "zn" || provider === "zen") {
+    const env = getEnv();
+    if (env.LITEROUTER_HTTP_REFERER) {
+      headers["HTTP-Referer"] = env.LITEROUTER_HTTP_REFERER;
+      headers["Referer"] = env.LITEROUTER_HTTP_REFERER;
+    }
+    if (env.LITEROUTER_X_TITLE) {
+      headers["X-Title"] = env.LITEROUTER_X_TITLE;
+    }
+    if (env.LITEROUTER_USER_AGENT) {
+      headers["User-Agent"] = env.LITEROUTER_USER_AGENT;
+    }
+  }
   return headers;
 }
 

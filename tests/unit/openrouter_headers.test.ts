@@ -24,7 +24,7 @@ describe("OpenRouter Whitelist & Attribution Headers", () => {
     expect(headers["User-Agent"]).toBe("OpenCode/1.0.0");
   });
 
-  it("does not inject OpenRouter headers for other providers (nv, gg, zn)", () => {
+  it("does not inject OpenRouter headers for other providers (nv, gg)", () => {
     resetEnvCache();
     const nvHeaders = buildAuthHeaders("Bearer", "nvapi-mock-key", "nv");
     expect(nvHeaders["HTTP-Referer"]).toBeUndefined();
@@ -36,11 +36,25 @@ describe("OpenRouter Whitelist & Attribution Headers", () => {
     expect(ggHeaders["X-Title"]).toBeUndefined();
     expect(ggHeaders["User-Agent"]).toBeUndefined();
     expect(ggHeaders["x-goog-api-key"]).toBe("AIza-mock-key");
+  });
 
+  it("injects OpenCode agentic headers for Zen (provider 'zn' and 'zen')", () => {
+    resetEnvCache();
     const znHeaders = buildAuthHeaders("Bearer", "sk-zn-mock-key", "zn");
-    expect(znHeaders["HTTP-Referer"]).toBeUndefined();
-    expect(znHeaders["X-Title"]).toBeUndefined();
-    expect(znHeaders["User-Agent"]).toBeUndefined();
+    expect(znHeaders["Authorization"]).toBe("Bearer sk-zn-mock-key");
+    expect(znHeaders["Content-Type"]).toBe("application/json");
+    expect(znHeaders["Accept-Encoding"]).toBe("identity");
+    expect(znHeaders["HTTP-Referer"]).toBe("https://opencode.ai");
+    expect(znHeaders["Referer"]).toBe("https://opencode.ai");
+    expect(znHeaders["X-Title"]).toBe("OpenCode");
+    expect(znHeaders["User-Agent"]).toBe("OpenCode/1.0.0");
+
+    const zenHeaders = buildAuthHeaders("Bearer", "sk-zen-mock-key", "zen");
+    expect(zenHeaders["Authorization"]).toBe("Bearer sk-zen-mock-key");
+    expect(zenHeaders["HTTP-Referer"]).toBe("https://opencode.ai");
+    expect(zenHeaders["Referer"]).toBe("https://opencode.ai");
+    expect(zenHeaders["X-Title"]).toBe("OpenCode");
+    expect(zenHeaders["User-Agent"]).toBe("OpenCode/1.0.0");
   });
 
   it("respects custom env configuration (e.g. unknown or custom harness)", () => {

@@ -189,7 +189,7 @@ async function probeNvidiaKey(key: string): Promise<ProbeResult> {
   const masked = maskKey(key);
   const url = "https://integrate.api.nvidia.com/v1/chat/completions";
   const payload = {
-    model: "meta/llama-3.1-8b-instruct",
+    model: "nvidia/nemotron-3-super-120b-a12b",
     messages: [{ role: "user", content: "ping" }],
     max_tokens: 10,
   };
@@ -236,6 +236,9 @@ async function probeOpenrouterKey(key: string): Promise<ProbeResult> {
       headers: {
         Authorization: `Bearer ${key}`,
         "Content-Type": "application/json",
+        "HTTP-Referer": process.env.LITEROUTER_HTTP_REFERER || "https://opencode.ai",
+        "X-Title": process.env.LITEROUTER_X_TITLE || "OpenCode",
+        "User-Agent": process.env.LITEROUTER_USER_AGENT || "OpenCode/1.0.0",
       },
       body: JSON.stringify(payload),
       signal: AbortSignal.timeout(10000),
@@ -272,6 +275,10 @@ async function probeZenKey(key: string): Promise<ProbeResult> {
       headers: {
         Authorization: `Bearer ${key}`,
         "Content-Type": "application/json",
+        "HTTP-Referer": process.env.LITEROUTER_HTTP_REFERER || "https://opencode.ai",
+        Referer: process.env.LITEROUTER_HTTP_REFERER || "https://opencode.ai",
+        "X-Title": process.env.LITEROUTER_X_TITLE || "OpenCode",
+        "User-Agent": process.env.LITEROUTER_USER_AGENT || "OpenCode/1.0.0",
       },
       body: JSON.stringify(payload),
       signal: AbortSignal.timeout(20000),
