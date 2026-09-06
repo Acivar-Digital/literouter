@@ -246,7 +246,9 @@ async function executeDirectCall(
   clientOptions?: RequestClientOptions
 ): Promise<Response> {
   const env = getEnv();
-  const breaker = env.LITEROUTER_CIRCUIT_BREAKER
+  const isZen = directive.provider === "zn";
+  const zenBreakerEnabled = !isZen || env.ZEN_ENABLE_CIRCUIT_BREAKER;
+  const breaker = env.LITEROUTER_CIRCUIT_BREAKER && zenBreakerEnabled
     ? getCircuitBreakerForProvider(directive.provider)
     : null;
 
@@ -307,7 +309,8 @@ async function executeDirectCall(
       bodyText,
     });
 
-    if (classification.quarantineTtlSec > 0) {
+    const zenQuarantineEnabled = !isZen || env.ZEN_ENABLE_QUARANTINE;
+    if (zenQuarantineEnabled && classification.quarantineTtlSec > 0) {
       globalKeyPool.reportFailure(
         directive.provider,
         selected.index,
@@ -317,10 +320,14 @@ async function executeDirectCall(
         Date.now(),
         classification.quarantineTtlSec
       );
+    } else if (isZen && !env.ZEN_ENABLE_QUARANTINE && classification.quarantineTtlSec > 0) {
+      logWarn(EMOJI.zap, `[ZEN ${reqId}] Dumb-forwarder mode (ZEN_ENABLE_QUARANTINE=false): Key ${selected.index} quarantine bypassed.`);
     }
 
     const rawErrorMsg = extractErrorMessage(bodyText);
-    const ttlSec = classification.quarantineTtlSec > 0 ? classification.quarantineTtlSec : (response.status === 429 ? 60 : undefined);
+    const ttlSec = zenQuarantineEnabled
+      ? (classification.quarantineTtlSec > 0 ? classification.quarantineTtlSec : (response.status === 429 ? 60 : undefined))
+      : undefined;
     logLimit(reqId, directive.provider, selected.index, response.status, ttlSec, selected.totalKeys, rawErrorMsg);
 
     if (isContextLengthError(response.status, bodyText) && !clientSignal?.aborted) {
@@ -333,13 +340,18 @@ async function executeDirectCall(
       }
     }
 
-    const canRetry = classification.action === "retry_rotate" && attempt < maxAttempts && !clientSignal?.aborted;
+    const zenRetriesEnabled = !isZen || env.ZEN_ENABLE_RETRIES;
+    const canRetry = zenRetriesEnabled && classification.action === "retry_rotate" && attempt < maxAttempts && !clientSignal?.aborted;
     if (canRetry) {
       throw new UpstreamRetryableError(
         `Upstream error ${response.status}: ${classification.reason}`,
         response.status,
         classification
       );
+    }
+
+    if (isZen && !env.ZEN_ENABLE_RETRIES && classification.action === "retry_rotate") {
+      logWarn(EMOJI.zap, `[ZEN ${reqId}] Single-flight mode (ZEN_ENABLE_RETRIES=false): Passing HTTP ${response.status} directly downstream.`);
     }
 
     logServed(reqId, duration, response.status, attempt, maxAttempts);
@@ -497,10 +509,19 @@ async function executeDirectCall(
     },
     retryProvider: async (reason: string, _hasEmittedTokens?: boolean) => {
       const classification = classifyTransportError(reason);
-      if (classification.quarantineTtlSec > 0) {
+      const zenMidQuarantine = !isZen || env.ZEN_ENABLE_QUARANTINE;
+      if (zenMidQuarantine && classification.quarantineTtlSec > 0) {
         globalKeyPool.reportFailure(directive.provider, currentKeyIndex, 500, undefined, reason, Date.now(), classification.quarantineTtlSec);
       }
-      logLimit(reqId, directive.provider, currentKeyIndex, 500, classification.quarantineTtlSec > 0 ? classification.quarantineTtlSec : undefined, selected.totalKeys, reason);
+      const midTtlSec = zenMidQuarantine && classification.quarantineTtlSec > 0
+        ? classification.quarantineTtlSec
+        : undefined;
+      logLimit(reqId, directive.provider, currentKeyIndex, 500, midTtlSec, selected.totalKeys, reason);
+
+      if (isZen && !env.ZEN_ENABLE_RETRIES) {
+        logWarn(EMOJI.zap, `[ZEN ${reqId}] Mid-stream drop occurred. Retries disabled via ZEN_ENABLE_RETRIES=false. Closing stream.`);
+        return null;
+      }
 
       while (currentAttempt < maxAttempts) {
         currentAttempt++;
@@ -526,7 +547,7 @@ async function executeDirectCall(
           model: activePayload.model,
         };
 
-        if (env.LITEROUTER_PACER_ENABLED) {
+        if (env.LITEROUTER_PACER_ENABLED && (!isZen || env.ZEN_ENABLE_PACER)) {
           const dynamicMaxQueueDepth = globalKeyPool.getDynamicMaxQueueDepth(directive.provider);
           const maxQueueDepth = env.LITEROUTER_PACER_MAX_QUEUE_DEPTH > 0
             ? env.LITEROUTER_PACER_MAX_QUEUE_DEPTH
@@ -540,7 +561,9 @@ async function executeDirectCall(
         try {
           const nextResult = await fetchWithTtftGuard(nextFetchOpts);
           if (nextResult.response.status >= 400) {
-            globalKeyPool.reportFailure(directive.provider, nextSelected.index, nextResult.response.status);
+            if (!isZen || env.ZEN_ENABLE_QUARANTINE) {
+              globalKeyPool.reportFailure(directive.provider, nextSelected.index, nextResult.response.status);
+            }
             continue;
           }
           globalKeyPool.reportSuccess(directive.provider, nextSelected.index);
@@ -551,7 +574,9 @@ async function executeDirectCall(
           };
         } catch (fetchErr: unknown) {
           void fetchErr;
-          globalKeyPool.reportFailure(directive.provider, nextSelected.index, 500);
+          if (!isZen || env.ZEN_ENABLE_QUARANTINE) {
+            globalKeyPool.reportFailure(directive.provider, nextSelected.index, 500);
+          }
           continue;
         }
       }
@@ -583,6 +608,9 @@ export async function acquireProviderPacer(
 ): Promise<void> {
   const env = getEnv();
   if (!env.LITEROUTER_PACER_ENABLED) {
+    return;
+  }
+  if (provider === "zn" && !env.ZEN_ENABLE_PACER) {
     return;
   }
   const dynamicMaxQueueDepth = globalKeyPool.getDynamicMaxQueueDepth(provider);
@@ -618,7 +646,8 @@ async function tryDirectAttempt(
   reqId: string,
   attempt: number,
   maxAttempts: number,
-  clientOptions?: RequestClientOptions
+  clientOptions?: RequestClientOptions,
+  startTime?: number
 ): Promise<AttemptExecutionResult> {
   try {
     const res = await executeDirectCall(directive, transformed, clientSignal, selected, reqId, attempt, maxAttempts, clientOptions);
@@ -656,7 +685,33 @@ async function tryDirectAttempt(
       return { success: false, error: err, retryable: true };
     }
     if (err instanceof NoResponseError) {
-      globalKeyPool.reportFailure(directive.provider, selected.index, 0, undefined, err.message, Date.now(), 2);
+      const isZenNoResp = directive.provider === "zn";
+      const zenNoRespQuarantine = !isZenNoResp || getEnv().ZEN_ENABLE_QUARANTINE;
+      if (zenNoRespQuarantine) {
+        globalKeyPool.reportFailure(directive.provider, selected.index, 0, undefined, err.message, Date.now(), 2);
+      }
+      if (isZenNoResp && !getEnv().ZEN_ENABLE_RETRIES) {
+        logWarn(EMOJI.zap, `[ZEN ${reqId}] Single-flight mode (ZEN_ENABLE_RETRIES=false): Upstream transport error: ${err.message}`);
+        logServed(reqId, Date.now() - (startTime ?? Date.now()), 502, attempt, maxAttempts);
+        logSeparator();
+        return {
+          success: true,
+          response: Response.json(
+            {
+              error: {
+                message: `ZEN upstream connection failed: ${err.message}`,
+                type: "upstream_connection_error",
+                code: 502,
+              },
+            },
+            {
+              status: 502,
+              headers: { "Content-Type": "application/json" },
+            }
+          ),
+          retryable: false,
+        };
+      }
       return { success: false, error: err, retryable: true };
     }
     logError(reqId, "Direct request error", err);
@@ -671,17 +726,21 @@ async function executeSingleAttemptLoop(
   reqId: string,
   clientOptions?: RequestClientOptions
 ): Promise<Response> {
+  const env = getEnv();
   const poolSize = globalKeyPool.getPoolSize(directive.provider);
-  const maxAttempts = Math.min(3, Math.max(1, poolSize));
+  const isZenLoop = directive.provider === "zn";
+  const maxAttempts = isZenLoop && !env.ZEN_ENABLE_RETRIES
+    ? 1
+    : Math.min(3, Math.max(1, poolSize));
   let lastError: unknown = null;
   let prevKeyIndex = -1;
   const startTime = Date.now();
-  const env = getEnv();
   const maxWaitMs = env.LITEROUTER_PACER_MAX_QUEUE_WAIT_MS || 300000;
 
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     const dwellMs = Date.now() - startTime;
-    if (globalKeyPool.shouldLoadShed(directive.provider, dwellMs, maxWaitMs)) {
+    const zenQuarantineOn = !isZenLoop || env.ZEN_ENABLE_QUARANTINE;
+    if (zenQuarantineOn && globalKeyPool.shouldLoadShed(directive.provider, dwellMs, maxWaitMs)) {
       const minTtl = globalKeyPool.getMinQuarantineTtlMs(directive.provider);
       const retryAfterSec = Math.max(1, Math.ceil(minTtl / 1000));
       return Response.json(
@@ -750,7 +809,7 @@ async function executeSingleAttemptLoop(
     }
     prevKeyIndex = selected.index;
 
-    const outcome = await tryDirectAttempt(directive, transformed, clientSignal, selected, reqId, attempt + 1, maxAttempts, clientOptions);
+    const outcome = await tryDirectAttempt(directive, transformed, clientSignal, selected, reqId, attempt + 1, maxAttempts, clientOptions, startTime);
     if (outcome.response) {
       return outcome.response;
     }

@@ -4,9 +4,17 @@ All notable changes to LiteRouter will be documented in this file.
 
 ## [Unreleased]
 
-### Fixed / Streaming `/v1/responses` USAGE with Reasoning/Speed (literouter-6i72)
-- `src/handlers/openai_original.ts`: `readLoop`/`pumpStream` accumulate SSE text (decoder streaming, 1MB cap tail-kept 256KB, loop log-free); `emitStreamCompletion` parses last `response.completed` `response.usage` via `tryParseStreamedResponsesUsage` (reuses `tryParseResponsesUsage`: prompt|input, completion|output, reasoning via details) then `logUsage` with Reasoning/Speed before `SERVED`. Honest bytes-only fallback when usage absent. `EMOJI.stats` for STREAM-DONE, `EMOJI.usage` for USAGE.
-- Gates: `clean_ts` valid:true, `tsc --noEmit` exit 0, `bun test` 625 pass.
+### Added / Zen resilience parity flags docs (literouter-5ciz)
+- Documented `ZEN_ENABLE_RETRIES` (default `true`), `ZEN_ENABLE_QUARANTINE` (default `true`), `ZEN_ENABLE_CIRCUIT_BREAKER` (default `false`), `ZEN_ENABLE_PACER` (default `true`), mirroring GCP semantics (`src/config/schema.ts`, `src/config/env.ts`).
+- Tracked `.env` currently sets `false`/`false`/`false`/`true` (dumb-forwarder mode for `zn`); unset/code defaults remain `true`/`true`/`false`/`true`.
+- Skill: `.opencode2/skills/literouter/SKILL.md` items 28-30 + Environment Architecture line. Docs only, no code logic, `.env.local`/keys untouched.
+
+### Fixed / Streaming `/v1/responses` USAGE with Reasoning/Speed (literouter-6i72) — SHA 622ba64
+- `src/handlers/openai_original.ts` (SHA `622ba64`): `readLoop` accumulates SSE text via streaming `TextDecoder` with 1MB cap (tail-kept 256KB, loop log-free); `tryParseStreamedResponsesUsage` scans last `response.completed` `response.usage` -> `tryParseResponsesUsage` (prompt|input, completion|output, reasoning via details); `emitStreamCompletion` emits STREAM-DONE + USAGE + SERVED.
+- Behavior: streaming `/v1/responses` now emits USAGE with Reasoning/Speed after STREAM-DONE before SERVED; honest bytes-only fallback when no usage frame present.
+- Live proof verbatim: req_zlo3qhg Prompt=58,705 Reasoning=171 Completion=268 Total=58,973 Speed=67.8 tok/s; req_xhl95vw P55,445/R132/C359/T55,804 Speed48.6
+- Gates: `clean_ts` valid:true, `tsc --noEmit` exit 0, `bun test` 625 pass (per worker report; docs-only, no re-run).
+- `EMOJI.stats` for STREAM-DONE, `EMOJI.usage` for USAGE.
 
 ### Added / Per-line icons + Ref from registry lookup (literouter-p71n)
 - `src/ui/logger.ts`: `EMOJI.directive` 🎯 on Directive line, `EMOJI.model` 🤖 on Model line with `| Ref:`; `EMOJI.limit` ⚠️ on Parsed Retry-After + Upstream Error continuations.

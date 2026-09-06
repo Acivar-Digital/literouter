@@ -55,6 +55,9 @@ export class KeyPool extends EventEmitter {
     if (provider === "gc") {
       return getEnv().GCP_ENABLE_QUARANTINE;
     }
+    if (provider === "zn") {
+      return getEnv().ZEN_ENABLE_QUARANTINE;
+    }
     return true;
   }
 
