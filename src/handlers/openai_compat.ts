@@ -52,6 +52,7 @@ interface ProviderEndpointConfig {
   readonly code: string;
   readonly base_url: string;
   readonly auth_header?: "Bearer" | "x-api-key";
+  readonly headers?: Record<string, string>;
   readonly endpoints: Record<string, string>;
 }
 
@@ -60,6 +61,10 @@ interface ProvidersRegistry {
 }
 
 let cachedRegistry: ProvidersRegistry | null = null;
+
+export function resetProvidersRegistryCache(): void {
+  cachedRegistry = null;
+}
 
 function getProvidersRegistry(): ProvidersRegistry {
   if (cachedRegistry !== null) {
@@ -96,7 +101,7 @@ export function resolveUpstreamEndpoint(
   providerCode: string,
   completionCode: string,
   model: string
-): { url: string; authHeader: "Bearer" | "x-api-key"; rawPath: string } {
+): { url: string; authHeader: "Bearer" | "x-api-key"; rawPath: string; headers: Record<string, string> } {
   const reg = getProvidersRegistry();
   for (const p of Object.values(reg.providers)) {
     if (p.code === providerCode && p.endpoints[completionCode]) {
@@ -107,6 +112,7 @@ export function resolveUpstreamEndpoint(
         url: overrideProviderUrl(originalUrl, providerCode),
         authHeader: p.auth_header ?? "Bearer",
         rawPath: formatted,
+        headers: p.headers ?? {},
       };
     }
   }
@@ -114,6 +120,7 @@ export function resolveUpstreamEndpoint(
     url: overrideProviderUrl("https://openrouter.ai/api/v1/chat/completions", providerCode),
     authHeader: "Bearer",
     rawPath: "/api/v1/chat/completions",
+    headers: {},
   };
 }
 
@@ -135,29 +142,15 @@ export function buildAuthHeaders(
   if (provider === "gg") {
     headers["x-goog-api-key"] = key;
   }
-  if (provider === "or" || provider === "openrouter") {
-    const env = getEnv();
-    if (env.LITEROUTER_HTTP_REFERER) {
-      headers["HTTP-Referer"] = env.LITEROUTER_HTTP_REFERER;
-    }
-    if (env.LITEROUTER_X_TITLE) {
-      headers["X-Title"] = env.LITEROUTER_X_TITLE;
-    }
-    if (env.LITEROUTER_USER_AGENT) {
-      headers["User-Agent"] = env.LITEROUTER_USER_AGENT;
-    }
-  }
-  if (provider === "zn" || provider === "zen") {
-    const env = getEnv();
-    if (env.LITEROUTER_HTTP_REFERER) {
-      headers["HTTP-Referer"] = env.LITEROUTER_HTTP_REFERER;
-      headers["Referer"] = env.LITEROUTER_HTTP_REFERER;
-    }
-    if (env.LITEROUTER_X_TITLE) {
-      headers["X-Title"] = env.LITEROUTER_X_TITLE;
-    }
-    if (env.LITEROUTER_USER_AGENT) {
-      headers["User-Agent"] = env.LITEROUTER_USER_AGENT;
+  if (provider) {
+    const reg = getProvidersRegistry();
+    for (const [provKey, p] of Object.entries(reg.providers)) {
+      if (p.code === provider || provKey === provider) {
+        if (p.headers) {
+          Object.assign(headers, p.headers);
+        }
+        break;
+      }
     }
   }
   return headers;

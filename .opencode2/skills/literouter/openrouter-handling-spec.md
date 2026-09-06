@@ -20,7 +20,7 @@ This document serves as the definitive reference for how LiteRouter and its clie
 | **SSE Keep-Alive Heartbeats** | `src/network/fetcher.ts` (`startKeepAliveTimer`), `src/transformers/opencode_adapter.ts` | Emits spec-compliant `: keep-alive\n\n` comments (and stateful 5-second empty delta heartbeats for reasoning models) to prevent client/proxy 55s socket severance. |
 | **Terminal Usage Accounting Chunk** | `src/network/fetcher.ts` (`extractUsageFromChunk`, `onUsage`), `src/handlers/openai_compat.ts` | Intercepts and parses OpenRouter's final usage frame containing repeated `finish_reason` without corrupting client token accounting. |
 | **Stream Cancellation / Upstream Abort** | `src/network/fetcher.ts`, `src/network/h2_pool.ts` | Downstream client abort signal propagates immediately through `AbortController`, tears down keepalive timers, and closes upstream HTTP/2 streams to preserve credits. |
-| **Agentic Harness Gate Bypass (`:free` models)** | `src/handlers/openai_compat.ts`, `src/config/env.ts` | Automatically injects `HTTP-Referer`, `X-Title`, and `User-Agent` headers (defaulting to OpenCode, env-configurable) on upstream OpenRouter calls to bypass the `Gate Free Endpoints by Agentic Harness` HTTP 403 gate. |
+| **Agentic Harness Gate Bypass (`:free` models)** | `config/providers.json`, `src/handlers/openai_compat.ts` | Declaratively configures and injects `HTTP-Referer`, `X-Title`, and `User-Agent` headers (defaulting to `OpenCode/1.18.29`) on upstream OpenRouter calls to bypass the `Gate Free Endpoints by Agentic Harness` HTTP 403 gate. |
 
 ---
 
@@ -129,24 +129,50 @@ When a client cancels or aborts a streaming request:
 
 OpenRouter enforces an anti-abuse gate named `"Gate Free Endpoints by Agentic Harness"` on all `:free` models (e.g., `thinkingmachines/inkling:free`, `liquid/lfm-2.5-2.6b:free`, `meta-llama/llama-3.3-70b-instruct:free`). Requests lacking approved coding agent identification headers are rejected with **HTTP 403 Forbidden**.
 
-### Architectural Solution
-In `src/handlers/openai_compat.ts` (`buildAuthHeaders`), LiteRouter automatically injects standard agentic harness identification headers whenever dispatching upstream to OpenRouter (`provider === "or"` or `provider === "openrouter"`):
+### Declarative Architectural Solution
+Attribution and agentic harness whitelist headers are declaratively configured directly in `config/providers.json` under each provider's `"headers"` object. In `src/handlers/openai_compat.ts`, `resolveUpstreamEndpoint` and `buildAuthHeaders` dynamically load and merge these headers:
 
-```typescript
-if (provider === "or" || provider === "openrouter") {
-  const env = getEnv();
-  if (env.LITEROUTER_HTTP_REFERER) headers["HTTP-Referer"] = env.LITEROUTER_HTTP_REFERER;
-  if (env.LITEROUTER_X_TITLE) headers["X-Title"] = env.LITEROUTER_X_TITLE;
-  if (env.LITEROUTER_USER_AGENT) headers["User-Agent"] = env.LITEROUTER_USER_AGENT;
+```json
+// config/providers.json
+{
+  "providers": {
+    "openrouter": {
+      "code": "or",
+      "base_url": "https://openrouter.ai",
+      "auth_header": "Bearer",
+      "headers": {
+        "HTTP-Referer": "https://opencode.ai",
+        "X-Title": "OpenCode",
+        "User-Agent": "OpenCode/1.18.29"
+      }
+    }
+  }
 }
 ```
+
+In `buildAuthHeaders`:
+```typescript
+if (provider) {
+  const reg = getProvidersRegistry();
+  for (const [provKey, p] of Object.entries(reg.providers)) {
+    if (p.code === provider || provKey === provider) {
+      if (p.headers) {
+        Object.assign(headers, p.headers);
+      }
+      break;
+    }
+  }
+}
+```
+
+Any updates to `config/providers.json` can be hot-reloaded without restarting the gateway via `POST /reset`, which triggers `resetProvidersRegistryCache()`.
 
 ### Configurable Environment Variables (`.env`)
 - **`LITEROUTER_HTTP_REFERER`**: Defaults to `https://opencode.ai`.
 - **`LITEROUTER_X_TITLE`**: Defaults to `OpenCode`.
-- **`LITEROUTER_USER_AGENT`**: Defaults to `OpenCode/1.0.0`.
+- **`LITEROUTER_USER_AGENT`**: Defaults to `OpenCode/1.18.29`.
 
-These can be freely customized in `.env` (e.g. set `LITEROUTER_USER_AGENT=unknown` or custom harness identities) without requiring code modifications. Non-OpenRouter providers (NVIDIA NIM, Google Vertex, Zen) remain isolated and do not receive these headers.
+These can also be customized in `.env` (e.g. set `LITEROUTER_USER_AGENT=unknown` or custom harness identities) without requiring code modifications. Non-agentic providers (NVIDIA NIM, Google Vertex) remain isolated and do not receive these headers, while Zen receives matching OpenCode headers configured declaratively in `config/providers.json` to bypass FreeUsageLimitError.
 
 ---
 

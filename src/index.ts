@@ -19,6 +19,7 @@ import {
   globalKeyPool,
   handleOpenAICompat,
   initializeKeyPools,
+  resetProvidersRegistryCache,
 } from "./handlers/openai_compat";
 import { getHttp2Pool, resetHttp2Pool } from "./network/h2_pool";
 import { getAllCircuitBreakers, clearCircuitBreakerRegistry } from "./network/circuit_breaker";
@@ -57,6 +58,7 @@ function handleHardReset(): Response {
   clearCircuitBreakerRegistry();
   clearPacerRegistry();
   resetHttp2Pool();
+  resetProvidersRegistryCache();
   return Response.json(
     {
       status: "ok",
@@ -303,6 +305,7 @@ export function resetAllState(): void {
   clearCircuitBreakerRegistry();
   clearPacerRegistry();
   resetHttp2Pool();
+  resetProvidersRegistryCache();
 }
 
 export function getCooldownState(): Record<string, unknown> {

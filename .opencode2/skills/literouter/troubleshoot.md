@@ -47,7 +47,7 @@ bun run scripts/doctor.ts
   - **Google Gemini**: Probes `gemini-3.1-flash-lite` via `generateContent`.
   - **NVIDIA NIM**: Probes `meta/llama-3.1-8b-instruct` via `/v1/chat/completions`.
   - **OpenRouter**: Probes `openrouter/free:nitro` via `/api/v1/chat/completions`.
-  - **Zen**: Probes `zen/hy3-free` via `/v1/chat/completions`.
+  - **Zen**: Probes bare model `big-pickle` (or `hy3-free`) via `/v1/chat/completions`.
 - **TLS Verification**: Automatically binds `mkcert` root CA (`~/.local/share/opencode2/mkcert/rootCA.pem` or `SSL_CERT_FILE`) into `NODE_EXTRA_CA_CERTS`.
 - **Safe 1s Pacing**: Enforces a 1-second sequential delay between probes to prevent triggering upstream rate limits during diagnosis.
 - **Non-Blocking Diagnostics**: Runs purely for operator inspection without altering in-memory quotas, setting cooldowns, or gating gateway boot.

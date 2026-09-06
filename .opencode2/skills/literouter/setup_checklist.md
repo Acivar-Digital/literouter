@@ -66,7 +66,7 @@ GOOGLE_API_KEYS=AIzaSyKey1...,AIzaSyKey2...
    ```
    - Validates `config/providers.json`, `config/fusion.json`, and `config/models.json` JSON schema.
    - Pings local `/health` endpoint.
-   - Sequentially probes (with 1s pacing) live upstream key health across Google Gemini (`gemini-2.5-flash`), NVIDIA NIM (`meta/llama-3.1-8b-instruct`), OpenRouter (`nvidia/nemotron-3-nano-30b-a3b:free`), and Zen (`zen/hy3-free`) using `mkcert` root CA TLS verification.
+   - Sequentially probes (with 1s pacing) live upstream key health across Google Gemini (`gemini-2.5-flash`), NVIDIA NIM (`meta/llama-3.1-8b-instruct`), OpenRouter (`nvidia/nemotron-3-nano-30b-a3b:free`), and Zen (`big-pickle`) using `mkcert` root CA TLS verification.
 
 ---
 

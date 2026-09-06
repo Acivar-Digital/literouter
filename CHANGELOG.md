@@ -4,6 +4,15 @@ All notable changes to LiteRouter will be documented in this file.
 
 ## [Unreleased]
 
+### Added / Declarative Provider Headers & OpenCode Identity Modernization (`config/providers.json`, `src/handlers/openai_compat.ts`, `src/handlers/anthropic_compat.ts`, `src/index.ts`, `tests/unit/openrouter_headers.test.ts`)
+- **Declarative Per-Provider Attribution Headers (`config/providers.json`)**: Configured attribution and agentic harness whitelist headers directly in `config/providers.json` for OpenRouter (`or`) and Zen (`zn`).
+- **Dynamic Header Resolution & Merging (`src/handlers/openai_compat.ts`)**: Outbound requests dynamically merge provider headers from `config/providers.json` via `resolveUpstreamEndpoint` and `buildAuthHeaders`.
+- **Eliminated Hardcoded Provider Conditionals (`src/handlers/openai_compat.ts`, `src/handlers/anthropic_compat.ts`)**: Removed hardcoded provider conditionals in `src/handlers/openai_compat.ts` and `src/handlers/anthropic_compat.ts` in favor of declarative registry lookups.
+- **Hot-Reload Cache Invalidation (`src/index.ts`, `src/handlers/openai_compat.ts`)**: Integrated `resetProvidersRegistryCache()` into `POST /reset` and state reset handlers for zero-restart live reload upon configuration updates.
+- **Updated OpenCode Identity to `OpenCode/1.18.29`**: Updated default OpenCode identity and `LITEROUTER_USER_AGENT` to `OpenCode/1.18.29` across provider configurations and environment templates.
+- **Comprehensive Unit Test Coverage (`tests/unit/openrouter_headers.test.ts`)**: Added comprehensive unit test coverage covering `buildAuthHeaders`, `resolveUpstreamEndpoint`, provider isolation (verifying non-configured providers like `nv` and `gg` remain clean), and cache invalidation behavior with dynamic provider reloading.
+- **Live Gateway Integration Verification**: Verified live requests through the running LiteRouter gateway against Zen (`big-pickle` -> HTTP 200) and OpenRouter (`dots-studio/dots-3-note-preview:free` -> HTTP 200), confirming declarative header injection, agentic harness gate bypass, and zero rate-limit/quarantine errors.
+
 ### Added / Zen Provider OpenCode Identity & Referer Gating (`src/handlers/openai_compat.ts`, `scripts/doctor.ts`, `tests/unit/openrouter_headers.test.ts`)
 - **Zen Gateway OpenCode Authentication & Referer Injection**: Injected OpenCode identity headers (`User-Agent: OpenCode/1.0.0`, `HTTP-Referer: https://opencode.ai`, and `Referer: https://opencode.ai`) in `buildAuthHeaders` when provider is `zn` or `zen`. Resolves synthetic HTTP 429 `FreeUsageLimitError: Rate limit exceeded` returned by `opencode.ai/zen/v1` when called with standard runtime User-Agents.
 - **Diagnostic Doctor Probe Hardening (`scripts/doctor.ts`)**: Updated `probeZenKey` and `probeOpenrouterKey` in `scripts/doctor.ts` to include `User-Agent`, `HTTP-Referer`, and `Referer` headers so diagnostic probes testing `big-pickle` succeed with 200 OK.

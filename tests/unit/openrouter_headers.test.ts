@@ -1,88 +1,182 @@
-import { describe, expect, it } from "bun:test";
-import { buildAuthHeaders } from "../../src/handlers/openai_compat";
-import { resetEnvCache } from "../../src/config/env";
+import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
+import * as fs from "node:fs";
+import {
+  buildAuthHeaders,
+  resetProvidersRegistryCache,
+  resolveUpstreamEndpoint,
+} from "../../src/handlers/openai_compat";
 
-describe("OpenRouter Whitelist & Attribution Headers", () => {
-  it("injects OpenCode agentic whitelist headers for OpenRouter (provider 'or')", () => {
-    resetEnvCache();
-    const headers = buildAuthHeaders("Bearer", "sk-mock-or-key", "or");
-
-    expect(headers["Authorization"]).toBe("Bearer sk-mock-or-key");
-    expect(headers["Content-Type"]).toBe("application/json");
-    expect(headers["Accept-Encoding"]).toBe("identity");
-    expect(headers["HTTP-Referer"]).toBe("https://opencode.ai");
-    expect(headers["X-Title"]).toBe("OpenCode");
-    expect(headers["User-Agent"]).toBe("OpenCode/1.0.0");
+describe("Declarative Provider Headers & Cache Hot-Reload", () => {
+  beforeEach(() => {
+    resetProvidersRegistryCache();
   });
 
-  it("injects headers when provider is 'openrouter'", () => {
-    resetEnvCache();
-    const headers = buildAuthHeaders("Bearer", "sk-mock-or-key", "openrouter");
-
-    expect(headers["HTTP-Referer"]).toBe("https://opencode.ai");
-    expect(headers["X-Title"]).toBe("OpenCode");
-    expect(headers["User-Agent"]).toBe("OpenCode/1.0.0");
+  afterEach(() => {
+    resetProvidersRegistryCache();
   });
 
-  it("does not inject OpenRouter headers for other providers (nv, gg)", () => {
-    resetEnvCache();
-    const nvHeaders = buildAuthHeaders("Bearer", "nvapi-mock-key", "nv");
-    expect(nvHeaders["HTTP-Referer"]).toBeUndefined();
-    expect(nvHeaders["X-Title"]).toBeUndefined();
-    expect(nvHeaders["User-Agent"]).toBeUndefined();
+  describe("buildAuthHeaders", () => {
+    it("injects declarative headers for OpenRouter (provider 'or' and 'openrouter')", () => {
+      const orHeaders = buildAuthHeaders("Bearer", "sk-mock-or-key", "or");
+      expect(orHeaders["Authorization"]).toBe("Bearer sk-mock-or-key");
+      expect(orHeaders["Content-Type"]).toBe("application/json");
+      expect(orHeaders["Accept-Encoding"]).toBe("identity");
+      expect(orHeaders["HTTP-Referer"]).toBe("https://opencode.ai");
+      expect(orHeaders["X-Title"]).toBe("OpenCode");
+      expect(orHeaders["User-Agent"]).toBe("OpenCode/1.18.29");
+      expect(orHeaders["Referer"]).toBeUndefined();
 
-    const ggHeaders = buildAuthHeaders("Bearer", "AIza-mock-key", "gg");
-    expect(ggHeaders["HTTP-Referer"]).toBeUndefined();
-    expect(ggHeaders["X-Title"]).toBeUndefined();
-    expect(ggHeaders["User-Agent"]).toBeUndefined();
-    expect(ggHeaders["x-goog-api-key"]).toBe("AIza-mock-key");
+      const openrouterHeaders = buildAuthHeaders("Bearer", "sk-mock-or-key", "openrouter");
+      expect(openrouterHeaders["Authorization"]).toBe("Bearer sk-mock-or-key");
+      expect(openrouterHeaders["HTTP-Referer"]).toBe("https://opencode.ai");
+      expect(openrouterHeaders["X-Title"]).toBe("OpenCode");
+      expect(openrouterHeaders["User-Agent"]).toBe("OpenCode/1.18.29");
+      expect(openrouterHeaders["Referer"]).toBeUndefined();
+    });
+
+    it("injects declarative headers for Zen (provider 'zn' and 'zen')", () => {
+      const znHeaders = buildAuthHeaders("Bearer", "sk-mock-zn-key", "zn");
+      expect(znHeaders["Authorization"]).toBe("Bearer sk-mock-zn-key");
+      expect(znHeaders["Content-Type"]).toBe("application/json");
+      expect(znHeaders["Accept-Encoding"]).toBe("identity");
+      expect(znHeaders["HTTP-Referer"]).toBe("https://opencode.ai");
+      expect(znHeaders["Referer"]).toBe("https://opencode.ai");
+      expect(znHeaders["X-Title"]).toBe("OpenCode");
+      expect(znHeaders["User-Agent"]).toBe("OpenCode/1.18.29");
+
+      const zenHeaders = buildAuthHeaders("Bearer", "sk-mock-zen-key", "zen");
+      expect(zenHeaders["Authorization"]).toBe("Bearer sk-mock-zen-key");
+      expect(zenHeaders["HTTP-Referer"]).toBe("https://opencode.ai");
+      expect(zenHeaders["Referer"]).toBe("https://opencode.ai");
+      expect(zenHeaders["X-Title"]).toBe("OpenCode");
+      expect(zenHeaders["User-Agent"]).toBe("OpenCode/1.18.29");
+    });
+
+    it("does not inject whitelist headers for non-configured providers ('nv', 'nvidia', 'gg', 'google')", () => {
+      const nvHeaders = buildAuthHeaders("Bearer", "nvapi-mock-key", "nv");
+      expect(nvHeaders["Authorization"]).toBe("Bearer nvapi-mock-key");
+      expect(nvHeaders["HTTP-Referer"]).toBeUndefined();
+      expect(nvHeaders["Referer"]).toBeUndefined();
+      expect(nvHeaders["X-Title"]).toBeUndefined();
+      expect(nvHeaders["User-Agent"]).toBeUndefined();
+
+      const nvidiaHeaders = buildAuthHeaders("Bearer", "nvapi-mock-key", "nvidia");
+      expect(nvidiaHeaders["Authorization"]).toBe("Bearer nvapi-mock-key");
+      expect(nvidiaHeaders["HTTP-Referer"]).toBeUndefined();
+      expect(nvidiaHeaders["Referer"]).toBeUndefined();
+      expect(nvidiaHeaders["X-Title"]).toBeUndefined();
+      expect(nvidiaHeaders["User-Agent"]).toBeUndefined();
+
+      const ggHeaders = buildAuthHeaders("Bearer", "AIza-mock-key", "gg");
+      expect(ggHeaders["Authorization"]).toBe("Bearer AIza-mock-key");
+      expect(ggHeaders["x-goog-api-key"]).toBe("AIza-mock-key");
+      expect(ggHeaders["HTTP-Referer"]).toBeUndefined();
+      expect(ggHeaders["Referer"]).toBeUndefined();
+      expect(ggHeaders["X-Title"]).toBeUndefined();
+      expect(ggHeaders["User-Agent"]).toBeUndefined();
+
+      const googleHeaders = buildAuthHeaders("Bearer", "AIza-mock-key", "google");
+      expect(googleHeaders["Authorization"]).toBe("Bearer AIza-mock-key");
+      expect(googleHeaders["HTTP-Referer"]).toBeUndefined();
+      expect(googleHeaders["Referer"]).toBeUndefined();
+      expect(googleHeaders["X-Title"]).toBeUndefined();
+      expect(googleHeaders["User-Agent"]).toBeUndefined();
+    });
   });
 
-  it("injects OpenCode agentic headers for Zen (provider 'zn' and 'zen')", () => {
-    resetEnvCache();
-    const znHeaders = buildAuthHeaders("Bearer", "sk-zn-mock-key", "zn");
-    expect(znHeaders["Authorization"]).toBe("Bearer sk-zn-mock-key");
-    expect(znHeaders["Content-Type"]).toBe("application/json");
-    expect(znHeaders["Accept-Encoding"]).toBe("identity");
-    expect(znHeaders["HTTP-Referer"]).toBe("https://opencode.ai");
-    expect(znHeaders["Referer"]).toBe("https://opencode.ai");
-    expect(znHeaders["X-Title"]).toBe("OpenCode");
-    expect(znHeaders["User-Agent"]).toBe("OpenCode/1.0.0");
+  describe("resolveUpstreamEndpoint", () => {
+    it("returns headers dictionary matching config/providers.json for 'or'", () => {
+      const endpoint = resolveUpstreamEndpoint("or", "ch", "openai/gpt-4o");
+      expect(endpoint.headers).toEqual({
+        "HTTP-Referer": "https://opencode.ai",
+        "X-Title": "OpenCode",
+        "User-Agent": "OpenCode/1.18.29",
+      });
+    });
 
-    const zenHeaders = buildAuthHeaders("Bearer", "sk-zen-mock-key", "zen");
-    expect(zenHeaders["Authorization"]).toBe("Bearer sk-zen-mock-key");
-    expect(zenHeaders["HTTP-Referer"]).toBe("https://opencode.ai");
-    expect(zenHeaders["Referer"]).toBe("https://opencode.ai");
-    expect(zenHeaders["X-Title"]).toBe("OpenCode");
-    expect(zenHeaders["User-Agent"]).toBe("OpenCode/1.0.0");
+    it("returns headers dictionary matching config/providers.json for 'zn'", () => {
+      const endpoint = resolveUpstreamEndpoint("zn", "ch", "big-pickle");
+      expect(endpoint.headers).toEqual({
+        "HTTP-Referer": "https://opencode.ai",
+        "Referer": "https://opencode.ai",
+        "X-Title": "OpenCode",
+        "User-Agent": "OpenCode/1.18.29",
+      });
+    });
+
+    it("returns empty headers dictionary for providers without custom headers ('nv', fallback)", () => {
+      const nvEndpoint = resolveUpstreamEndpoint("nv", "ch", "nvidia/nemotron-3-super-120b-a12b");
+      expect(nvEndpoint.headers).toEqual({});
+
+      const unknownEndpoint = resolveUpstreamEndpoint("nonexistent-provider", "ch", "some-model");
+      expect(unknownEndpoint.headers).toEqual({});
+    });
   });
 
-  it("respects custom env configuration (e.g. unknown or custom harness)", () => {
-    const originalRef = process.env.LITEROUTER_HTTP_REFERER;
-    const originalTitle = process.env.LITEROUTER_X_TITLE;
-    const originalUA = process.env.LITEROUTER_USER_AGENT;
+  describe("resetProvidersRegistryCache", () => {
+    it("caches the registry across consecutive calls until reset", () => {
+      let readCount = 0;
+      const originalReadFileSync = fs.readFileSync;
+      const fsSpy = (spyOn(fs, "readFileSync") as any).mockImplementation((...args: any[]) => {
+        readCount++;
+        return (originalReadFileSync as any)(...args);
+      });
 
-    try {
-      process.env.LITEROUTER_HTTP_REFERER = "https://example.com/custom";
-      process.env.LITEROUTER_X_TITLE = "custom-agent";
-      process.env.LITEROUTER_USER_AGENT = "unknown";
-      resetEnvCache();
+      try {
+        resetProvidersRegistryCache();
 
-      const headers = buildAuthHeaders("Bearer", "sk-mock-or-key", "or");
-      expect(headers["HTTP-Referer"]).toBe("https://example.com/custom");
-      expect(headers["X-Title"]).toBe("custom-agent");
-      expect(headers["User-Agent"]).toBe("unknown");
-    } finally {
-      if (originalRef !== undefined) process.env.LITEROUTER_HTTP_REFERER = originalRef;
-      else delete process.env.LITEROUTER_HTTP_REFERER;
+        resolveUpstreamEndpoint("or", "ch", "test-model");
+        expect(readCount).toBe(1);
 
-      if (originalTitle !== undefined) process.env.LITEROUTER_X_TITLE = originalTitle;
-      else delete process.env.LITEROUTER_X_TITLE;
+        resolveUpstreamEndpoint("or", "ch", "test-model");
+        expect(readCount).toBe(1);
 
-      if (originalUA !== undefined) process.env.LITEROUTER_USER_AGENT = originalUA;
-      else delete process.env.LITEROUTER_USER_AGENT;
+        resetProvidersRegistryCache();
 
-      resetEnvCache();
-    }
+        resolveUpstreamEndpoint("or", "ch", "test-model");
+        expect(readCount).toBe(2);
+      } finally {
+        fsSpy.mockRestore();
+        resetProvidersRegistryCache();
+      }
+    });
+
+    it("re-reads config/providers.json dynamically on demand after reset", () => {
+      const mockCustomProviders = JSON.stringify({
+        providers: {
+          customprovider: {
+            code: "cp",
+            base_url: "https://api.customprovider.ai",
+            auth_header: "Bearer",
+            headers: {
+              "X-Dynamic-Header": "dynamic-value-123",
+              "User-Agent": "DynamicTester/1.0",
+            },
+            endpoints: {
+              ch: "/v1/chat/completions",
+            },
+          },
+        },
+      });
+
+      const fsSpy = spyOn(fs, "readFileSync").mockReturnValue(mockCustomProviders);
+
+      try {
+        resetProvidersRegistryCache();
+
+        const endpoint = resolveUpstreamEndpoint("cp", "ch", "custom-model");
+        expect(endpoint.headers).toEqual({
+          "X-Dynamic-Header": "dynamic-value-123",
+          "User-Agent": "DynamicTester/1.0",
+        });
+
+        const authHeaders = buildAuthHeaders("Bearer", "mock-custom-token", "cp");
+        expect(authHeaders["X-Dynamic-Header"]).toBe("dynamic-value-123");
+        expect(authHeaders["User-Agent"]).toBe("DynamicTester/1.0");
+      } finally {
+        fsSpy.mockRestore();
+        resetProvidersRegistryCache();
+      }
+    });
   });
 });

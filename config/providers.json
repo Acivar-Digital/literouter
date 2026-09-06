@@ -4,6 +4,11 @@
       "code": "or",
       "base_url": "https://openrouter.ai",
       "auth_header": "Bearer",
+      "headers": {
+        "HTTP-Referer": "https://opencode.ai",
+        "X-Title": "OpenCode",
+        "User-Agent": "OpenCode/1.18.29"
+      },
       "endpoints": {
         "ch": "/api/v1/chat/completions",
         "ms": "/api/v1/messages",
@@ -243,6 +248,12 @@
       "code": "zn",
       "base_url": "https://opencode.ai/zen",
       "auth_header": "Bearer",
+      "headers": {
+        "HTTP-Referer": "https://opencode.ai",
+        "Referer": "https://opencode.ai",
+        "X-Title": "OpenCode",
+        "User-Agent": "OpenCode/1.18.29"
+      },
       "endpoints": {
         "ch": "/v1/chat/completions",
         "md": "/v1/models"

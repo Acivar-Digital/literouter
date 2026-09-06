@@ -3,6 +3,7 @@ import type { OpenAIMessage, OpenAIRequestPayload } from "../transformers/nuance
 import { validateDirective } from "../directive/validator";
 import {
   acquireProviderPacer,
+  buildAuthHeaders,
   globalKeyPool,
   handleOpenAICompat,
   resolveUpstreamEndpoint,
@@ -990,13 +991,7 @@ async function executeAnthropicDirectCall(
   }
 
   const endpoint = resolveUpstreamEndpoint(directive.provider, directive.completion, payload.model);
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-    Authorization: `Bearer ${selected.key}`,
-    "Accept-Encoding": "identity",
-    "HTTP-Referer": env.LITEROUTER_HTTP_REFERER,
-    "X-Title": env.LITEROUTER_X_TITLE,
-  };
+  const headers = buildAuthHeaders(endpoint.authHeader, selected.key, directive.provider);
 
   const startTime = Date.now();
   const { response, ttftMs, firstChunk, rawReader, protocol } = await fetchWithTtftGuard({
@@ -1224,13 +1219,7 @@ async function executeAnthropicDirectCall(
         logRotate(reqId, directive.provider, currentKeyIndex, nextSelected.index, nextSelected.totalKeys, currentAttempt, maxAttempts);
         currentKeyIndex = nextSelected.index;
 
-        const nextHeaders: Record<string, string> = {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${nextSelected.key}`,
-          "Accept-Encoding": "identity",
-          "HTTP-Referer": env.LITEROUTER_HTTP_REFERER,
-          "X-Title": env.LITEROUTER_X_TITLE,
-        };
+        const nextHeaders = buildAuthHeaders(endpoint.authHeader, nextSelected.key, directive.provider);
 
         if (env.LITEROUTER_PACER_ENABLED) {
           const dynamicMaxQueueDepth = globalKeyPool.getDynamicMaxQueueDepth(directive.provider);
