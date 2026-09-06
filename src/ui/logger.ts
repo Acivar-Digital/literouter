@@ -61,6 +61,8 @@ export const EMOJI = Object.freeze({
   upstream: "🔌",
   stats: "📊",
   prune: "✂️",
+  zap: "⚡",
+  hourglass: "⏳",
 });
 
 export function getProviderDisplayName(code: string): string {

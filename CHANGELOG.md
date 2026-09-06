@@ -4,6 +4,11 @@ All notable changes to LiteRouter will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed / Restore dropped telemetry glyphs + standardise (literouter-aqv8)
+- `src/ui/logger.ts`: restored `zap:"⚡"` + `hourglass:"⏳"` to frozen EMOJI map.
+- `src/handlers/gcp_compat.ts`: 4x `[GCP]` amber→zap, 2x `[PACER]` pacer→hourglass; 💥/✂️ untouched.
+- `src/handlers/openai_original.ts`: restored bare `Failed to inspect upstream error body` text (dropped `[WARN reqId]` prefix).
+
 ### Added / `/v1/responses` rich telemetry parity with chat completions (`src/handlers/openai_original.ts`)
 - Inbound now shows key idx/pool (`Key [#n/m]`) with rs wire attribution on par with chat completions.
 - `PREP` line logs model, input bytes, reasoning effort, and stream flag for native Responses payloads.

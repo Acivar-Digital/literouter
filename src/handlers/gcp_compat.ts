@@ -198,7 +198,7 @@ async function executeGcpDirectCall(
         classification.quarantineTtlSec
       );
     } else if (!env.GCP_ENABLE_QUARANTINE && classification.quarantineTtlSec > 0) {
-      logWarn(EMOJI.amber, `[GCP ${reqId}] Dumb-forwarder mode (GCP_ENABLE_QUARANTINE=false): Key ${selected.index} quarantine bypassed.`);
+      logWarn(EMOJI.zap, `[GCP ${reqId}] Dumb-forwarder mode (GCP_ENABLE_QUARANTINE=false): Key ${selected.index} quarantine bypassed.`);
     }
 
     const rawErrorMsg = extractErrorMessage(bodyText);
@@ -231,7 +231,7 @@ async function executeGcpDirectCall(
     }
 
     if (!env.GCP_ENABLE_RETRIES && classification.action === "retry_rotate") {
-      logWarn(EMOJI.amber, `[GCP ${reqId}] Single-flight mode (GCP_ENABLE_RETRIES=false): Passing HTTP ${response.status} directly downstream.`);
+      logWarn(EMOJI.zap, `[GCP ${reqId}] Single-flight mode (GCP_ENABLE_RETRIES=false): Passing HTTP ${response.status} directly downstream.`);
     }
 
     logServed(reqId, duration, response.status, attempt, maxAttempts);
@@ -320,7 +320,7 @@ async function executeGcpDirectCall(
       logLimit(reqId, "gc", currentKeyIndex, 500, ttlSec, selected.totalKeys, reason);
 
       if (!env.GCP_ENABLE_RETRIES) {
-        logWarn(EMOJI.amber, `[GCP ${reqId}] Mid-stream drop occurred. Retries disabled via GCP_ENABLE_RETRIES=false. Closing stream.`);
+        logWarn(EMOJI.zap, `[GCP ${reqId}] Mid-stream drop occurred. Retries disabled via GCP_ENABLE_RETRIES=false. Closing stream.`);
         return null;
       }
 
@@ -412,7 +412,7 @@ async function tryGcpAttempt(
       return { success: false, error: err, retryable: false };
     }
     if (err instanceof PacerQueueOverflowError) {
-      logWarn(EMOJI.pacer, `[PACER ${reqId}] GCP Pacer queue overflow: ${err.message} (Retry-After: ${err.retryAfterSec}s)`);
+      logWarn(EMOJI.hourglass, `[PACER ${reqId}] GCP Pacer queue overflow: ${err.message} (Retry-After: ${err.retryAfterSec}s)`);
       logServed(reqId, Date.now() - startTime, 429, attempt, maxAttempts);
       logSeparator();
       return {
@@ -444,7 +444,7 @@ async function tryGcpAttempt(
         globalKeyPool.reportFailure("gc", selected.index, 0, undefined, err.message, Date.now(), 2);
       }
       if (!env.GCP_ENABLE_RETRIES) {
-        logWarn(EMOJI.amber, `[GCP ${reqId}] Single-flight mode (GCP_ENABLE_RETRIES=false): Upstream transport error: ${err.message}`);
+        logWarn(EMOJI.zap, `[GCP ${reqId}] Single-flight mode (GCP_ENABLE_RETRIES=false): Upstream transport error: ${err.message}`);
         logServed(reqId, Date.now() - startTime, 502, attempt, maxAttempts);
         logSeparator();
         return {
@@ -522,7 +522,7 @@ async function executeGcpAttemptLoop(
         );
       }
       if (err instanceof PacerQueueOverflowError) {
-        logWarn(EMOJI.pacer, `[PACER ${reqId}] GCP Pacer queue overflow: ${err.message} (Retry-After: ${err.retryAfterSec}s)`);
+        logWarn(EMOJI.hourglass, `[PACER ${reqId}] GCP Pacer queue overflow: ${err.message} (Retry-After: ${err.retryAfterSec}s)`);
         logServed(reqId, Date.now() - startTime, 429, attempt, maxAttempts);
         logSeparator();
         return Response.json(

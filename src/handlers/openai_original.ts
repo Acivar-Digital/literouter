@@ -173,7 +173,7 @@ async function logUpstreamError(reqId: string, route: ResolvedRoute, totalKeys: 
     const ttl = getRetryAfterSec(res) ?? (res.status === 429 ? 60 : undefined);
     logLimit(reqId, route.provider, route.keyIndex, res.status, ttl, totalKeys, rawMsg);
   } catch (err: unknown) {
-    logWarn(EMOJI.limit, `[WARN ${reqId}] Failed to inspect upstream error body: ${err}`);
+    logWarn(EMOJI.limit, `Failed to inspect upstream error body: ${err}`);
   }
 }
 
