@@ -81,7 +81,7 @@ export function buildUpstreamHeaders(
   provider: string,
   incomingHeaders?: Headers
 ): Record<string, string> {
-  const headers = buildAuthHeaders("Bearer", key, provider);
+  const headers = buildAuthHeaders("Bearer", key, provider, incomingHeaders);
   if (incomingHeaders?.has("accept")) {
     headers["Accept"] = incomingHeaders.get("accept") ?? "*/*";
   }

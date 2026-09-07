@@ -133,7 +133,8 @@ export function resolveUpstreamEndpoint(
 export function buildAuthHeaders(
   authHeader: "Bearer" | "x-api-key",
   key: string,
-  provider?: string
+  provider?: string,
+  incomingHeaders?: Headers
 ): Record<string, string> {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
@@ -156,6 +157,23 @@ export function buildAuthHeaders(
           Object.assign(headers, p.headers);
         }
         break;
+      }
+    }
+  }
+  if (incomingHeaders) {
+    for (const [k, v] of incomingHeaders.entries()) {
+      const lower = k.toLowerCase();
+      if (
+        lower === "session-id" ||
+        lower === "x-session-id" ||
+        lower === "x-opencode-session" ||
+        lower === "x-opencode-session-id" ||
+        lower === "opencode-session-id" ||
+        lower === "opencode-session" || 
+        lower === "x-client-version" || 
+        lower === "x-client-name"
+      ) {
+        headers[k] = v;
       }
     }
   }
@@ -270,7 +288,10 @@ async function executeDirectCall(
   }
 
   const endpoint = resolveUpstreamEndpoint(directive.provider, directive.completion, activePayload.model);
-  const headers = buildAuthHeaders(endpoint.authHeader, selected.key, directive.provider);
+  const clientHdrs = clientOptions?.headers instanceof Headers
+    ? clientOptions.headers
+    : (clientOptions?.headers ? new Headers(clientOptions.headers as Record<string, string>) : undefined);
+  const headers = buildAuthHeaders(endpoint.authHeader, selected.key, directive.provider, clientHdrs);
   const isResponses = directive.completion === "rs";
   const outboundBody = isResponses
     ? JSON.stringify(transformOpenAiToResponses(activePayload))
@@ -535,7 +556,7 @@ async function executeDirectCall(
         logRotate(reqId, directive.provider, currentKeyIndex, nextSelected.index, nextSelected.totalKeys, currentAttempt, maxAttempts);
         currentKeyIndex = nextSelected.index;
 
-        const nextHeaders = buildAuthHeaders(endpoint.authHeader, nextSelected.key, directive.provider);
+        const nextHeaders = buildAuthHeaders(endpoint.authHeader, nextSelected.key, directive.provider, clientHdrs);
         const nextFetchOpts: FetcherOptions = {
           url: endpoint.url,
           method: "POST",

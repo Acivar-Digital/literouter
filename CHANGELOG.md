@@ -4,6 +4,13 @@ All notable changes to LiteRouter will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed / Zen `MissingSessionID` free-tier gate: forward client session identity upstream (literouter-g3bf) - 2026-09-07
+- Root cause was upstream Zen gating on `MissingSessionID`, not `User-Agent`: `muse-spark-1.3-contributor-free` via `lr-zn-oo-rs-no` failed `HTTP 400 "OpenCode's free tier can only be used in OpenCode"` because LiteRouter stripped client identity.
+- `src/handlers/openai_compat.ts`: `buildAuthHeaders(..., incomingHeaders?)` now forwards `session-id`, `x-session-id`, `x-opencode-session`, `x-opencode-session-id`, `opencode-session-id`, `opencode-session`, `x-client-version`, `x-client-name`; threaded through `executeDirectCall` initial + retry paths.
+- `src/handlers/openai_original.ts`: `buildUpstreamHeaders` delegates to `buildAuthHeaders(..., incomingHeaders)`.
+- `src/handlers/anthropic_compat.ts`: `executeAnthropicDirectCall`/`executeAnthropicDirectLoop` accept `clientHeaders?`, wired from `req.headers`.
+- Gates: `tsc --noEmit` pass, `clean_ts validate` valid:true x3, `ruff check` pass, `bun test` 628 pass, `pytest tests/integration/` 6 passed 7 skipped.
+
 ### Added / LiteRouter v4 Architectural Boundary & Responses H2 Wire (literouter-pakj) - 2026-09-07
 - Decoupled route handling from transport stream reassembly (`reassembleResponse` in `src/network/fetcher.ts`).
 - Enabled HTTP/2 wire multiplexing on `/v1/responses` via `fetchWithTtftGuard`.

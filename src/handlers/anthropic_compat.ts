@@ -975,7 +975,8 @@ async function executeAnthropicDirectCall(
   selected: SelectedKey,
   reqId: string,
   attempt: number,
-  maxAttempts: number
+  maxAttempts: number,
+  clientHeaders?: Headers
 ): Promise<Response> {
   const env = getEnv();
   const breaker = env.LITEROUTER_CIRCUIT_BREAKER
@@ -993,7 +994,7 @@ async function executeAnthropicDirectCall(
   }
 
   const endpoint = resolveUpstreamEndpoint(directive.provider, directive.completion, payload.model);
-  const headers = buildAuthHeaders(endpoint.authHeader, selected.key, directive.provider);
+  const headers = buildAuthHeaders(endpoint.authHeader, selected.key, directive.provider, clientHeaders);
 
   const startTime = Date.now();
   const { response, ttftMs, firstChunk, rawReader, protocol } = await fetchWithTtftGuard({
@@ -1051,7 +1052,7 @@ async function executeAnthropicDirectCall(
       const pruned = pruneAnthropicPayload(payload, targetLimit);
       if (pruned.messages.length < payload.messages.length || estimateAnthropicTokens(pruned) < estimateAnthropicTokens(payload)) {
         logWarn(EMOJI.prune, `[PRUNE ${reqId}] Context length exceeded upstream (${detectedLimit ?? "unknown"} tokens). Auto-pruned message turns and retrying...`);
-        return executeAnthropicDirectCall(directive, pruned, clientSignal, selected, reqId, attempt, maxAttempts);
+        return executeAnthropicDirectCall(directive, pruned, clientSignal, selected, reqId, attempt, maxAttempts, clientHeaders);
       }
     }
 
@@ -1159,7 +1160,7 @@ async function executeAnthropicDirectCall(
         const pruned = pruneAnthropicPayload(payload, targetLimit);
         if (pruned.messages.length < payload.messages.length || estimateAnthropicTokens(pruned) < estimateAnthropicTokens(payload)) {
           logWarn(EMOJI.prune, `[PRUNE ${reqId}] Context length exceeded upstream (${detectedLimit ?? "unknown"} tokens). Auto-pruned message turns and retrying...`);
-          return executeAnthropicDirectCall(directive, pruned, clientSignal, selected, reqId, attempt, maxAttempts);
+          return executeAnthropicDirectCall(directive, pruned, clientSignal, selected, reqId, attempt, maxAttempts, clientHeaders);
         }
       }
 
@@ -1227,7 +1228,7 @@ async function executeAnthropicDirectCall(
         logRotate(reqId, directive.provider, currentKeyIndex, nextSelected.index, nextSelected.totalKeys, currentAttempt, maxAttempts);
         currentKeyIndex = nextSelected.index;
 
-        const nextHeaders = buildAuthHeaders(endpoint.authHeader, nextSelected.key, directive.provider);
+        const nextHeaders = buildAuthHeaders(endpoint.authHeader, nextSelected.key, directive.provider, clientHeaders);
 
         if (env.LITEROUTER_PACER_ENABLED) {
           const dynamicMaxQueueDepth = globalKeyPool.getDynamicMaxQueueDepth(directive.provider);
@@ -1289,7 +1290,8 @@ async function executeAnthropicDirectLoop(
   directive: DirectDirective,
   payload: AnthropicMessagesRequest,
   clientSignal: AbortSignal | undefined,
-  reqId: string
+  reqId: string,
+  clientHeaders?: Headers
 ): Promise<Response> {
   const poolSize = globalKeyPool.getPoolSize(directive.provider);
   const maxAttempts = Math.min(3, Math.max(1, poolSize));
@@ -1363,7 +1365,7 @@ async function executeAnthropicDirectLoop(
     prevKeyIndex = selected.index;
 
     try {
-      return await executeAnthropicDirectCall(directive, payload, clientSignal, selected, reqId, attempt + 1, maxAttempts);
+      return await executeAnthropicDirectCall(directive, payload, clientSignal, selected, reqId, attempt + 1, maxAttempts, clientHeaders);
     } catch (err: unknown) {
       lastError = err;
       if (clientSignal?.aborted || (err instanceof Error && err.message.includes("aborted"))) {
@@ -1466,7 +1468,7 @@ export async function handleAnthropicCompat(
       undefined,
       getEnv().LITEROUTER_ENABLE_SCRUBBING
     ) as unknown as AnthropicMessagesRequest;
-    return executeAnthropicDirectLoop(directive, payload, req.signal, reqId);
+    return executeAnthropicDirectLoop(directive, payload, req.signal, reqId, req.headers);
   }
 
   const openAiPayload = translateAnthropicToOpenAI(effectiveAnthropicBody);

@@ -663,3 +663,33 @@ tests/integration/test_dots_transformer_e2e.py::test_dots_non_streaming_converts
 
 -- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
 ================== 6 passed, 7 skipped, 3 warnings in 13.02s ===================
+Run started: 2026-09-07T12:23:20Z
+============================= test session starts ==============================
+platform linux -- Python 3.14.0, pytest-9.0.3, pluggy-1.6.0
+rootdir: /home/yapilwsl/arthityap/literouter
+configfile: pyproject.toml
+plugins: anyio-4.13.0, asyncio-1.3.0, logfire-4.37.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 13 items
+
+tests/integration/smoke/test_downstream_dual.py ss                       [ 15%]
+tests/integration/smoke/test_gemini_flash_pass_through.py sss            [ 38%]
+tests/integration/test_dots_transformer_e2e.py ..                        [ 53%]
+tests/integration/test_e2e_gateway_mock.py ....                          [ 84%]
+tests/integration/test_gemini_flash_tool_call.py ss                      [100%]
+
+=============================== warnings summary ===============================
+.venv/lib/python3.14/site-packages/google/genai/types.py:42
+  /home/yapilwsl/arthityap/literouter/.venv/lib/python3.14/site-packages/google/genai/types.py:42: DeprecationWarning: '_UnionGenericAlias' is deprecated and slated for removal in Python 3.17
+    VersionedUnionType = Union[builtin_types.UnionType, _UnionGenericAlias]
+
+tests/integration/test_dots_transformer_e2e.py::test_dots_non_streaming_converts_to_tool_calls
+  /home/yapilwsl/arthityap/literouter/.venv/lib/python3.14/site-packages/websockets/legacy/__init__.py:6: DeprecationWarning: websockets.legacy is deprecated; see https://websockets.readthedocs.io/en/stable/howto/upgrade.html for upgrade instructions
+    warnings.warn(  # deprecated in 14.0 - 2024-11-09
+
+tests/integration/test_dots_transformer_e2e.py::test_dots_non_streaming_converts_to_tool_calls
+  /home/yapilwsl/arthityap/literouter/.venv/lib/python3.14/site-packages/uvicorn/protocols/websockets/websockets_impl.py:17: DeprecationWarning: websockets.server.WebSocketServerProtocol is deprecated
+    from websockets.server import WebSocketServerProtocol
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=================== 6 passed, 7 skipped, 3 warnings in 5.02s ===================
