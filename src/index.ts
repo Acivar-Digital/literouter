@@ -34,7 +34,7 @@ import {
   PacerQueueOverflowError,
 } from "./network/pacer";
 import { type BannerOptions, printBanner } from "./ui/banner";
-import { logAmber, logError } from "./ui/logger";
+import { logAmber, logError, logPacer } from "./ui/logger";
 
 function loadTlsOptions(tlsEnabledFlag?: boolean): { cert: string; key: string } | undefined {
   if (process.env.LITEROUTER_TLS_ENABLED === "false" || tlsEnabledFlag === false) {
@@ -209,7 +209,7 @@ function dispatchGoogleBeta(path: string, req: Request, rawKey: string, reqId: s
 
 const ingressPacedRequests = new WeakSet<Request>();
 
-async function acquireIngressPacer(req: Request, rawKey: string): Promise<Response | null> {
+async function acquireIngressPacer(req: Request, rawKey: string, reqId?: string): Promise<Response | null> {
   if (ingressPacedRequests.has(req)) {
     return null;
   }
@@ -225,8 +225,17 @@ async function acquireIngressPacer(req: Request, rawKey: string): Promise<Respon
     return null;
   }
   try {
-    await getPacerForProvider(provider, 0).acquire(req.signal);
+    const pacer = getPacerForProvider(provider, 0);
+    const { queueDwellMs } = await pacer.acquire(req.signal);
     ingressPacedRequests.add(req);
+    if (reqId) {
+      const stats = pacer.getStats();
+      logPacer(reqId, provider, queueDwellMs, {
+        queueDepth: stats.queueDepth,
+        avgDwellMs: stats.avgDwellTimeMs,
+        minIntervalMs: pacer.getMinInterval(),
+      });
+    }
     return null;
   } catch (err: unknown) {
     if (req.signal?.aborted || (err instanceof Error && err.message.includes("aborted"))) {
@@ -365,7 +374,7 @@ export async function dispatchRoute(
     return mismatchRes;
   }
 
-  const pacerGate = await acquireIngressPacer(req, rawKey);
+  const pacerGate = await acquireIngressPacer(req, rawKey, reqId);
   if (pacerGate !== null) {
     return pacerGate;
   }
@@ -419,7 +428,7 @@ export async function handleAppRequest(req: Request): Promise<Response> {
   if (mismatchRes !== null) {
     return mismatchRes;
   }
-  const pacerGate = await acquireIngressPacer(req, rawKey);
+  const pacerGate = await acquireIngressPacer(req, rawKey, reqId);
   if (pacerGate !== null) {
     return pacerGate;
   }

@@ -17,7 +17,6 @@ import {
   logRotate,
   logSeparator,
   logServed,
-  logTrace,
   logTtft,
   logUsage,
   logWarn,
@@ -61,8 +60,8 @@ describe("Visual Telemetry & Terminal UI", () => {
     expect(consoleSpy).toHaveBeenCalled();
     const calls = consoleSpy.mock.calls.map((c) => c[0]);
     expect(calls.some((c) => c.includes("Inbound POST /v1/messages from Claude-Code/1.0"))).toBe(true);
-    expect(calls.some((c) => c.includes("Directive : lr-or-cl-ms-no -> Target: OpenRouter | Wire: Claude | EP: /api/v1/messages"))).toBe(true);
-    expect(calls.some((c) => c.includes("Model     : anthropic/claude-3.7-sonnet | Pool: OpenRouter (5 keys)"))).toBe(true);
+    expect(calls.some((c) => c.includes("Directive: lr-or-cl-ms-no -> Target: OpenRouter | Wire: Claude | EP: /api/v1/messages"))).toBe(true);
+    expect(calls.some((c) => c.includes("Model: anthropic/claude-3.7-sonnet | Pool: OpenRouter (5 keys)"))).toBe(true);
     consoleSpy.mockRestore();
   });
 
@@ -85,7 +84,7 @@ describe("Visual Telemetry & Terminal UI", () => {
     const calls = consoleSpy.mock.calls.map((c) => c[0]);
     expect(calls.some((c) => c.includes("[TTFT REQ-89f2a] TTFT = 315ms | First chunk streamed downstream [Upstream: HTTP/2]"))).toBe(true);
     expect(calls.some((c) => c.includes("[USAGE REQ-89f2a] OpenRouter (Key #1/5)"))).toBe(true);
-    expect(calls.some((c) => c.includes("Tokens: Prompt=1,420 | Completion=680 | Total=2,100 | Speed=198.8 tok/s"))).toBe(true);
+    expect(calls.some((c) => c.includes("[USAGE REQ-89f2a] Tokens: Prompt=1,420 | Completion=680 | Total=2,100 | Speed=198.8 tok/s"))).toBe(true);
     consoleSpy.mockRestore();
   });
 

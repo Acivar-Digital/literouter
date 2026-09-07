@@ -4,6 +4,23 @@ All notable changes to LiteRouter will be documented in this file.
 
 ## [Unreleased]
 
+### Added / Telemetry wiring & dead code cleanup: wire PACER and FINISH, remove dead AuditLogger (literouter-ll1w)
+- `src/index.ts`: wired `logPacer` into `acquireIngressPacer` edge conveyor gate, emitting `🐢 [PACER reqId] Provider dwell=...ms depth=... avg=...ms interval=...ms`.
+- `src/handlers/openai_original.ts`: wired `logFinishReason` into `emitStreamCompletion` and `emitNonStreamCompletion` for `/v1/responses` (`oo`/`rs`), emitting `🏁 [FINISH reqId] Stream finished: finish_reason=...`.
+- Dead code cleanup:
+  - Removed unreferenced `saveTrace` from `src/ui/telemetry.ts` and pruned `node:fs` / `node:path` imports.
+  - Removed unused `logTrace` export and dead `EMOJI.trace` (`📝`) from `src/ui/logger.ts`.
+- Gates: `agent_guardrail validate` valid:true x4, `tsc --noEmit` (exit 0), `bun test` 625 pass.
+
+### Polish / Visual telemetry: colon anchoring, USAGE distinct purple glyph, and speech bubble Tokens prompt (literouter-14n5)
+- `src/ui/logger.ts`:
+  - `EMOJI.usage` updated from `🟢` to `🟣` to prevent confusion with `[TTFT]` and `[SERVED]`.
+  - Added `EMOJI.tokens` `💬` (speech bubble) for token prompt telemetry continuation line, completely avoiding amber/yellow alert collisions.
+  - Directive & Model lines: anchored colons directly to labels (`Directive:` 10 cols, `Model:    ` 10 cols), eliminating floating detached colon space.
+- `tests/unit/visual_telemetry.test.ts`: updated expected test assertions to match `Directive:`, `Model:    `, and `💬 Tokens: Prompt=`.
+- Gates: `agent_guardrail validate` valid:true x2, `bun run typecheck` (exit 0), `bun test` 625 pass.
+
+
 ### Added / Zen resilience parity flags docs (literouter-5ciz)
 - Documented `ZEN_ENABLE_RETRIES` (default `true`), `ZEN_ENABLE_QUARANTINE` (default `true`), `ZEN_ENABLE_CIRCUIT_BREAKER` (default `false`), `ZEN_ENABLE_PACER` (default `true`), mirroring GCP semantics (`src/config/schema.ts`, `src/config/env.ts`).
 - Tracked `.env` currently sets `false`/`false`/`false`/`true` (dumb-forwarder mode for `zn`); unset/code defaults remain `true`/`true`/`false`/`true`.

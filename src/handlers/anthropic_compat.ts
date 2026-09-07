@@ -982,8 +982,9 @@ async function executeAnthropicDirectCall(
     ? getCircuitBreakerForProvider(directive.provider)
     : null;
 
+  const zenQ = directive.provider !== "zn" || env.ZEN_ENABLE_QUARANTINE;
   if (breaker && !breaker.isAvailable()) {
-    logLimit(reqId, directive.provider, selected.index, 503, 60, selected.totalKeys);
+    logLimit(reqId, directive.provider, selected.index, 503, zenQ ? 60 : undefined, selected.totalKeys);
     throw new UpstreamRetryableError(
       `Provider '${directive.provider}' circuit breaker is OPEN`,
       503,
@@ -1024,7 +1025,7 @@ async function executeAnthropicDirectCall(
       bodyText,
     });
 
-    if (classification.quarantineTtlSec > 0) {
+    if (zenQ && classification.quarantineTtlSec > 0) {
       globalKeyPool.reportFailure(
         directive.provider,
         selected.index,
@@ -1034,10 +1035,14 @@ async function executeAnthropicDirectCall(
         Date.now(),
         classification.quarantineTtlSec
       );
+    } else if (directive.provider === "zn" && !env.ZEN_ENABLE_QUARANTINE && classification.quarantineTtlSec > 0) {
+      logWarn(EMOJI.zap, `[ZEN ${reqId}] Dumb-forwarder mode (ZEN_ENABLE_QUARANTINE=false): Key ${selected.index} quarantine bypassed.`);
     }
 
     const rawErrorMsg = extractErrorMessage(bodyText);
-    const ttlSec = classification.quarantineTtlSec > 0 ? classification.quarantineTtlSec : (response.status === 429 ? 60 : undefined);
+    const ttlSec = zenQ
+      ? (classification.quarantineTtlSec > 0 ? classification.quarantineTtlSec : (response.status === 429 ? 60 : undefined))
+      : undefined;
     logLimit(reqId, directive.provider, selected.index, response.status, ttlSec, selected.totalKeys, rawErrorMsg);
 
     if (isContextLengthError(response.status, bodyText) && !clientSignal?.aborted) {
@@ -1203,10 +1208,12 @@ async function executeAnthropicDirectCall(
         return null;
       }
       const classification = classifyTransportError(reason);
-      if (classification.quarantineTtlSec > 0) {
+      if (zenQ && classification.quarantineTtlSec > 0) {
         globalKeyPool.reportFailure(directive.provider, currentKeyIndex, 500, undefined, reason, Date.now(), classification.quarantineTtlSec);
+      } else if (directive.provider === "zn" && !env.ZEN_ENABLE_QUARANTINE && classification.quarantineTtlSec > 0) {
+        logWarn(EMOJI.zap, `[ZEN ${reqId}] Dumb-forwarder mode (ZEN_ENABLE_QUARANTINE=false): Key ${currentKeyIndex} quarantine bypassed.`);
       }
-      logLimit(reqId, directive.provider, currentKeyIndex, 500, classification.quarantineTtlSec > 0 ? classification.quarantineTtlSec : undefined, selected.totalKeys, reason);
+      logLimit(reqId, directive.provider, currentKeyIndex, 500, zenQ && classification.quarantineTtlSec > 0 ? classification.quarantineTtlSec : undefined, selected.totalKeys, reason);
 
       while (currentAttempt < maxAttempts) {
         currentAttempt++;
@@ -1245,7 +1252,9 @@ async function executeAnthropicDirectCall(
             model: payload.model,
           });
           if (nextResult.response.status >= 400) {
-            globalKeyPool.reportFailure(directive.provider, nextSelected.index, nextResult.response.status);
+            if (zenQ) {
+              globalKeyPool.reportFailure(directive.provider, nextSelected.index, nextResult.response.status);
+            }
             continue;
           }
           globalKeyPool.reportSuccess(directive.provider, nextSelected.index);
@@ -1256,7 +1265,9 @@ async function executeAnthropicDirectCall(
           };
         } catch (fetchErr: unknown) {
           void fetchErr;
-          globalKeyPool.reportFailure(directive.provider, nextSelected.index, 500);
+          if (zenQ) {
+            globalKeyPool.reportFailure(directive.provider, nextSelected.index, 500);
+          }
           continue;
         }
       }
@@ -1380,7 +1391,9 @@ async function executeAnthropicDirectLoop(
         continue;
       }
       if (err instanceof NoResponseError) {
-        globalKeyPool.reportFailure(directive.provider, selected.index, 0, undefined, err.message, Date.now(), 2);
+        if (directive.provider !== "zn" || env.ZEN_ENABLE_QUARANTINE) {
+          globalKeyPool.reportFailure(directive.provider, selected.index, 0, undefined, err.message, Date.now(), 2);
+        }
         continue;
       }
       logError(reqId, "Direct request error", err);

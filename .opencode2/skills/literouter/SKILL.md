@@ -78,6 +78,7 @@ Fusion presets: `lr-fse-<preset>` (e.g. `lr-fse-fast`, `lr-fse-smart`, `lr-fse-c
 | **HTTP/2 Lifecycle & Stream Isolation** | `http2-lifecycle-stream-isolation.md` | User asks about `nodeReq`/`nodeRes` lifecycle, client abort propagation, stream isolation, H2 connection pooling, anti-pinning aging, or 0s quarantine transport resets |
 | **OpenRouter Rate Limits, Reasoning & Tool Calling** | `openrouter-handling-spec.md` | User asks about OpenRouter rate limits (429), credit limits (402), mid-stream in-band errors (`finish_reason: "error"`), keepalives, or reasoning/tool-call retention policies |
 | **TUI LaTeX & Math Rendering** | `tui-latex-math-rendering.md` | User asks about raw LaTeX math ($ / $$), broken math in ASCII tables, TUI vs Webview rendering, or OpenCode2 math formatting issues |
+| **Terminal telemetry & logger contract** | `logger.md` | User reports missing/misaligned terminal lines, timestamp issues, or needs to add/fix telemetry in `src/ui/logger.ts` |
 
 ## Gateway Resilience
 
@@ -134,14 +135,15 @@ Fusion presets: `lr-fse-<preset>` (e.g. `lr-fse-fast`, `lr-fse-smart`, `lr-fse-c
 - **Real-Time Terminal Protocol Tagging**:
   The TTFT line in live stdout explicitly logs the upstream protocol:
   `🟢 [TTFT req_id] TTFT = 320ms | Stream established [Upstream: HTTP/2]`
-- **Terminal Telemetry Contract (per-line icons + Ref lookup)**:
+- **Terminal Telemetry Contract (per-line icons + Ref lookup, full spec: `logger.md`)**:
+  - Every line is column-0 `EMOJI + timestamp + [TAG reqId]` (no indented timeless continuations since 2026-09-07 fix).
   - Directive line carries 🎯 (`EMOJI.directive`); Model line carries 🤖 (`EMOJI.model`).
   - Model line appends `| Ref: <User-Agent> @ <Referer>` when registry provides headers; `InboundLogDetails.referrer` is sourced from `config/providers.json` headers via `resolveUpstreamEndpoint`/`buildAuthHeaders` (lookup-only, no hardcoded values).
-  - `logLimit` continuation lines (`Parsed Retry-After`, `Upstream Error`) carry ⚠️ (`EMOJI.limit`) with 4-space indent.
-  - Streaming `/v1/responses` USAGE (`oo`, 622ba64, `openai_original.ts:279` `emitStreamCompletion`): emits `📊 [STREAM-DONE]` (bytes+duration) → conditional `🟢 [USAGE]` → `[SERVED]`. USAGE line shows `Prompt/Reasoning/Completion/Total` + `Speed` (`logUsage`, `logger.ts:170`).
+  - `logLimit` detail lines (`Parsed Retry-After`, `Upstream Error`) carry ⚠️ (`EMOJI.limit`) as full timestamped `[LIMIT reqId]` lines.
+  - Streaming `/v1/responses` USAGE (`oo`, 622ba64, `openai_original.ts:279` `emitStreamCompletion`): emits `📊 [STREAM-DONE]` (bytes+duration) → conditional `🟣 [USAGE]` → `[SERVED]`. USAGE line carries `🟣` (`EMOJI.usage`); Tokens detail line carries `💬` (`EMOJI.tokens`) as its own timestamped `[USAGE reqId]` line showing `Prompt/Reasoning/Completion/Total` + `Speed` (`logUsage`, `logger.ts:170`).
   - Guards (`logger.ts:170`): `Speed` only when `durationMs>0` AND `completionTokens>0`; `Reasoning` segment only when `reasoningTokens>0`, else omitted.
   - Fallback: bytes-only `STREAM-DONE` when no `response.completed` usage frame parses (`tryParseStreamedResponsesUsage` returns null) — honest bytes accounting, not a drop.
-  - 7 USAGE emitters: `openai_compat.ts:449/481`, `anthropic_compat.ts:1133/1187`, `gcp_compat.ts:263/295`, `openai_original.ts:220` (non-stream) + `:285` (stream).
+  - 8 USAGE emitters: `openai_compat.ts:461/493`, `anthropic_compat.ts:1138/1192`, `gcp_compat.ts:263/295`, `openai_original.ts:229` (non-stream) + `:329` (stream).
 - **Inspect OS Sockets**:
   ```bash
   # Downstream client connections (port 7766)

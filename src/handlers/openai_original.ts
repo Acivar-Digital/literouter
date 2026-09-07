@@ -18,6 +18,7 @@ import {
   formatTimestamp,
   logError,
   logExhausted,
+  logFinishReason,
   logInbound,
   logInfo,
   logLimit,
@@ -177,7 +178,9 @@ async function logUpstreamError(reqId: string, route: ResolvedRoute, totalKeys: 
   try {
     const bodyText = await res.clone().text();
     const rawMsg = extractErrorMessage(bodyText);
-    const ttl = getRetryAfterSec(res) ?? (res.status === 429 ? 60 : undefined);
+    const isZen = route.provider === "zn";
+    const zenQuarantineEnabled = !isZen || getEnv().ZEN_ENABLE_QUARANTINE;
+    const ttl = zenQuarantineEnabled ? (getRetryAfterSec(res) ?? (res.status === 429 ? 60 : undefined)) : undefined;
     logLimit(reqId, route.provider, route.keyIndex, res.status, ttl, totalKeys, rawMsg);
   } catch (err: unknown) {
     logWarn(EMOJI.limit, `Failed to inspect upstream error body: ${err}`);
@@ -237,8 +240,43 @@ function emitNonStreamCompletion(telemetry: ResponsesTelemetry, bodyText: string
   } else {
     logInfo(EMOJI.stats, `[COMPLETE ${telemetry.reqId}] bytes=${byteLength} duration=${durationMs}ms (usage unavailable)`);
   }
+  const finishReason = tryParseResponsesFinishReason(bodyText) || "stop";
+  logFinishReason(telemetry.reqId, finishReason);
   logServed(telemetry.reqId, durationMs, telemetry.status);
   logSeparator();
+}
+
+function tryParseResponsesFinishReason(text: string): string | null {
+  try {
+    const data = JSON.parse(text) as Record<string, unknown>;
+    const response = (data.response && typeof data.response === "object")
+      ? (data.response as Record<string, unknown>)
+      : data;
+    if (typeof response.status === "string" && response.status) {
+      return response.status === "completed" ? "stop" : response.status;
+    }
+    if (Array.isArray(response.choices) && response.choices[0] && typeof response.choices[0].finish_reason === "string") {
+      return response.choices[0].finish_reason;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function tryParseStreamedResponsesFinishReason(sseText: string): string | null {
+  const lines = sseText.split("\n");
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i];
+    if (!line) continue;
+    const trimmed = line.trim();
+    if (!trimmed.startsWith("data:")) continue;
+    const payload = trimmed.slice(5).trim();
+    if (!payload || payload === "[DONE]") continue;
+    const reason = tryParseResponsesFinishReason(payload);
+    if (reason) return reason;
+  }
+  return "stop";
 }
 
 function tryParseStreamedResponsesUsage(sseText: string): ParsedResponsesUsage | null {
@@ -300,6 +338,12 @@ function emitStreamCompletion(telemetry: ResponsesTelemetry, bytes: number, accu
         durationMs,
       });
     }
+    const finishReason = tryParseStreamedResponsesFinishReason(accumulatedText);
+    if (finishReason) {
+      logFinishReason(telemetry.reqId, finishReason);
+    }
+  } else {
+    logFinishReason(telemetry.reqId, "stop");
   }
   logServed(telemetry.reqId, durationMs, telemetry.status);
   logSeparator();

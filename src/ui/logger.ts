@@ -42,7 +42,7 @@ export const WIRE_NAMES: Readonly<Record<string, string>> = Object.freeze({
 export const EMOJI = Object.freeze({
   inbound: "🔵",
   ttft: "🟢",
-  usage: "🟢",
+  usage: "🟣",
   servedOk: "🟢",
   servedErr: "⚠️",
   rotate: "🔄",
@@ -56,7 +56,6 @@ export const EMOJI = Object.freeze({
   fusion: "🔗",
   finish: "🏁",
   finishTrunc: "⚠️",
-  trace: "📝",
   prep: "📦",
   upstream: "🔌",
   stats: "📊",
@@ -65,6 +64,7 @@ export const EMOJI = Object.freeze({
   hourglass: "⏳",
   directive: "🎯",
   model: "🤖",
+  tokens: "💬",
 });
 
 export function getProviderDisplayName(code: string): string {
@@ -113,7 +113,7 @@ export function logInbound(
       const target = d.targetProvider ? getProviderDisplayName(d.targetProvider) : "Direct";
       const wire = d.wireFormat ? getWireDisplayName(d.wireFormat) : "OpenAI";
       const ep = d.endpoint ? ` | EP: ${d.endpoint}` : "";
-      console.log(`    ${EMOJI.directive} Directive : ${d.directiveStr} -> Target: ${target} | Wire: ${wire}${ep}`);
+      console.log(`${EMOJI.directive} ${ts} [${d.reqId}] Directive: ${d.directiveStr} -> Target: ${target} | Wire: ${wire}${ep}`);
     }
 
     if (d.model) {
@@ -129,8 +129,8 @@ export function logInbound(
       const nuanceInfo = d.nuances && d.nuances.length > 0 && d.nuances[0] !== "no"
         ? ` | Nuances: [${d.nuances.join(", ")}]`
         : "";
-      const refInfo = d.referrer ? ` | Ref: ${d.referrer}` : "";
-      console.log(`    ${EMOJI.model} Model     : ${d.model}${keyInfo}${nuanceInfo}${refInfo}`);
+      const refInfo = d.referrer ? ` | Ref: ${d.referrer.split(" @ ")[0]}` : "";
+      console.log(`${EMOJI.model} ${ts} [${d.reqId}] Model: ${d.model}${keyInfo}${nuanceInfo}${refInfo}`);
     }
     return;
   }
@@ -186,7 +186,7 @@ export function logUsage(details: UsageLogDetails): void {
 
   console.log(`${EMOJI.usage} ${ts} [USAGE ${details.reqId}] ${provName} (Key #${keyIdx}${totalKeysStr})`);
   console.log(
-    `    Tokens: Prompt=${formatTokenNumber(details.promptTokens)}${reasoningStr} | Completion=${formatTokenNumber(details.completionTokens)} | Total=${formatTokenNumber(details.totalTokens)}${speedStr}`
+    `${EMOJI.tokens} ${ts} [USAGE ${details.reqId}] Tokens: Prompt=${formatTokenNumber(details.promptTokens)}${reasoningStr} | Completion=${formatTokenNumber(details.completionTokens)} | Total=${formatTokenNumber(details.totalTokens)}${speedStr}`
   );
 }
 
@@ -265,10 +265,10 @@ export function logLimit(
   const statusText = getHttpStatusText(status);
   console.warn(`${EMOJI.limit} ${ts} [LIMIT ${reqId}] ${provName} [Key #${keyIdx + 1}${keyTotal}] returned ${statusText}`);
   if (retryAfterSec) {
-    console.warn(`    ${EMOJI.limit} Parsed Retry-After: ${retryAfterSec}s -> Quarantined Key #${keyIdx + 1} for ${retryAfterSec}s`);
+    console.warn(`${EMOJI.limit} ${ts} [LIMIT ${reqId}] Parsed Retry-After: ${retryAfterSec}s -> Quarantined Key #${keyIdx + 1} for ${retryAfterSec}s`);
   }
   if (rawMessage) {
-    console.warn(`    ${EMOJI.limit} Upstream Error: "${rawMessage.slice(0, 300)}"`);
+    console.warn(`${EMOJI.limit} ${ts} [LIMIT ${reqId}] Upstream Error: "${rawMessage.slice(0, 300)}"`);
   }
 }
 
@@ -381,11 +381,6 @@ export function logFinishReason(
   } else {
     logInfo(EMOJI.finish, `[FINISH ${reqId}] Stream finished: finish_reason=${finishReason}`);
   }
-}
-
-export function logTrace(reqId: string, tracePath: string): void {
-  const ts = formatTimestamp();
-  console.log(`${EMOJI.trace} ${ts} [TRACE ${reqId}] Saved audit trace -> ${tracePath}`);
 }
 
 export function logSeparator(): void {
