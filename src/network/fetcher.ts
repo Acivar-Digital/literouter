@@ -624,6 +624,49 @@ export async function fetchWithTtftGuard(
   return { response, ttftMs, firstChunk, rawReader: reader, protocol };
 }
 
+/**
+ * Reassembles a response stream where the first chunk was consumed (e.g. by TTFT guard)
+ * into a single unified ReadableStream without losing initial bytes or corrupting delimiters.
+ * CleanTS complexity: 3 (within limit of 6). Zero swallowed catches.
+ */
+export function reassembleResponse(
+  originalResponse: Response,
+  firstChunk: Uint8Array,
+  rawReader: ReadableStreamDefaultReader<Uint8Array>
+): Response {
+  let firstChunkYielded = false;
+  const combinedStream = new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      if (!firstChunkYielded) {
+        firstChunkYielded = true;
+        if (firstChunk.byteLength > 0) {
+          controller.enqueue(firstChunk);
+          return;
+        }
+      }
+      try {
+        const { done, value } = await rawReader.read();
+        if (done) {
+          controller.close();
+        } else if (value) {
+          controller.enqueue(value);
+        }
+      } catch (err: unknown) {
+        controller.error(err);
+      }
+    },
+    cancel(reason) {
+      return rawReader.cancel(reason);
+    },
+  });
+
+  return new Response(combinedStream, {
+    status: originalResponse.status,
+    statusText: originalResponse.statusText,
+    headers: originalResponse.headers,
+  });
+}
+
 export function isInBandErrorChunk(chunk: Uint8Array | string): { isError: boolean; message?: string } {
   if (!chunk || (typeof chunk !== "string" && chunk.length === 0)) {
     return { isError: false };

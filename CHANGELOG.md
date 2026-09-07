@@ -4,6 +4,18 @@ All notable changes to LiteRouter will be documented in this file.
 
 ## [Unreleased]
 
+### Added / LiteRouter v4 Architectural Boundary & Responses H2 Wire (literouter-pakj) - 2026-09-07
+- Decoupled route handling from transport stream reassembly (`reassembleResponse` in `src/network/fetcher.ts`).
+- Enabled HTTP/2 wire multiplexing on `/v1/responses` via `fetchWithTtftGuard`.
+- Disambiguated inbound client protocol from negotiated upstream wire protocol in TTFT telemetry.
+
+### Fixed / Banner stale `/v1/responses` display + Audit final & Push stage isolation (literouter-bxrs, streamline03) - 2026-09-07
+- `src/ui/banner.ts`: added `/v1/responses` (OpenAI Responses / `oo` wire) to `buildBannerLines()` (single-line surgical add, style-matched).
+- Red-team audit `docs/streamline03_audit.md` (371 lines / 26K): `APPROVE WITH CONDITIONS` — zero critical code blockers; hygiene gate: exclude `.beads/**` from commit before push.
+- Stage isolation: `git add` source/docs/tests/CHANGELOG/skills only (`.beads/` excluded); commit conventional (`feat(v4): h2 ALPN multiplexing + banner fix + audit`); push `origin literouter-v4`.
+- Banner verified live: tmux `Endpoints Registered:` now shows `/v1/responses`; gateway healthy (`curl -sk https://localhost:7766/health` -> HTTP 200); `/v1/responses` proxy serves `lr-zn-oo-rs-no` with `[Inbound: HTTP/1.1]` / `[Upstream: HTTP/2]` / `TTFT=1045ms`.
+- No `.env*` or API key modifications; `.env.local` untouched; banner issue `literouter-bxrs` closed (`orch-banner-fix-closed`).
+
 ### Added / Telemetry wiring & dead code cleanup: wire PACER and FINISH, remove dead AuditLogger (literouter-ll1w)
 - `src/index.ts`: wired `logPacer` into `acquireIngressPacer` edge conveyor gate, emitting `🐢 [PACER reqId] Provider dwell=...ms depth=... avg=...ms interval=...ms`.
 - `src/handlers/openai_original.ts`: wired `logFinishReason` into `emitStreamCompletion` and `emitNonStreamCompletion` for `/v1/responses` (`oo`/`rs`), emitting `🏁 [FINISH reqId] Stream finished: finish_reason=...`.

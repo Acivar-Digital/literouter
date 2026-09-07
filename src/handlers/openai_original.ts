@@ -3,7 +3,13 @@ import { validateDirective } from "../directive/validator";
 import { getEnv } from "../config/env";
 import { classifyUpstreamError } from "../network/classifier";
 import { getCircuitBreakerForProvider } from "../network/circuit_breaker";
-import { sanitizeDownstreamHeaders } from "../network/fetcher";
+import {
+  fetchWithTtftGuard,
+  reassembleResponse,
+  sanitizeDownstreamHeaders,
+  type FetcherOptions,
+  type OutboundProtocol,
+} from "../network/fetcher";
 import { getPacerForProvider, PacerQueueOverflowError } from "../network/pacer";
 import {
   buildAuthHeaders,
@@ -587,18 +593,26 @@ async function parseRequestBody(
   }
 }
 
+interface UpstreamExecutionResult {
+  readonly response: Response;
+  readonly upstreamProtocol: OutboundProtocol;
+  readonly measuredTtftMs: number;
+}
+
 async function executeUpstreamFetch(
-  url: string,
-  headers: Record<string, string>,
-  body: string,
-  signal: AbortSignal
-): Promise<Response> {
-  return fetch(url, {
-    method: "POST",
-    headers,
-    body: body.length > 0 ? body : undefined,
-    signal,
-  });
+  options: FetcherOptions
+): Promise<UpstreamExecutionResult> {
+  const guard = await fetchWithTtftGuard(options);
+  const reassembled = reassembleResponse(
+    guard.response,
+    guard.firstChunk,
+    guard.rawReader
+  );
+  return {
+    response: reassembled,
+    upstreamProtocol: guard.protocol,
+    measuredTtftMs: guard.ttftMs,
+  };
 }
 
 function resolveRequestRoute(
@@ -701,13 +715,22 @@ async function acquireZenRetryPacer(
   }
 }
 
+interface FetchResult {
+  readonly response?: Response;
+  readonly errorResponse?: Response;
+  readonly keyIndex?: number;
+  readonly upstreamProtocol?: OutboundProtocol;
+  readonly measuredTtftMs?: number;
+}
+
 async function dispatchUpstreamFetch(
   route: ResolvedRoute,
   bodyText: string,
   clientHeaders: Headers,
   signal: AbortSignal,
-  reqId: string
-): Promise<{ response?: Response; errorResponse?: Response; keyIndex?: number }> {
+  reqId: string,
+  model?: string
+): Promise<FetchResult> {
   const env = getEnv();
   const isZen = route.provider === "zn";
   const zenRetriesEnabled = !isZen || env.ZEN_ENABLE_RETRIES;
@@ -801,9 +824,19 @@ async function dispatchUpstreamFetch(
     }
 
     const upstreamHeaders = buildUpstreamHeaders(currentKey, route.provider, clientHeaders);
-    let res: Response;
+    let execResult: UpstreamExecutionResult;
     try {
-      res = await executeUpstreamFetch(route.upstreamUrl, upstreamHeaders, bodyText, signal);
+      const fetchOpts: FetcherOptions = {
+        url: route.upstreamUrl,
+        method: "POST",
+        headers: upstreamHeaders,
+        body: bodyText.length > 0 ? bodyText : undefined,
+        clientSignal: signal,
+        provider: route.provider,
+        keyIndex: currentKeyIndex,
+        model,
+      };
+      execResult = await executeUpstreamFetch(fetchOpts);
     } catch (err: unknown) {
       if (zenQuarantineEnabled) {
         globalKeyPool.reportFailure(route.provider, currentKeyIndex, 502);
@@ -828,10 +861,16 @@ async function dispatchUpstreamFetch(
       };
     }
 
+    const res = execResult.response;
     if (res.status < 400) {
       breaker?.recordSuccess();
       globalKeyPool.reportSuccess(route.provider, currentKeyIndex);
-      return { response: res, keyIndex: currentKeyIndex };
+      return {
+        response: res,
+        keyIndex: currentKeyIndex,
+        upstreamProtocol: execResult.upstreamProtocol,
+        measuredTtftMs: execResult.measuredTtftMs,
+      };
     }
 
     if (breaker) {
@@ -961,7 +1000,7 @@ export async function handleOpenAiOriginal(
   const method = req.method;
   const path = new URL(req.url, "http://localhost").pathname;
   const clientAgent = req.headers.get("user-agent") ?? "unknown";
-  const protocol = req.headers.get("x-http-version") ?? "HTTP/1.1";
+  const clientProtocol = req.headers.get("x-http-version") ?? "HTTP/1.1";
   const targetProvider = route.provider;
   const totalKeys = globalKeyPool.getPoolSize(route.provider);
   const refHeaders = resolveUpstreamEndpoint(route.provider, "ch", body.model ?? "").headers;
@@ -974,7 +1013,7 @@ export async function handleOpenAiOriginal(
     method,
     path,
     clientAgent,
-    protocol,
+    protocol: clientProtocol,
     directiveStr,
     targetProvider,
     wireFormat: "rs",
@@ -997,7 +1036,8 @@ export async function handleOpenAiOriginal(
     bodyText,
     req.headers,
     abortController.signal,
-    reqId
+    reqId,
+    body.model
   );
   if (fetchResult.errorResponse) {
     cleanup();
@@ -1012,7 +1052,14 @@ export async function handleOpenAiOriginal(
   } else {
     logUpstreamLine(reqId, route.provider, route.upstreamUrl, isStream);
   }
-  logTtft(reqId, ttftMs, isStream ? "Stream established" : "First chunk streamed downstream", protocol);
+  const actualUpstreamProtocol = fetchResult.upstreamProtocol ?? "HTTP/1.1";
+  const effectiveTtftMs = fetchResult.measuredTtftMs ?? ttftMs;
+  logTtft(
+    reqId,
+    effectiveTtftMs,
+    isStream ? "Stream established" : "First chunk streamed downstream",
+    actualUpstreamProtocol
+  );
 
   const telemetry: ResponsesTelemetry = {
     reqId,

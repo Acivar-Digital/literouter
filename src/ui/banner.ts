@@ -41,6 +41,7 @@ function buildBannerLines(options: BannerOptions): string[] {
     "",
     "Endpoints Registered:",
     "  • /v1/chat/completions        (OpenAI Chat Completions)",
+    "  • /v1/responses                 (OpenAI Responses / oo wire)",
     "  • /v1/messages                (Anthropic Claude Messages)",
     "  • /v1/messages/count_tokens   (Anthropic Token Counter)",
     "  • /v1/models                  (Dynamic Model Discovery)",
