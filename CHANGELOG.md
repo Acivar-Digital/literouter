@@ -4,6 +4,12 @@ All notable changes to LiteRouter will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed / H2 drain graceful close: re-arm while activeStreams>0 (literouter-8paf, literouter-3a1j, literouter-i68z) - 2026-09-07
+- `src/network/h2_pool.ts`: `startDraining` now re-arms while `activeStreams>0` instead of unconditional `destroy()` after 30s, which killed 40s+ Zen reasoning streams with `ERR_HTTP2_STREAM_CANCEL`.
+- Drain path uses graceful `session.close()` on idle vs `destroy()`; in-flight LLM/SSE streams complete to EOF before close.
+- Added aborted-stream guard so cancelled streams don't block drain completion.
+- Tests: 4 new tests in `tests/unit/h2_drain.test.ts` covering re-arm, graceful close, abort guard, and long-stream survival.
+
 ### Fixed / Zen `MissingSessionID` free-tier gate: forward client session identity upstream (literouter-g3bf) - 2026-09-07
 - Root cause was upstream Zen gating on `MissingSessionID`, not `User-Agent`: `muse-spark-1.3-contributor-free` via `lr-zn-oo-rs-no` failed `HTTP 400 "OpenCode's free tier can only be used in OpenCode"` because LiteRouter stripped client identity.
 - `src/handlers/openai_compat.ts`: `buildAuthHeaders(..., incomingHeaders?)` now forwards `session-id`, `x-session-id`, `x-opencode-session`, `x-opencode-session-id`, `opencode-session-id`, `opencode-session`, `x-client-version`, `x-client-name`; threaded through `executeDirectCall` initial + retry paths.

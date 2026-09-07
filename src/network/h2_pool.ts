@@ -134,6 +134,10 @@ export class Http2SessionPool {
     stream.once("error", releaseOnce);
     stream.once("frameError", releaseOnce);
     stream.once("finish", releaseOnce);
+    // Release on abort only where the stream object supports the signal.
+    if ("aborted" in stream) {
+      stream.once("aborted", releaseOnce);
+    }
   }
 
   public releaseStream(poolKey: string, session: ClientHttp2Session): void {
@@ -211,7 +215,13 @@ export class Http2SessionPool {
       return;
     }
     item.drainTimer = setTimeout(() => {
-      this.destroySession(poolKey, item);
+      if (item.activeStreams > 0) {
+        item.drainTimer = undefined;
+        item.isDraining = false;
+        this.startDraining(poolKey, item);
+      } else {
+        this.destroySession(poolKey, item);
+      }
     }, this.drainTimeoutMs);
   }
 
@@ -307,7 +317,11 @@ export class Http2SessionPool {
     }
     if (!item.session.destroyed && !item.session.closed) {
       try {
-        if (typeof item.session.destroy === "function") {
+        if (item.isDraining && item.activeStreams > 0) {
+          if (typeof item.session.close === "function") {
+            item.session.close();
+          }
+        } else if (typeof item.session.destroy === "function") {
           item.session.destroy();
         } else if (typeof item.session.close === "function") {
           item.session.close();

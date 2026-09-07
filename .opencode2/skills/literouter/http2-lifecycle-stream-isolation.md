@@ -142,13 +142,15 @@ async function pipeWebResponseToNode(
 LiteRouter multiplexes outbound requests across multiple upstream TCP connections using Node.js `node:http2`.
 
 ### Core Pool Invariants
-1. **Multi-Session Balancing (`sessionsPerOrigin = 4`)**:
-   - Spawns up to 4 parallel `ClientHttp2Session` connections per upstream origin (e.g. `https://openrouter.ai`).
+1. **Multi-Session Balancing (`sessionsPerOrigin = 1` code default, `src/network/h2_pool.ts:36`; singleton `getHttp2Pool()` passes no config)**:
+   - Spawns up to 1 parallel `ClientHttp2Session` connection per upstream origin (e.g. `https://openrouter.ai`) under the live default.
    - Dispatches new requests using a least-loaded algorithm (`activeStreams < maxStreamsPerSession`).
+   - Recommended override is 4 for anti-pinning breadth: code-default-1 keeps a single pinned socket per origin, so e.g. 7 Zen keys multiplex over 1 shared socket (not 7 sockets) — raising to 4 spreads load across up to 4 sockets with fresh ephemeral ports/buckets. Per-key sockets (7 sockets for 7 Zen keys) would require per-key pool keys, not the current per-origin pooling.
 2. **Staggered Socket Aging & Anti-Pinning 429 Protection**:
    - **The L4 Pinning Problem**: Persistent HTTP/2 sockets remain pinned to a single upstream Cloudflare edge blade. High-throughput turns exhaust that blade's local rate-limit token bucket, returning false `429 Too Many Requests`.
    - **The Solution**: Sessions age out after `maxSessionAgeMs = 180s ± 15s jitter`.
    - When a session reaches its age limit, it marks `isDraining = true`. No new streams attach to it, and it gracefully closes when existing streams complete. New requests spawn fresh TCP connections with new ephemeral ports and full rate-limit quotas.
+   - **Drain fix (`startDraining` re-arm + graceful `session.close()`)**: `startDraining` no-ops if already draining; if `activeStreams === 0` it destroys immediately, otherwise it arms `drainTimer` (`drainTimeoutMs = 30s`). On timer fire while `activeStreams > 0`, it clears the timer, resets `isDraining = false`, and re-enters `startDraining` to re-arm — the session is never hard-killed mid-stream. `destroySession` uses graceful `session.close()` (GOAWAY, lets in-flight LLM/SSE streams run to EOF) whenever `isDraining && activeStreams > 0`; `session.destroy()` is reserved for 0-stream idle expiry and fatal paths (`error`/`frameError`/connect timeout/`closeAll`).
 3. **Stream Isolation vs. Session Purge**:
    - **Stream-Level Errors**: If an individual stream aborts or is canceled (`ERR_HTTP2_STREAM_CANCEL`), call `stream.destroy()`. Do **not** destroy the parent session. Neighboring streams on the same socket continue uninterrupted.
    - **Session-Level Purging**: `pool.purgeSession(origin, session)` is strictly gated to true transport fatalities:
