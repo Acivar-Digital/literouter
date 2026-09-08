@@ -1,10 +1,14 @@
 ---
 name: literouter
-description: LiteRouter API Gateway operational guide for Bun/TypeScript proxy on port 7766. Use when the user asks about LiteRouter, gateway ops, directive keys, provider/model config, routing, fusion presets, Claude Code integration, OpenCode2 integration, Antigravity proxy, setup, or troubleshooting the literouter gateway.
+description: LiteRouter API Gateway operational guide for Bun/TypeScript proxy on port 7766. Use when the user asks about LiteRouter, gateway ops, directive keys, provider/model config, routing, fusion presets, Zen provider, doctor diagnostics, Claude Code integration, OpenCode2 integration, Antigravity proxy, setup, or troubleshooting the literouter gateway.
 ---
 
 # Skill: literouter
 
+> **CANONICAL LOCATION (DO NOT SEARCH DISK):**
+> - Root Skill File: `/home/yapilwsl/arthityap/literouter/.opencode2/skills/literouter/SKILL.md`
+> - Skill Directory: `/home/yapilwsl/arthityap/literouter/.opencode2/skills/literouter/`
+>
 > **Lazy-load skill.** This SKILL.md is the entry point only. When the user's request matches the skill description, load this file first. For deep dives into specific topics, read the referenced markdown files in this directory.
 
 ## Quick Reference
@@ -29,7 +33,20 @@ description: LiteRouter API Gateway operational guide for Bun/TypeScript proxy o
 ## Environment Architecture
 
 - **`.env.local`** (git-ignored secrets): live upstream API key pools (`OPENROUTER_API_KEYS`, `NVIDIA_API_KEYS`, `ZEN_API_KEYS`, `GOOGLE_API_KEYS`)
-- **`.env`** (tracked): operational parameters (port, timeouts, TTFT guards, reasoning defaults, GCP retry toggle `GCP_ENABLE_RETRIES`, GCP quarantine toggle `GCP_ENABLE_QUARANTINE`, GCP circuit breaker toggle `GCP_ENABLE_CIRCUIT_BREAKER`, GCP pacer toggle `GCP_ENABLE_PACER`, Zen retry toggle `ZEN_ENABLE_RETRIES`, Zen quarantine toggle `ZEN_ENABLE_QUARANTINE`, Zen circuit breaker toggle `ZEN_ENABLE_CIRCUIT_BREAKER`, Zen pacer toggle `ZEN_ENABLE_PACER`)
+- **`.env`** (tracked): operational parameters (port, timeouts, TTFT guards, reasoning defaults, GCP retry toggle `GCP_ENABLE_RETRIES`, GCP quarantine toggle `GCP_ENABLE_QUARANTINE`, GCP circuit breaker toggle `GCP_ENABLE_CIRCUIT_BREAKER`, GCP pacer toggle `GCP_ENABLE_PACER`, Zen retry toggle `ZEN_ENABLE_RETRIES`, Zen quarantine toggle `ZEN_ENABLE_QUARANTINE`, Zen circuit breaker toggle `ZEN_ENABLE_CIRCUIT_BREAKER`, Zen pacer toggle `ZEN_ENABLE_PACER`, OpenRouter quarantine toggle `OPENROUTER_ENABLE_QUARANTINE`, rate limit cooldown `COOLDOWN_RATE_LIMIT_TTL_SEC`)
+
+## ⚡ EXACT PARAMETER LOCATIONS: COOLDOWN & QUARANTINE (NO GREP NEEDED)
+
+When changing cooldown, rate limits, or quarantine toggles, edit directly without searching:
+
+| Parameter | Location in `.env` | Code Consumer / Schema | Purpose | How to Change Immediately |
+|---|---|---|---|---|
+| **Rate Limit Cooldown (TTL)** | `.env` line: `COOLDOWN_RATE_LIMIT_TTL_SEC=<sec>` | `src/network/cooldown.ts` (`parseResetDelay`, `computeStatusTtlSec`) via `getEnv().COOLDOWN_RATE_LIMIT_TTL_SEC`<br>Schema: `src/config/schema.ts`<br>Fallback: `src/config/env.ts` | Default quarantine duration when HTTP 429 occurs without `Retry-After` header. Set to `0` to completely disable 429 quarantine penalty. | Set `COOLDOWN_RATE_LIMIT_TTL_SEC=30` (or `0` / `<sec>`) in `.env`, then `bash scripts/restart.sh`. |
+| **OpenRouter Quarantine Toggle** | `.env` line: `OPENROUTER_ENABLE_QUARANTINE=<true\|false>` | `src/network/pool.ts` (`isQuarantineEnabled("or")`)<br>Schema: `src/config/schema.ts`<br>Fallback: `src/config/env.ts` | Bypass all quarantine, lockout, and load-shedding for OpenRouter (`or`) keys. | Set `OPENROUTER_ENABLE_QUARANTINE=false` (or `true`) in `.env`, then `bash scripts/restart.sh`. |
+| **Zen Quarantine Toggle** | `.env` line: `ZEN_ENABLE_QUARANTINE=<true\|false>` | `src/network/pool.ts` (`isQuarantineEnabled("zn")`), `src/handlers/openai_compat.ts`, `src/handlers/openai_original.ts` | Bypass all quarantine for Zen keys. | Set `ZEN_ENABLE_QUARANTINE=false` in `.env`, then `bash scripts/restart.sh`. |
+| **GCP Quarantine Toggle** | `.env` line: `GCP_ENABLE_QUARANTINE=<true\|false>` | `src/network/pool.ts` (`isQuarantineEnabled("gc")`), `src/handlers/gcp_compat.ts` | Bypass all quarantine for Google Cloud Vertex keys. | Set `GCP_ENABLE_QUARANTINE=false` in `.env`, then `bash scripts/restart.sh`. |
+| **Server Error Cooldown (5xx)** | `.env` line: `COOLDOWN_SERVER_ERROR_TTL_SEC=<sec>` | `src/network/cooldown.ts` (`SERVER_ERROR_DEFAULT_SEC = 10`) | Quarantines failing key on 500/502/503/504 errors. | Edit `.env`, then `bash scripts/restart.sh`. |
+| **Auth Error Cooldown (401/403)** | `.env` line: `COOLDOWN_AUTH_ERROR_TTL_SEC=<sec>` | `src/network/classifier.ts` (tiered 300s/1800s/86400s) | Quarantine duration on authentication/bad key errors. | Edit `.env`, then `bash scripts/restart.sh`. |
 
 ## Directive Key Format
 
@@ -65,6 +82,8 @@ Fusion presets: `lr-fse-<preset>` (e.g. `lr-fse-fast`, `lr-fse-smart`, `lr-fse-c
 
 | Topic | File | When to read it |
 |---|---|---|
+| **Zen provider (identity gating, sessions, directives, toggles)** | `zen-provider.md` | User asks about Zen, `zn`, `big-pickle`, `MissingSessionID`, `FreeUsageLimitError`, session-id forwarding, Zen directive keys, or Zen retry/quarantine toggles |
+| **Doctor diagnostics (all providers + Zen session probes)** | `zen-provider.md` (§7) | User asks about `scripts/doctor.ts`, `scripts/doctor_zn.ts`, key health probes, or upstream diagnostics |
 | **Claude Code integration** | `claude-code.md` | User asks about Claude Code, Anthropic Messages API, `ANTHROPIC_BASE_URL`, or routing Claude Code through LiteRouter |
 | **OpenCode2 integration** | `opencode2-playbook.md` | User asks about OpenCode2, V2 plugins, `~/.config/opencode2/`, or V1/V2 isolation |
 | **OpenCode2 streaming troubleshooting** | `opencode2-streaming-troubleshooting.md` | User asks about deep-reasoning streaming hangs, Zod schema `content: null` breakdown, `network_error` crashes, or streaming diagnostics |

@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { resolve, join } from "node:path";
 import { getEnv } from "../src/config/env";
 import { loadKeyPools, maskKey } from "../src/config/keys";
+import { probeZenKeyWithFreshSession } from "./doctor_zn";
 import type { ProviderCode } from "../src/config/schema";
 
 // Inject mkcert root CA so Bun/Node fetch can verify local/proxy TLS certs
@@ -445,7 +446,7 @@ async function runDoctor(): Promise<void> {
     console.log("\n[Zen] ⏭️ Skipped (filter active).");
   } else if (zenKeys.length > 0) {
     console.log(`\n[Zen] Probing ${zenKeys.length} key(s)...`);
-    const res = await probePoolSequential("Zen", zenKeys, probeZenKey, 1000);
+    const res = await probePoolSequential("Zen", zenKeys, probeZenKeyWithFreshSession, 1000);
     probeResults.push(...res);
   } else {
     console.log("\n[Zen] ⏭️ Skipped: No keys configured.");

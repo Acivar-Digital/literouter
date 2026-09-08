@@ -27,10 +27,11 @@ For all system design, folder maps, design decisions, and architectural constrai
 👉 `literouter` Skill (Fixed path: `/home/yapilwsl/arthityap/literouter/.opencode2/skills/literouter/SKILL.md`)
 
 ### ⚡ FIXED CORE PATHS (DO NOT SEARCH DISK)
-- **LiteRouter Skill**: `.opencode2/skills/literouter/` (Root: `.opencode2/skills/literouter/SKILL.md`)
-- **Changelog**: `CHANGELOG.md`
-- **Architecture**: `docs/ARCHITECTURE.md`
-- **Routing & Streaming Spec**: `docs/Fix_Streaming_01.md`
+- **LiteRouter Skill (Absolute)**: `/home/yapilwsl/arthityap/literouter/.opencode2/skills/literouter/SKILL.md`
+- **LiteRouter Skill Directory**: `/home/yapilwsl/arthityap/literouter/.opencode2/skills/literouter/`
+- **Changelog**: `/home/yapilwsl/arthityap/literouter/CHANGELOG.md`
+- **Architecture**: `/home/yapilwsl/arthityap/literouter/docs/ARCHITECTURE.md`
+- **Routing & Streaming Spec**: `/home/yapilwsl/arthityap/literouter/docs/Fix_Streaming_01.md`
 - **Main Handlers**: `src/handlers/openai_compat.ts`, `src/network/fetcher.ts`, `src/network/pacer.ts`
 
 ### OpenCode vs OpenCode2 Config Format
@@ -76,12 +77,12 @@ If for any reason the skill was not loaded at session start, you **MUST immediat
 
 | Category | Trigger Keywords |
 |---|---|
-| **Core & Gateway** | `literouter`, `gateway`, `proxy`, `port 7766`, `bun run src/index.ts`, `scripts/start.sh`, `scripts/doctor.ts` |
+| **Core & Gateway** | `literouter`, `gateway`, `proxy`, `port 7766`, `bun run src/index.ts`, `scripts/start.sh`, `scripts/doctor.ts`, `scripts/doctor_zn.ts`, `zen-provider.md` |
 | **Routing & Keys** | `directive key`, `lr-`, `routing`, `provider`, `model`, `fusion`, `fusion.json`, `globalKeyPool`, `key rotation`, `cooldown`, `quarantine` |
 | **Client Integrations** | `claude code`, `opencode2`, `antigravity`, `agy-gemini`, `agy-claude`, `OpenRouter`, `NVIDIA NIM`, `Zen`, `Google Vertex` |
 | **Streaming & Protocol** | `streaming`, `TTFT`, `SSE`, `keep-alive`, `h2_pool`, `HTTP/2`, `ALPN`, `pacer`, `circuit_breaker`, `network_error`, `content: null`, `Zod` |
 | **Reasoning & Tools** | `reasoning scrubber`, `collapse-reasoning`, `dots`, `XML tool calling`, `<think>`, `trapped thinking`, `tool compaction` |
-| **Errors & Limits** | `429`, `500`, `502`, `503`, `NoResponseError`, `ghosting`, `fast-canning`, `Retry-After`, `GCP_ENABLE_RETRIES` |
+| **Errors & Limits** | `429`, `500`, `502`, `503`, `NoResponseError`, `ghosting`, `fast-canning`, `Retry-After`, `GCP_ENABLE_RETRIES`, `MissingSessionID`, `FreeUsageLimitError`, `session-id`, `big-pickle` |
 
 ---
 

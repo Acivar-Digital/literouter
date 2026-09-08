@@ -4,6 +4,12 @@ All notable changes to LiteRouter will be documented in this file.
 
 ## [Unreleased]
 
+### Added / Zen doctor session probes + zen-provider skill sheet (literouter-9qw0, literouter-f6w6, literouter-vp10) - 2026-09-08
+- `scripts/doctor_zn.ts` (new, isolated): `generateZenSessionId()` mints a fresh `ses_` + 26 random base62 ID per probe (matches verified OpenCode pattern), `buildZenSessionHeaders()` layers registry static identity (`config/providers.json` Zen headers) with the full session fan-out, `probeZenKeyWithFreshSession()` pings `big-pickle` with one distinct session per key. `scripts/doctor.ts` Zen loop delegates to it; legacy static-only `probeZenKey` kept as fallback reference.
+- Verified live: `bun run scripts/doctor.ts --provider=zn` went 7x `400 MissingSessionID` to 7/7 `200 OK (Healthy)`; generator emits 7/7 unique IDs matching `^ses_[A-Za-z0-9]{26}$`; guardrail valid x2 + `bun run typecheck` clean.
+- `.opencode2/skills/literouter/zen-provider.md` (new): all Zen-specific ops in one place — endpoint/registry, bare-model standard, two-layer identity gating, session forwarding (`openai_compat.ts:163-179`), Zen directives, `ZEN_ENABLE_*` toggles, doctor probes, synthetic-identity policy note, and §9 referrer/session-ID mechanics with symptom-to-check table. `SKILL.md` description + Topic Map point at it for Zen/doctor questions.
+- `AGENTS.md`: fallback trigger table now fires the skill on `scripts/doctor_zn.ts`, `zen-provider.md`, `MissingSessionID`, `FreeUsageLimitError`, `session-id`, `big-pickle`.
+
 ### Fixed / H2 drain graceful close: re-arm while activeStreams>0 (literouter-8paf, literouter-3a1j, literouter-i68z) - 2026-09-07
 - `src/network/h2_pool.ts`: `startDraining` now re-arms while `activeStreams>0` instead of unconditional `destroy()` after 30s, which killed 40s+ Zen reasoning streams with `ERR_HTTP2_STREAM_CANCEL`.
 - Drain path uses graceful `session.close()` on idle vs `destroy()`; in-flight LLM/SSE streams complete to EOF before close.
