@@ -17,8 +17,7 @@
   "chain": [
     "nvidia/deepseek-ai/deepseek-v4-pro",
     "nvidia/minimaxai/minimax-m3",
-    "nvidia/z-ai/glm-5.2",
-    "nvidia/moonshotai/kimi-k2.6"
+    "nvidia/z-ai/glm-5.2"
   ],
     "upstream": "http://localhost:7766/v1/chat/completions"
   },

@@ -4,6 +4,13 @@ All notable changes to LiteRouter will be documented in this file.
 
 ## [Unreleased]
 
+### Feat / Google Native Dumb Forwarder for `/v1beta/models/*` (literouter-7xhr, literouter-q0bq) - 2026-09-08
+- Re-engineered `handleGoogleNative` in `src/handlers/google_native.ts` into a true Google Native Dumb Forwarder for `/v1beta/models/*` (`:streamGenerateContent?alt=sse` and `:generateContent`).
+- Supports transparent byte stream passthrough, `x-goog-api-key` injection, stripping client `authorization`, and in-flight key rotation on 429/5xx across `GOOGLE_API_KEYS`.
+- Automatically strips `?key=` query parameters before forwarding, strips downstream hop-by-hop/compression headers (`content-encoding`, `transfer-encoding`, `content-length`), and enforces Google ingress pacing (`getPacerForProvider("gg")`).
+- Integration tests: `tests/integration/google_native.test.ts` verifying native query auth, OpenAI-compatible beta completions, 401 unauthorized rejection, SSE stream passthrough, and 429 rotation.
+- Unit tests: `tests/unit/google_native_dumb_forwarder.test.ts` (10 tests) verifying header sanitization, byte passthrough, 429/503 rotation, network error retries, and exhaustion limits.
+
 ### Added / Zen doctor session probes + zen-provider skill sheet (literouter-9qw0, literouter-f6w6, literouter-vp10) - 2026-09-08
 - `scripts/doctor_zn.ts` (new, isolated): `generateZenSessionId()` mints a fresh `ses_` + 26 random base62 ID per probe (matches verified OpenCode pattern), `buildZenSessionHeaders()` layers registry static identity (`config/providers.json` Zen headers) with the full session fan-out, `probeZenKeyWithFreshSession()` pings `big-pickle` with one distinct session per key. `scripts/doctor.ts` Zen loop delegates to it; legacy static-only `probeZenKey` kept as fallback reference.
 - Verified live: `bun run scripts/doctor.ts --provider=zn` went 7x `400 MissingSessionID` to 7/7 `200 OK (Healthy)`; generator emits 7/7 unique IDs matching `^ses_[A-Za-z0-9]{26}$`; guardrail valid x2 + `bun run typecheck` clean.

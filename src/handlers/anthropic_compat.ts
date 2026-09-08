@@ -983,9 +983,9 @@ async function executeAnthropicDirectCall(
     ? getCircuitBreakerForProvider(directive.provider)
     : null;
 
-  const zenQ = directive.provider !== "zn" || env.ZEN_ENABLE_QUARANTINE;
+  const quarantineEnabled = globalKeyPool.isQuarantineEnabled(directive.provider);
   if (breaker && !breaker.isAvailable()) {
-    logLimit(reqId, directive.provider, selected.index, 503, zenQ ? 60 : undefined, selected.totalKeys);
+    logLimit(reqId, directive.provider, selected.index, 503, quarantineEnabled ? 60 : undefined, selected.totalKeys);
     throw new UpstreamRetryableError(
       `Provider '${directive.provider}' circuit breaker is OPEN`,
       503,
@@ -1026,7 +1026,7 @@ async function executeAnthropicDirectCall(
       bodyText,
     });
 
-    if (zenQ && classification.quarantineTtlSec > 0) {
+    if (quarantineEnabled && classification.quarantineTtlSec > 0) {
       globalKeyPool.reportFailure(
         directive.provider,
         selected.index,
@@ -1036,14 +1036,14 @@ async function executeAnthropicDirectCall(
         Date.now(),
         classification.quarantineTtlSec
       );
-    } else if (directive.provider === "zn" && !env.ZEN_ENABLE_QUARANTINE && classification.quarantineTtlSec > 0) {
-      logWarn(EMOJI.zap, `[ZEN ${reqId}] Dumb-forwarder mode (ZEN_ENABLE_QUARANTINE=false): Key ${selected.index} quarantine bypassed.`);
+    } else if (!quarantineEnabled && classification.quarantineTtlSec > 0) {
+      logWarn(EMOJI.zap, `[${directive.provider.toUpperCase()} ${reqId}] Dumb-forwarder mode (${directive.provider.toUpperCase()}_ENABLE_QUARANTINE=false): Key ${selected.index} quarantine bypassed.`);
     }
 
     const rawErrorMsg = extractErrorMessage(bodyText);
-    const ttlSec = zenQ
-      ? (classification.quarantineTtlSec > 0 ? classification.quarantineTtlSec : (response.status === 429 ? 60 : undefined))
-      : undefined;
+    const ttlSec = !quarantineEnabled || classification.quarantineTtlSec === 0
+      ? undefined
+      : classification.quarantineTtlSec;
     logLimit(reqId, directive.provider, selected.index, response.status, ttlSec, selected.totalKeys, rawErrorMsg);
 
     if (isContextLengthError(response.status, bodyText) && !clientSignal?.aborted) {
@@ -1209,12 +1209,12 @@ async function executeAnthropicDirectCall(
         return null;
       }
       const classification = classifyTransportError(reason);
-      if (zenQ && classification.quarantineTtlSec > 0) {
+      if (quarantineEnabled && classification.quarantineTtlSec > 0) {
         globalKeyPool.reportFailure(directive.provider, currentKeyIndex, 500, undefined, reason, Date.now(), classification.quarantineTtlSec);
-      } else if (directive.provider === "zn" && !env.ZEN_ENABLE_QUARANTINE && classification.quarantineTtlSec > 0) {
-        logWarn(EMOJI.zap, `[ZEN ${reqId}] Dumb-forwarder mode (ZEN_ENABLE_QUARANTINE=false): Key ${currentKeyIndex} quarantine bypassed.`);
+      } else if (!quarantineEnabled && classification.quarantineTtlSec > 0) {
+        logWarn(EMOJI.zap, `[${directive.provider.toUpperCase()} ${reqId}] Dumb-forwarder mode (${directive.provider.toUpperCase()}_ENABLE_QUARANTINE=false): Key ${currentKeyIndex} quarantine bypassed.`);
       }
-      logLimit(reqId, directive.provider, currentKeyIndex, 500, zenQ && classification.quarantineTtlSec > 0 ? classification.quarantineTtlSec : undefined, selected.totalKeys, reason);
+      logLimit(reqId, directive.provider, currentKeyIndex, 500, !quarantineEnabled || classification.quarantineTtlSec === 0 ? undefined : classification.quarantineTtlSec, selected.totalKeys, reason);
 
       while (currentAttempt < maxAttempts) {
         currentAttempt++;
@@ -1253,7 +1253,7 @@ async function executeAnthropicDirectCall(
             model: payload.model,
           });
           if (nextResult.response.status >= 400) {
-            if (zenQ) {
+            if (quarantineEnabled) {
               globalKeyPool.reportFailure(directive.provider, nextSelected.index, nextResult.response.status);
             }
             continue;
@@ -1266,7 +1266,7 @@ async function executeAnthropicDirectCall(
           };
         } catch (fetchErr: unknown) {
           void fetchErr;
-          if (zenQ) {
+          if (quarantineEnabled) {
             globalKeyPool.reportFailure(directive.provider, nextSelected.index, 500);
           }
           continue;
@@ -1393,7 +1393,7 @@ async function executeAnthropicDirectLoop(
         continue;
       }
       if (err instanceof NoResponseError) {
-        if (directive.provider !== "zn" || env.ZEN_ENABLE_QUARANTINE) {
+        if (globalKeyPool.isQuarantineEnabled(directive.provider)) {
           globalKeyPool.reportFailure(directive.provider, selected.index, 0, undefined, err.message, Date.now(), 2);
         }
         continue;

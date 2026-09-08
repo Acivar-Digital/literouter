@@ -15,6 +15,19 @@ export interface PoolStatus {
   readonly quarantined: number;
 }
 
+export function isProviderQuarantineEnabled(provider: string): boolean {
+  if (provider === "gc") {
+    return getEnv().GCP_ENABLE_QUARANTINE;
+  }
+  if (provider === "zn") {
+    return getEnv().ZEN_ENABLE_QUARANTINE;
+  }
+  if (provider === "or") {
+    return getEnv().OPENROUTER_ENABLE_QUARANTINE;
+  }
+  return true;
+}
+
 export class KeyPool extends EventEmitter {
   private readonly pools = new Map<string, readonly string[]>();
   private readonly pointers = new Map<string, number>();
@@ -51,14 +64,8 @@ export class KeyPool extends EventEmitter {
     this.pointers.set(provider, (curr + 1) % total);
   }
 
-  private isQuarantineEnabled(provider: string): boolean {
-    if (provider === "gc") {
-      return getEnv().GCP_ENABLE_QUARANTINE;
-    }
-    if (provider === "zn") {
-      return getEnv().ZEN_ENABLE_QUARANTINE;
-    }
-    return true;
+  public isQuarantineEnabled(provider: string): boolean {
+    return isProviderQuarantineEnabled(provider);
   }
 
   private tryPickIndex(

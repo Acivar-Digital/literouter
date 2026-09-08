@@ -330,8 +330,8 @@ async function executeDirectCall(
       bodyText,
     });
 
-    const zenQuarantineEnabled = !isZen || env.ZEN_ENABLE_QUARANTINE;
-    if (zenQuarantineEnabled && classification.quarantineTtlSec > 0) {
+    const quarantineEnabled = globalKeyPool.isQuarantineEnabled(directive.provider);
+    if (quarantineEnabled && classification.quarantineTtlSec > 0) {
       globalKeyPool.reportFailure(
         directive.provider,
         selected.index,
@@ -341,14 +341,14 @@ async function executeDirectCall(
         Date.now(),
         classification.quarantineTtlSec
       );
-    } else if (isZen && !env.ZEN_ENABLE_QUARANTINE && classification.quarantineTtlSec > 0) {
-      logWarn(EMOJI.zap, `[ZEN ${reqId}] Dumb-forwarder mode (ZEN_ENABLE_QUARANTINE=false): Key ${selected.index} quarantine bypassed.`);
+    } else if (!quarantineEnabled && classification.quarantineTtlSec > 0) {
+      logWarn(EMOJI.zap, `[${directive.provider.toUpperCase()} ${reqId}] Dumb-forwarder mode (${directive.provider.toUpperCase()}_ENABLE_QUARANTINE=false): Key ${selected.index} quarantine bypassed.`);
     }
 
     const rawErrorMsg = extractErrorMessage(bodyText);
-    const ttlSec = zenQuarantineEnabled
-      ? (classification.quarantineTtlSec > 0 ? classification.quarantineTtlSec : (response.status === 429 ? 60 : undefined))
-      : undefined;
+    const ttlSec = !quarantineEnabled || classification.quarantineTtlSec === 0
+      ? undefined
+      : classification.quarantineTtlSec;
     logLimit(reqId, directive.provider, selected.index, response.status, ttlSec, selected.totalKeys, rawErrorMsg);
 
     if (isContextLengthError(response.status, bodyText) && !clientSignal?.aborted) {
@@ -530,13 +530,15 @@ async function executeDirectCall(
     },
     retryProvider: async (reason: string, _hasEmittedTokens?: boolean) => {
       const classification = classifyTransportError(reason);
-      const zenMidQuarantine = !isZen || env.ZEN_ENABLE_QUARANTINE;
-      if (zenMidQuarantine && classification.quarantineTtlSec > 0) {
+      const midQuarantineEnabled = globalKeyPool.isQuarantineEnabled(directive.provider);
+      if (midQuarantineEnabled && classification.quarantineTtlSec > 0) {
         globalKeyPool.reportFailure(directive.provider, currentKeyIndex, 500, undefined, reason, Date.now(), classification.quarantineTtlSec);
+      } else if (!midQuarantineEnabled && classification.quarantineTtlSec > 0) {
+        logWarn(EMOJI.zap, `[${directive.provider.toUpperCase()} ${reqId}] Dumb-forwarder mode (${directive.provider.toUpperCase()}_ENABLE_QUARANTINE=false): Key ${currentKeyIndex} quarantine bypassed.`);
       }
-      const midTtlSec = zenMidQuarantine && classification.quarantineTtlSec > 0
-        ? classification.quarantineTtlSec
-        : undefined;
+      const midTtlSec = !midQuarantineEnabled || classification.quarantineTtlSec === 0
+        ? undefined
+        : classification.quarantineTtlSec;
       logLimit(reqId, directive.provider, currentKeyIndex, 500, midTtlSec, selected.totalKeys, reason);
 
       if (isZen && !env.ZEN_ENABLE_RETRIES) {
@@ -582,7 +584,7 @@ async function executeDirectCall(
         try {
           const nextResult = await fetchWithTtftGuard(nextFetchOpts);
           if (nextResult.response.status >= 400) {
-            if (!isZen || env.ZEN_ENABLE_QUARANTINE) {
+            if (globalKeyPool.isQuarantineEnabled(directive.provider)) {
               globalKeyPool.reportFailure(directive.provider, nextSelected.index, nextResult.response.status);
             }
             continue;
@@ -595,7 +597,7 @@ async function executeDirectCall(
           };
         } catch (fetchErr: unknown) {
           void fetchErr;
-          if (!isZen || env.ZEN_ENABLE_QUARANTINE) {
+          if (globalKeyPool.isQuarantineEnabled(directive.provider)) {
             globalKeyPool.reportFailure(directive.provider, nextSelected.index, 500);
           }
           continue;
@@ -707,8 +709,7 @@ async function tryDirectAttempt(
     }
     if (err instanceof NoResponseError) {
       const isZenNoResp = directive.provider === "zn";
-      const zenNoRespQuarantine = !isZenNoResp || getEnv().ZEN_ENABLE_QUARANTINE;
-      if (zenNoRespQuarantine) {
+      if (globalKeyPool.isQuarantineEnabled(directive.provider)) {
         globalKeyPool.reportFailure(directive.provider, selected.index, 0, undefined, err.message, Date.now(), 2);
       }
       if (isZenNoResp && !getEnv().ZEN_ENABLE_RETRIES) {
@@ -760,8 +761,7 @@ async function executeSingleAttemptLoop(
 
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     const dwellMs = Date.now() - startTime;
-    const zenQuarantineOn = !isZenLoop || env.ZEN_ENABLE_QUARANTINE;
-    if (zenQuarantineOn && globalKeyPool.shouldLoadShed(directive.provider, dwellMs, maxWaitMs)) {
+    if (globalKeyPool.isQuarantineEnabled(directive.provider) && globalKeyPool.shouldLoadShed(directive.provider, dwellMs, maxWaitMs)) {
       const minTtl = globalKeyPool.getMinQuarantineTtlMs(directive.provider);
       const retryAfterSec = Math.max(1, Math.ceil(minTtl / 1000));
       return Response.json(

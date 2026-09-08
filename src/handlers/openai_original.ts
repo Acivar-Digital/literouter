@@ -184,9 +184,10 @@ async function logUpstreamError(reqId: string, route: ResolvedRoute, totalKeys: 
   try {
     const bodyText = await res.clone().text();
     const rawMsg = extractErrorMessage(bodyText);
-    const isZen = route.provider === "zn";
-    const zenQuarantineEnabled = !isZen || getEnv().ZEN_ENABLE_QUARANTINE;
-    const ttl = zenQuarantineEnabled ? (getRetryAfterSec(res) ?? (res.status === 429 ? 60 : undefined)) : undefined;
+    const quarantineEnabled = globalKeyPool.isQuarantineEnabled(route.provider);
+    const ttl = quarantineEnabled && (res.status !== 429 || getEnv().COOLDOWN_RATE_LIMIT_TTL_SEC > 0)
+      ? (getRetryAfterSec(res) ?? (res.status === 429 ? getEnv().COOLDOWN_RATE_LIMIT_TTL_SEC : undefined))
+      : undefined;
     logLimit(reqId, route.provider, route.keyIndex, res.status, ttl, totalKeys, rawMsg);
   } catch (err: unknown) {
     logWarn(EMOJI.limit, `Failed to inspect upstream error body: ${err}`);
@@ -734,7 +735,7 @@ async function dispatchUpstreamFetch(
   const env = getEnv();
   const isZen = route.provider === "zn";
   const zenRetriesEnabled = !isZen || env.ZEN_ENABLE_RETRIES;
-  const zenQuarantineEnabled = !isZen || env.ZEN_ENABLE_QUARANTINE;
+  const quarantineEnabled = globalKeyPool.isQuarantineEnabled(route.provider);
   // S5 zn gating mirrors S4 (openai_compat.ts) + gcp_compat.ts. Non-zn providers
   // (or/oa) keep the legacy single-flight path: maxAttempts=1, unconditional
   // failure reporting, no breaker, no load-shed.
@@ -780,7 +781,7 @@ async function dispatchUpstreamFetch(
     }
 
     // Load-shed is zn-scoped and skipped when quarantine is off.
-    if (isZen && zenQuarantineEnabled) {
+    if (isZen && quarantineEnabled) {
       const dwellMs = Date.now() - loopStart;
       if (globalKeyPool.shouldLoadShed("zn", dwellMs, maxWaitMs)) {
         const minTtl = globalKeyPool.getMinQuarantineTtlMs("zn");
@@ -838,7 +839,7 @@ async function dispatchUpstreamFetch(
       };
       execResult = await executeUpstreamFetch(fetchOpts);
     } catch (err: unknown) {
-      if (zenQuarantineEnabled) {
+      if (quarantineEnabled) {
         globalKeyPool.reportFailure(route.provider, currentKeyIndex, 502);
       } else if (isZen) {
         logWarn(EMOJI.zap, `[ZEN ${reqId}] Dumb-forwarder mode (ZEN_ENABLE_QUARANTINE=false): Key ${currentKeyIndex} quarantine bypassed.`);
@@ -882,7 +883,9 @@ async function dispatchUpstreamFetch(
     }
 
     if (!isZen) {
-      globalKeyPool.reportFailure(route.provider, currentKeyIndex, res.status);
+      if (quarantineEnabled) {
+        globalKeyPool.reportFailure(route.provider, currentKeyIndex, res.status);
+      }
       return { response: res, keyIndex: currentKeyIndex };
     }
 
@@ -894,7 +897,7 @@ async function dispatchUpstreamFetch(
       headers: res.headers,
       bodyText: errBodyText,
     });
-    if (zenQuarantineEnabled && classification.quarantineTtlSec > 0) {
+    if (quarantineEnabled && classification.quarantineTtlSec > 0) {
       globalKeyPool.reportFailure("zn", currentKeyIndex, res.status, res.headers, errBodyText, Date.now(), classification.quarantineTtlSec);
     } else if (classification.quarantineTtlSec > 0) {
       logWarn(EMOJI.zap, `[ZEN ${reqId}] Dumb-forwarder mode (ZEN_ENABLE_QUARANTINE=false): Key ${currentKeyIndex} quarantine bypassed.`);
@@ -906,7 +909,7 @@ async function dispatchUpstreamFetch(
       attempt < maxAttempts &&
       !signal.aborted;
     if (canRetry) {
-      const ttlSec = zenQuarantineEnabled && classification.quarantineTtlSec > 0
+      const ttlSec = quarantineEnabled && classification.quarantineTtlSec > 0
         ? classification.quarantineTtlSec
         : undefined;
       logLimit(reqId, "zn", currentKeyIndex, res.status, ttlSec, totalKeys, extractErrorMessage(errBodyText));

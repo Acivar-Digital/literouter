@@ -13,7 +13,7 @@ This document serves as the definitive reference for how LiteRouter and its clie
 | OpenRouter Specification / Proposal | LiteRouter Implementation Component | Operational Mechanism |
 | :--- | :--- | :--- |
 | **Credit Balance Exhaustion (402 Payment Required)** | `src/network/fetcher.ts` (`classifyUpstreamError`) | Classifies 402 as `QUOTA_EXHAUSTED` / `bad_key`, sets key cooldown (7 days), immediately rotates to next valid key in pool without failing the downstream request. |
-| **Pre-Stream Rate Limits (429 Too Many Requests)** | `src/network/fetcher.ts`, `src/network/pacer.ts` | Token-bucket FIFO conveyor belt paces ingress requests. If a 429 occurs pre-stream, `classifyUpstreamError` dynamically sets exponential backoff cooldown and transparently rotates key in-flight. |
+| **Pre-Stream Rate Limits (429 Too Many Requests)** | `src/network/fetcher.ts`, `src/network/pacer.ts`, `src/network/cooldown.ts` | Token-bucket FIFO conveyor belt paces ingress requests. If a 429 occurs pre-stream without `Retry-After`, quarantine defaults to `COOLDOWN_RATE_LIMIT_TTL_SEC` in `.env` (can be `0` to disable quarantine penalty). OpenRouter quarantine can be completely disabled via `OPENROUTER_ENABLE_QUARANTINE=false`. |
 | **Provider-Side vs Platform-Side 429s** | `src/network/fetcher.ts` (`classifyUpstreamError`) | Detects `error.metadata.provider_code` and provider status messages to distinguish transient upstream provider stalls from key exhaustion. |
 | **Mid-Stream Rate Limits & In-Band Errors** | `src/network/fetcher.ts` (`isInBandErrorChunk`, `handleInBandErrorIfPresent`) | Intercepts in-band JSON chunks with `finish_reason: "error"`, `finish_reason: "network_error"`, and `"Server error mid-response"` to prevent error JSON leaking into the user transcript. |
 | **Mid-Stream Phase Gating (`hasEmittedTokens`)** | `src/network/fetcher.ts` (`createResilientStream`) | If zero content tokens were emitted before error (TTFT phase), transparently retries with fallback key. If tokens were already emitted, formats spec-compliant terminal error frame (`formatMidstreamErrorFrame`) to prevent duplicate token splicing. |
@@ -44,6 +44,11 @@ OpenRouter rate limits originate from:
 1. **Ingress Token-Bucket Pacer (`src/network/pacer.ts`)**: Enforces minimum spacing (`minIntervalMs = 500ms`) to avoid triggering burst rate limits.
 2. **Anti-Pinning H2 Aging (`src/network/h2_pool.ts`)**: Re-creates HTTP/2 sessions every 180s ($\pm 15\text{s}$) to avoid L4 load-balancer pinning where all requests hit a single exhausted upstream blade.
 3. **In-Flight Key Rotation**: Up to 3 attempts across available pool keys with exponential backoff.
+
+4. **Quarantine Duration & Toggle**:
+   - Fallback quarantine when no `Retry-After` header is supplied is governed by `COOLDOWN_RATE_LIMIT_TTL_SEC` in `.env` (reads directly into `src/network/cooldown.ts`).
+   - Setting `COOLDOWN_RATE_LIMIT_TTL_SEC=0` sets 429 quarantine delay to 0 seconds.
+   - Setting `OPENROUTER_ENABLE_QUARANTINE=false` in `.env` completely bypasses key quarantine for OpenRouter across all error codes (`src/network/pool.ts`).
 
 ---
 
@@ -173,6 +178,13 @@ Any updates to `config/providers.json` can be hot-reloaded without restarting th
 - **`LITEROUTER_USER_AGENT`**: Defaults to `OpenCode/1.18.29`.
 
 These can also be customized in `.env` (e.g. set `LITEROUTER_USER_AGENT=unknown` or custom harness identities) without requiring code modifications. Non-agentic providers (NVIDIA NIM, Google Vertex) remain isolated and do not receive these headers, while Zen receives matching OpenCode headers configured declaratively in `config/providers.json` to bypass FreeUsageLimitError.
+
+### App Attribution Side-Effect (`/apps/url/...` Is Not a Redirect)
+
+- `HTTP-Referer: https://opencode.ai` (no trailing slash; OpenRouter normalizes to `https://opencode.ai/` when URL-encoding) attributes all LiteRouter traffic to the shared `opencode.ai` app id.
+- Clicking the app opens OpenRouter's internal route `openrouter.ai/apps/url/<url-encoded-referer>` (e.g. `/apps/url/https%3A%2F%2Fopencode.ai%2F`). Per `openrouter.ai/docs/app-attribution`, this page never 302-redirects out to `opencode.ai` — it is the rankings/analytics view for that referer. A blank or JS-shell render is OpenRouter-side (login / no public metadata), not a wrong URL from LiteRouter.
+- Native OpenCode sends identical headers (`provider.ts`: `HTTP-Referer: https://opencode.ai`, `X-Title: opencode`), so direct-key and LiteRouter traffic share one app entry. Verified 2026-09-08.
+- For genuine/private attribution: set `LITEROUTER_HTTP_REFERER=https://<your-domain>` + `LITEROUTER_X_TITLE=<name>` (optional `X-OpenRouter-App-Visibility: hidden`), then `POST /reset`. Tradeoff: custom referer is untested against the `:free` harness gate — keep `opencode.ai` if free models must work. Never change the Zen block for this; Zen free-tier gating requires OpenCode identity.
 
 ---
 

@@ -1,3 +1,5 @@
+import { getEnv } from "../config/env";
+
 export interface KeyCooldownState {
   readonly quarantinedUntil: number;
   readonly reason: string;
@@ -89,11 +91,15 @@ export function parseResetDelay(
   headers?: Headers | Record<string, string>,
   errorBody?: string
 ): ParsedResetDelay {
+  if (getEnv().COOLDOWN_RATE_LIMIT_TTL_SEC === 0) {
+    return { delayMs: 0, isGraceRetry: false };
+  }
   const headerVal = getHeaderString(headers);
   const extractedMs = parseHeaderValue(headerVal) ?? parseBodyRegex(errorBody);
 
   if (extractedMs === null) {
-    return { delayMs: RATE_LIMIT_DEFAULT_SEC * 1000, isGraceRetry: false };
+    const configuredTtlSec = getEnv().COOLDOWN_RATE_LIMIT_TTL_SEC;
+    return { delayMs: configuredTtlSec * 1000, isGraceRetry: false };
   }
   const isGrace = extractedMs > 0 && extractedMs <= GRACE_RETRY_THRESHOLD_MS;
   const delayMs = isGrace ? extractedMs : clampDuration(extractedMs);
@@ -113,6 +119,9 @@ const STATUS_TTL_MAP: Readonly<Record<number, number>> = {
 };
 
 export function computeStatusTtlSec(status: number): number {
+  if (status === 429) {
+    return getEnv().COOLDOWN_RATE_LIMIT_TTL_SEC;
+  }
   const mapped = STATUS_TTL_MAP[status];
   if (mapped !== undefined) {
     return mapped;

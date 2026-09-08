@@ -1,4 +1,6 @@
 import { parseResetDelay } from "./cooldown";
+import { isProviderQuarantineEnabled } from "./pool";
+import { getEnv } from "../config/env";
 
 export interface UpstreamErrorInfo {
   readonly provider: string;
@@ -137,14 +139,17 @@ export function classifyUpstreamError(input: UpstreamErrorInfo): ErrorDispositio
     if (isQuotaExhausted429(text)) {
       return {
         action: "retry_rotate",
-        quarantineTtlSec: SEVEN_DAYS_SEC,
+        quarantineTtlSec: !isProviderQuarantineEnabled(input.provider) ? 0 : SEVEN_DAYS_SEC,
         reason: "Quota or credit exhaustion (429)",
         isRetryable: true,
       };
     }
 
     const reset = parseResetDelay(headers, rawBody);
-    const ttlSec = Math.round(reset.delayMs / 1000);
+    const ttlSec =
+      !isProviderQuarantineEnabled(input.provider) || getEnv().COOLDOWN_RATE_LIMIT_TTL_SEC === 0
+        ? 0
+        : Math.round(reset.delayMs / 1000);
     return {
       action: "retry_rotate",
       quarantineTtlSec: ttlSec,
