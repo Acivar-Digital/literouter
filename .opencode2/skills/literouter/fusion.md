@@ -9,26 +9,51 @@ LiteRouter Fusion (`v3.1`) encompasses two high-availability resilience architec
 ## 1. Google Native Flash & Flash-Lite Fusion (`gemini-flash`, `gemini-flash-lite`)
 
 ### 1.1 Architecture & Concept
-When client requests target the Google Native endpoint (`/v1beta/models/*:generateContent` or `/v1beta/models/*:streamGenerateContent`) using model alias `gemini-flash` or `gemini-flash-lite` (or prefixed with `google/`) with directive key `lr-gg-gg-gc-no`, LiteRouter activates the Native Fusion cascade for that chain.
+When client requests target the Google Native endpoint using model alias `gemini-flash` or `gemini-flash-lite` (or prefixed with `google/`) with directive key `lr-gg-gg-gc-no`, LiteRouter activates the Native Fusion cascade for that specific chain.
 
+#### Endpoint & Directive Specification:
+- **Endpoints**:
+  - Unary: `POST /v1beta/models/<chain>:generateContent`
+  - Streaming: `POST /v1beta/models/<chain>:streamGenerateContent?alt=sse`
+- **Directive Key**: `lr-gg-gg-gc-no` (Google Native Dumb Forwarder, wire `gg`, endpoint `gc`).
+  - Pass via `Authorization: Bearer lr-gg-gg-gc-no` or query parameter `?key=lr-gg-gg-gc-no`.
+- **Supported Client SDKs**: `@ai-sdk/google` or standard Gemini SDKs configured with:
+  ```ts
+  const google = createGoogleGenerativeAI({
+    baseURL: "http://localhost:7766/v1beta",
+    apiKey: "lr-gg-gg-gc-no",
+  });
+  ```
+- **Bare & Prefixed Model Naming**:
+  Both bare model names and `google/` prefixes are fully supported and automatically normalized by `normalizeGoogleNativeModel()`:
+  - `gemini-flash` or `google/gemini-flash`
+  - `gemini-flash-lite` or `google/gemini-flash-lite`
+
+#### Native Chains & Tier Cascades:
 The cascades step down through generational model tiers:
 
-**`gemini-flash` Chain:**
-```
-gemini-3.8-flash (Tier 1) ──[404 or all keys 429/5xx]──► gemini-3.7-flash (Tier 2)
-                                                                 │
-                                                   [404 or all keys 429/5xx]
-                                                                 ▼
-gemini-3.5-flash (Tier 4) ◄──[404 or all keys 429/5xx]── gemini-3.6-flash (Tier 3)
-```
+1. **`gemini-flash` Chain**:
+   - Tier 1: `gemini-3.8-flash`
+   - Tier 2: `gemini-3.7-flash`
+   - Tier 3: `gemini-3.6-flash`
+   - Tier 4: `gemini-3.5-flash`
+   ```
+   gemini-3.8-flash (Tier 1) ──[404 or all keys 429/5xx]──► gemini-3.7-flash (Tier 2)
+                                                                    │
+                                                      [404 or all keys 429/5xx]
+                                                                    ▼
+   gemini-3.5-flash (Tier 4) ◄──[404 or all keys 429/5xx]── gemini-3.6-flash (Tier 3)
+   ```
 
-**`gemini-flash-lite` Chain:**
-```
-gemini-3.5-flash-lite (Tier 1) ──[404 or all keys 429/5xx]──► gemini-3.1-flash-lite (Tier 2)
-```
+2. **`gemini-flash-lite` Chain**:
+   - Tier 1: `gemini-3.5-flash-lite`
+   - Tier 2: `gemini-3.1-flash-lite`
+   ```
+   gemini-3.5-flash-lite (Tier 1) ──[404 or all keys 429/5xx]──► gemini-3.1-flash-lite (Tier 2)
+   ```
 
 ### 1.2 Declarative Configuration (`config/fusion.json`)
-Native chains are declared under the top-level `"native_chains"` object in `config/fusion.json`:
+Native chains are declared declaratively under the top-level `"native_chains"` object in `config/fusion.json`:
 ```json
 {
   "native_chains": {
@@ -45,10 +70,11 @@ Native chains are declared under the top-level `"native_chains"` object in `conf
   }
 }
 ```
+If `config/fusion.json` is missing or omits a chain, LiteRouter provides hardcoded fallback constants (`DEFAULT_FLASH_CHAIN` and `DEFAULT_FLASH_LITE_CHAIN`) in `src/handlers/google_native.ts`.
 
 ### 1.3 Zero Disk I/O On Hot Path
 - **Boot-Time Ingestion**: Chains are parsed and cached in memory via `loadAndCacheNativeChains()` during gateway boot (`src/index.ts`).
-- **Zero Disk Reads**: Inbound requests never touch the filesystem; `getNativeChain("gemini-flash")` and `getNativeChain("gemini-flash-lite")` read exclusively from the in-memory cache.
+- **Zero Disk Reads**: Inbound requests never touch the filesystem; `getNativeChain("gemini-flash")` and `getNativeChain("gemini-flash-lite")` read exclusively from the in-memory cache `cachedNativeChains`.
 - **Hot Reloading**: The cache is cleanly refreshed on `POST /reset` via `resetAllState()` / `resetNativeChainsCache()`.
 
 ### 1.4 Dual-Rotation Engine & State Machine
@@ -90,30 +116,35 @@ The cascade combines **tier fallback** with **inner key pool rotation**:
    - Returns HTTP 503 {"error": {"message": "All Google native fusion tiers exhausted", "type": "service_unavailable"}}
 ```
 
-#### Key Mechanics:
+#### Key Mechanics & State Isolation:
 1. **Isolated Persistent Tier Pointers ("Stay There" Semantics)**:
-   - Module-level state `nativeTierIndices = new Map<string, number>()` tracks each chain's current active tier independently.
-   - If `gemini-flash-lite` Tier 1 fails and Tier 2 succeeds, `getNativeTierIndex("gemini-flash-lite")` updates to `1` (Tier 2), while `gemini-flash` remains at its own independent tier index. Subsequent requests for `gemini-flash-lite` begin directly at Tier 2.
+   - Module-level state `nativeTierIndices = new Map<string, number>()` tracks each chain's current active tier **independently**.
+   - **Full State Isolation**: Because each chain key is tracked separately in `nativeTierIndices`:
+     - A fallback on `gemini-flash-lite` (e.g. from Tier 1 `gemini-3.5-flash-lite` to Tier 2 `gemini-3.1-flash-lite`) updates only `nativeTierIndices.get("gemini-flash-lite")`. It has **zero effect** on `gemini-flash`, which remains pinned at its own independent tier index.
+     - Conversely, a cascade on `gemini-flash` never mutates or shifts the tier index of `gemini-flash-lite`.
+   - Subsequent requests for each chain begin directly at that chain's pinned winning tier index.
    - Resets all indices to `0` upon `POST /reset` via `resetNativeTierIndices()`.
-2. **Concurrency Pinning**:
-   - To prevent race conditions and skipped tiers under concurrent load, each request takes a local snapshot `const startTier = getNativeTierIndex(chainKey)`.
-   - Iteration uses `(startTier + cycleStep) % totalTiers`, ensuring that even if another concurrent request mutates the pointer mid-flight, every individual request deterministically traverses all unique tiers of that chain exactly once.
+2. **Concurrency Snapshot Pinning**:
+   - To prevent race conditions and skipped tiers under concurrent load, each request captures an atomic snapshot `const startTier = getNativeTierIndex(chainKey)`.
+   - Iteration strictly evaluates `(startTier + cycleStep) % totalTiers`, ensuring that even if another concurrent request mutates the pointer mid-flight, every individual request deterministically traverses all unique tiers of that chain exactly once.
 3. **Prefix Normalization**:
    - Inbound model paths such as `/v1beta/models/google/gemini-flash` or `/v1beta/models/google/gemini-flash-lite` automatically strip the `google/` prefix to resolve against canonical `native_chains`.
 4. **Inner Key Rotation**:
    - For a given tier, the forwarder attempts all active keys in the `gg` pool before cascading to the next model tier on 429/5xx errors.
 
 ### 1.5 Error Cascades & Safeguards
-- **HTTP 404 Fast-Advance**: If Google returns 404 (e.g. `gemini-3.8-flash` or unreleased lite tiers), LiteRouter does **not** retry other keys. It immediately steps to the next tier on attempt 1 with 0 extra keys burned.
-- **HTTP 429 / 5xx / Network Drops**: Triggers key rotation across the Google key pool. If all keys fail, the tier cascades.
+- **HTTP 404 Fast-Advance**: If Google returns 404 (e.g. `gemini-3.8-flash` or unreleased lite tiers), LiteRouter does **not** retry other keys in the pool. It immediately steps to the next tier on attempt 1 with 0 extra keys burned.
+- **HTTP 429 / 5xx / Network Drops**: Triggers key rotation across the Google key pool. If all keys fail, the tier cascades to the next model in the chain.
 - **Deterministic Errors (400, 401, 403)**: Non-recoverable client issues bypass cascade and return directly downstream.
-- **1-Cycle Safeguard**: The loop is strictly capped at `totalTiers` (4 for `gemini-flash`, 2 for `gemini-flash-lite`). If all tiers are exhausted, it terminates with HTTP 503 `{"error": {"message": "All Google native fusion tiers exhausted", "type": "service_unavailable"}}`.
-- **Pre-Stream vs Mid-Stream Safety**: Cascades apply strictly before stream initiation. If upstream drops the connection after headers or bytes are sent to downstream, the stream closes cleanly without attempting a cascade into an active downstream body.
+- **1-Cycle Safeguard**: The loop is strictly capped at `totalTiers` (4 for `gemini-flash`, 2 for `gemini-flash-lite`). If all tiers in the chain are exhausted, it terminates with HTTP 503 `{"error": {"message": "All Google native fusion tiers exhausted", "type": "service_unavailable"}}`.
+- **Pre-Stream vs Mid-Stream Safety**: Cascades apply strictly before stream initiation. If upstream drops the connection after headers or bytes are sent downstream, the stream closes cleanly without attempting a cascade into an active downstream body.
 
 ### 1.6 Telemetry & Headers
 - **Downstream Headers**:
   - `x-literouter-model: <active_tier_model>` (e.g. `gemini-3.7-flash` or `gemini-3.1-flash-lite`)
   - `x-literouter-tier: <tier_number>` (e.g. `2`)
+- **Hop-by-Hop & Compression Header Stripping**:
+  - Downstream headers strip `content-encoding`, `content-length`, and `transfer-encoding` to prevent gzip decompression mismatch or chunk framing issues in `@ai-sdk/google`.
 - **Upstream Harness Attribution**:
   - Injects `User-Agent: OpenCode/1.18.29`
   - Injects `HTTP-Referer: https://opencode.ai`
