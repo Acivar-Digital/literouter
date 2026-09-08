@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { resetAllState } from "../../src/lib";
 import {
   getCurrentFlashTierIndex,
+  getNativeTierIndex,
   handleGoogleNative,
   loadAndCacheNativeChains,
   resetNativeFlashTierIndex,
@@ -408,5 +409,166 @@ describe("Google Native gemini-flash Fusion Unit Tests", () => {
     // Both requests evaluated Tier 1 (3.8) then Tier 2 (3.7)
     expect(callsPerReq["req-concurrent-A"]).toEqual(["gemini-3.8-flash", "gemini-3.7-flash"]);
     expect(callsPerReq["req-concurrent-B"]).toEqual(["gemini-3.8-flash", "gemini-3.7-flash"]);
+  });
+
+  // 11. gemini-flash-lite: routes to Tier 1 (gemini-3.5-flash-lite) on 200 OK, injecting x-literouter-model: gemini-3.5-flash-lite and x-literouter-tier: 1
+  it("gemini-flash-lite routes to Tier 1 on 200 OK and injects x-literouter-* headers", async () => {
+    const fetchCalls: MockFetchCall[] = [];
+
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      const url = input.toString();
+      const headers = new Headers(init?.headers);
+      const key = headers.get("x-goog-api-key") ?? undefined;
+      const modelInUrl = getModelFromUrl(url);
+      fetchCalls.push({ url, method: init?.method, headers, key, modelInUrl });
+
+      if (modelInUrl === "gemini-3.5-flash-lite") {
+        return createSuccessCandidateResponse("Lite Tier 1 ok", "gemini-3.5-flash-lite");
+      }
+      return createErrorResponse(500, "Unexpected model requested");
+    }) as unknown as typeof fetch;
+
+    const req = makeGoogleRequest("/v1beta/models/gemini-flash-lite:generateContent");
+    const res = await handleGoogleNative(req, "lr-gg-gg-gc-no", "req-flash-lite-tier1");
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get("x-literouter-model")).toBe("gemini-3.5-flash-lite");
+    expect(res.headers.get("x-literouter-tier")).toBe("1");
+    expect(fetchCalls.length).toBe(1);
+    expect(fetchCalls[0]?.modelInUrl).toBe("gemini-3.5-flash-lite");
+  });
+
+  // 12. gemini-flash-lite: falls back to Tier 2 (gemini-3.1-flash-lite) on 404 fast-advance without burning keys, injecting x-literouter-model: gemini-3.1-flash-lite and x-literouter-tier: 2
+  it("gemini-flash-lite falls back to Tier 2 on 404 fast-advance without burning keys", async () => {
+    const fetchCalls: MockFetchCall[] = [];
+
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      const url = input.toString();
+      const headers = new Headers(init?.headers);
+      const key = headers.get("x-goog-api-key") ?? undefined;
+      const modelInUrl = getModelFromUrl(url);
+      fetchCalls.push({ url, method: init?.method, headers, key, modelInUrl });
+
+      if (modelInUrl === "gemini-3.5-flash-lite") {
+        return createErrorResponse(404, "models/gemini-3.5-flash-lite not found");
+      }
+      if (modelInUrl === "gemini-3.1-flash-lite") {
+        return createSuccessCandidateResponse("Lite Tier 2 response", "gemini-3.1-flash-lite");
+      }
+      return createErrorResponse(500, "Unexpected model");
+    }) as unknown as typeof fetch;
+
+    const req = makeGoogleRequest("/v1beta/models/gemini-flash-lite:generateContent");
+    const res = await handleGoogleNative(req, "lr-gg-gg-gc-no", "req-flash-lite-404-advance");
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get("x-literouter-model")).toBe("gemini-3.1-flash-lite");
+    expect(res.headers.get("x-literouter-tier")).toBe("2");
+
+    const calls35Lite = fetchCalls.filter((c) => c.modelInUrl === "gemini-3.5-flash-lite");
+    const calls31Lite = fetchCalls.filter((c) => c.modelInUrl === "gemini-3.1-flash-lite");
+
+    expect(calls35Lite.length).toBe(1);
+    expect(calls31Lite.length).toBe(1);
+    expect(fetchCalls.length).toBe(2);
+  });
+
+  // 13. google/gemini-flash-lite (with prefix) is properly normalized to gemini-flash-lite
+  it("normalizes google/gemini-flash-lite prefix to gemini-flash-lite and routes to fusion chain", async () => {
+    let capturedUrl = "";
+
+    globalThis.fetch = (async (input: string | URL | Request) => {
+      capturedUrl = input.toString();
+      return createSuccessCandidateResponse("Lite prefix stripped ok", "gemini-3.5-flash-lite");
+    }) as unknown as typeof fetch;
+
+    const req = makeGoogleRequest("/v1beta/models/google/gemini-flash-lite:generateContent");
+    const res = await handleGoogleNative(req, "lr-gg-gg-gc-no", "req-flash-lite-prefix-strip");
+
+    expect(res.status).toBe(200);
+    expect(capturedUrl).toContain("/v1beta/models/gemini-3.5-flash-lite:generateContent");
+    expect(capturedUrl).not.toContain("google/");
+    expect(res.headers.get("x-literouter-model")).toBe("gemini-3.5-flash-lite");
+    expect(res.headers.get("x-literouter-tier")).toBe("1");
+  });
+
+  // 14. Independent tier index tracking: failing gemini-flash-lite advances its tier pointer without advancing or affecting gemini-flash's tier pointer, and vice-versa
+  it("maintains independent tier index tracking between gemini-flash-lite and gemini-flash", async () => {
+    globalThis.fetch = (async (input: string | URL | Request) => {
+      const url = input.toString();
+      const modelInUrl = getModelFromUrl(url);
+
+      if (modelInUrl === "gemini-3.5-flash-lite") {
+        return createErrorResponse(404, "3.5 lite not found");
+      }
+      if (modelInUrl === "gemini-3.1-flash-lite") {
+        return createSuccessCandidateResponse("3.1 lite ok", "gemini-3.1-flash-lite");
+      }
+      if (modelInUrl === "gemini-3.8-flash") {
+        return createErrorResponse(404, "3.8 flash not found");
+      }
+      if (modelInUrl === "gemini-3.7-flash") {
+        return createSuccessCandidateResponse("3.7 flash ok", "gemini-3.7-flash");
+      }
+      return createErrorResponse(500, "Unexpected model");
+    }) as unknown as typeof fetch;
+
+    // Both chains start at tier index 0
+    expect(getNativeTierIndex("gemini-flash-lite")).toBe(0);
+    expect(getNativeTierIndex("gemini-flash")).toBe(0);
+
+    // Failing gemini-flash-lite (3.5 -> 404, falls back to 3.1 -> 200)
+    const reqLite = makeGoogleRequest("/v1beta/models/gemini-flash-lite:generateContent");
+    const resLite = await handleGoogleNative(reqLite, "lr-gg-gg-gc-no", "req-lite-advance");
+    expect(resLite.status).toBe(200);
+    expect(resLite.headers.get("x-literouter-model")).toBe("gemini-3.1-flash-lite");
+    expect(resLite.headers.get("x-literouter-tier")).toBe("2");
+
+    // gemini-flash-lite pointer advanced to 1, but gemini-flash is still 0
+    expect(getNativeTierIndex("gemini-flash-lite")).toBe(1);
+    expect(getNativeTierIndex("gemini-flash")).toBe(0);
+
+    // Failing gemini-flash (3.8 -> 404, falls back to 3.7 -> 200)
+    const reqFlash = makeGoogleRequest("/v1beta/models/gemini-flash:generateContent");
+    const resFlash = await handleGoogleNative(reqFlash, "lr-gg-gg-gc-no", "req-flash-advance");
+    expect(resFlash.status).toBe(200);
+    expect(resFlash.headers.get("x-literouter-model")).toBe("gemini-3.7-flash");
+    expect(resFlash.headers.get("x-literouter-tier")).toBe("2");
+
+    // gemini-flash pointer advanced to 1, while gemini-flash-lite remains at 1
+    expect(getNativeTierIndex("gemini-flash")).toBe(1);
+    expect(getNativeTierIndex("gemini-flash-lite")).toBe(1);
+  });
+
+  // 15. 1-cycle exhaustion safeguard: if both gemini-3.5-flash-lite and gemini-3.1-flash-lite fail, it returns HTTP 503 after exactly 2 tier attempts
+  it("returns HTTP 503 after exactly 2 tier attempts when both gemini-flash-lite tiers fail", async () => {
+    const fetchCalls: MockFetchCall[] = [];
+
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      const url = input.toString();
+      const headers = new Headers(init?.headers);
+      const key = headers.get("x-goog-api-key") ?? undefined;
+      const modelInUrl = getModelFromUrl(url);
+      fetchCalls.push({ url, method: init?.method, headers, key, modelInUrl });
+
+      return createErrorResponse(404, `Model ${modelInUrl ?? "unknown"} not found`);
+    }) as unknown as typeof fetch;
+
+    const req = makeGoogleRequest("/v1beta/models/gemini-flash-lite:generateContent");
+    const res = await handleGoogleNative(req, "lr-gg-gg-gc-no", "req-flash-lite-exhausted");
+
+    expect(res.status).toBe(503);
+
+    const body = (await res.json()) as { error?: { message?: string; type?: string } };
+    expect(body.error?.type).toBe("service_unavailable");
+    expect(body.error?.message).toContain("exhausted");
+
+    // Exactly 2 tier attempts made (gemini-3.5-flash-lite and gemini-3.1-flash-lite)
+    expect(fetchCalls.length).toBe(2);
+    const modelsCalled = fetchCalls.map((c) => c.modelInUrl);
+    expect(modelsCalled).toEqual([
+      "gemini-3.5-flash-lite",
+      "gemini-3.1-flash-lite",
+    ]);
   });
 });

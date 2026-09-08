@@ -4,6 +4,15 @@ All notable changes to LiteRouter will be documented in this file.
 
 ## [Unreleased]
 
+### Feat / Google Native Fusion Support for `gemini-flash-lite` (literouter-e37p) - 2026-09-09
+- **Google Native Flash-Lite Fusion (`gemini-flash-lite`)**:
+  - Added descending fallback chain across `gemini-3.5-flash-lite` (Tier 1) -> `gemini-3.1-flash-lite` (Tier 2) on `/v1beta/models/gemini-flash-lite:*` endpoints.
+  - Configured declarative chain in `config/fusion.json` under `"native_chains": { "gemini-flash-lite": [...] }`.
+  - Upgraded native tier tracking in `src/handlers/google_native.ts` from a single global pointer to an isolated dynamic `nativeTierIndices = new Map<string, number>()` with helpers `getNativeTierIndex`, `setNativeTierIndex`, and `resetNativeTierIndices` ensuring independent fallback progression across chains (`gemini-flash` vs `gemini-flash-lite`).
+  - Added prefix stripping and normalization for `google/gemini-flash-lite` into `gemini-flash-lite`.
+  - Maintained HTTP 404 fast-advance without burning keys, 429/5xx key pool rotation, 1-cycle safeguard capping execution at 2 tiers (HTTP 503 on exhaustion), and downstream telemetry headers (`x-literouter-model`, `x-literouter-tier`).
+  - Added comprehensive unit tests in `tests/unit/google_native_fusion.test.ts` covering 200 OK routing, 404 fast-advance, prefix stripping, isolated chain tier pointers, and 2-tier exhaustion safeguard.
+
 ### Feat / Google Native Flash Fusion & Registry Cleanup (literouter-wngu) - 2026-09-09
 - **Google Native Flash Fusion (`gemini-flash`)**:
   - Implemented descending fallback cascade across `gemini-3.8-flash` -> `gemini-3.7-flash` -> `gemini-3.6-flash` -> `gemini-3.5-flash` on `/v1beta/models/gemini-flash:*` endpoints.

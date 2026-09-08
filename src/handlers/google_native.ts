@@ -33,22 +33,61 @@ const STRIPPED_DOWNSTREAM_HEADERS = new Set([
   "transfer-encoding",
 ]);
 
-const DEFAULT_NATIVE_FLASH_CHAIN: readonly string[] = Object.freeze([
+export const DEFAULT_FLASH_CHAIN: readonly string[] = Object.freeze([
   "gemini-3.8-flash",
   "gemini-3.7-flash",
   "gemini-3.6-flash",
   "gemini-3.5-flash",
 ]);
+export const DEFAULT_NATIVE_FLASH_CHAIN = DEFAULT_FLASH_CHAIN;
+
+export const DEFAULT_FLASH_LITE_CHAIN: readonly string[] = Object.freeze([
+  "gemini-3.5-flash-lite",
+  "gemini-3.1-flash-lite",
+]);
 
 let cachedNativeChains: Readonly<Record<string, readonly string[]>> = {};
-let currentFlashTierIndex = 0;
+const nativeTierIndices = new Map<string, number>();
+
+export function getNativeTierIndex(chainKey: string): number {
+  return nativeTierIndices.get(chainKey) ?? 0;
+}
+
+export function setNativeTierIndex(chainKey: string, index: number): void {
+  nativeTierIndices.set(chainKey, index);
+}
+
+export function resetNativeTierIndices(): void {
+  nativeTierIndices.clear();
+}
 
 export function resetNativeFlashTierIndex(): void {
-  currentFlashTierIndex = 0;
+  resetNativeTierIndices();
 }
 
 export function getCurrentFlashTierIndex(): number {
-  return currentFlashTierIndex;
+  return getNativeTierIndex("gemini-flash");
+}
+
+export function normalizeGoogleNativeModel(rawModel: string): string {
+  if (rawModel.startsWith("google/")) {
+    return rawModel.slice("google/".length);
+  }
+  return rawModel;
+}
+
+export function resolveNativeChain(normalizedModel: string): readonly string[] | undefined {
+  const configuredChain = cachedNativeChains[normalizedModel];
+  if (Array.isArray(configuredChain) && configuredChain.length > 0) {
+    return configuredChain;
+  }
+  if (normalizedModel === "gemini-flash") {
+    return DEFAULT_FLASH_CHAIN;
+  }
+  if (normalizedModel === "gemini-flash-lite") {
+    return DEFAULT_FLASH_LITE_CHAIN;
+  }
+  return undefined;
 }
 
 export function loadAndCacheNativeChains(): void {
@@ -68,19 +107,15 @@ export function loadAndCacheNativeChains(): void {
   cachedNativeChains = {};
 }
 
-function getNativeChain(chainName: string): readonly string[] {
-  const chain = cachedNativeChains[chainName];
-  if (Array.isArray(chain) && chain.length > 0) {
-    return chain;
-  }
-  if (chainName === "gemini-flash") {
-    return DEFAULT_NATIVE_FLASH_CHAIN;
-  }
-  return [];
+export function getNativeChain(chainName: string): readonly string[] {
+  const normalized = normalizeGoogleNativeModel(chainName);
+  return resolveNativeChain(normalized) ?? [];
 }
 
-function isNativeFusionModel(model: string): boolean {
-  return model === "gemini-flash";
+export function isNativeFusionModel(model: string): boolean {
+  const normalized = normalizeGoogleNativeModel(model);
+  const chain = resolveNativeChain(normalized);
+  return chain !== undefined && chain.length > 0;
 }
 
 type SelectedKey = NonNullable<ReturnType<typeof globalKeyPool.selectNextKey>>;
@@ -119,7 +154,7 @@ interface NativeForwardContext {
 function extractModelFromPath(pathname: string): string {
   const match = pathname.match(/\/v1beta\/models\/([^:]+)/);
   const raw = match?.[1] ?? "gemini-2.5-flash";
-  return raw.startsWith("google/") ? raw.slice(7) : raw;
+  return normalizeGoogleNativeModel(raw);
 }
 
 function getGoogleNativeBaseUrl(): string {
@@ -623,6 +658,7 @@ type TierOutcome =
 
 async function executeTierKeyLoop(
   context: NativeForwardContext,
+  chainKey: string,
   tierModel: string,
   tierIdx: number,
   totalTiers: number,
@@ -649,7 +685,7 @@ async function executeTierKeyLoop(
     }
 
     if (status < 429) {
-      currentFlashTierIndex = tierIdx;
+      setNativeTierIndex(chainKey, tierIdx);
       logInfo(
         EMOJI.fusion,
         `[FUSION ${context.reqId}] Tier ${tierIdx + 1} (${tierModel}) → ${status} OK. Served by Tier ${tierIdx + 1}.`
@@ -675,23 +711,24 @@ async function executeNativeFusionCascade(
   reqId: string,
   url: URL,
   baseUpstreamUrl: URL,
-  bodyBuffer: ArrayBuffer
+  bodyBuffer: ArrayBuffer,
+  chainKey = "gemini-flash",
+  chain: readonly string[] = resolveNativeChain(chainKey) ?? DEFAULT_FLASH_CHAIN
 ): Promise<Response> {
-  const chain = getNativeChain("gemini-flash");
   const totalTiers = chain.length;
   if (totalTiers === 0) {
     return Response.json(
-      { error: { message: "No native chain configured for gemini-flash", type: "configuration_error" } },
+      { error: { message: `No native chain configured for ${chainKey}`, type: "configuration_error" } },
       { status: 500 }
     );
   }
 
-  const startTier = currentFlashTierIndex;
+  const startTier = getNativeTierIndex(chainKey);
   let lastResponse: Response | undefined;
 
   for (let cycleStep = 0; cycleStep < totalTiers; cycleStep++) {
     const tierIdx = (startTier + cycleStep) % totalTiers;
-    const tierModel = chain[tierIdx] ?? "gemini-3.5-flash";
+    const tierModel = chain[tierIdx] ?? chain[0] ?? "gemini-3.5-flash";
     const tierUpstreamUrl = buildTierUpstreamUrl(baseUpstreamUrl, tierModel);
 
     const context: NativeForwardContext = {
@@ -704,12 +741,12 @@ async function executeNativeFusionCascade(
       bodyBuffer,
     };
 
-    const outcome = await executeTierKeyLoop(context, tierModel, tierIdx, totalTiers, chain);
+    const outcome = await executeTierKeyLoop(context, chainKey, tierModel, tierIdx, totalTiers, chain);
     if (outcome.kind === "success") {
       return outcome.response;
     }
     lastResponse = outcome.response;
-    currentFlashTierIndex = (startTier + cycleStep + 1) % totalTiers;
+    setNativeTierIndex(chainKey, (startTier + cycleStep + 1) % totalTiers);
   }
 
   logWarn(EMOJI.exhausted, `[FUSION ${reqId}] All ${totalTiers} tiers exhausted. Returning 503.`);
@@ -751,10 +788,21 @@ export async function handleGoogleNative(
   const url = new URL(req.url);
   const baseUpstreamUrl = buildGoogleNativeUpstreamUrl(url);
   const requestedModel = extractModelFromPath(url.pathname);
+  const normalizedModel = normalizeGoogleNativeModel(requestedModel);
   const bodyBuffer = await req.arrayBuffer();
 
-  if (isNativeFusionModel(requestedModel)) {
-    return executeNativeFusionCascade(req, rawKey, reqId, url, baseUpstreamUrl, bodyBuffer);
+  const chain = resolveNativeChain(normalizedModel);
+  if (chain && chain.length > 0) {
+    return executeNativeFusionCascade(
+      req,
+      rawKey,
+      reqId,
+      url,
+      baseUpstreamUrl,
+      bodyBuffer,
+      normalizedModel,
+      chain
+    );
   }
 
   const context: NativeForwardContext = {

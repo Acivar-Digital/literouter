@@ -1,23 +1,30 @@
 # LiteRouter Fusion Multi-Tier Setup & Sticky Fallback Architecture
 
 LiteRouter Fusion (`v3.1`) encompasses two high-availability resilience architectures:
-1. **Google Native Flash Fusion (`gemini-flash`)**: High-performance, zero-disk-I/O descending fallback cascade specifically designed for Google Generative Language REST / `@ai-sdk/google` endpoints.
+1. **Google Native Flash & Flash-Lite Fusion (`gemini-flash`, `gemini-flash-lite`)**: High-performance, zero-disk-I/O descending fallback cascades specifically designed for Google Generative Language REST / `@ai-sdk/google` endpoints.
 2. **OpenAI-Compatible Virtual Presets (`quad`, `pydn`, `fast`, `deep`)**: Cross-provider sticky fallback engine with TTL-based position caching across OpenAI, Anthropic, OpenRouter, NVIDIA, and DeepSeek backends.
 
 ---
 
-## 1. Google Native Flash Fusion (`gemini-flash`)
+## 1. Google Native Flash & Flash-Lite Fusion (`gemini-flash`, `gemini-flash-lite`)
 
 ### 1.1 Architecture & Concept
-When client requests target the Google Native endpoint (`/v1beta/models/*:generateContent` or `/v1beta/models/*:streamGenerateContent`) using model alias `gemini-flash` with directive key `lr-gg-gg-gc-no`, LiteRouter activates the Native Fusion cascade.
+When client requests target the Google Native endpoint (`/v1beta/models/*:generateContent` or `/v1beta/models/*:streamGenerateContent`) using model alias `gemini-flash` or `gemini-flash-lite` (or prefixed with `google/`) with directive key `lr-gg-gg-gc-no`, LiteRouter activates the Native Fusion cascade for that chain.
 
-The cascade steps down through generational Flash tiers:
+The cascades step down through generational model tiers:
+
+**`gemini-flash` Chain:**
 ```
 gemini-3.8-flash (Tier 1) ──[404 or all keys 429/5xx]──► gemini-3.7-flash (Tier 2)
                                                                  │
                                                    [404 or all keys 429/5xx]
                                                                  ▼
 gemini-3.5-flash (Tier 4) ◄──[404 or all keys 429/5xx]── gemini-3.6-flash (Tier 3)
+```
+
+**`gemini-flash-lite` Chain:**
+```
+gemini-3.5-flash-lite (Tier 1) ──[404 or all keys 429/5xx]──► gemini-3.1-flash-lite (Tier 2)
 ```
 
 ### 1.2 Declarative Configuration (`config/fusion.json`)
@@ -30,6 +37,10 @@ Native chains are declared under the top-level `"native_chains"` object in `conf
       "gemini-3.7-flash",
       "gemini-3.6-flash",
       "gemini-3.5-flash"
+    ],
+    "gemini-flash-lite": [
+      "gemini-3.5-flash-lite",
+      "gemini-3.1-flash-lite"
     ]
   }
 }
@@ -37,7 +48,7 @@ Native chains are declared under the top-level `"native_chains"` object in `conf
 
 ### 1.3 Zero Disk I/O On Hot Path
 - **Boot-Time Ingestion**: Chains are parsed and cached in memory via `loadAndCacheNativeChains()` during gateway boot (`src/index.ts`).
-- **Zero Disk Reads**: Inbound requests never touch the filesystem; `getNativeChain("gemini-flash")` reads exclusively from the in-memory cache.
+- **Zero Disk Reads**: Inbound requests never touch the filesystem; `getNativeChain("gemini-flash")` and `getNativeChain("gemini-flash-lite")` read exclusively from the in-memory cache.
 - **Hot Reloading**: The cache is cleanly refreshed on `POST /reset` via `resetAllState()` / `resetNativeChainsCache()`.
 
 ### 1.4 Dual-Rotation Engine & State Machine
@@ -45,10 +56,10 @@ Native chains are declared under the top-level `"native_chains"` object in `conf
 The cascade combines **tier fallback** with **inner key pool rotation**:
 
 ```
-[Inbound Request: gemini-flash]
+[Inbound Request: gemini-flash or gemini-flash-lite]
    │
    ▼
-[Snapshot startTier = currentFlashTierIndex]
+[Snapshot startTier = getNativeTierIndex(chainKey)]
    │
    ▼
 [Tier Loop: cycleStep = 0 .. totalTiers - 1]
@@ -58,7 +69,7 @@ The cascade combines **tier fallback** with **inner key pool rotation**:
    ├──► [Inner Key Loop: attempt = 1 .. poolSize(gg)]
    │        │
    │        ├─► Upstream 200/2xx:
-   │        │     - Pin pointer: currentFlashTierIndex = tierIdx ("stay there")
+   │        │     - Pin pointer: setNativeTierIndex(chainKey, tierIdx) ("stay there")
    │        │     - Inject telemetry headers: x-literouter-model, x-literouter-tier
    │        │     - Return Response (200 OK)
    │        │
@@ -80,26 +91,28 @@ The cascade combines **tier fallback** with **inner key pool rotation**:
 ```
 
 #### Key Mechanics:
-1. **Persistent Tier Ring Pointer ("Stay There" Semantics)**:
-   - Module-level state `currentFlashTierIndex` records the last working tier.
-   - If Tier 1 fails and Tier 2 succeeds, `currentFlashTierIndex` updates to `1` (Tier 2). Subsequent requests begin directly at Tier 2, avoiding repetitive failed attempts against an unavailable tier.
-   - Resets to `0` upon `POST /reset`.
+1. **Isolated Persistent Tier Pointers ("Stay There" Semantics)**:
+   - Module-level state `nativeTierIndices = new Map<string, number>()` tracks each chain's current active tier independently.
+   - If `gemini-flash-lite` Tier 1 fails and Tier 2 succeeds, `getNativeTierIndex("gemini-flash-lite")` updates to `1` (Tier 2), while `gemini-flash` remains at its own independent tier index. Subsequent requests for `gemini-flash-lite` begin directly at Tier 2.
+   - Resets all indices to `0` upon `POST /reset` via `resetNativeTierIndices()`.
 2. **Concurrency Pinning**:
-   - To prevent race conditions and skipped tiers under concurrent load, each request takes a local snapshot `const startTier = currentFlashTierIndex`.
-   - Iteration uses `(startTier + cycleStep) % totalTiers`, ensuring that even if another concurrent request mutates the global pointer mid-flight, every individual request deterministically traverses all unique tiers exactly once.
-3. **Inner Key Rotation**:
+   - To prevent race conditions and skipped tiers under concurrent load, each request takes a local snapshot `const startTier = getNativeTierIndex(chainKey)`.
+   - Iteration uses `(startTier + cycleStep) % totalTiers`, ensuring that even if another concurrent request mutates the pointer mid-flight, every individual request deterministically traverses all unique tiers of that chain exactly once.
+3. **Prefix Normalization**:
+   - Inbound model paths such as `/v1beta/models/google/gemini-flash` or `/v1beta/models/google/gemini-flash-lite` automatically strip the `google/` prefix to resolve against canonical `native_chains`.
+4. **Inner Key Rotation**:
    - For a given tier, the forwarder attempts all active keys in the `gg` pool before cascading to the next model tier on 429/5xx errors.
 
 ### 1.5 Error Cascades & Safeguards
-- **HTTP 404 Fast-Advance**: If Google returns 404 (e.g. `gemini-3.8-flash` not yet public or removed), LiteRouter does **not** retry other keys. It immediately steps to the next tier on attempt 1 with 0 extra keys burned.
+- **HTTP 404 Fast-Advance**: If Google returns 404 (e.g. `gemini-3.8-flash` or unreleased lite tiers), LiteRouter does **not** retry other keys. It immediately steps to the next tier on attempt 1 with 0 extra keys burned.
 - **HTTP 429 / 5xx / Network Drops**: Triggers key rotation across the Google key pool. If all keys fail, the tier cascades.
 - **Deterministic Errors (400, 401, 403)**: Non-recoverable client issues bypass cascade and return directly downstream.
-- **1-Cycle Safeguard**: The loop is strictly capped at `totalTiers` (max 4 attempts). If all tiers are exhausted, it terminates with HTTP 503 `{"error": {"message": "All Google native fusion tiers exhausted", "type": "service_unavailable"}}`.
+- **1-Cycle Safeguard**: The loop is strictly capped at `totalTiers` (4 for `gemini-flash`, 2 for `gemini-flash-lite`). If all tiers are exhausted, it terminates with HTTP 503 `{"error": {"message": "All Google native fusion tiers exhausted", "type": "service_unavailable"}}`.
 - **Pre-Stream vs Mid-Stream Safety**: Cascades apply strictly before stream initiation. If upstream drops the connection after headers or bytes are sent to downstream, the stream closes cleanly without attempting a cascade into an active downstream body.
 
 ### 1.6 Telemetry & Headers
 - **Downstream Headers**:
-  - `x-literouter-model: <active_tier_model>` (e.g. `gemini-3.7-flash`)
+  - `x-literouter-model: <active_tier_model>` (e.g. `gemini-3.7-flash` or `gemini-3.1-flash-lite`)
   - `x-literouter-tier: <tier_number>` (e.g. `2`)
 - **Upstream Harness Attribution**:
   - Injects `User-Agent: OpenCode/1.18.29`

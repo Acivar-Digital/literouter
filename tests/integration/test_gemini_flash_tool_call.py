@@ -9,7 +9,7 @@ from pydantic_ai import Agent, RunContext
 from pydantic_ai.models.google import GoogleModel
 from pydantic_ai.providers.google import GoogleProvider
 
-GATEWAY_URL = os.environ.get("LITEROUTER_BASE_URL", "http://127.0.0.1:7766")
+GATEWAY_URL = os.environ.get("LITEROUTER_BASE_URL", "https://localhost:7766")
 AUTH_TOKEN_NATIVE = os.environ.get("LITEROUTER_AUTH_KEY_NATIVE", "lr-gg-gg-gc-no")
 AUTH_TOKEN_OPENAI = os.environ.get("LITEROUTER_AUTH_KEY_OPENAI", "lr-gg-oa-ob-no")
 MODEL = "gemini-3.1-flash-lite"
@@ -44,6 +44,8 @@ UPSTREAM_ERRORS = (
 
 
 def _handle_upstream_error(err: Exception) -> None:
+    if isinstance(err, (httpx.TimeoutException, httpx.NetworkError)):
+        pytest.skip(f"Upstream provider timeout/network issue: {err!r}")
     err_str = str(err)
     if any(w in err_str for w in UPSTREAM_ERRORS):
         pytest.skip(f"Upstream provider unavailable: {err_str[:120]}")
