@@ -229,7 +229,63 @@ To support project-specific plugins in any repo:
 
 ---
 
-## 5. Troubleshooting & Root Cause Analysis
+## 5. Multi-Agent & Subagent System (Agents, Sandboxing & Permissions)
+
+OpenCode 2 natively supports custom and built-in agents defined via **Markdown files** (`.opencode/agents/<name>.md`, `~/.config/opencode2/agents/<name>.md`) or JSON configuration (`opencode.json` / `config.json`).
+
+### 5.1 Built-in Agents
+- **`build`** (`mode: "primary"`): Default interactive coding agent.
+- **`plan`** (`mode: "primary"`): Planning agent (file edits denied except plan files).
+- **`general`** (`mode: "subagent"`): General-purpose multi-step subagent.
+- **`explore`** (`mode: "subagent"`): Fast read-only codebase and web explorer (`read`, `glob`, `grep`, `webfetch`, `websearch`).
+
+### 5.2 Permissions Invariants
+- **`shell` (NOT `bash`)**: The terminal tool action is named `shell`.
+- **`edit` (NOT `write`)**: All file writing, editing, and patching are governed by `edit`.
+- **`permissions` Array**: Ordered array of `{ action, resource, effect }` rules. Do NOT use legacy `permission: { ... }` maps.
+- **Schema Stripping**: Denied tools are removed from the JSON schema sent to the LLM, making write attempts impossible.
+- **Wildcard Deny-First**: Deny all tools first (`{ "action": "*", "resource": "*", "effect": "deny" }`), then explicitly allow read tools.
+
+### 5.3 Model Pinning
+- Pinned via `model: "<provider-id>/<model-id>"`, e.g. `lr-gg/gemini-flash-lite` (routing to LiteRouter port 7766).
+- If omitted, subagents inherit the active session model.
+
+### 5.4 Example: Sandboxed Read-Only Explorer (`~/.config/opencode2/agents/explore.md`)
+```markdown
+---
+description: Read-only codebase explorer
+mode: subagent
+model: lr-gg/gemini-flash-lite
+permissions:
+  - action: "*"
+    resource: "*"
+    effect: deny
+  - action: read
+    resource: "*"
+    effect: allow
+  - action: glob
+    resource: "*"
+    effect: allow
+  - action: grep
+    resource: "*"
+    effect: allow
+  - action: webfetch
+    resource: "*"
+    effect: allow
+  - action: websearch
+    resource: "*"
+    effect: allow
+---
+You are a read-only codebase explorer.
+Your job is to find and report, search code, and answer questions about the codebase.
+
+1. Return exact file paths, line numbers, and code snippets.
+2. You cannot write, edit, or create files, or execute terminal commands.
+```
+
+---
+
+## 6. Troubleshooting & Root Cause Analysis
 
 | Error / Symptom | Root Cause | Solution |
 |---|---|---|

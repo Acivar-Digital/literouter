@@ -26,6 +26,62 @@ description: LiteRouter API Gateway operational guide for Bun/TypeScript proxy o
 | OpenCode2 Auto-Patch | `bash scripts/opencode2_autopatch.sh` (fast <5ms self-heal & binary verification) |
 | Typecheck & lint | `bun x tsc --noEmit && uv run ruff check .` |
 
+## ⚡ Definitive LiteRouter Setup Quick-Lookup (No Search Needed)
+
+> 📖 **Full Architectural Reference**: For in-depth mechanical blueprints, see [`architecture.md`](architecture.md).
+
+### 1. Active Key Pools Table
+| Provider | Code | Environment Variable | Upstream Target | Purpose |
+|---|---|---|---|---|
+| **OpenRouter** | `or` | `OPENROUTER_API_KEYS` | `https://openrouter.ai` | Multimodal & open-weights models aggregator |
+| **NVIDIA NIM** | `nv` | `NVIDIA_API_KEYS` | `https://integrate.api.nvidia.com` | High-throughput enterprise microservices (Nemotron, DeepSeek) |
+| **Google AI Studio** | `gg` | `GOOGLE_API_KEYS` | `https://generativelanguage.googleapis.com` | Gemini & Gemma native forwarder / native fusion chains |
+| **Zen** | `zn` | `ZEN_API_KEYS` | `https://opencode.ai/zen` | OpenCode Zen free-tier models (`big-pickle`, `hy3-free`) |
+| **Google Cloud (GCP)** | `gc` | `GCP_KEYS` / `GCP_API_KEYS` | `https://generativelanguage.googleapis.com` | GCP Vertex AI Gemma inference (30 RPM conveyor paced) |
+
+*Validation*: Discards tokens `< 4` chars or matching `changeme`, `todo`, `undefined`, `null`. Non-destructive mock keys injected during unit tests.
+
+### 2. Core Inbound Endpoints & Handlers
+| Inbound Method & Path | Handler Source File | Handler Function | Directives / Notes |
+|---|---|---|---|
+| `POST /v1/chat/completions` | `src/handlers/openai_compat.ts` | `handleOpenAICompat` | `lr-*-oa-ch-*`, `lr-*-ao-ch-*`. Full streaming & key rotation. |
+| `POST /v1/messages`<br>`POST /messages` | `src/handlers/anthropic_compat.ts` | `handleAnthropicCompat` | `lr-*-cl-ms-*`. Native Claude Code integration. |
+| `POST /v1/responses` | `src/handlers/openai_original.ts` | `handleOpenAiOriginal` | `lr-*-oo-rs-*`. Native OpenAI Responses API passthrough. |
+| `POST /v1beta/models/*:generateContent` | `src/handlers/google_native.ts` | `handleGoogleNative` | `lr-gg-gg-gc-no`. Direct Gemini REST for `@ai-sdk/google`. |
+| `POST /v1beta/openai/*` | `src/handlers/gcp_compat.ts` / `google_native.ts` | `handleGcpCompat` / `handleGoogleOpenAIBeta` | `lr-gc-oa-ch-no`. GCP Vertex AI OpenAI-compatible route. |
+| `GET /v1/models`, `/v1beta/models` | `src/handlers/discovery.ts` | `handleModelsDiscovery` | Aggregates models from `models.json` & `fusion.json`. |
+| `GET /health`, `/hello` | `src/index.ts` | `handleHealthCheck` | Health probe (uptime, circuit breakers, H2 pool stats). |
+| `POST /reset` | `src/index.ts` | `handleHardReset` | Hard reload of pools, cooldowns, breakers, and providers. |
+
+### 3. Directive Key Grammar & Top 10 Most Common Keys
+Format: `lr-<provider>-<payload>-<completion>-<nuance>`
+- **Providers**: `or`, `nv`, `gg`, `zn`, `gc`, `oa`, `an`, `gq`, `cb`, `ds`, `ms`, `tg`
+- **Payload (wire)**: `oa` (OpenAI), `oo` (OpenAI Original Responses), `cl` (Anthropic), `ao` (Anthropic->OpenAI), `gg` (Google), `rs` (Responses)
+- **Completion (endpoint)**: `ch` (`/v1/chat/completions`), `ms` (`/v1/messages`), `rs` (`/v1/responses`), `gc` (`:generateContent`), `ob` (OpenAI Beta)
+- **Nuances**: `no` (none), `dp` (Dots XML polyfill), `ts` (Thinking Support - keep reasoning in OpenCode), `sb` (Strip reasoning), `gm` (Gemma merge), `tc` (Tool compaction)
+
+| Top 10 Key | Target Client / Workflow | Model Example | Wire & Behavior |
+|---|---|---|---|
+| `lr-zn-oa-ch-no` | OpenCode 2 (Zen Free) | `big-pickle`, `hy3-free` | OpenAI Chat Completions ➔ Zen with OpenCode headers & key rotation |
+| `lr-zn-oo-rs-no` | OpenCode 2 (Zen Responses) | `muse-spark-1.3-contributor-free` | Native Responses API passthrough via `@ai-sdk/openai` (`POST /v1/responses`) |
+| `lr-or-oa-ch-no` | OpenCode 2 (OpenRouter) | `liquid/lfm-2.5-2.6b:free` | Standard OpenAI Chat with agentic harness headers |
+| `lr-nv-oa-ch-ts` | OpenCode 2 (NVIDIA NIM) | `nvidia/nemotron-3-super-120b-a12b` | NIM Chat with thinking chunks preserved (`ts`) |
+| `lr-or-cl-ms-no` | Claude Code (via OpenRouter) | `anthropic/claude-3.7-sonnet` | Anthropic Messages API passthrough to OpenRouter |
+| `lr-an-cl-ms-no` | Claude Code (Direct Anthropic) | `claude-3-7-sonnet-20250219` | Direct Anthropic Messages API with key rotation |
+| `lr-gg-gg-gc-no` | Google Native (`@ai-sdk/google`) | `gemini-flash`, `gemini-3.5-flash-lite` | Direct Google REST forwarder + Native Google Fusion cascades |
+| `lr-nv-oa-ch-no` | Pydantic AI / Python SDK | `deepseek-ai/deepseek-r1` | High-throughput HTTP/2 binary multiplexed chat completions |
+| `lr-gc-oa-ch-no` | GCP Vertex AI (Gemma) | `gemma-4-31b-it` | Vertex AI Chat Completions with 30 RPM pacer & zero-cost guardrail |
+| `lr-or-ao-ch-dp` | Dots / Open-Weights XML Tools | `dots-studio/dots-3-note-preview:free` | Anthropic-to-OpenAI cross-wire with XML tool & thinking extraction |
+
+### 4. Wire & Compatibility Rules Summary
+- **OpenCode Reasoning Filter**: By default, strips `delta.reasoning_content` for OpenCode clients (`User-Agent: opencode*`) to prevent SQLite token bloat (40k ➔ 300k). Use `ts` nuance to keep thinking, or `sb` to force-strip for all clients.
+- **Zen Bare Model Rule**: Zen models NEVER accept `zen/` prefix. Always send bare model names (e.g. `big-pickle`, `hy3-free`).
+- **Responses vs Chat Endpoint Match**: Sending `-rs-` directive to `/v1/chat/completions` or `-ch-` directive to `/v1/responses` results in immediate `HTTP 400` fail-fast error.
+- **Agentic Attribution**: Declaratively loaded from `config/providers.json`. OpenRouter receives `User-Agent: OpenCode/1.18.29` + `HTTP-Referer` to bypass 403 harness gates. Zen receives client session identity headers (`session-id`, `x-session-id`) to bypass `MissingSessionID` errors.
+- **Native Google Fusion Chains**: Triggering `gemini-flash` cascades `3.8 ➔ 3.7 ➔ 3.6 ➔ 3.5`; triggering `gemini-flash-lite` cascades `3.5 ➔ 3.1`. Maintains isolated tier pointers in `nativeTierIndices` map with 404 fast-advance and 429 key rotation.
+
+---
+
 ## ⛔ Critical: Zero Key Redaction
 
 **NEVER** edit, sanitize, replace, or overwrite API keys in `.env.local` or `.env`. Never substitute real keys with `<REDACTED>`, `changeme`, or placeholders — this causes `staticValidateKeys` to discard key pools on boot, breaking gateway routing. `.env.local` is write-protected via `protect.sh` (owned by root, mode `644`).
@@ -83,6 +139,7 @@ Fusion presets: `lr-fse-<preset>` (e.g. `lr-fse-fast`, `lr-fse-smart`, `lr-fse-c
 
 | Topic | File | When to read it |
 |---|---|---|
+| **LiteRouter Master Architecture, Keys, Endpoints & Directives** | `architecture.md` | **PRIMARY ARCHITECTURAL REFERENCE**: Complete system design, key pools (`or`, `nv`, `gg`, `zn`, `gc`), master routing matrix, compatibility layers, full directive token grammar, and resilience mechanics |
 | **Zen provider (identity gating, sessions, directives, toggles)** | `zen-provider.md` | User asks about Zen, `zn`, `big-pickle`, `MissingSessionID`, `FreeUsageLimitError`, session-id forwarding, Zen directive keys, or Zen retry/quarantine toggles |
 | **Fusion setup, Native Google Fusion chains (`gemini-flash`, `gemini-flash-lite`) & virtual presets (`quad`, `pydn`, `fast`, `deep`)** | `fusion.md` | User asks about LiteRouter Fusion multi-tier routing, Native Google Fusion cascades (`gemini-flash` and `gemini-flash-lite`), native chains, independent tier indices (`nativeTierIndices`), sticky fallback caching, `config/fusion.json`, `FusionEngine`, or execution plans |
 | **Doctor diagnostics (all providers + Zen session probes)** | `zen-provider.md` (§7) | User asks about `scripts/doctor.ts`, `scripts/doctor_zn.ts`, key health probes, or upstream diagnostics |

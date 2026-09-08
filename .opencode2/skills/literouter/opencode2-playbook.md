@@ -190,3 +190,39 @@ if [ -x "$AUTOPATCH_SCRIPT" ]; then
 fi
 ```
 
+---
+
+## 6. OpenCode2 Agent Sandboxing & Subagent Configuration
+
+OpenCode 2 natively supports multi-agent workflows. Agents can be customized via Markdown files (`~/.config/opencode2/agents/<name>.md`) or JSON configuration.
+
+### Explorer Subagent Standard (`explore`)
+To configure a read-only codebase explorer routed through LiteRouter without write permissions:
+1. **Agent ID**: Use `explore` (the built-in V2 explorer name). You can symlink `explorer.md -> explore.md` for dual compatibility.
+2. **Permission Engine**:
+   - `action: "shell"` controls terminal execution (NOT `bash`).
+   - `action: "edit"` controls all file modifications/creations (NOT `write`).
+   - Use the **wildcard deny-first pattern**:
+     ```yaml
+     permissions:
+       - action: "*"
+         resource: "*"
+         effect: deny
+       - action: read
+         resource: "*"
+         effect: allow
+       - action: glob
+         resource: "*"
+         effect: allow
+       - action: grep
+         resource: "*"
+         effect: allow
+       - action: webfetch
+         resource: "*"
+         effect: allow
+       - action: websearch
+         resource: "*"
+         effect: allow
+     ```
+3. **Model Pinning**: Pin to LiteRouter endpoints, e.g. `model: lr-gg/gemini-flash-lite` (routes to LiteRouter port 7766 Google Native endpoint with `lr-gg-gg-gc-no`). Denied tools (`edit`, `shell`, etc.) are automatically stripped from the tool schema sent to the model.
+
