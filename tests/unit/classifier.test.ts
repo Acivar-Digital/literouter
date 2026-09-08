@@ -1,4 +1,5 @@
-import { describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { resetEnvCache } from "../../src/config/env";
 import {
   classifyTransportError,
   classifyUpstreamError,
@@ -7,6 +8,30 @@ import {
 } from "../../src/network/classifier";
 
 describe("Error Classifier — classifyUpstreamError & classifyTransportError", () => {
+  let originalTtl: string | undefined;
+  let originalOrQuarantine: string | undefined;
+
+  beforeEach(() => {
+    originalTtl = process.env.COOLDOWN_RATE_LIMIT_TTL_SEC;
+    originalOrQuarantine = process.env.OPENROUTER_ENABLE_QUARANTINE;
+    process.env.COOLDOWN_RATE_LIMIT_TTL_SEC = "65";
+    process.env.OPENROUTER_ENABLE_QUARANTINE = "true";
+    resetEnvCache();
+  });
+
+  afterEach(() => {
+    if (originalTtl === undefined) {
+      delete process.env.COOLDOWN_RATE_LIMIT_TTL_SEC;
+    } else {
+      process.env.COOLDOWN_RATE_LIMIT_TTL_SEC = originalTtl;
+    }
+    if (originalOrQuarantine === undefined) {
+      delete process.env.OPENROUTER_ENABLE_QUARANTINE;
+    } else {
+      process.env.OPENROUTER_ENABLE_QUARANTINE = originalOrQuarantine;
+    }
+    resetEnvCache();
+  });
   describe("HTTP 400 - Provider-side retryable vs client-side fail-fast", () => {
     it("classifies 'Provider returned error' as fail_fast with 0s quarantine", () => {
       const result = classifyUpstreamError({

@@ -1,10 +1,28 @@
-import { beforeEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { resetEnvCache } from "../../src/config/env";
 import {
   CooldownManager,
   computeStatusTtlSec,
   getExhaustionBackoffMs,
   parseResetDelay,
 } from "../../src/network/cooldown";
+
+let originalTtl: string | undefined;
+
+beforeEach(() => {
+  originalTtl = process.env.COOLDOWN_RATE_LIMIT_TTL_SEC;
+  process.env.COOLDOWN_RATE_LIMIT_TTL_SEC = "65";
+  resetEnvCache();
+});
+
+afterEach(() => {
+  if (originalTtl === undefined) {
+    delete process.env.COOLDOWN_RATE_LIMIT_TTL_SEC;
+  } else {
+    process.env.COOLDOWN_RATE_LIMIT_TTL_SEC = originalTtl;
+  }
+  resetEnvCache();
+});
 
 describe("Cooldown Manager — Status Code Reason-Aware Mapping", () => {
   it("assigns 65s default cooldown on HTTP 429 rate limit", () => {

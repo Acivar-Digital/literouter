@@ -10,10 +10,12 @@ import {
 describe("Admin Pool Reset Endpoint (/admin/pool/reset)", () => {
   const originalAuthKey = process.env.LITEROUTER_AUTH_KEY;
   const originalOpenAiKeys = process.env.OPENAI_API_KEYS;
+  const originalTtl = process.env.COOLDOWN_RATE_LIMIT_TTL_SEC;
 
   beforeEach(() => {
     process.env.LITEROUTER_AUTH_KEY = "test-admin-secret-key-123";
     process.env.OPENAI_API_KEYS = "sk-test-key-1,sk-test-key-2";
+    process.env.COOLDOWN_RATE_LIMIT_TTL_SEC = "65";
     resetEnvCache();
     resetAllState();
   });
@@ -28,6 +30,11 @@ describe("Admin Pool Reset Endpoint (/admin/pool/reset)", () => {
       process.env.OPENAI_API_KEYS = originalOpenAiKeys;
     } else {
       delete process.env.OPENAI_API_KEYS;
+    }
+    if (originalTtl !== undefined) {
+      process.env.COOLDOWN_RATE_LIMIT_TTL_SEC = originalTtl;
+    } else {
+      delete process.env.COOLDOWN_RATE_LIMIT_TTL_SEC;
     }
     resetEnvCache();
     resetAllState();

@@ -105,15 +105,22 @@ describe("GCP Retry Toggle & Resilience Handler (GCP_ENABLE_RETRIES & GCP_ENABLE
   const originalGcpKeys = process.env.GCP_KEYS;
   const originalNvKeys = process.env.NVIDIA_API_KEYS;
   const originalPacer = process.env.LITEROUTER_PACER_ENABLED;
+  const originalTtl = process.env.COOLDOWN_RATE_LIMIT_TTL_SEC;
 
   beforeEach(() => {
     process.env.LITEROUTER_PACER_ENABLED = "false";
+    process.env.COOLDOWN_RATE_LIMIT_TTL_SEC = "65";
     resetEnvCache();
     resetAllState();
   });
 
   afterEach(() => {
     globalThis.fetch = originalFetch;
+    if (originalTtl !== undefined) {
+      process.env.COOLDOWN_RATE_LIMIT_TTL_SEC = originalTtl;
+    } else {
+      delete process.env.COOLDOWN_RATE_LIMIT_TTL_SEC;
+    }
     if (originalGcpRetries !== undefined) {
       process.env.GCP_ENABLE_RETRIES = originalGcpRetries;
     } else {

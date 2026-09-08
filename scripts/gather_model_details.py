@@ -8,7 +8,7 @@ import httpx
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 logger = logging.getLogger("gather_details")
 
-MODELS_JSON = Path(__file__).resolve().parent.parent / "models.json"
+MODELS_JSON = Path(__file__).resolve().parent.parent / "config" / "models.json"
 MODELS_DIR = Path(__file__).resolve().parent.parent / "models"
 
 # --- ONE-TIME STATIC SETUP (top of script) ---

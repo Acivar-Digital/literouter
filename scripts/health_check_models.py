@@ -17,7 +17,7 @@ load_dotenv()
 # Config
 GATEWAY_URL = os.getenv("LITEROUTER_URL", "http://localhost:7766")
 AUTH_KEY = os.getenv("LITEROUTER_AUTH_KEY", "")
-MODELS_JSON = Path(__file__).resolve().parent.parent / "models.json"
+MODELS_JSON = Path(__file__).resolve().parent.parent / "config" / "models.json"
 
 
 async def check_model(client: httpx.AsyncClient, model_id: str) -> dict[str, Any]:

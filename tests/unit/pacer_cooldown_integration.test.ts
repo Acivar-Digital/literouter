@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { resetEnvCache } from "../../src/config/env";
 import {
   computeStatusTtlSec,
   globalCooldownManager,
@@ -12,6 +13,7 @@ import {
 describe("Pacer Cooldown Integration, Load-Shedding & Transport Error Classification", () => {
   const originalFetch = globalThis.fetch;
   const originalEnvOpenAi = process.env.OPENAI_API_KEYS;
+  const originalTtl = process.env.COOLDOWN_RATE_LIMIT_TTL_SEC;
 
   const mockSuccessPayload = {
     id: "chatcmpl-pacer-int-test",
@@ -30,6 +32,8 @@ describe("Pacer Cooldown Integration, Load-Shedding & Transport Error Classifica
 
   beforeEach(() => {
     process.env.OPENAI_API_KEYS = "sk-test-key-pacer-1,sk-test-key-pacer-2";
+    process.env.COOLDOWN_RATE_LIMIT_TTL_SEC = "65";
+    resetEnvCache();
     resetAllState();
   });
 
@@ -40,6 +44,12 @@ describe("Pacer Cooldown Integration, Load-Shedding & Transport Error Classifica
     } else {
       delete process.env.OPENAI_API_KEYS;
     }
+    if (originalTtl !== undefined) {
+      process.env.COOLDOWN_RATE_LIMIT_TTL_SEC = originalTtl;
+    } else {
+      delete process.env.COOLDOWN_RATE_LIMIT_TTL_SEC;
+    }
+    resetEnvCache();
     resetAllState();
   });
 

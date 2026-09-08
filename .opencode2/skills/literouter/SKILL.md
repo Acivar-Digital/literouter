@@ -84,7 +84,7 @@ Fusion presets: `lr-fse-<preset>` (e.g. `lr-fse-fast`, `lr-fse-smart`, `lr-fse-c
 | Topic | File | When to read it |
 |---|---|---|
 | **Zen provider (identity gating, sessions, directives, toggles)** | `zen-provider.md` | User asks about Zen, `zn`, `big-pickle`, `MissingSessionID`, `FreeUsageLimitError`, session-id forwarding, Zen directive keys, or Zen retry/quarantine toggles |
-| **Fusion setup, sticky caching & presets (`quad`, `pydn`, `fast`, `deep`)** | `fusion.md` | User asks about LiteRouter Fusion multi-tier routing, sticky fallback caching, `config/fusion.json`, `FusionEngine`, or execution plans |
+| **Fusion setup, Google Native Flash Fusion & presets (`gemini-flash`, `quad`, `pydn`, `fast`, `deep`)** | `fusion.md` | User asks about LiteRouter Fusion multi-tier routing, Google Native Flash cascade, native chains, persistent tier index, sticky fallback caching, `config/fusion.json`, `FusionEngine`, or execution plans |
 | **Doctor diagnostics (all providers + Zen session probes)** | `zen-provider.md` (§7) | User asks about `scripts/doctor.ts`, `scripts/doctor_zn.ts`, key health probes, or upstream diagnostics |
 | **Claude Code integration** | `claude-code.md` | User asks about Claude Code, Anthropic Messages API, `ANTHROPIC_BASE_URL`, or routing Claude Code through LiteRouter |
 | **OpenCode2 integration** | `opencode2-playbook.md` | User asks about OpenCode2, V2 plugins, `~/.config/opencode2/`, or V1/V2 isolation |
@@ -93,7 +93,7 @@ Fusion presets: `lr-fse-<preset>` (e.g. `lr-fse-fast`, `lr-fse-smart`, `lr-fse-c
 | **Payload wire & scrubbing matrix (`oa` vs `oo`)** | `payload.md` | User asks about `oa` vs `oo` wire, reasoning scrub vs passthrough, `rs` endpoint routing, `lr-*-oa-rs-*` vs `lr-*-oo-rs-*`, or which Zen key preserves CoT replay |
 | **Antigravity proxy** | `antigravity.md` | User asks about remote Antigravity services (`agy-gemini`, `agy-claude`), ZeroTier nodes, or Google Native RPC |
 | **Google Native Forwarder (H2 pooling, Free Tier key rotation, `@ai-sdk/google`)** | `google-native.md` | User asks about Google Native, `lr-gg-gg-gc-no`, `@ai-sdk/google`, `/v1beta/models/*`, Google Free Tier key rotation, or H2 pooling to `generativelanguage.googleapis.com` |
-| **Setup & configuration** | `setup.md` | User asks about installing, configuring, env vars, providers.json, models.json, fusion.json, or TLS certs |
+| **Setup & configuration** | `setup.md` | User asks about installing, configuring, env vars, providers.json, config/models.json, fusion.json, or TLS certs |
 | **Setup checklist** | `setup_checklist.md` | Pre-flight verification of gateway health, key pools, and config integrity |
 | **Troubleshooting** | `troubleshoot.md` | User reports an error, gateway behaving unexpectedly, or needs diagnostic procedures |
 | **Antigravity IDE setup** | `agy-ide-setup.md` | User asks about installing/configuring/maintaining Google Antigravity IDE in WSL2 |

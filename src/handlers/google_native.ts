@@ -1,3 +1,5 @@
+import { existsSync, readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { getEnv } from "../config/env";
 import { createUnauthorizedResponse, validateDirective } from "../directive/validator";
 import { fetchWithTtftGuard } from "../network/fetcher";
@@ -7,6 +9,7 @@ import {
   logError,
   logFinishReason,
   logInbound,
+  logInfo,
   logLimit,
   logSeparator,
   logServed,
@@ -29,6 +32,56 @@ const STRIPPED_DOWNSTREAM_HEADERS = new Set([
   "content-length",
   "transfer-encoding",
 ]);
+
+const DEFAULT_NATIVE_FLASH_CHAIN: readonly string[] = Object.freeze([
+  "gemini-3.8-flash",
+  "gemini-3.7-flash",
+  "gemini-3.6-flash",
+  "gemini-3.5-flash",
+]);
+
+let cachedNativeChains: Readonly<Record<string, readonly string[]>> = {};
+let currentFlashTierIndex = 0;
+
+export function resetNativeFlashTierIndex(): void {
+  currentFlashTierIndex = 0;
+}
+
+export function getCurrentFlashTierIndex(): number {
+  return currentFlashTierIndex;
+}
+
+export function loadAndCacheNativeChains(): void {
+  try {
+    const configPath = resolve(process.cwd(), "config", "fusion.json");
+    if (existsSync(configPath)) {
+      const parsed = JSON.parse(readFileSync(configPath, "utf-8"));
+      if (parsed.native_chains && typeof parsed.native_chains === "object") {
+        cachedNativeChains = parsed.native_chains;
+        logInfo(EMOJI.boot, `Loaded native_chains: ${Object.keys(parsed.native_chains).join(", ")}`);
+        return;
+      }
+    }
+  } catch {
+    logWarn(EMOJI.error, "Failed to load native_chains from config/fusion.json — using hardcoded fallback");
+  }
+  cachedNativeChains = {};
+}
+
+function getNativeChain(chainName: string): readonly string[] {
+  const chain = cachedNativeChains[chainName];
+  if (Array.isArray(chain) && chain.length > 0) {
+    return chain;
+  }
+  if (chainName === "gemini-flash") {
+    return DEFAULT_NATIVE_FLASH_CHAIN;
+  }
+  return [];
+}
+
+function isNativeFusionModel(model: string): boolean {
+  return model === "gemini-flash";
+}
 
 type SelectedKey = NonNullable<ReturnType<typeof globalKeyPool.selectNextKey>>;
 type GuardFetchResult = Awaited<ReturnType<typeof fetchWithTtftGuard>>;
@@ -90,6 +143,15 @@ function buildGoogleNativeUpstreamUrl(url: URL): URL {
   return upstreamUrl;
 }
 
+function buildTierUpstreamUrl(baseUpstreamUrl: URL, tierModel: string): URL {
+  const cloned = new URL(baseUpstreamUrl.toString());
+  cloned.pathname = cloned.pathname.replace(
+    /\/v1beta\/models\/[^:]+/,
+    `/v1beta/models/${tierModel}`
+  );
+  return cloned;
+}
+
 function prepareUpstreamHeaders(reqHeaders: Headers, apiKey: string): Headers {
   const upstreamHeaders = new Headers();
   for (const [k, v] of reqHeaders) {
@@ -99,6 +161,10 @@ function prepareUpstreamHeaders(reqHeaders: Headers, apiKey: string): Headers {
   }
   upstreamHeaders.set("x-goog-api-key", apiKey);
   upstreamHeaders.set("accept-encoding", "identity");
+  upstreamHeaders.set("user-agent", process.env.LITEROUTER_USER_AGENT || "OpenCode/1.18.29");
+  upstreamHeaders.set("http-referer", process.env.LITEROUTER_HTTP_REFERER || "https://opencode.ai");
+  upstreamHeaders.set("referer", process.env.LITEROUTER_HTTP_REFERER || "https://opencode.ai");
+  upstreamHeaders.set("x-title", process.env.LITEROUTER_X_TITLE || "OpenCode");
   return upstreamHeaders;
 }
 
@@ -531,27 +597,129 @@ async function attemptNativeForward(
   }
 }
 
-export async function handleGoogleNative(
-  req: Request,
-  rawKey: string,
-  reqId: string
-): Promise<Response> {
-  const authError = validateGoogleDirective(rawKey);
-  if (authError) {
-    return authError;
+function buildFusionServedResponse(
+  outcomeResponse: Response,
+  tierModel: string,
+  tierIdx: number
+): Response {
+  const resHeaders = new Headers(outcomeResponse.headers);
+  for (const h of STRIPPED_DOWNSTREAM_HEADERS) {
+    resHeaders.delete(h);
+  }
+  resHeaders.set("x-literouter-model", tierModel);
+  resHeaders.set("x-literouter-tier", String(tierIdx + 1));
+
+  return new Response(outcomeResponse.body, {
+    status: outcomeResponse.status,
+    statusText: outcomeResponse.statusText,
+    headers: resHeaders,
+  });
+}
+
+type TierOutcome =
+  | { readonly kind: "success"; readonly response: Response }
+  | { readonly kind: "fast_advance"; readonly response: Response }
+  | { readonly kind: "exhausted"; readonly response?: Response };
+
+async function executeTierKeyLoop(
+  context: NativeForwardContext,
+  tierModel: string,
+  tierIdx: number,
+  totalTiers: number,
+  chain: readonly string[]
+): Promise<TierOutcome> {
+  const totalActiveKeys = Math.max(1, globalKeyPool.getPoolSize("gg"));
+  let lastResponse: Response | undefined;
+
+  for (let attempt = 1; attempt <= totalActiveKeys; attempt++) {
+    const outcome = await attemptNativeForward(context, attempt);
+    lastResponse = outcome.response;
+    if (outcome.retry) {
+      continue;
+    }
+
+    const status = outcome.response.status;
+    if (status === 404) {
+      const nextModel = chain[(tierIdx + 1) % totalTiers];
+      logWarn(
+        EMOJI.fusion,
+        `[FUSION ${context.reqId}] Tier ${tierIdx + 1} (${tierModel}) → 404. Cascading to Tier ${((tierIdx + 1) % totalTiers) + 1} (${nextModel})`
+      );
+      return { kind: "fast_advance", response: outcome.response };
+    }
+
+    if (status < 429) {
+      currentFlashTierIndex = tierIdx;
+      logInfo(
+        EMOJI.fusion,
+        `[FUSION ${context.reqId}] Tier ${tierIdx + 1} (${tierModel}) → ${status} OK. Served by Tier ${tierIdx + 1}.`
+      );
+      return {
+        kind: "success",
+        response: buildFusionServedResponse(outcome.response, tierModel, tierIdx),
+      };
+    }
   }
 
-  const url = new URL(req.url);
-  const context: NativeForwardContext = {
-    req,
-    rawKey,
-    reqId,
-    url,
-    upstreamUrl: buildGoogleNativeUpstreamUrl(url),
-    model: extractModelFromPath(url.pathname),
-    bodyBuffer: await req.arrayBuffer(),
-  };
+  const nextModel = chain[(tierIdx + 1) % totalTiers];
+  logWarn(
+    EMOJI.fusion,
+    `[FUSION ${context.reqId}] Tier ${tierIdx + 1} (${tierModel}) → all ${totalActiveKeys} keys exhausted. Cascading to Tier ${((tierIdx + 1) % totalTiers) + 1} (${nextModel})`
+  );
+  return { kind: "exhausted", response: lastResponse };
+}
 
+async function executeNativeFusionCascade(
+  req: Request,
+  rawKey: string,
+  reqId: string,
+  url: URL,
+  baseUpstreamUrl: URL,
+  bodyBuffer: ArrayBuffer
+): Promise<Response> {
+  const chain = getNativeChain("gemini-flash");
+  const totalTiers = chain.length;
+  if (totalTiers === 0) {
+    return Response.json(
+      { error: { message: "No native chain configured for gemini-flash", type: "configuration_error" } },
+      { status: 500 }
+    );
+  }
+
+  const startTier = currentFlashTierIndex;
+  let lastResponse: Response | undefined;
+
+  for (let cycleStep = 0; cycleStep < totalTiers; cycleStep++) {
+    const tierIdx = (startTier + cycleStep) % totalTiers;
+    const tierModel = chain[tierIdx] ?? "gemini-3.5-flash";
+    const tierUpstreamUrl = buildTierUpstreamUrl(baseUpstreamUrl, tierModel);
+
+    const context: NativeForwardContext = {
+      req,
+      rawKey,
+      reqId,
+      url,
+      upstreamUrl: tierUpstreamUrl,
+      model: tierModel,
+      bodyBuffer,
+    };
+
+    const outcome = await executeTierKeyLoop(context, tierModel, tierIdx, totalTiers, chain);
+    if (outcome.kind === "success") {
+      return outcome.response;
+    }
+    lastResponse = outcome.response;
+    currentFlashTierIndex = (startTier + cycleStep + 1) % totalTiers;
+  }
+
+  logWarn(EMOJI.exhausted, `[FUSION ${reqId}] All ${totalTiers} tiers exhausted. Returning 503.`);
+  return Response.json(
+    { error: { message: "All Google native fusion tiers exhausted", type: "service_unavailable" } },
+    { status: 503 }
+  );
+}
+
+async function executeSingleModelForward(context: NativeForwardContext): Promise<Response> {
   let lastResponse: Response | undefined;
   for (let attempt = 1; attempt <= MAX_NATIVE_ATTEMPTS; attempt++) {
     const outcome = await attemptNativeForward(context, attempt);
@@ -568,6 +736,38 @@ export async function handleGoogleNative(
       { status: 502 }
     )
   );
+}
+
+export async function handleGoogleNative(
+  req: Request,
+  rawKey: string,
+  reqId: string
+): Promise<Response> {
+  const authError = validateGoogleDirective(rawKey);
+  if (authError) {
+    return authError;
+  }
+
+  const url = new URL(req.url);
+  const baseUpstreamUrl = buildGoogleNativeUpstreamUrl(url);
+  const requestedModel = extractModelFromPath(url.pathname);
+  const bodyBuffer = await req.arrayBuffer();
+
+  if (isNativeFusionModel(requestedModel)) {
+    return executeNativeFusionCascade(req, rawKey, reqId, url, baseUpstreamUrl, bodyBuffer);
+  }
+
+  const context: NativeForwardContext = {
+    req,
+    rawKey,
+    reqId,
+    url,
+    upstreamUrl: baseUpstreamUrl,
+    model: requestedModel,
+    bodyBuffer,
+  };
+
+  return executeSingleModelForward(context);
 }
 
 export async function handleGoogleOpenAIBeta(

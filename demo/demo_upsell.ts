@@ -12,7 +12,7 @@ import { join } from "node:path";
 const GATEWAY_URL = "http://localhost:7766";
 const AUTH_KEY = "sk-lr-your-auth-key";
 const STUB_KEY = "sk-test-stub-0001-padded-to-look-like-real";
-const MODELS_JSON = join(import.meta.dir, "..", "models.json");
+const MODELS_JSON = join(import.meta.dir, "..", "config", "models.json");
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 

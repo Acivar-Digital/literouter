@@ -4,6 +4,39 @@ All notable changes to LiteRouter will be documented in this file.
 
 ## [Unreleased]
 
+### Feat / Google Native Flash Fusion & Registry Cleanup (literouter-wngu) - 2026-09-09
+- **Google Native Flash Fusion (`gemini-flash`)**:
+  - Implemented descending fallback cascade across `gemini-3.8-flash` -> `gemini-3.7-flash` -> `gemini-3.6-flash` -> `gemini-3.5-flash` on `/v1beta/models/gemini-flash:*` endpoints.
+  - Declarative native chain configuration defined in `config/fusion.json` under `"native_chains": { "gemini-flash": [...] }` with boot-time caching (`loadAndCacheNativeChains`) for zero disk I/O on hot paths.
+  - In-memory dual-rotation engine featuring a persistent active tier ring pointer (`currentFlashTierIndex`) with "stay there" semantics (persists on tier promotion across subsequent requests) and reset hooks (`resetAllState`).
+  - Concurrency-safe local tier snapshot pinning (`startTier = currentFlashTierIndex`) guaranteeing deterministic single-cycle iteration without race conditions or skipped tiers under concurrent load.
+  - Fast-advance on HTTP 404 (model unreleased or missing) immediately advancing to next tier on attempt 1 with 0 extra keys burned.
+  - Inner key loop retrying across all active Google keys in `GOOGLE_API_KEYS` on HTTP 429 / 5xx / network drops before triggering tier failover.
+  - Fail-fast pass-through for client errors (HTTP 400, 401, 403) without cascading.
+  - 1-cycle safeguard capping execution at 1 full cycle across configured tiers, returning HTTP 503 `{"error": {"message": "All Google native fusion tiers exhausted", "type": "service_unavailable"}}`.
+  - Downstream telemetry headers: `x-literouter-model: <active_model>` and `x-literouter-tier: <tier_number>`.
+  - Upstream OpenCode harness attribution headers (`User-Agent: OpenCode/1.18.29`, `HTTP-Referer: https://opencode.ai`, `X-Title: OpenCode`).
+  - Real-time terminal telemetry: `🔗 [FUSION req_id]` on cascade and tier success, `🔴 [EXHAUSTED req_id]` on full exhaustion.
+- **Model Registry Cleanup**:
+  - Removed obsolete and confusing legacy root `models.json`.
+  - Standardized all scripts, test runners, demos, and documentation on canonical `config/models.json` (`tests/integration/smoke/test_downstream_dual.py`, `scripts/health_check_models.py`, `scripts/gather_model_details.py`, `demo/demo_upsell.ts`).
+  - Overhauled `.opencode2/skills/literouter/fusion.md` to comprehensively document Google Native Flash Fusion alongside OpenAI-compatible virtual presets (`quad`, `pydn`, `fast`, `deep`).
+
+
+### Feat / Google Native Flash Fusion descending chain (literouter-rg8k, literouter-zzna) - 2026-09-08
+- Added native fusion descending chain for `gemini-flash` (`gemini-3.8-flash` -> `gemini-3.7-flash` -> `gemini-3.6-flash` -> `gemini-3.5-flash`) on `/v1beta/models/gemini-flash:*` endpoints.
+- Declarative native chain support in `config/fusion.json` under `"native_chains"` with boot-time caching (`getNativeFlashChain()`) and zero-IO hot path.
+- In-memory dual-rotation ring buffer with persistent active tier pointer (`currentFlashTierIndex`, "stay there" semantics) across requests.
+- Concurrency-safe local tier pinning (`startTier` snapshot) ensuring concurrent requests traverse an isolated cycle from the pointer without race conditions.
+- HTTP 404 fast-advance (0 keys burned): advances to the next tier immediately on 404 (model not found / deprecated) without retrying remaining keys in pool.
+- HTTP 429/5xx full key pool rotation per tier before cascading to the next tier in the chain.
+- Single full-cycle safeguard halting after 4 tiers max, returning HTTP 503 (`All Google native fusion tiers exhausted`) on complete pool exhaustion.
+- Downstream telemetry headers: emits `x-literouter-model` (actual serving tier model name) and `x-literouter-tier` (1-based tier index) on success.
+- OpenCode agentic attribution upstream headers injected via `buildGoogleUpstreamHeaders` (`user-agent`, `http-referer`, `referer`, `x-title`).
+- Reset hooks: `resetNativeFlashTierIndex()` wired into `resetAllState()` for gateway reset (`POST /reset`).
+- Unit test coverage: 10 comprehensive tests in `tests/unit/google_native_fusion.test.ts` verifying boot caching, 404 fast-advance, 429/5xx cascade, ring buffer advancement, downstream headers, and 503 cycle safeguard.
+
+
 ### Feat / Google Native Dumb Forwarder for `/v1beta/models/*` (literouter-7xhr, literouter-q0bq) - 2026-09-08
 - Re-engineered `handleGoogleNative` in `src/handlers/google_native.ts` into a true Google Native Dumb Forwarder for `/v1beta/models/*` (`:streamGenerateContent?alt=sse` and `:generateContent`).
 - Supports transparent byte stream passthrough, `x-goog-api-key` injection, stripping client `authorization`, and in-flight key rotation on 429/5xx across `GOOGLE_API_KEYS`.

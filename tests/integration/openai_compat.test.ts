@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import type { Server } from "bun";
+import { resetEnvCache } from "../../src/config/env";
 import { handleAppRequest, resetAllState } from "../../src/lib";
 
 interface MockServerState {
@@ -116,15 +117,34 @@ async function readAllStream(stream: ReadableStream<Uint8Array>): Promise<string
 }
 
 describe("OpenAI Compatibility Handler Integration", () => {
+  let originalOrQuarantine: string | undefined;
+  let originalTtl: string | undefined;
+
   beforeEach(() => {
     state.statusOverride = undefined;
     process.env.MOCK_OR_PORT = "19801";
+    originalOrQuarantine = process.env.OPENROUTER_ENABLE_QUARANTINE;
+    originalTtl = process.env.COOLDOWN_RATE_LIMIT_TTL_SEC;
+    process.env.OPENROUTER_ENABLE_QUARANTINE = "true";
+    process.env.COOLDOWN_RATE_LIMIT_TTL_SEC = "65";
+    resetEnvCache();
     resetAllState();
     startMockServer();
   });
 
   afterEach(() => {
     delete process.env.MOCK_OR_PORT;
+    if (originalOrQuarantine !== undefined) {
+      process.env.OPENROUTER_ENABLE_QUARANTINE = originalOrQuarantine;
+    } else {
+      delete process.env.OPENROUTER_ENABLE_QUARANTINE;
+    }
+    if (originalTtl !== undefined) {
+      process.env.COOLDOWN_RATE_LIMIT_TTL_SEC = originalTtl;
+    } else {
+      delete process.env.COOLDOWN_RATE_LIMIT_TTL_SEC;
+    }
+    resetEnvCache();
     stopMockServer();
   });
 

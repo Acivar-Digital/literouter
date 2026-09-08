@@ -13,6 +13,8 @@ import {
   handleGoogleInteractionsPassthrough,
   handleGoogleNative,
   handleGoogleOpenAIBeta,
+  loadAndCacheNativeChains,
+  resetNativeFlashTierIndex,
 } from "./handlers/google_native";
 import {
   globalCooldownManager,
@@ -64,6 +66,8 @@ function handleHardReset(): Response {
   clearPacerRegistry();
   resetHttp2Pool();
   resetProvidersRegistryCache();
+  loadAndCacheNativeChains();
+  resetNativeFlashTierIndex();
   return Response.json(
     {
       status: "ok",
@@ -412,6 +416,8 @@ export function resetAllState(): void {
   clearPacerRegistry();
   resetHttp2Pool();
   resetProvidersRegistryCache();
+  loadAndCacheNativeChains();
+  resetNativeFlashTierIndex();
 }
 
 export function getCooldownState(): Record<string, unknown> {
@@ -551,6 +557,7 @@ export interface LiteRouterServer {
 
 export function createServer(portOverride?: number): Server<unknown> | LiteRouterServer {
   initializeKeyPools();
+  loadAndCacheNativeChains();
   const env = getEnv();
   const port = portOverride ?? env.LITEROUTER_PORT;
   const tls = loadTlsOptions(env.LITEROUTER_TLS_ENABLED);

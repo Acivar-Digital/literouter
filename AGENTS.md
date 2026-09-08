@@ -78,7 +78,7 @@ If for any reason the skill was not loaded at session start, you **MUST immediat
 | Category | Trigger Keywords |
 |---|---|
 | **Core & Gateway** | `literouter`, `gateway`, `proxy`, `port 7766`, `bun run src/index.ts`, `scripts/start.sh`, `scripts/doctor.ts`, `scripts/doctor_zn.ts`, `zen-provider.md` |
-| **Routing & Keys** | `directive key`, `lr-`, `routing`, `provider`, `model`, `fusion`, `fusion.json`, `globalKeyPool`, `key rotation`, `cooldown`, `quarantine` |
+| **Routing & Keys** | `directive key`, `lr-`, `routing`, `provider`, `model`, `fusion`, `gemini-flash`, `native chains`, `fusion.json`, `globalKeyPool`, `key rotation`, `cooldown`, `quarantine` |
 | **Client Integrations** | `claude code`, `opencode2`, `antigravity`, `agy-gemini`, `agy-claude`, `OpenRouter`, `NVIDIA NIM`, `Zen`, `Google Vertex` |
 | **Streaming & Protocol** | `streaming`, `TTFT`, `SSE`, `keep-alive`, `h2_pool`, `HTTP/2`, `ALPN`, `pacer`, `circuit_breaker`, `network_error`, `content: null`, `Zod` |
 | **Reasoning & Tools** | `reasoning scrubber`, `collapse-reasoning`, `dots`, `XML tool calling`, `<think>`, `trapped thinking`, `tool compaction` |

@@ -21,7 +21,7 @@ BASE_URL: str = os.environ.get("LITEROUTER_BASE_URL", "http://localhost:7766").r
 AUTH_KEY: str = os.environ.get("LITEROUTER_AUTH_KEY", "")
 
 MODELS_PATH: str = os.path.join(
-    os.path.dirname(__file__), "..", "..", "..", "models.json"
+    os.path.dirname(__file__), "..", "..", "..", "config", "models.json"
 )
 
 
