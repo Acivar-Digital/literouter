@@ -4,6 +4,19 @@ All notable changes to LiteRouter will be documented in this file.
 
 ## [Unreleased]
 
+### Feat / Google Native Version Routing (`g1`, `gb`, `ob`) & `/v1/models/*` Forwarding (literouter-vgp7) - 2026-09-09
+- **Disambiguated Google Native Directive Conventions**:
+  - Introduced completion code `g1` (`lr-gg-gg-g1-no`) targeting Google Native GA `v1` REST (`/v1/models/{model}:generateContent`).
+  - Introduced completion code `gb` (`lr-gg-gg-gb-no`) targeting Google Native `v1beta` REST (`/v1beta/models/{model}:generateContent`), eliminating the naming collision where `gc` was shared between Provider GCP and Completion `generateContent`.
+  - Retained `gc` as a backward-compatible alias for `gb` (`v1beta`).
+  - Documented and preserved `ob` (`lr-gg-oa-ob-no`) for Google OpenAI-compatible Beta endpoint (`/v1beta/openai/chat/completions`).
+- **Inbound `/v1/models/*` Gateway Routing**:
+  - Expanded gateway dispatcher in `src/index.ts` to route inbound `path.startsWith("/v1/models/")` directly to `handleGoogleNative` alongside `/v1beta/models/`.
+  - Updated `extractModelFromPath` and `buildTierUpstreamUrl` in `src/handlers/google_native.ts` to recognize both `/v1/` and `/v1beta/`, guaranteeing that fallback cascades across native chains (`gemini-flash`, `gemini-flash-lite`) preserve the `/v1/` path without reverting to `/v1beta/`.
+  - Maintained exact-path dynamic discovery for `GET /v1/models` and `GET /v1beta/models` without path collision.
+- **Unit Test Coverage**:
+  - Added `tests/unit/google_native_v1_g1.test.ts` covering directive parsing for `g1` and `gb`, upstream endpoint resolution, `/v1/` vs `/v1beta/` upstream forwarding, cascade version preservation, and discovery coexistence.
+
 ### Feat / Google Native Fusion Support for `gemini-flash-lite` (literouter-e37p) - 2026-09-09
 - **Google Native Flash-Lite Fusion (`gemini-flash-lite`)**:
   - Added descending fallback chain across `gemini-3.5-flash-lite` (Tier 1) -> `gemini-3.1-flash-lite` (Tier 2) on `/v1beta/models/gemini-flash-lite:*` endpoints.

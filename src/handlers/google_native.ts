@@ -152,7 +152,7 @@ interface NativeForwardContext {
 }
 
 function extractModelFromPath(pathname: string): string {
-  const match = pathname.match(/\/v1beta\/models\/([^:]+)/);
+  const match = pathname.match(/\/(?:v1beta|v1)\/models\/([^:]+)/);
   const raw = match?.[1] ?? "gemini-2.5-flash";
   return normalizeGoogleNativeModel(raw);
 }
@@ -181,8 +181,11 @@ function buildGoogleNativeUpstreamUrl(url: URL): URL {
 function buildTierUpstreamUrl(baseUpstreamUrl: URL, tierModel: string): URL {
   const cloned = new URL(baseUpstreamUrl.toString());
   cloned.pathname = cloned.pathname.replace(
-    /\/v1beta\/models\/[^:]+/,
-    `/v1beta/models/${tierModel}`
+    /\/(v1beta|v1)\/models\/[^:]+/,
+    (match) => {
+      const version = match.startsWith("/v1beta") ? "v1beta" : "v1";
+      return `/${version}/models/${tierModel}`;
+    }
   );
   return cloned;
 }

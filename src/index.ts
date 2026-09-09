@@ -205,7 +205,7 @@ function dispatchGoogleBeta(path: string, req: Request, rawKey: string, reqId: s
   if (path.startsWith("/v1beta/openai/")) {
     return handleGoogleOpenAIBeta(req, rawKey, reqId);
   }
-  if (path.startsWith("/v1beta/models/")) {
+  if (path.startsWith("/v1beta/models/") || path.startsWith("/v1/models/")) {
     return handleGoogleNative(req, rawKey, reqId);
   }
   return null;

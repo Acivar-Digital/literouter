@@ -23,6 +23,7 @@ export const CompletionCodeSchema = z.enum([
   "ms",
   "ob",
   "gc",
+  "g1",
   "im",
   "em",
   "au",

@@ -47,6 +47,7 @@
       "endpoints": {
         "ob": "/v1beta/openai/chat/completions",
         "gc": "/v1beta/models/{model}:generateContent",
+        "g1": "/v1/models/{model}:generateContent",
         "em": "/v1beta/models/{model}:embedContent",
         "md": "/v1beta/models"
       },

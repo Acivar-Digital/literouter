@@ -22,6 +22,7 @@ export type CompletionCode =
   | "ms"
   | "ob"
   | "gc"
+  | "g1"
   | "im"
   | "em"
   | "au"
@@ -73,6 +74,7 @@ const VALID_COMPLETIONS: ReadonlySet<string> = new Set([
   "ms",
   "ob",
   "gc",
+  "g1",
   "im",
   "em",
   "au",

@@ -46,7 +46,7 @@ function buildBannerLines(options: BannerOptions): string[] {
     "  • /v1/messages/count_tokens   (Anthropic Token Counter)",
     "  • /v1/models                  (Dynamic Model Discovery)",
     "  • /v1beta/openai/*            (Google OpenAI-Compat Beta)",
-    "  • /v1beta/models/*            (Google Native RPC)",
+    "  • /v1/models/*, /v1beta/models/* (Google Native RPC)",
     "  • /reset                      (Hard Flush / Key Unfreeze)",
     "  • /health                     (Health Check Probe)",
     "================================================================================",

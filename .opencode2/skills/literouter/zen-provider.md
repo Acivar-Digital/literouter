@@ -66,6 +66,8 @@ Real OpenCode session IDs match `ses_` + 26 alnum chars
 
 ## 7. Doctor Diagnostics (`scripts/doctor.ts` + `scripts/doctor_zn.ts`)
 
+> 📖 **Comprehensive Reference**: For complete operational details on all doctor probes, error classifications (including `prompt_cache_key`), and CLI filters, see [`doctor.md`](doctor.md).
+
 - Full sweep (all providers): `bun run scripts/doctor.ts`
 - Zen only: `bun run scripts/doctor.ts --provider=zn`
 - Legacy `probeZenKey` (`doctor.ts:263-308`) sends static headers only → always
