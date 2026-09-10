@@ -67,7 +67,7 @@ curl -sk -X POST https://localhost:7766/reset
 ### Pattern 1: `HTTP 401 Unauthorized: Invalid API key directive`
 - **Symptom**: Requests fail immediately with `invalid_api_key` error.
 - **Cause**: Client passed a malformed key directive.
-- **Fix**: Directives must follow either the 5-token format `lr-<provider>-<payload>-<completions>-<nuances>` (e.g. `lr-nv-oa-ch-no`, `lr-or-cl-ms-dp`) or fusion format `lr-fse-<preset>`.
+- **Fix**: See single source of truth `directive-grammar.md` §1 (direct `lr-<provider>-<payload>-<completion>-<nuance>` vs fusion `lr-fse-<preset>`; presets on disk: `quad`, `pydn`, `fast`, `deep`).
 
 ### Pattern 2: `HTTP 429 Too Many Requests: All API keys are cooling down`
 - **Symptom**: All keys for a provider are cooling down after repeated upstream rate limits.

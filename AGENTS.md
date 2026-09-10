@@ -33,6 +33,8 @@ For all system design, folder maps, design decisions, and architectural constrai
 - **Architecture**: `/home/yapilwsl/arthityap/literouter/docs/ARCHITECTURE.md`
 - **Routing & Streaming Spec**: `/home/yapilwsl/arthityap/literouter/docs/Fix_Streaming_01.md`
 - **Main Handlers**: `src/handlers/openai_compat.ts`, `src/network/fetcher.ts`, `src/network/pacer.ts`
+- **Antigravity IDE Setup (lazy-load)**: `.opencode2/skills/literouter/agy-ide-setup.md` (LiteRouter wiring only; canonical IDE skill: `.opencode2/skills/agy-ide-playbook/SKILL.md`)
+- **TUI LaTeX & Math Rendering (lazy-load)**: `.opencode2/skills/literouter/tui-latex-math-rendering.md`
 
 ### OpenCode vs OpenCode2 Config Format
 This repo maintains both OpenCode v1 and OpenCode2 v2 configurations. Key differences when editing JSON configs:

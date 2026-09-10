@@ -44,78 +44,19 @@ literouter/
 
 ### Secret Upstream Key Pools (`.env.local`)
 
-Live API keys are provided as comma-separated lists:
-
-```env
-OPENROUTER_API_KEYS=sk-or-v1-key1...,sk-or-v1-key2...
-NVIDIA_API_KEYS=nvapi-key1...,nvapi-key2...
-ZEN_API_KEYS=sk-zen-key1...,sk-zen-key2...
-GOOGLE_API_KEYS=AIzaSyKey1...,AIzaSyKey2...
-```
+> Single source of truth: key pools and boot validation live in `architecture.md` §2 (`src/config/keys.ts`); JSON schemas live in `config-schemas.md`. Live API keys are comma-separated lists — never paste real keys here.
 
 ---
 
 ## 3. Upstream Provider Registry (`config/providers.json`)
 
-`config/providers.json` defines supported upstream providers and their endpoint routing templates:
-
-```json
-{
-  "providers": {
-    "openrouter": {
-      "code": "or",
-      "base_url": "https://openrouter.ai",
-      "auth_header": "Bearer",
-      "endpoints": {
-        "ch": "/api/v1/chat/completions",
-        "ms": "/api/v1/messages",
-        "em": "/api/v1/embeddings",
-        "md": "/api/v1/models"
-      }
-    },
-    "nvidia": {
-      "code": "nv",
-      "base_url": "https://integrate.api.nvidia.com",
-      "auth_header": "Bearer",
-      "endpoints": {
-        "ch": "/v1/chat/completions",
-        "em": "/v1/embeddings",
-        "md": "/v1/models"
-      }
-    },
-    "google": {
-      "code": "gg",
-      "base_url": "https://generativelanguage.googleapis.com",
-      "auth_header": "Bearer",
-      "endpoints": {
-        "ob": "/v1beta/openai/chat/completions",
-        "gc": "/v1beta/models/{model}:generateContent",
-        "em": "/v1beta/models/{model}:embedContent",
-        "md": "/v1beta/models"
-      }
-    },
-    "zen": {
-      "code": "zn",
-      "base_url": "https://opencode.ai/zen",
-      "auth_header": "Bearer",
-      "endpoints": {
-        "ch": "/v1/chat/completions",
-        "md": "/v1/models"
-      }
-    }
-  }
-}
-```
+> Single source of truth: `config-schemas.md` §3. Fusion presets on disk are `quad`, `pydn`, `fast`, `deep` (see `config-schemas.md` §1); `FUSION_UPSTREAM_URL` is a legacy Python fusion-sidecar env var, not a gateway constant (see `config-schemas.md` §4).
 
 ---
 
 ## 4. Key Pool Validation Rules (`src/config/keys.ts`)
 
-During gateway boot, `staticValidateKeys` parses and filters key pools:
-1. **Placeholder Rejection**: Discards keys containing `changeme`, `placeholder`, `your_key`, `todo`, `xxxx`.
-2. **Angle Bracket Rejection**: Discards keys containing `<` or `>`.
-3. **Length Verification**: Discards keys shorter than 10 characters.
-4. **Resilient Mock Key Loading**: If a key pool is empty during unit tests, test stubs (`sk-stub-<provider>-mock-key-1`) are injected safely to preserve test suite integrity without hitting live APIs.
+> Single source of truth: `architecture.md` §2.3 (`staticValidateKeys` in `src/config/keys.ts`).
 
 ---
 

@@ -130,6 +130,18 @@ export function resolveUpstreamEndpoint(
   };
 }
 
+function generateZenSessionId(): string {
+  const chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+  let id = "ses_";
+  const bytes = new Uint8Array(20);
+  crypto.getRandomValues(bytes);
+  for (let i = 0; i < 20; i++) {
+    const byte = bytes[i] ?? 0;
+    id += chars.charAt(byte % chars.length);
+  }
+  return id;
+}
+
 export function buildAuthHeaders(
   authHeader: "Bearer" | "x-api-key",
   key: string,
@@ -175,6 +187,11 @@ export function buildAuthHeaders(
       ) {
         headers[k] = v;
       }
+    }
+  }
+  if (provider === "zn" || provider === "zen") {
+    if (!headers["session-id"] && !headers["x-session-id"]) {
+      headers["session-id"] = generateZenSessionId();
     }
   }
   return headers;

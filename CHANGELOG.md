@@ -4,6 +4,19 @@ All notable changes to LiteRouter will be documented in this file.
 
 ## [Unreleased]
 
+### Feat / Vision-Language Web Evaluation Engine (`eval/build_web.ts` & `eval/stages_web/`) - 2026-09-11
+- **Dedicated Web Generation Evaluation Suite (`eval/build_web.ts`)**:
+  - Implemented 5-stage modular visual-to-code evaluation harness targeting Vision-Language models (`inclusionai/ling-3.0-flash-vl:free`, GPT-4o, Sonnet):
+    - **Stage 1 (Structure & DOM Layout)**: Verifies semantic landmarks (`<header>`, `<nav>`, `<main>`, `<aside>`, `<footer>`), CSS grid/flex structures, and detects broken `position: absolute` overlap hacks.
+    - **Stage 2 (Responsive Scaling)**: Verifies responsive Tailwind breakpoints (`sm:`, `md:`, `lg:`), fluid container widths (`max-w-*`, `w-full`), and mobile column collapse (`grid-cols-1 md:grid-cols-3`).
+    - **Stage 3 (State & Logic)**: Audits real React hook usage (`useState`, `useReducer`), controlled input bindings (`value` + `onChange`), genuine form submit handlers (`e.preventDefault()`), and state-driven conditional UI toggles.
+    - **Stage 4 (Code Hygiene & Anti-Hallucination)**: Flags lazy placeholder anti-patterns (`TODO`, `<!-- insert icons here -->`, dummy placeholder divs), scans unauthorized third-party npm package imports, and prevents unsafe XSS patterns (`dangerouslySetInnerHTML`).
+    - **Stage 5 (Semantic Accessibility & ARIA)**: Enforces WCAG best practices, detects `<div onClick>` without button semantics, validates input labels, image `alt` tags, and modal `role="dialog"` ARIA attributes.
+  - **Zero-Browser-Binary Architecture**: Runs completely natively in Bun with AST parsing, requiring no heavy Chromium/Playwright binaries.
+  - **Built-in Mockup Fixtures (`eval/stages_web/fixtures.ts`)**: In-memory SVG-based data URI mockups for SaaS dashboards, 4-tier pricing tables, and authentication modals.
+  - **Unit Test Coverage**: Added comprehensive test suites (`tests/unit/eval_stages_web.test.ts`, `tests/unit/eval_stages_web_stage3_4.test.ts`, `eval/stages_web/stage5_a11y.test.ts`), bringing unit test count to 697 passing tests.
+
+
 ### Feat / Google Native Version Routing (`g1`, `gb`, `ob`) & `/v1/models/*` Forwarding (literouter-vgp7) - 2026-09-09
 - **Disambiguated Google Native Directive Conventions**:
   - Introduced completion code `g1` (`lr-gg-gg-g1-no`) targeting Google Native GA `v1` REST (`/v1/models/{model}:generateContent`).
