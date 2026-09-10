@@ -280,4 +280,63 @@ describe("In-Flight Retry & Rotation Loop", () => {
     expect(fetchCalls.length).toBe(1);
     expect(fetchCalls[0]?.authHeader).toContain("sk-mock-key-1");
   });
+
+  it("parks Key 1 via conserveKey and rotates to Key 2 when matching conserve rule", async () => {
+    const origOrKeys = process.env.OPENROUTER_API_KEYS;
+    process.env.OPENROUTER_API_KEYS = "sk-or-key-1,sk-or-key-2";
+    resetAllState();
+
+    try {
+      const fetchCalls: { url: string; authHeader: string | null }[] = [];
+      globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+        const headers = new Headers(init?.headers);
+        const authHeader = headers.get("Authorization") || headers.get("api-key");
+        const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+        fetchCalls.push({ url, authHeader });
+
+        if (authHeader?.includes("sk-or-key-1")) {
+          return new Response(JSON.stringify({ error: { message: "free-models-per-day rate limit reached" } }), {
+            status: 429,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+
+        if (authHeader?.includes("sk-or-key-2")) {
+          return new Response(JSON.stringify(mockSuccessJson), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+
+        return new Response("Unauthorized", { status: 401 });
+      }) as typeof fetch;
+
+      const req = new Request("http://localhost:7766/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer lr-or-oa-ch-no",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: "openrouter/free-model",
+          messages: [{ role: "user", content: "Hello world" }],
+          stream: false,
+        }),
+      });
+
+      const response = await handleAppRequest(req);
+      expect(response.status).toBe(200);
+      expect(fetchCalls.length).toBe(2);
+      expect(fetchCalls[0]?.authHeader).toContain("sk-or-key-1");
+      expect(fetchCalls[1]?.authHeader).toContain("sk-or-key-2");
+      expect(globalCooldownManager.isQuarantined("or:0")).toBe(true);
+    } finally {
+      if (origOrKeys !== undefined) {
+        process.env.OPENROUTER_API_KEYS = origOrKeys;
+      } else {
+        delete process.env.OPENROUTER_API_KEYS;
+      }
+      resetAllState();
+    }
+  });
 });

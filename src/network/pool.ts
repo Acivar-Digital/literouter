@@ -191,6 +191,20 @@ export class KeyPool extends EventEmitter {
     return state;
   }
 
+  public conserveKey(
+    provider: string,
+    index: number,
+    ttlSec: number,
+    reason: string = "conserve_key",
+    status?: number,
+    now: number = Date.now()
+  ): KeyCooldownState {
+    const keyId = this.makeKeyId(provider, index);
+    const state = this.cooldownManager.quarantineKeyWithTtl(keyId, ttlSec, reason, status, now);
+    this.scheduleAvailabilityTimer(keyId, provider, state.quarantinedUntil - now);
+    return state;
+  }
+
   public getConsecutiveAuthFailures(provider: string, index: number): number {
     const keyId = this.makeKeyId(provider, index);
     return this.consecutiveAuthFailures.get(keyId) ?? 0;

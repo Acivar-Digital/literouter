@@ -11,6 +11,13 @@ export interface ParsedResetDelay {
   readonly isGraceRetry: boolean;
 }
 
+export interface ConserveRule {
+  readonly status: number;
+  readonly contains: string;
+  readonly ttl: number | "midnight_utc";
+  readonly reason: string;
+}
+
 const DEFAULT_COOLDOWN_SEC = 30;
 const RATE_LIMIT_DEFAULT_SEC = 65;
 const SERVER_ERROR_DEFAULT_SEC = 10;
@@ -133,6 +140,29 @@ export function getExhaustionBackoffMs(attemptCount: number): number {
   const safeIndex = Math.min(Math.max(0, attemptCount), EXHAUSTION_LADDER_MS.length - 1);
   const fallback = EXHAUSTION_LADDER_MS[0] ?? 65000;
   return EXHAUSTION_LADDER_MS[safeIndex] ?? fallback;
+}
+
+export function calculateMidnightUtcSec(nowMs: number = Date.now()): number {
+  const date = new Date(nowMs);
+  const nextMidnightUtc = Date.UTC(
+    date.getUTCFullYear(),
+    date.getUTCMonth(),
+    date.getUTCDate() + 1,
+    0, 0, 0, 0
+  );
+  // Add 60s buffer so the upstream reset window is guaranteed to have passed
+  const diffSec = Math.ceil((nextMidnightUtc - nowMs) / 1000) + 60;
+  return Math.max(diffSec, 60);
+}
+
+export function resolveConserveTtlSec(ttl: number | "midnight_utc" | undefined, nowMs: number = Date.now()): number {
+  if (ttl === "midnight_utc") {
+    return calculateMidnightUtcSec(nowMs);
+  }
+  if (typeof ttl === "number" && ttl > 0) {
+    return ttl;
+  }
+  return calculateMidnightUtcSec(nowMs);
 }
 
 export class CooldownManager {

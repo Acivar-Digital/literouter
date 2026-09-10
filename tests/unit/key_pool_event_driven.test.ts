@@ -223,5 +223,25 @@ describe("KeyPool — Event-Driven Key Availability & Lifecycle", () => {
       expect(cooldownManager.isQuarantined("anthropic:0", now)).toBe(true);
       expect(pool.getConsecutiveAuthFailures("anthropic", 0)).toBe(1);
     });
+
+    it("parks key via conserveKey even when provider quarantine is disabled", () => {
+      const origEnv = process.env.OPENROUTER_ENABLE_QUARANTINE;
+      process.env.OPENROUTER_ENABLE_QUARANTINE = "false";
+      try {
+        pool.setPool("or", ["sk-or-key-1"]);
+        const now = 3000000;
+        // Normal quarantineKey returns disabled state
+        const qState = pool.quarantineKey("or", 0, 60, "rate_limit", 429, now);
+        expect(qState.quarantinedUntil).toBe(0);
+        expect(cooldownManager.isQuarantined("or:0", now)).toBe(false);
+
+        // conserveKey parks key regardless of isQuarantineEnabled
+        const cState = pool.conserveKey("or", 0, 120, "openrouter_daily_free_quota_exhausted", 429, now);
+        expect(cState.quarantinedUntil).toBe(now + 120000);
+        expect(cooldownManager.isQuarantined("or:0", now)).toBe(true);
+      } finally {
+        process.env.OPENROUTER_ENABLE_QUARANTINE = origEnv;
+      }
+    });
   });
 });

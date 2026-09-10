@@ -32,6 +32,8 @@ import { getCircuitBreakerForProvider } from "../network/circuit_breaker";
 import {
   EMOJI,
   extractErrorMessage,
+  formatTimestamp,
+  getProviderDisplayName,
   logError,
   logExhausted,
   logFinishReason,
@@ -45,6 +47,7 @@ import {
   logWarn,
   type UsageLogDetails,
 } from "../ui/logger";
+import type { ConserveRule } from "../network/cooldown";
 import {
   DEFAULT_MAX_CONTEXT_TOKENS,
   DEFAULT_SAFE_CONTEXT_TOKENS,
@@ -60,6 +63,7 @@ interface ProviderEndpointConfig {
   readonly auth_header?: "Bearer" | "x-api-key";
   readonly headers?: Record<string, string>;
   readonly endpoints: Record<string, string>;
+  readonly conserve_rules?: readonly ConserveRule[];
 }
 
 interface ProvidersRegistry {
@@ -86,6 +90,16 @@ function getProvidersRegistry(): ProvidersRegistry {
   } catch {
     return { providers: {} };
   }
+}
+
+export function getProviderEndpointConfig(providerCode: string): ProviderEndpointConfig | undefined {
+  const reg = getProvidersRegistry();
+  for (const [provKey, p] of Object.entries(reg.providers)) {
+    if (p.code === providerCode || provKey === providerCode) {
+      return p;
+    }
+  }
+  return undefined;
 }
 
 export function overrideProviderUrl(url: string, providerCode: string): string {
@@ -340,15 +354,28 @@ async function executeDirectCall(
 
     const fullBody = await collectFullBody(firstChunk, rawReader);
     const bodyText = new TextDecoder().decode(fullBody);
+    const providerConfig = getProviderEndpointConfig(directive.provider);
     const classification = classifyUpstreamError({
       provider: directive.provider,
       status: response.status,
       headers: response.headers,
       bodyText,
+      conserveRules: providerConfig?.conserve_rules,
     });
 
     const quarantineEnabled = globalKeyPool.isQuarantineEnabled(directive.provider);
-    if (quarantineEnabled && classification.quarantineTtlSec > 0) {
+    if (classification.isConserve && classification.quarantineTtlSec > 0) {
+      globalKeyPool.conserveKey(
+        directive.provider,
+        selected.index,
+        classification.quarantineTtlSec,
+        classification.reason,
+        response.status
+      );
+      console.warn(
+        `${EMOJI.limit} ${formatTimestamp()} [CONSERVE ${reqId}] ${getProviderDisplayName(directive.provider)} [Key #${selected.index + 1}/${selected.totalKeys}] matched conserve rule "${classification.reason}" -> Parked for ${classification.quarantineTtlSec}s`
+      );
+    } else if (quarantineEnabled && classification.quarantineTtlSec > 0) {
       globalKeyPool.reportFailure(
         directive.provider,
         selected.index,
@@ -362,11 +389,13 @@ async function executeDirectCall(
       logWarn(EMOJI.zap, `[${directive.provider.toUpperCase()} ${reqId}] Dumb-forwarder mode (${directive.provider.toUpperCase()}_ENABLE_QUARANTINE=false): Key ${selected.index} quarantine bypassed.`);
     }
 
-    const rawErrorMsg = extractErrorMessage(bodyText);
-    const ttlSec = !quarantineEnabled || classification.quarantineTtlSec === 0
-      ? undefined
-      : classification.quarantineTtlSec;
-    logLimit(reqId, directive.provider, selected.index, response.status, ttlSec, selected.totalKeys, rawErrorMsg);
+    if (!classification.isConserve) {
+      const rawErrorMsg = extractErrorMessage(bodyText);
+      const ttlSec = !quarantineEnabled || classification.quarantineTtlSec === 0
+        ? undefined
+        : classification.quarantineTtlSec;
+      logLimit(reqId, directive.provider, selected.index, response.status, ttlSec, selected.totalKeys, rawErrorMsg);
+    }
 
     if (isContextLengthError(response.status, bodyText) && !clientSignal?.aborted) {
       const detectedLimit = extractContextLimit(bodyText);
@@ -379,7 +408,7 @@ async function executeDirectCall(
     }
 
     const zenRetriesEnabled = !isZen || env.ZEN_ENABLE_RETRIES;
-    const canRetry = zenRetriesEnabled && classification.action === "retry_rotate" && attempt < maxAttempts && !clientSignal?.aborted;
+    const canRetry = (classification.isConserve || zenRetriesEnabled) && classification.action === "retry_rotate" && attempt < maxAttempts && !clientSignal?.aborted;
     if (canRetry) {
       throw new UpstreamRetryableError(
         `Upstream error ${response.status}: ${classification.reason}`,
@@ -1000,6 +1029,10 @@ export async function handleOpenAICompat(
     const endpoint = directive.type === "direct"
       ? resolveUpstreamEndpoint(directive.provider, directive.completion, body.model)
       : undefined;
+    const providerConfig = directive.type === "direct"
+      ? getProviderEndpointConfig(directive.provider)
+      : undefined;
+    const _conserveRules = providerConfig?.conserve_rules;
     const poolSize = directive.type === "direct" ? globalKeyPool.getPoolSize(directive.provider) : 1;
     const refHeaders = endpoint?.headers;
     const refUa = refHeaders?.["User-Agent"];

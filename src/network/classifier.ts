@@ -1,4 +1,4 @@
-import { parseResetDelay } from "./cooldown";
+import { type ConserveRule, parseResetDelay, resolveConserveTtlSec } from "./cooldown";
 import { isProviderQuarantineEnabled } from "./pool";
 import { getEnv } from "../config/env";
 
@@ -8,6 +8,7 @@ export interface UpstreamErrorInfo {
   readonly headers?: Headers | Record<string, string>;
   readonly bodyText?: string;
   readonly consecutiveAuthFailures?: number;
+  readonly conserveRules?: readonly ConserveRule[];
 }
 
 export interface ErrorDisposition {
@@ -15,6 +16,7 @@ export interface ErrorDisposition {
   readonly quarantineTtlSec: number;
   readonly reason: string;
   readonly isRetryable?: boolean;
+  readonly isConserve?: boolean;
 }
 
 export type ErrorClassification = ErrorDisposition;
@@ -132,6 +134,22 @@ export function classifyUpstreamError(input: UpstreamErrorInfo): ErrorDispositio
       reason: "Client request error (non-retryable 400)",
       isRetryable: false,
     };
+  }
+
+  // 1b. Conserve rules: Custom per-provider quota/parking rules
+  if (input.conserveRules && input.conserveRules.length > 0) {
+    for (const rule of input.conserveRules) {
+      if (status === rule.status && text.includes(rule.contains.toLowerCase())) {
+        const ttlSec = resolveConserveTtlSec(rule.ttl);
+        return {
+          action: "retry_rotate",
+          quarantineTtlSec: ttlSec,
+          reason: rule.reason,
+          isRetryable: true,
+          isConserve: true,
+        };
+      }
+    }
   }
 
   // 2. Status 429: Check quota exhaustion vs standard rate limit

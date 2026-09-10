@@ -2,9 +2,11 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { resetEnvCache } from "../../src/config/env";
 import {
   CooldownManager,
+  calculateMidnightUtcSec,
   computeStatusTtlSec,
   getExhaustionBackoffMs,
   parseResetDelay,
+  resolveConserveTtlSec,
 } from "../../src/network/cooldown";
 
 let originalTtl: string | undefined;
@@ -146,5 +148,37 @@ describe("Cooldown Manager — In-Memory Key State Management", () => {
     manager.clearAll();
     expect(manager.isQuarantined("google:0")).toBe(false);
     expect(manager.isQuarantined("google:1")).toBe(false);
+  });
+});
+
+describe("Cooldown Manager — Midnight UTC & Conserve TTL Calculation", () => {
+  it("calculates midnight UTC sec with 60s buffer", () => {
+    // 2026-09-11T23:59:00.000Z is 60s before 2026-09-12T00:00:00.000Z
+    const nowMs = Date.UTC(2026, 8, 11, 23, 59, 0, 0);
+    const ttlSec = calculateMidnightUtcSec(nowMs);
+    expect(ttlSec).toBe(120); // 60s diff + 60s buffer
+  });
+
+  it("calculates midnight UTC sec at noon UTC", () => {
+    // 12 hours before midnight = 43200s + 60s buffer = 43260s
+    const nowMs = Date.UTC(2026, 8, 11, 12, 0, 0, 0);
+    const ttlSec = calculateMidnightUtcSec(nowMs);
+    expect(ttlSec).toBe(43260);
+  });
+
+  it("resolves conserve TTL for midnight_utc", () => {
+    const nowMs = Date.UTC(2026, 8, 11, 23, 59, 0, 0);
+    expect(resolveConserveTtlSec("midnight_utc", nowMs)).toBe(120);
+  });
+
+  it("resolves conserve TTL for positive number", () => {
+    expect(resolveConserveTtlSec(300)).toBe(300);
+  });
+
+  it("resolves conserve TTL fallback to midnight UTC for undefined or non-positive", () => {
+    const nowMs = Date.UTC(2026, 8, 11, 23, 59, 0, 0);
+    expect(resolveConserveTtlSec(undefined, nowMs)).toBe(120);
+    expect(resolveConserveTtlSec(0, nowMs)).toBe(120);
+    expect(resolveConserveTtlSec(-10, nowMs)).toBe(120);
   });
 });

@@ -21,7 +21,15 @@
           "rpd": 1000,
           "tpm": 1000000
         }
-      }
+      },
+      "conserve_rules": [
+        {
+          "status": 429,
+          "contains": "free-models-per-day",
+          "ttl": "midnight_utc",
+          "reason": "openrouter_daily_free_quota_exhausted"
+        }
+      ]
     },
     "nvidia": {
       "code": "nv",

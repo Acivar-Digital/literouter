@@ -521,4 +521,47 @@ describe("Error Classifier — classifyUpstreamError & classifyTransportError", 
       expect(result.isRetryable).toBe(false);
     });
   });
+
+  describe("Conserve Rules Evaluation", () => {
+    it("matches custom conserve rule and marks isConserve with resolved TTL", () => {
+      const result = classifyUpstreamError({
+        provider: "or",
+        status: 429,
+        headers: {},
+        bodyText: '{"error":{"message":"free-models-per-day limit reached"}}',
+        conserveRules: [
+          {
+            status: 429,
+            contains: "free-models-per-day",
+            ttl: 3600,
+            reason: "openrouter_daily_free_quota_exhausted",
+          },
+        ],
+      });
+      expect(result.action).toBe("retry_rotate");
+      expect(result.isRetryable).toBe(true);
+      expect(result.isConserve).toBe(true);
+      expect(result.quarantineTtlSec).toBe(3600);
+      expect(result.reason).toBe("openrouter_daily_free_quota_exhausted");
+    });
+
+    it("falls through when conserve rules do not match status or text", () => {
+      const result = classifyUpstreamError({
+        provider: "or",
+        status: 429,
+        headers: {},
+        bodyText: '{"error":{"message":"Rate limit exceeded"}}',
+        conserveRules: [
+          {
+            status: 429,
+            contains: "free-models-per-day",
+            ttl: "midnight_utc",
+            reason: "openrouter_daily_free_quota_exhausted",
+          },
+        ],
+      });
+      expect(result.isConserve).toBeUndefined();
+      expect(result.reason).toBe("Rate limit reached (429)");
+    });
+  });
 });

@@ -4,6 +4,22 @@ All notable changes to LiteRouter will be documented in this file.
 
 ## [Unreleased]
 
+### Feat / Decoupled Key Conserve Logic & OpenRouter Daily Limit Shield (literouter-q4ov) - 2026-09-11
+- **Decoupled Key Conserve / Ban Prevention (`conserve_rules`)**:
+  - Implemented a dedicated "Conserve" mechanism configured in `config/providers.json` that immediately parks keys encountering hard daily quota limits (e.g. OpenRouter `Rate limit exceeded: free-models-per-day-high-balance.`) to prevent upstream account bans and eliminate repeated failed retry cycles.
+  - Decoupled from general quarantine: operates independently of `OPENROUTER_ENABLE_QUARANTINE=false` and `COOLDOWN_RATE_LIMIT_TTL_SEC=0`, preserving the user's setup where transient 429 RPM bursts are not penalized with lockouts.
+- **Provider-Driven Configuration (`config/providers.json`)**:
+  - Added `conserve_rules` array to OpenRouter provider configuration matching status `429`, substring `free-models-per-day`, and TTL `"midnight_utc"`.
+  - Zero hardcoding in transport code; fully hot-reloadable on `POST /reset`.
+- **Midnight UTC Dynamic TTL Calculation (`src/network/cooldown.ts`)**:
+  - Implemented `calculateMidnightUtcSec` and `resolveConserveTtlSec` to compute exact seconds until the next 00:00:00 UTC boundary (+60s safety buffer), ensuring keys reactivate as soon as daily provider quotas reset.
+- **KeyPool Conserve Method (`src/network/pool.ts`)**:
+  - Added `KeyPool.conserveKey()` to park keys in `CooldownManager` regardless of `isQuarantineEnabled` status.
+- **OpenAI Compat Handler Integration (`src/handlers/openai_compat.ts`)**:
+  - Wired conserve rule matching into upstream error classification, logging `[CONSERVE <reqId>]` warnings and immediately rotating to healthy keys in the pool.
+- **Comprehensive Unit Test Suite (`tests/unit/conserve_rules.test.ts`)**:
+  - Added 17 unit tests validating UTC midnight calculation, rule matching, key parking under `OPENROUTER_ENABLE_QUARANTINE=false`, pool rotation, and non-quarantine of standard 429s. Full test suite now passes with 723 tests.
+
 ### Feat / Vision-Language Web Evaluation Engine (`eval/build_web.ts` & `eval/stages_web/`) - 2026-09-11
 - **Dedicated Web Generation Evaluation Suite (`eval/build_web.ts`)**:
   - Implemented 5-stage modular visual-to-code evaluation harness targeting Vision-Language models (`inclusionai/ling-3.0-flash-vl:free`, GPT-4o, Sonnet):
