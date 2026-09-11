@@ -55,6 +55,7 @@ export async function runStage1Wire(ctx: StageContext): Promise<StageResult> {
 
     const resp1 = await fetch(ctx.gatewayUrl, {
       method: "POST",
+      signal: AbortSignal.timeout(ctx.timeoutMs ?? 120000),
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${ctx.directiveKey}`,
@@ -89,9 +90,14 @@ export async function runStage1Wire(ctx: StageContext): Promise<StageResult> {
         console.log(`         ❌ Test 1.1 Failed: Tool call invalid or XML leaked in content.`);
       }
     }
-  } catch (err) {
-    result.notes.push(`Test 1.1 exception: ${String(err)}`);
-    console.log(`         ❌ Test 1.1 Error: ${String(err)}`);
+  } catch (err: unknown) {
+    if (err instanceof Error && (err.name === "TimeoutError" || err.name === "AbortError")) {
+      result.notes.push("Request timed out after " + (ctx.timeoutMs ?? 120000) + "ms");
+      console.log(`         ❌ Test 1.1 Timeout: Request timed out after ${ctx.timeoutMs ?? 120000}ms`);
+    } else {
+      result.notes.push(`Test 1.1 exception: ${String(err)}`);
+      console.log(`         ❌ Test 1.1 Error: ${String(err)}`);
+    }
   }
 
   // --- Sub-test 1.2: Long Context Hydration (12k+ tokens) on POST /v1/responses ---
@@ -110,6 +116,7 @@ export async function runStage1Wire(ctx: StageContext): Promise<StageResult> {
 
     const resp2 = await fetch(ctx.gatewayUrl, {
       method: "POST",
+      signal: AbortSignal.timeout(ctx.timeoutMs ?? 120000),
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${ctx.directiveKey}`,
@@ -144,9 +151,14 @@ export async function runStage1Wire(ctx: StageContext): Promise<StageResult> {
         console.log(`         ❌ Test 1.2 Failed: Model failed to emit tool under 12k context.`);
       }
     }
-  } catch (err) {
-    result.notes.push(`Test 1.2 exception: ${String(err)}`);
-    console.log(`         ❌ Test 1.2 Error: ${String(err)}`);
+  } catch (err: unknown) {
+    if (err instanceof Error && (err.name === "TimeoutError" || err.name === "AbortError")) {
+      result.notes.push("Request timed out after " + (ctx.timeoutMs ?? 120000) + "ms");
+      console.log(`         ❌ Test 1.2 Timeout: Request timed out after ${ctx.timeoutMs ?? 120000}ms`);
+    } else {
+      result.notes.push(`Test 1.2 exception: ${String(err)}`);
+      console.log(`         ❌ Test 1.2 Error: ${String(err)}`);
+    }
   }
 
   result.passed = result.score >= 50;

@@ -68,6 +68,7 @@ export async function runStage3Agentic(ctx: StageContext): Promise<StageResult> 
 
     const resp1 = await fetch(ctx.gatewayUrl, {
       method: "POST",
+      signal: AbortSignal.timeout(ctx.timeoutMs ?? 120000),
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${ctx.directiveKey}`,
@@ -135,8 +136,8 @@ export async function runStage3Agentic(ctx: StageContext): Promise<StageResult> 
               }
             }
           }
-        } catch {
-          // ignore unparseable chunk
+        } catch (parseErr) {
+          result.notes.push(`Stage 3 SSE chunk parse warning: ${String(parseErr)}`);
         }
       }
     }
@@ -171,6 +172,7 @@ export async function runStage3Agentic(ctx: StageContext): Promise<StageResult> 
 
     const resp2 = await fetch(ctx.gatewayUrl, {
       method: "POST",
+      signal: AbortSignal.timeout(ctx.timeoutMs ?? 120000),
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${ctx.directiveKey}`,
@@ -221,6 +223,7 @@ export async function runStage3Agentic(ctx: StageContext): Promise<StageResult> 
 
     const resp3 = await fetch(ctx.gatewayUrl, {
       method: "POST",
+      signal: AbortSignal.timeout(ctx.timeoutMs ?? 120000),
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${ctx.directiveKey}`,
@@ -253,9 +256,14 @@ export async function runStage3Agentic(ctx: StageContext): Promise<StageResult> 
       result.notes.push(`Turn 3 failed with HTTP ${resp3.status}`);
       console.log(`         ❌ Turn 3 Failed: HTTP ${resp3.status}`);
     }
-  } catch (err) {
-    result.notes.push(`Stage 3 exception: ${String(err)}`);
-    console.log(`         ❌ Stage 3 Error: ${String(err)}`);
+  } catch (err: unknown) {
+    if (err instanceof Error && (err.name === "TimeoutError" || err.name === "AbortError")) {
+      result.notes.push("Request timed out after " + (ctx.timeoutMs ?? 120000) + "ms");
+      console.log(`         ❌ Stage 3 Timeout: Request timed out after ${ctx.timeoutMs ?? 120000}ms`);
+    } else {
+      result.notes.push(`Stage 3 exception: ${String(err)}`);
+      console.log(`         ❌ Stage 3 Error: ${String(err)}`);
+    }
   }
 
   result.passed = result.score >= 50;

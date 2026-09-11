@@ -42,6 +42,7 @@ export async function runStage1Wire(ctx: StageContext): Promise<StageResult> {
   try {
     const resp1 = await fetch(ctx.gatewayUrl, {
       method: "POST",
+      signal: AbortSignal.timeout(ctx.timeoutMs ?? 120000),
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${ctx.directiveKey}`,
@@ -92,6 +93,12 @@ export async function runStage1Wire(ctx: StageContext): Promise<StageResult> {
       }
     }
   } catch (err) {
+    if (
+      err instanceof Error &&
+      (err.name === "TimeoutError" || err.name === "AbortError" || err.message.includes("timed out"))
+    ) {
+      result.notes.push("Request timed out after " + (ctx.timeoutMs ?? 120000) + "ms");
+    }
     result.notes.push(`Test 1.1 exception: ${String(err)}`);
   }
 
@@ -100,6 +107,7 @@ export async function runStage1Wire(ctx: StageContext): Promise<StageResult> {
   try {
     const resp2 = await fetch(messagesUrl, {
       method: "POST",
+      signal: AbortSignal.timeout(ctx.timeoutMs ?? 120000),
       headers: {
         "Content-Type": "application/json",
         "x-api-key": anthropicDirective,
@@ -153,6 +161,12 @@ export async function runStage1Wire(ctx: StageContext): Promise<StageResult> {
       }
     }
   } catch (err) {
+    if (
+      err instanceof Error &&
+      (err.name === "TimeoutError" || err.name === "AbortError" || err.message.includes("timed out"))
+    ) {
+      result.notes.push("Request timed out after " + (ctx.timeoutMs ?? 120000) + "ms");
+    }
     result.notes.push(`Test 1.2 exception: ${String(err)}`);
   }
 
@@ -161,6 +175,7 @@ export async function runStage1Wire(ctx: StageContext): Promise<StageResult> {
   try {
     const resp3 = await fetch(ctx.gatewayUrl, {
       method: "POST",
+      signal: AbortSignal.timeout(ctx.timeoutMs ?? 120000),
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${ctx.directiveKey}`,
@@ -216,6 +231,12 @@ export async function runStage1Wire(ctx: StageContext): Promise<StageResult> {
       }
     }
   } catch (err) {
+    if (
+      err instanceof Error &&
+      (err.name === "TimeoutError" || err.name === "AbortError" || err.message.includes("timed out"))
+    ) {
+      result.notes.push("Request timed out after " + (ctx.timeoutMs ?? 120000) + "ms");
+    }
     result.notes.push(`Test 1.3 exception: ${String(err)}`);
   }
 

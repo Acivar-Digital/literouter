@@ -102,14 +102,14 @@ describe("GCP Retry Toggle & Resilience Handler (GCP_ENABLE_RETRIES & GCP_ENABLE
   const originalFetch = globalThis.fetch;
   const originalGcpRetries = process.env.GCP_ENABLE_RETRIES;
   const originalGcpQuarantine = process.env.GCP_ENABLE_QUARANTINE;
-  const originalGcpKeys = process.env.GCP_KEYS;
-  const originalNvKeys = process.env.NVIDIA_API_KEYS;
   const originalPacer = process.env.LITEROUTER_PACER_ENABLED;
   const originalTtl = process.env.COOLDOWN_RATE_LIMIT_TTL_SEC;
 
   beforeEach(() => {
     process.env.LITEROUTER_PACER_ENABLED = "false";
     process.env.COOLDOWN_RATE_LIMIT_TTL_SEC = "65";
+    process.env.GCP_KEYS = "mock-gc-stub-key-01,mock-gc-stub-key-02";
+    process.env.NVIDIA_API_KEYS = "mock-nv-stub-key-01,mock-nv-stub-key-02";
     resetEnvCache();
     resetAllState();
   });
@@ -131,16 +131,10 @@ describe("GCP Retry Toggle & Resilience Handler (GCP_ENABLE_RETRIES & GCP_ENABLE
     } else {
       delete process.env.GCP_ENABLE_QUARANTINE;
     }
-    if (originalGcpKeys !== undefined) {
-      process.env.GCP_KEYS = originalGcpKeys;
-    } else {
-      delete process.env.GCP_KEYS;
-    }
-    if (originalNvKeys !== undefined) {
-      process.env.NVIDIA_API_KEYS = originalNvKeys;
-    } else {
-      delete process.env.NVIDIA_API_KEYS;
-    }
+    delete process.env.GCP_ENABLE_CIRCUIT_BREAKER;
+    // CRITICAL: Keep keys as synthetic stubs in test environment - NEVER restore live keys from .env.local
+    process.env.GCP_KEYS = "mock-gc-stub-key-01,mock-gc-stub-key-02";
+    process.env.NVIDIA_API_KEYS = "mock-nv-stub-key-01,mock-nv-stub-key-02";
     if (originalPacer !== undefined) {
       process.env.LITEROUTER_PACER_ENABLED = originalPacer;
     } else {
@@ -151,6 +145,7 @@ describe("GCP Retry Toggle & Resilience Handler (GCP_ENABLE_RETRIES & GCP_ENABLE
   });
 
   it("1. Default behavior (GCP_ENABLE_RETRIES unset/true): retries and rotates to next key on 429", async () => {
+    console.log("🧪 [TEST SIMULATION] Executing resilience gate test: intentionally injecting mock 503/429 upstream error to verify failover...");
     delete process.env.GCP_ENABLE_RETRIES;
     process.env.GCP_KEYS = "mock-gcp-key-1,mock-gcp-key-2";
     resetEnvCache();
@@ -184,6 +179,7 @@ describe("GCP Retry Toggle & Resilience Handler (GCP_ENABLE_RETRIES & GCP_ENABLE
   });
 
   it("2. Single-flight behavior (GCP_ENABLE_RETRIES=false): terminates on attempt 1 and passes 429 verbatim", async () => {
+    console.log("🧪 [TEST SIMULATION] Executing resilience gate test: intentionally injecting mock 503/429 upstream error to verify failover...");
     process.env.GCP_ENABLE_RETRIES = "false";
     process.env.GCP_KEYS = "mock-gcp-key-1,mock-gcp-key-2";
     resetEnvCache();
@@ -216,6 +212,7 @@ describe("GCP Retry Toggle & Resilience Handler (GCP_ENABLE_RETRIES & GCP_ENABLE
   });
 
   it("3. Key quarantine preservation: records failure for key 0 so subsequent request picks key 1", async () => {
+    console.log("🧪 [TEST SIMULATION] Executing resilience gate test: intentionally injecting mock 503/429 upstream error to verify failover...");
     process.env.GCP_ENABLE_RETRIES = "false";
     process.env.GCP_ENABLE_QUARANTINE = "true";
     process.env.GCP_KEYS = "mock-gcp-key-1,mock-gcp-key-2";
@@ -260,6 +257,7 @@ describe("GCP Retry Toggle & Resilience Handler (GCP_ENABLE_RETRIES & GCP_ENABLE
   });
 
   it("4. Transport fail-safe (NoResponseError -> 502): synthesizes HTTP 502 with JSON error structure", async () => {
+    console.log("🧪 [TEST SIMULATION] Executing resilience gate test: intentionally injecting network connection error to verify 502 fail-safe...");
     process.env.GCP_ENABLE_RETRIES = "false";
     process.env.GCP_KEYS = "mock-gcp-key-1,mock-gcp-key-2";
     resetEnvCache();
@@ -310,6 +308,7 @@ describe("GCP Retry Toggle & Resilience Handler (GCP_ENABLE_RETRIES & GCP_ENABLE
   });
 
   it("6. Non-GCP isolation: non-GCP routes (e.g. nv) still retry on 429 even when GCP_ENABLE_RETRIES=false", async () => {
+    console.log("🧪 [TEST SIMULATION] Executing resilience gate test: intentionally injecting mock 503/429 upstream error to verify failover...");
     process.env.GCP_ENABLE_RETRIES = "false";
     process.env.NVIDIA_API_KEYS = "nvapi-mock-key-1,nvapi-mock-key-2";
     resetEnvCache();
@@ -343,6 +342,7 @@ describe("GCP Retry Toggle & Resilience Handler (GCP_ENABLE_RETRIES & GCP_ENABLE
   });
 
   it("7. Dumb forwarder mode (GCP_ENABLE_QUARANTINE=false): fails key on 429 without placing key into quarantine", async () => {
+    console.log("🧪 [TEST SIMULATION] Executing resilience gate test: intentionally injecting mock 503/429 upstream error to verify failover...");
     process.env.GCP_ENABLE_QUARANTINE = "false";
     process.env.GCP_KEYS = "mock-gcp-key-1,mock-gcp-key-2";
     resetEnvCache();
@@ -363,6 +363,7 @@ describe("GCP Retry Toggle & Resilience Handler (GCP_ENABLE_RETRIES & GCP_ENABLE
   });
 
   it("8. Combined dumb forwarder (GCP_ENABLE_RETRIES=false + GCP_ENABLE_QUARANTINE=false): transparent pass-through without lockout", async () => {
+    console.log("🧪 [TEST SIMULATION] Executing resilience gate test: intentionally injecting mock 503/429 upstream error to verify failover...");
     process.env.GCP_ENABLE_RETRIES = "false";
     process.env.GCP_ENABLE_QUARANTINE = "false";
     process.env.GCP_KEYS = "mock-single-gcp-key";
@@ -398,6 +399,7 @@ describe("GCP Retry Toggle & Resilience Handler (GCP_ENABLE_RETRIES & GCP_ENABLE
   });
 
   it("9. KeyPool provider isolation: GCP_ENABLE_QUARANTINE=false only disables quarantine for gc, not other providers", async () => {
+    console.log("🧪 [TEST SIMULATION] Executing resilience gate test: intentionally injecting mock 503/429 upstream error to verify failover...");
     process.env.GCP_ENABLE_QUARANTINE = "false";
     resetEnvCache();
     resetAllState();
@@ -419,6 +421,7 @@ describe("GCP Retry Toggle & Resilience Handler (GCP_ENABLE_RETRIES & GCP_ENABLE
   });
 
   it("10. Circuit breaker isolation (GCP_ENABLE_CIRCUIT_BREAKER=false): 5 consecutive 503s do not trip breaker or block subsequent requests", async () => {
+    console.log("🧪 [TEST SIMULATION] Executing resilience gate test: intentionally injecting mock 503/429 upstream error to verify failover...");
     process.env.GCP_ENABLE_RETRIES = "false";
     process.env.GCP_ENABLE_QUARANTINE = "false";
     process.env.GCP_ENABLE_CIRCUIT_BREAKER = "false";

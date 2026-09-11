@@ -32,6 +32,8 @@ export interface CodeEvalOptions {
   stageFilter?: number;
   runs?: number;
   continueOnFailure?: boolean;
+  cooldownMs?: number;
+  timeoutMs?: number;
 }
 
 export interface CodeEvalSummary {
@@ -54,6 +56,8 @@ Options:
   --stage <n>         Run ONLY a specific stage (1, 2, 3, 4, or 5)
   --continue          Do not abort on failure; run all stages (Diagnostic Mode)
   --runs <n>          Number of benchmark iterations (default: 2)
+  --cooldown <ms>     Cooldown delay between stages in milliseconds (default: 2000)
+  --timeout <ms>      Stage execution timeout in milliseconds (default: 120000)
   -h, --help          Show this help screen
 `);
 }
@@ -94,6 +98,8 @@ export function parseCliArgs(argv: string[] = process.argv.slice(2)): CodeEvalOp
   const opts: CodeEvalOptions = {
     runs: 2,
     continueOnFailure: false,
+    cooldownMs: 2000,
+    timeoutMs: 120000,
   };
 
   for (let i = 0; i < argv.length; i++) {
@@ -116,6 +122,12 @@ export function parseCliArgs(argv: string[] = process.argv.slice(2)): CodeEvalOp
     } else if (arg === "--runs" && i + 1 < argv.length) {
       const val = argv[++i];
       if (val) opts.runs = parseInt(val, 10);
+    } else if (arg === "--cooldown" && i + 1 < argv.length) {
+      const val = argv[++i];
+      if (val) opts.cooldownMs = parseInt(val, 10);
+    } else if (arg === "--timeout" && i + 1 < argv.length) {
+      const val = argv[++i];
+      if (val) opts.timeoutMs = parseInt(val, 10);
     } else if (arg === "--continue" || arg === "--no-fail-fast") {
       opts.continueOnFailure = true;
     } else if (!arg.startsWith("--")) {
@@ -150,7 +162,13 @@ function getStages(wire: "chat" | "responses"): StageDef[] {
   ];
 }
 
-function printHeader(ctx: StageContext, wire: string, stageFilter?: number, continueOnFailure?: boolean): void {
+function printHeader(
+  ctx: StageContext,
+  wire: string,
+  stageFilter?: number,
+  continueOnFailure?: boolean,
+  cooldownMs?: number,
+): void {
   const mode = stageFilter
     ? `Isolated Stage ${stageFilter}`
     : (continueOnFailure ? "All Stages (Diagnostic Mode)" : "Full Sequential Pipeline (Fail-Fast)");
@@ -163,6 +181,7 @@ function printHeader(ctx: StageContext, wire: string, stageFilter?: number, cont
   console.log(`🔑 Directive Key   : \x1b[33m${ctx.directiveKey}\x1b[0m`);
   console.log(`🌐 Gateway Origin  : ${ctx.gatewayUrl}`);
   console.log(`⚙️  Execution Mode  : ${mode}`);
+  console.log(`⏱️  Timeout / Cool : ${ctx.timeoutMs ?? 120000}ms / ${cooldownMs ?? 2000}ms`);
   console.log(`========================================================================`);
 }
 
@@ -198,22 +217,32 @@ export function printFinalSummary(model: string, wire: string, results: StageRes
 
 export async function runCodeEvaluation(options: CodeEvalOptions = {}): Promise<CodeEvalSummary> {
   const resolved = resolveWireAndDefaults(options);
+  const timeoutMs = options.timeoutMs ?? 120000;
+  const cooldownMs = options.cooldownMs ?? 2000;
   const ctx: StageContext = {
     model: resolved.model,
     directiveKey: resolved.directiveKey,
     gatewayUrl: resolved.gatewayUrl,
     runs: options.runs ?? 2,
+    timeoutMs,
   };
   const continueOnFailure = options.continueOnFailure ?? false;
   const stageFilter = options.stageFilter;
 
-  printHeader(ctx, resolved.wire, stageFilter, continueOnFailure);
+  printHeader(ctx, resolved.wire, stageFilter, continueOnFailure, cooldownMs);
 
   const stages = getStages(resolved.wire);
   const stageResults: StageResult[] = [];
 
+  let isFirstStage = true;
   for (const s of stages) {
     if (stageFilter && stageFilter !== s.stageNum) continue;
+
+    if (!isFirstStage && cooldownMs > 0) {
+      console.log(`⏳ Cooling down for ${cooldownMs}ms before Stage ${s.stageNum}...`);
+      await Bun.sleep(cooldownMs);
+    }
+    isFirstStage = false;
 
     const result = await s.runner(ctx);
     stageResults.push(result);
@@ -236,6 +265,8 @@ export async function runCodeEvaluation(options: CodeEvalOptions = {}): Promise<
     results: stageResults,
   };
 }
+
+export const runCodeEvalSuite = runCodeEvaluation;
 
 if (import.meta.main) {
   const options = parseCliArgs();

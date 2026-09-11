@@ -52,6 +52,7 @@ def _handle_upstream_error(err: Exception) -> None:
     raise err
 
 
+@pytest.mark.live
 @pytest.mark.anyio
 async def test_gemini_flash_tool_call_via_native() -> None:
     try:
@@ -64,6 +65,7 @@ async def test_gemini_flash_tool_call_via_native() -> None:
         _handle_upstream_error(err)
 
 
+@pytest.mark.live
 @pytest.mark.anyio
 async def test_gemini_flash_tool_call_via_openai_compat() -> None:
     """Tool call through OpenAI-compat route — requires thought_signature fix."""

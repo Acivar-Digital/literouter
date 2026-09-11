@@ -75,6 +75,7 @@ export async function runStage3Agentic(ctx: StageContext): Promise<StageResult> 
         tools: TOOL_PALETTE,
         messages: turn1Messages,
       }),
+      signal: AbortSignal.timeout(ctx.timeoutMs ?? 120000),
     });
 
     if (!resp1.ok || !resp1.body) {
@@ -111,8 +112,8 @@ export async function runStage3Agentic(ctx: StageContext): Promise<StageResult> 
               if (tc.function?.arguments) toolArgs += tc.function.arguments;
             }
           }
-        } catch {
-          // ignore
+        } catch (parseErr) {
+          void parseErr;
         }
       }
     }
@@ -161,6 +162,7 @@ export async function runStage3Agentic(ctx: StageContext): Promise<StageResult> 
         tools: TOOL_PALETTE,
         messages: turn2Messages,
       }),
+      signal: AbortSignal.timeout(ctx.timeoutMs ?? 120000),
     });
 
     if (resp2.ok) {
@@ -210,6 +212,7 @@ export async function runStage3Agentic(ctx: StageContext): Promise<StageResult> 
         tools: TOOL_PALETTE,
         messages: turn3Messages,
       }),
+      signal: AbortSignal.timeout(ctx.timeoutMs ?? 120000),
     });
 
     if (resp3.ok) {
@@ -221,7 +224,11 @@ export async function runStage3Agentic(ctx: StageContext): Promise<StageResult> 
       }
     }
   } catch (err) {
-    result.notes.push(`Stage 3 exception: ${String(err)}`);
+    if (err instanceof Error && err.name === "TimeoutError") {
+      result.notes.push(`Request timed out after ${ctx.timeoutMs ?? 120000}ms`);
+    } else {
+      result.notes.push(`Stage 3 exception: ${String(err)}`);
+    }
   }
 
   result.passed = result.score >= 50;

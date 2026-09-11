@@ -36,7 +36,7 @@ Output a JSON object matching this schema:
 Output ONLY the raw JSON object. No prose.
 `;
 
-function validatePayload(obj: unknown): { valid: boolean; errors: string[] } {
+export function validatePayload(obj: unknown): { valid: boolean; errors: string[] } {
   const errors: string[] = [];
   if (!obj || typeof obj !== "object") {
     return { valid: false, errors: ["Root is not an object"] };
@@ -110,6 +110,7 @@ export async function runStage2Pydantic(ctx: StageContext): Promise<StageResult>
           },
         ],
       }),
+      signal: AbortSignal.timeout(ctx.timeoutMs ?? 120000),
     });
 
     if (resp1.ok) {
@@ -134,7 +135,11 @@ export async function runStage2Pydantic(ctx: StageContext): Promise<StageResult>
       console.log(`         ❌ Test 2.1 Failed: HTTP ${resp1.status}`);
     }
   } catch (err) {
-    result.notes.push(`Test 2.1 exception: ${String(err)}`);
+    if (err instanceof Error && err.name === "TimeoutError") {
+      result.notes.push("Request timed out after " + (ctx.timeoutMs ?? 120000) + "ms");
+    } else {
+      result.notes.push(`Test 2.1 exception: ${String(err)}`);
+    }
   }
 
   // --- Sub-test 2.2: The Self-Correction (Retry) Loop ---
@@ -174,6 +179,7 @@ export async function runStage2Pydantic(ctx: StageContext): Promise<StageResult>
         stream: false,
         messages: errorFeedbackPrompt,
       }),
+      signal: AbortSignal.timeout(ctx.timeoutMs ?? 120000),
     });
 
     if (resp2.ok) {
@@ -197,7 +203,11 @@ export async function runStage2Pydantic(ctx: StageContext): Promise<StageResult>
       console.log(`         ❌ Test 2.2 Failed: HTTP ${resp2.status}`);
     }
   } catch (err) {
-    result.notes.push(`Test 2.2 exception: ${String(err)}`);
+    if (err instanceof Error && err.name === "TimeoutError") {
+      result.notes.push("Request timed out after " + (ctx.timeoutMs ?? 120000) + "ms");
+    } else {
+      result.notes.push(`Test 2.2 exception: ${String(err)}`);
+    }
   }
 
   // --- Sub-test 2.3: Massive Traceback Noise Resilience ---
@@ -250,6 +260,7 @@ FAILED tests/test_engine.py::test_payload_ingestion_pipeline - pydantic_core._py
           },
         ],
       }),
+      signal: AbortSignal.timeout(ctx.timeoutMs ?? 120000),
     });
 
     if (resp3.ok) {
@@ -273,7 +284,11 @@ FAILED tests/test_engine.py::test_payload_ingestion_pipeline - pydantic_core._py
       console.log(`         ❌ Test 2.3 Failed: HTTP ${resp3.status}`);
     }
   } catch (err) {
-    result.notes.push(`Test 2.3 exception: ${String(err)}`);
+    if (err instanceof Error && err.name === "TimeoutError") {
+      result.notes.push("Request timed out after " + (ctx.timeoutMs ?? 120000) + "ms");
+    } else {
+      result.notes.push(`Test 2.3 exception: ${String(err)}`);
+    }
   }
 
   result.passed = result.score >= 60;

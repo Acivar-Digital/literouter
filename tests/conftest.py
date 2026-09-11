@@ -35,6 +35,25 @@ if _cert_path.exists() and os.environ.get("LITEROUTER_TLS_ENABLED", "").lower() 
         os.environ["REQUESTS_CA_BUNDLE"] = str(_ca_path)
 
 
+def pytest_addoption(parser: pytest.Parser) -> None:
+    parser.addoption(
+        "--live",
+        action="store_true",
+        default=False,
+        help="Run tests that connect to live upstream providers and consume real API tokens",
+    )
+
+
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    if not config.getoption("--live"):
+        skip_live = pytest.mark.skip(
+            reason="Live upstream test disabled by default to protect API keys (run with --live to execute)"
+        )
+        for item in items:
+            if "live" in item.keywords:
+                item.add_marker(skip_live)
+
+
 @pytest.fixture(autouse=True)
 def reset_singletons() -> Generator[None, None, None]:
     """Reset all singleton caches before each test (Python gateway only)."""

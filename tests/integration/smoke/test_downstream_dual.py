@@ -91,6 +91,7 @@ pytestmark = pytest.mark.skipif(
 )
 
 
+@pytest.mark.live
 def test_opencode_native_generate_content() -> None:
     """OpenCode native path: POST /v1beta/models/<google>:generateContent."""
     model = _pick("google")
@@ -108,6 +109,7 @@ def test_opencode_native_generate_content() -> None:
     assert "candidates" in data, data
 
 
+@pytest.mark.live
 def test_pydantic_ai_openai_compat() -> None:
     """pydantic-ai OpenAI-compat path: POST /v1/chat/completions."""
     models = _load_models()

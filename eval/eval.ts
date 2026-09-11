@@ -75,6 +75,7 @@ export interface EvalOrchestratorSummary {
   gatewayUrl: string;
   wire: "chat" | "responses";
   suitesRun: SuiteType[];
+  runs?: number;
   speedResult?: SpeedBenchmarkResult;
   codeSummary?: CodeEvalSummary;
   webResult?: WebEvalResult;
@@ -100,6 +101,212 @@ export function ensureReportsDirectory(customPath?: string): string {
     mkdirSync(dir, { recursive: true });
   }
   return dir;
+}
+
+function isValidPassAtKInput(n: number, c: number, k: number): boolean {
+  return n > 0 && k > 0 && c > 0;
+}
+
+/**
+ * Standard pass@k unbiased estimator.
+ * pass@k = 1 - \binom{n-c}{k} / \binom{n}{k} if (n - c) >= k, else 1.0.
+ * For k=1, pass@1 = c / n.
+ */
+export function computePassAtK(n: number, c: number, k: number): number {
+  if (!isValidPassAtKInput(n, c, k)) {
+    return 0;
+  }
+  if (n - c < k) {
+    return 1.0;
+  }
+  let prod = 1.0;
+  for (let i = 0; i < k; i++) {
+    prod *= (n - c - i) / (n - i);
+  }
+  return 1.0 - prod;
+}
+
+/**
+ * Computes the requested percentile (0 - 100) using linear interpolation.
+ * e.g., median = 50th, p95 = 95th.
+ */
+export function computePercentile(values: number[], percentile: number): number {
+  if (values.length === 0) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const clamped = Math.max(0, Math.min(100, percentile));
+  const index = (clamped / 100) * (sorted.length - 1);
+  const lower = Math.floor(index);
+  const upper = Math.ceil(index);
+  const weight = index - lower;
+  return sorted[lower]! * (1 - weight) + sorted[upper]! * weight;
+}
+
+/**
+ * Computes sample mean and sample standard deviation (Bessel's corrected, N - 1).
+ */
+export function computeMeanAndStdDev(values: number[]): { mean: number; stdDev: number } {
+  if (values.length === 0) {
+    return { mean: 0, stdDev: 0 };
+  }
+  const mean = values.reduce((sum, v) => sum + v, 0) / values.length;
+  if (values.length === 1) {
+    return { mean, stdDev: 0 };
+  }
+  const sumSqDiff = values.reduce((sum, v) => sum + (v - mean) ** 2, 0);
+  const variance = sumSqDiff / (values.length - 1);
+  return { mean, stdDev: Math.sqrt(variance) };
+}
+
+function getZScore(confidenceLevel: number): number {
+  if (confidenceLevel >= 0.99) return 2.576;
+  if (confidenceLevel >= 0.95) return 1.96;
+  if (confidenceLevel >= 0.90) return 1.645;
+  return 1.96;
+}
+
+/**
+ * Computes confidence interval for the sample mean at specified confidence level (default 0.95).
+ */
+export function computeConfidenceInterval(
+  values: number[],
+  confidenceLevel = 0.95
+): { lower: number; upper: number } {
+  if (values.length === 0) {
+    return { lower: 0, upper: 0 };
+  }
+  const { mean, stdDev } = computeMeanAndStdDev(values);
+  if (values.length === 1 || stdDev === 0) {
+    return { lower: mean, upper: mean };
+  }
+  const z = getZScore(confidenceLevel);
+  const margin = z * (stdDev / Math.sqrt(values.length));
+  return { lower: mean - margin, upper: mean + margin };
+}
+
+function extractSpeedFromAgg(summary: EvalOrchestratorSummary): {
+  ttfts: number[];
+  latencies: number[];
+  successCount: number;
+  totalCount: number;
+} {
+  const agg =
+    summary.speedResult?.aggregates.find((a) => a.model === summary.model) ??
+    summary.speedResult?.aggregates[0];
+  if (!agg) {
+    return { ttfts: [], latencies: [], successCount: 0, totalCount: 0 };
+  }
+  if (agg.successfulRuns <= 0) {
+    return { ttfts: [], latencies: [], successCount: 0, totalCount: 0 };
+  }
+  const ttfts = [agg.avgTtftMs];
+  return {
+    ttfts,
+    latencies: [agg.avgDurationMs],
+    successCount: agg.successfulRuns,
+    totalCount: agg.successfulRuns,
+  };
+}
+
+function extractSpeedRunData(summary: EvalOrchestratorSummary): {
+  ttfts: number[];
+  latencies: number[];
+  successCount: number;
+  totalCount: number;
+} {
+  const modelKey = Object.keys(summary.speedResult?.allResults ?? {})[0] ?? "";
+  const modelResults =
+    summary.speedResult?.allResults[summary.model] ??
+    summary.speedResult?.allResults[modelKey] ??
+    [];
+
+  if (modelResults.length > 0) {
+    const okResults = modelResults.filter((r) => r.status === "OK");
+    const ttfts = okResults.map((r) => r.ttftMs).filter((t) => t > 0);
+    const latencies = okResults.map((r) => r.totalDurationMs).filter((d) => d > 0);
+    return { ttfts, latencies, successCount: okResults.length, totalCount: modelResults.length };
+  }
+
+  return extractSpeedFromAgg(summary);
+}
+
+function resolvePassCounts(
+  speedData: { successCount: number; totalCount: number },
+  summary: EvalOrchestratorSummary,
+  runs: number
+): { n: number; c: number } {
+  if (speedData.totalCount > 0) {
+    return { n: speedData.totalCount, c: speedData.successCount };
+  }
+  const codeResults = summary.codeSummary?.results;
+  if (codeResults && codeResults.length > 0) {
+    const passed = codeResults.filter((r) => r.passed).length;
+    return { n: codeResults.length, c: passed };
+  }
+  const webStages = summary.webResult?.stages;
+  if (webStages && webStages.length > 0) {
+    const passed = webStages.filter((s) => s.passed).length;
+    return { n: webStages.length, c: passed };
+  }
+  return { n: runs, c: summary.allSuitesPassed ? runs : 0 };
+}
+
+function formatLatencyMetrics(speedData: { ttfts: number[]; latencies: number[] }): {
+  medianTtft: string;
+  p95Latency: string;
+  stdDev: string;
+  ciStr: string;
+} {
+  if (speedData.ttfts.length === 0) {
+    return {
+      medianTtft: "N/A",
+      p95Latency: "N/A",
+      stdDev: "N/A",
+      ciStr: "N/A",
+    };
+  }
+
+  const latSource = speedData.latencies.length > 0 ? speedData.latencies : speedData.ttfts;
+  const median = computePercentile(speedData.ttfts, 50);
+  const p95 = computePercentile(latSource, 95);
+  const { stdDev } = computeMeanAndStdDev(speedData.ttfts);
+  const ci = computeConfidenceInterval(speedData.ttfts, 0.95);
+
+  return {
+    medianTtft: `${median.toFixed(1)} ms`,
+    p95Latency: `${p95.toFixed(1)} ms`,
+    stdDev: `±${stdDev.toFixed(1)} ms`,
+    ciStr: `[${ci.lower.toFixed(1)} ms, ${ci.upper.toFixed(1)} ms]`,
+  };
+}
+
+export function buildStatisticalAnalysisSection(
+  summary: EvalOrchestratorSummary,
+  runs: number
+): string[] {
+  const lines: string[] = [];
+  const speedData = extractSpeedRunData(summary);
+  const { n, c } = resolvePassCounts(speedData, summary, runs);
+  const k = Math.max(1, Math.min(runs, n));
+
+  const pass1 = computePassAtK(n, c, 1);
+  const passK = computePassAtK(n, c, k);
+  const pass1Str = `${(pass1 * 100).toFixed(1)}%`;
+  const passKStr = `${(passK * 100).toFixed(1)}%`;
+  const latencyMetrics = formatLatencyMetrics(speedData);
+
+  lines.push(`## 📊 Statistical Analysis (Runs: ${runs})`);
+  lines.push("");
+  lines.push("| Metric | Value | Interpretation |");
+  lines.push("|---|---|---|");
+  lines.push(`| pass@1 (Sample Mean) | ${pass1Str} | Single-attempt pass probability |`);
+  lines.push(`| pass@k | ${passKStr} | Success probability over k attempts |`);
+  lines.push(`| Median TTFT | ${latencyMetrics.medianTtft} | 50th percentile time-to-first-token |`);
+  lines.push(`| p95 Latency | ${latencyMetrics.p95Latency} | Tail latency bound |`);
+  lines.push(`| Std Deviation | ${latencyMetrics.stdDev} | Output consistency |`);
+  lines.push(`| 95% Confidence Interval | ${latencyMetrics.ciStr} | Expected true mean range |`);
+  lines.push("");
+
+  return lines;
 }
 
 /**
@@ -358,6 +565,19 @@ export function generateMarkdownReport(summary: EvalOrchestratorSummary): string
 
   lines.push("---");
   lines.push("");
+
+  // Statistical Analysis Section (Runs > 1)
+  const runs = summary.runs ??
+    summary.speedResult?.aggregates.find((a) => a.model === summary.model)?.successfulRuns ??
+    1;
+
+  if (runs > 1) {
+    const statsLines = buildStatisticalAnalysisSection(summary, runs);
+    lines.push(...statsLines);
+    lines.push("---");
+    lines.push("");
+  }
+
   lines.push("## 📝 Operational LiteRouter Deployment Guidance");
   lines.push("");
   lines.push("```json");
@@ -609,6 +829,7 @@ export async function runMasterEvaluation(
     gatewayUrl,
     wire,
     suitesRun: suitesToRun,
+    runs,
     speedResult,
     codeSummary,
     webResult,

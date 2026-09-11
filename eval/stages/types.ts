@@ -9,6 +9,7 @@ export interface StageContext {
   directiveKey: string;
   gatewayUrl: string;
   runs: number;
+  timeoutMs?: number;
 }
 
 export interface StageResult {
@@ -17,4 +18,5 @@ export interface StageResult {
   score: number; // 0 - 100
   details: Record<string, unknown>;
   notes: string[];
+  vetoTriggered?: string;
 }

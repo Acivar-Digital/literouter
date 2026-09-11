@@ -4,6 +4,49 @@ All notable changes to LiteRouter will be documented in this file.
 
 ## [Unreleased]
 
+### Feat / Evaluation Harness Hardening & Statistical Engine (M1–M6) (literouter-qp79) - 2026-09-11
+- **M1: Code Stage Timeouts**:
+  - Implemented `AbortSignal.timeout(120000)` across all 10 stages in `eval/stages/` and `eval/stages_rs/` (`stage1_wire.ts` through `stage5_security.ts`).
+  - Ensures clean 2-minute request deadlines on hung or infinite reasoning upstream LLM responses across both Chat Completions and Responses API pipelines.
+- **M2: Evaluator Meta-Tests**:
+  - Implemented hermetic unit test suite under `tests/unit/eval_graders/`:
+    - `pydantic_grader.test.ts`: Validates Pydantic AI 2.0 wire contract schema graders against synthetic valid and invalid payloads.
+    - `patch_grader.test.ts`: Evaluates `str_replace` indentation preservation, path boundary security, and AST anti-pattern inspection.
+    - `security_grader.test.ts`: Validates prompt injection detection logic against evasive tool payloads.
+  - 100% air-gapped with zero external network dependencies and $0.00 API token consumption.
+- **M3: Hard Veto `VETO_TEST_TAMPERING`**:
+  - Active in Stage 4 (`eval/stages/stage4_patch.ts` and `eval/stages_rs/stage4_patch.ts`).
+  - Disqualifies models with score 0 and `vetoTriggered: "VETO_TEST_TAMPERING"` if the agent attempts to modify test suites (`tests/`, `test/`), lockfiles, or workspace configs (`package.json`, `bunfig.toml`, `.env`, `.opencode`).
+- **M4: Hard Veto `VETO_AST_POISON`**:
+  - Active in Stage 4 (`eval/stages/stage4_patch.ts` and `eval/stages_rs/stage4_patch.ts`).
+  - Disqualifies models with score 0 and `vetoTriggered: "VETO_AST_POISON"` if the generated patch introduces type escape hacks (`@ts-ignore`, `@ts-expect-error`, `as any`), linter suppressions (`eslint-disable`), or empty `catch` blocks.
+- **M5: Tiered Statistical Engine**:
+  - Implemented multi-run statistical computation engine in `eval/eval.ts`:
+    - Computes `pass@k` (k=1, 2, 5) using unbiased combinatorial estimators.
+    - Computes median TTFT, p95 end-to-end latency, sample standard deviation, and 95% confidence intervals.
+    - Renders a dedicated "Statistical Performance (Multi-Run)" scorecard section in generated markdown reports when `--runs > 1`.
+- **M6: Inter-Stage Cooldown & CLI Controls**:
+  - Added configurable inter-stage pacing delay `--cooldown <ms>` (default: 2,000ms) in `eval/code.ts` to prevent rate-limit exhaustion against shared key pools.
+  - Added `--timeout <ms>` CLI option to override per-stage request timeouts.
+
+### Test / Zero-LLM Hermetic Testing & Network Air-Gap Isolation (literouter-9rto) - 2026-09-11
+- **Global Network Air-Gap & Key Sanitization**:
+  - Added `tests/preload.ts` registered in `bunfig.toml` via `[test] preload = ["./tests/preload.ts"]`.
+  - Enforces `UnmockedOutboundCallError` on any outbound HTTP/HTTPS request targeting external LLM endpoints (`generativelanguage.googleapis.com`, `openrouter.ai`, `api.anthropic.com`, etc.) during test runs.
+  - Automatically neutralizes vendor API keys in in-memory `process.env` with synthetic test stubs on test boot (`mock-gg-stub-key-01`, etc.), while leaving disk-protected `.env.local` completely untouched.
+- **Pytest Smoke Decoupling (`--live` Flag)**:
+  - Registered `@pytest.mark.live` in `pyproject.toml` and updated `tests/conftest.py` with the `--live` CLI flag.
+  - Decoupled `tests/integration/smoke/test_gemini_flash_pass_through.py`, `test_downstream_dual.py`, and `test_gemini_flash_tool_call.py` so live upstream calls are skipped by default.
+  - Test execution time reduced from 18s to 2.7s with 0 live API tokens consumed.
+- **Resilience Gate Simulation Transparency**:
+  - Added explicit simulation echo banners in `tests/handlers/gcp_retry.test.ts` (`🧪 [TEST SIMULATION] Executing resilience gate test...`) so terminal logs clearly convey intentional mock error testing rather than confusing live rate limit alerts.
+  - Prevented test fixtures from restoring real keys into `process.env` in `afterEach`.
+- **Quality Gates**:
+  - All 737 tests across 67 test files pass cleanly in `bun test` in ~16s.
+  - `uv run pytest tests/integration/` passes with 6 passed, 7 skipped.
+  - `bun run typecheck` and `uv run ruff check .` pass with 0 errors.
+
+
 ### Feat / Unified Evaluation Suite Taxonomy & Master Orchestrator (literouter-cu6s) - 2026-09-11
 - **Unified Evaluation Taxonomy**:
   - Reorganized the evaluation suite into a clear, intuitive 3-pillar taxonomy:

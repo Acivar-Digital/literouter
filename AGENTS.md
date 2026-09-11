@@ -35,6 +35,7 @@ For all system design, folder maps, design decisions, and architectural constrai
 - **Main Handlers**: `src/handlers/openai_compat.ts`, `src/network/fetcher.ts`, `src/network/pacer.ts`
 - **Antigravity IDE Setup (lazy-load)**: `.opencode2/skills/literouter/agy-ide-setup.md` (LiteRouter wiring only; canonical IDE skill: `.opencode2/skills/agy-ide-playbook/SKILL.md`)
 - **TUI LaTeX & Math Rendering (lazy-load)**: `.opencode2/skills/literouter/tui-latex-math-rendering.md`
+- **Test Suite Hygiene Playbook (lazy-load)**: `.opencode2/skills/literouter/test-hygiene-playbook.md`
 
 ### OpenCode vs OpenCode2 Config Format
 This repo maintains both OpenCode v1 and OpenCode2 v2 configurations. Key differences when editing JSON configs:
@@ -84,6 +85,7 @@ If for any reason the skill was not loaded at session start, you **MUST immediat
 | **Client Integrations** | `claude code`, `opencode2`, `antigravity`, `agy-gemini`, `agy-claude`, `OpenRouter`, `NVIDIA NIM`, `Zen`, `Google Vertex` |
 | **Streaming & Protocol** | `streaming`, `TTFT`, `SSE`, `keep-alive`, `h2_pool`, `HTTP/2`, `ALPN`, `pacer`, `circuit_breaker`, `network_error`, `content: null`, `Zod` |
 | **Reasoning & Tools** | `reasoning scrubber`, `collapse-reasoning`, `dots`, `XML tool calling`, `<think>`, `trapped thinking`, `tool compaction` |
+| **Testing & Test Hygiene** | `test`, `bun test`, `pytest`, `test hygiene`, `airgap`, `test parking`, `mock response`, `simulation banner`, `UnmockedOutboundCallError`, `--live` |
 | **Errors & Limits** | `429`, `500`, `502`, `503`, `NoResponseError`, `ghosting`, `fast-canning`, `Retry-After`, `GCP_ENABLE_RETRIES`, `MissingSessionID`, `FreeUsageLimitError`, `session-id`, `big-pickle` |
 
 ---
@@ -306,6 +308,8 @@ Before marking a task as complete, you MUST act as a Critic:
 4. Run tests: `bun test` (unit) + `uv run pytest tests/integration/` (smoke)
 5. Verify the implementation matches the original request exactly (no gold-plating).
 6. If any check fails, fix it before proceeding.
+
+> **Test Authoring Mandate**: When creating or modifying tests, agents MUST consult the lazy-loaded test hygiene playbook (`.opencode2/skills/literouter/test-hygiene-playbook.md`) for zero-LLM air-gap enforcement, test parking taxonomy, simulation banners, and teardown symmetry.
 
 ## Build/Lint/Test Commands
 - Run TypeScript static typecheck: `bun run typecheck` (`tsc --noEmit`)

@@ -41,7 +41,7 @@ Output a JSON object matching this schema:
 Output ONLY the raw JSON object. No prose, no markdown fences.
 `;
 
-function validatePayload(obj: unknown): { valid: boolean; errors: string[] } {
+export function validatePayload(obj: unknown): { valid: boolean; errors: string[] } {
   const errors: string[] = [];
   if (!obj || typeof obj !== "object") {
     return { valid: false, errors: ["Root is not an object"] };
@@ -100,6 +100,7 @@ export async function runStage2Pydantic(ctx: StageContext): Promise<StageResult>
   try {
     const resp1 = await fetch(ctx.gatewayUrl, {
       method: "POST",
+      signal: AbortSignal.timeout(ctx.timeoutMs ?? 120000),
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${ctx.directiveKey}`,
@@ -138,9 +139,14 @@ export async function runStage2Pydantic(ctx: StageContext): Promise<StageResult>
       result.notes.push(`Test 2.1 HTTP ${resp1.status}: ${errText}`);
       console.log(`         ❌ Test 2.1 Failed: HTTP ${resp1.status}`);
     }
-  } catch (err) {
-    result.notes.push(`Test 2.1 exception: ${String(err)}`);
-    console.log(`         ❌ Test 2.1 Error: ${String(err)}`);
+  } catch (err: unknown) {
+    if (err instanceof Error && (err.name === "TimeoutError" || err.name === "AbortError")) {
+      result.notes.push("Request timed out after " + (ctx.timeoutMs ?? 120000) + "ms");
+      console.log(`         ❌ Test 2.1 Timeout: Request timed out after ${ctx.timeoutMs ?? 120000}ms`);
+    } else {
+      result.notes.push(`Test 2.1 exception: ${String(err)}`);
+      console.log(`         ❌ Test 2.1 Error: ${String(err)}`);
+    }
   }
 
   // --- Sub-test 2.2: Retry loop under validation failure ---
@@ -148,6 +154,7 @@ export async function runStage2Pydantic(ctx: StageContext): Promise<StageResult>
   try {
     const resp2 = await fetch(ctx.gatewayUrl, {
       method: "POST",
+      signal: AbortSignal.timeout(ctx.timeoutMs ?? 120000),
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${ctx.directiveKey}`,
@@ -193,9 +200,14 @@ export async function runStage2Pydantic(ctx: StageContext): Promise<StageResult>
       result.notes.push(`Test 2.2 HTTP ${resp2.status}: ${errText}`);
       console.log(`         ❌ Test 2.2 Failed: HTTP ${resp2.status}`);
     }
-  } catch (err) {
-    result.notes.push(`Test 2.2 exception: ${String(err)}`);
-    console.log(`         ❌ Test 2.2 Error: ${String(err)}`);
+  } catch (err: unknown) {
+    if (err instanceof Error && (err.name === "TimeoutError" || err.name === "AbortError")) {
+      result.notes.push("Request timed out after " + (ctx.timeoutMs ?? 120000) + "ms");
+      console.log(`         ❌ Test 2.2 Timeout: Request timed out after ${ctx.timeoutMs ?? 120000}ms`);
+    } else {
+      result.notes.push(`Test 2.2 exception: ${String(err)}`);
+      console.log(`         ❌ Test 2.2 Error: ${String(err)}`);
+    }
   }
 
   result.passed = result.score >= 50;

@@ -861,7 +861,7 @@ export async function handleGoogleInteractionsPassthrough(
   }
 
   const url = new URL(req.url);
-  const base = process.env.GOOGLE_NATIVE_BASE_URL || "https://generativelanguage.googleapis.com";
+  const base = getGoogleNativeBaseUrl();
   const upstreamUrl = new URL(`${base}${url.pathname}${url.search}`);
 
   const pacerError = await acquireNativePacer(req.signal);

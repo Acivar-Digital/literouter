@@ -32,8 +32,10 @@ def _check_status(status_code: int) -> None:
         pytest.skip(f"Upstream provider unavailable (status {status_code})")
 
 
+@pytest.mark.live
 @pytest.mark.parametrize("action", ["generateContent", "streamGenerateContent"])
 def test_gemini_flash_via_native(action: str) -> None:
+    print("🧪 [SMOKE TEST] Running live gateway test (if --live enabled)...")
     url = _native_url(action)
     params = {"alt": "sse"} if "stream" in action else {}
 
@@ -56,6 +58,7 @@ def test_gemini_flash_via_native(action: str) -> None:
         _assert_native_content_response(resp)
 
 
+@pytest.mark.live
 def test_gemini_flash_via_openai_compat() -> None:
     url = f"{GATEWAY_URL}/v1/chat/completions"
     with httpx.Client(http2=True, verify=False) as client:
