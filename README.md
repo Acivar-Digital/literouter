@@ -1,381 +1,283 @@
-# LiteRouter — Open-Source AI Gateway & LLM API Proxy
+# LiteRouter v4.0 — High-Performance Self-Contained AI Gateway & LLM Proxy
 
 > 🤖 **Zero-Friction Autonomous AI Installation**: Give this command to your AI Coding Assistant (Cursor, OpenCode, Claude Code, Windsurf, Copilot, ChatGPT):
 > ```text
 > Please read https://raw.githubusercontent.com/Acivar-Digital/literouter/main/INSTALL.md and autonomously set up, configure, and launch LiteRouter on my machine.
 > ```
 
-> **LiteRouter** is the world's first and only Bun/TypeScript AI API Gateway that combines **atomic Redis/Valkey Lua key rotation**, **Google Gemini `thought_signature` preservation** across multi-step agent tool calls, **70% reasoning-token cost stripping**, and **sticky fusion fallback chains** — solving the three problems every AI power user faces: 429 throttling, API key exhaustion, and bleeding money on reasoning tokens nobody asked for.
+> **LiteRouter v4.0** is the world's first and only **100% self-contained** Bun/TypeScript AI API Gateway with **zero external database dependencies** (no Redis, no Valkey, no Docker, no Python sidecars). It delivers **sub-millisecond routing overhead**, native in-memory token bucket rate limiting, event-driven key cooldowns, and revolutionary **Directive Key Architecture**.
 > 
-> It sits between modern AI applications (OpenCode, Claude Code, Cursor, SillyTavern, Cherry Studio, custom LLM apps) and upstream model providers (Google AI Studio, OpenRouter, NVIDIA, Anthropic). Unlike Python-heavy proxies, LiteRouter delivers **sub-millisecond** routing overhead with a single Bun process — no Python sidecars, no SaaS markup.
-
-> [!NOTE]
-> ### Why LiteRouter?
->
-> Every AI developer hits three invisible walls. LiteRouter is the **only** gateway in the "High Performance + High Intelligence" quadrant that solves all three:
->
-> - **⏱ 429 stalls** — keys get throttled; you wait 65s. LiteRouter recovers in **2 seconds**.
-> - **🔑 Key pool wastage** — manual round-robin causes race conditions. LiteRouter uses **atomic Lua ZSET rotation** — zero boundary bursts.
-> - **🧠 Reasoning token bleed** — `<thinking>` blocks inflate every turn. LiteRouter strips historical reasoning, saving **up to 70%** on token costs.
->
-> **→ Deploy in 30 seconds:** `git clone … && bun install && cp .env.example .env && ./scripts/start.sh`
-> **→ Full truth source:** see [`demo/POSITIONING.md`](demo/POSITIONING.md)
+> It sits between modern AI developer tools (OpenCode, Claude Code, Cursor, SillyTavern, custom LLM agents) and upstream model providers (Google AI Studio, OpenRouter, NVIDIA NIM, Zen, Anthropic, GCP Vertex AI).
 
 ---
 
-## What is LiteRouter?
+## ⚡ v4 Superpowers (Why LiteRouter?)
 
-**LiteRouter** acts as an intelligent middleware between modern AI applications (such as OpenCode, SillyTavern, Cherry Studio, or custom LLM apps) and upstream AI model providers (Google AI Studio, OpenRouter, Nvidia, Anthropic, and custom endpoints).
+Every AI developer hits invisible walls: rate limit 429 stalls, API key exhaustion, token cost blowouts, and silent model degradation. LiteRouter solves all of them out of the box in a single Bun process:
 
-### Why LiteRouter?
-1. **Multi-Provider API Key Rotation**: Distributes requests across multiple API keys using atomic Redis ZSET + Lua rolling windows with automatic key cooldown, quarantine, and rate limiting.
-2. **Google Thought Signature Preservation**: Automatically stores and reinjects Google Gemini `thought_signature` tokens across multi-step agent tool calls, fixing signature validation errors.
-3. **Historical Reasoning Context Stripping (Save $$$)**: Strips past reasoning blocks (`reasoning_content`, `thought`, `thought_summary`) from historical context turns before calling providers — saving up to 70% in prompt token costs and eliminating LLM reasoning loops.
-4. **Unified Routing**: Native support for OpenAI-compatible endpoints (`/v1/chat/completions`), Google native REST endpoints (`/v1beta/...`), and virtual Fusion groups in a single Bun process.
-5. **Fusion Fallback Chains**: Define model fallback priorities. If a primary model returns `429` or `5xx`, LiteRouter seamlessly routes requests to the next model with sticky fallback caching.
-6. **Model-Specific Payload Sanitization**: Strips Gemma-breaking fields (`thinkingConfig`, `presence_penalty`, `logit_bias`) and normalizes raw reasoning streams into unified `<thought>` tags.
-7. **Ghost & Idle Upstream Detection**: Automatically detects stalled upstream calls and rotates keys instantly without penalizing provider health.
+### 1. 🔑 Directive Key Architecture (The Token IS the Router)
+Forget editing bloated YAML routing configs or restarting servers. LiteRouter uses client-side **Directive Keys** formatted as `lr-<provider>-<wire>-<endpoint>-<nuance>`:
+- `lr-zn-oa-ch-no`: Routes OpenAI chat completions to **Zen Free** with agentic attribution.
+- `lr-or-ao-ch-dp`: Cross-wires Anthropic client payloads to **OpenRouter**, stripping `<think>` tags and normalizing tool calls.
+- `lr-nv-oa-ch-ts`: Routes to **NVIDIA NIM** while preserving deep-thinking tokens (`ts`).
+- `lr-gg-gg-gc-no`: Direct Google REST passthrough with Native Flash Cascade failover.
 
----
+Your client requests dictate upstream targets, wire formats, streaming nuances, and sanitizers instantly on a per-request basis.
 
-## Comparison: LiteRouter vs. Alternatives
-
-| Feature | LiteRouter | LiteLLM | OpenRouter |
-| :--- | :--- | :--- | :--- |
-| **Category** | Open-Source AI Gateway | Open-Source AI Gateway | Hosted AI Aggregator SaaS |
-| **Runtime & Performance** | Bun / TypeScript (Sub-ms overhead) | Python / FastAPI | Closed Source |
-| **Google Thought Signature Preservation** | ✅ Automatic store & reinject | ❌ Manual / Unhandled | ❌ N/A |
-| **History Reasoning Stripping (Cost Saving)** | ✅ Automatic (Save $$$) | ❌ Retains full context | ❌ Retains full context |
-| **OpenAI-Compatible API** | ✅ Standard `/v1/chat/completions` | ✅ Standard `/v1/chat/completions` | ✅ Standard `/v1/chat/completions` |
-| **Google Native REST Route** | ✅ Direct `/v1beta/...` passthrough | ❌ Requires translation | ❌ N/A |
-| **Key Rotation & Cooldown** | ✅ Atomic Redis Lua ZSET | ✅ Basic proxy rotation | ❌ N/A (Pay-per-token) |
-| **Virtual Fusion Fallbacks** | ✅ Sticky 5-min failover chains | ✅ Fallback list | ❌ Static routing |
-| **Self-Hostable** | ✅ 100% Free & Open Source | ✅ Open Source | ❌ Proprietary SaaS |
-
----
-
-## Routes
-
-| Route | Protocol | Target | Auth |
-|-------|----------|--------|------|
-| `/v1/chat/completions` | HTTP/2 or HTTP/1.1 (ALPN) | Provider upstream (Google: `/v1beta/openai/chat/completions`) | `Authorization: Bearer {key}` |
-| `/v1/models` | HTTP/2 or HTTP/1.1 (ALPN) | Aggregates all registered models from `models.json` & `fusion.json` | `Authorization: Bearer {key}` |
-| `/v1beta/...` | HTTP/2 or HTTP/1.1 (ALPN) | `generativelanguage.googleapis.com/v1beta/models/{model}:{action}` | `?key={API_KEY}` query param |
-| `/health` | HTTP/2 or HTTP/1.1 (ALPN) | Service & provider status probe | None |
-| Fusion groups | HTTP/2 or HTTP/1.1 (ALPN) | Virtual chain (in-process) — iterates model chain calling either route above | Internal |
-
-> **Transport**: LiteRouter natively supports HTTP/2 + HTTP/1.1 ALPN negotiation via Bun's built-in TLS. When local certificates (`certs/localhost.pem`, `certs/localhost-key.pem`) are present, the gateway serves HTTPS on port 7766 with automatic HTTP/2 negotiation. Without certificates, it falls back to plaintext HTTP/1.1. See [docs/Upgrade_http2.md](docs/Upgrade_http2.md) for setup.
-
----
-
-## 🏛️ Architectural Philosophy: Intelligent Transparent Pass-Through
-
-LiteRouter is intentionally designed as an **ultra-lean, high-throughput streaming proxy**:
-- **Why we don't build custom parsers for `/v1/images`, `/v1/audio`, or `/v1/embeddings`**: LiteRouter acts as an intelligent transparent forwarder. It injects healthy rotated API credentials and pipes HTTP payloads directly to upstream providers with zero serialization latency and zero maintenance churn.
-- **Looking for experimental or deferred features?** Check 👉 [**`KIV.md`**](KIV.md) (Keep-In-View) for features like native Anthropic Messages API, along with an AI builder prompt for contributors.
-- **Wondering why certain features aren't supported?** Check 👉 [**`GRAVEYARD.md`**](GRAVEYARD.md) (Architecture Graveyard) explaining why database ORMs, bloated web admin GUIs, and serverless edge rewrites were explicitly rejected to preserve sub-millisecond Bun+Valkey performance.
-
-## Fusion Groups (In-Process)
-
-Fusion groups define "virtual" models with priority-based fallback chains. If the primary model returns a `429` or `5xx`, Fusion automatically falls back to the next model in the chain.
-
-- **Circuit Breaker**: 65s per-model cooldown — skips a model that recently errored.
-- **Sticky Fallback**: 300s (5 min) — once the chain falls back, subsequent requests start there instead of the top.
-- **Identity**: Response header `X-Literouter-Model` identifies which upstream served.
-
+### 2. 🛡️ 60-Second Model Evaluation Gauntlet (Zero-Docker Benchmark)
+Evaluate any model's real-world agentic and frontend fitness in under 60 seconds with **zero Docker containers, zero headless browsers, and zero heavy dependencies**:
 ```bash
-curl -X POST https://localhost:7766/v1/chat/completions \
-  -H "Authorization: Bearer {{API_KEY}}" \
-  --cacert certs/localhost.pem \
-  -d '{"model": "pydantic/google", "messages": [{"role": "user", "content": "Hello"}]}'
+bun run eval/eval.ts <model_name>
 ```
+> *"All models are wrong, but some are useful."* — **George E. P. Box**  
+> *"So use our eval, we will tell you what is wrong."* — **Francis Yap**
 
-Fusion groups are defined in `fusion.json` and reference existing models from `models.json`.
+- **⚡ Speed Pillar (`eval/speed.ts`)**: Measures Time to First Token (TTFT), streaming throughput (tokens/sec), and slot headroom.
+- **💻 5-Stage Agentic Coding Pillar (`eval/code.ts`)**: Evaluates 12k context hydration, strict Pydantic 2.0 schema validation, 3-turn multi-step state loops, surgical `str_replace` patching, AST poison shields, and test tampering vetoes.
+- **🌐 5-Stage Web Generation Pillar (`eval/web.ts`)**: Audits semantic DOM landmarks, mobile Tailwind responsive grid collapse, React state hooks, syntax hygiene, and WCAG accessibility standards.
+- Outputs an actionable Markdown report card in `eval/reports/` classifying models into **Orchestrator**, **General Coder**, or **Explorer** roles.
 
-## Features
+### 3. 💸 70% Reasoning Token Cost Stripping
+Modern reasoning models emit thousands of `<think>` / `reasoning_content` tokens per turn. In multi-turn agent conversations, re-sending accumulated historical reasoning burns up to 70% of context and budget. LiteRouter **automatically scrubs past thinking blocks** from conversation history while leaving the current turn's thinking intact—slashing prompt token costs and preventing runaway context loops.
 
-- **Single process** — Bun/TypeScript, no Python or sidecar dependencies
-- **Multi-provider** — Google AI Studio, OpenRouter, Nvidia, Anthropic through a single endpoint
-- **Three route types** — OpenAI-compat (`/v1/chat/completions`), Google native (`/v1beta/...`), Fusion groups (virtual chains)
-- **Atomic rate limiting** — ZSET+Lua rolling 60s windows via Redis/Valkey (true rolling, no minute-edge bursts)
-- **Per-request backoff** — 65s → 90s → 120s when all keys exhausted for a provider
-- **Automatic cooldown** — Per-key, per-model cooldown states (429: 65s, timeout: 10s, quarantine: 7d)
-- **Reasoning normalization** — Collapses reasoning content into `<thought>` tags
-- **Payload sanitization** — Strips Gemma-breaking `thinkingConfig`, normalizes LaTeX symbols
-- **Streaming** — Full SSE support on all pathways
-- **Key rotation** — Comma-separated API keys in `.env`, rotated automatically per-provider
-- **OpenCode integration** — Drop-in replacement for direct provider endpoints
+### 4. 🚀 HTTP/2 ALPN Multiplexing & Synthetic Heartbeats
+- Built-in binary HTTP/2 multiplexing via Bun TLS with sub-millisecond connection pooling (`h2_pool`).
+- **Synthetic SSE Heartbeats**: Emits synthetic keepalive comments during deep-thinking phases to prevent client disconnects and proxy timeouts.
 
-## Quick Start
+### 5. 🌊 Google Native Flash Cascades & Thought Signature Preservation
+- **Flash Fallback Cascades**: Automatic sticky failover chains across Gemini model tiers (`3.8 ➔ 3.7 ➔ 3.6 ➔ 3.5`) on 429 rate limits or upstream hiccups.
+- **Thought Signature Preservation**: Automatically captures and re-injects Google Gemini `thought_signature` tokens across multi-step agent tool calls, eliminating signature validation crashes.
 
-### Prerequisites
-- [Bun](https://bun.sh) 1.2+
-- Redis / Valkey server (REQUIRED — the gateway exits(1) on a connection error; there is no in-memory fallback)
-- API key(s) for your chosen provider(s)
+### 6. 🌙 Midnight UTC Daily Limit Shield
+- Intelligently detects provider daily free-tier quota exhaustion (`FreeUsageLimitError`, 429 with daily reset headers) and parks exhausted keys in a decoupled conserve engine until **00:00:00 UTC**.
+- Key cooldowns are event-driven and non-blocking: burst RPM limits release in seconds, while daily quota limits sleep until midnight without locking your healthy keys.
 
-### Installation
+---
+
+## 📊 Comparison: LiteRouter v4 vs. Alternatives
+
+| Feature | LiteRouter v4.0 | LiteLLM | OpenRouter | Portkey |
+| :--- | :--- | :--- | :--- | :--- |
+| **Architecture** | **100% In-Memory Bun / TS** | Python / FastAPI | Closed-Source SaaS | Node.js / SaaS |
+| **External Database** | **Zero (No Redis, No Postgres)** | Redis / PostgreSQL | Hosted (Proprietary) | Redis / Postgres |
+| **Routing Overhead** | **Sub-millisecond (<1ms)** | 15–40ms | Network roundtrip | 20–50ms |
+| **Directive Keys** | ✅ Yes (`lr-<provider>-...`) | ❌ Static YAML | ❌ URL params | ❌ Config headers |
+| **Built-in 60s Eval Gauntlet**| ✅ Speed, Code, Web (Zero-Docker)| ❌ External (Evalverse)| ❌ None | ❌ None |
+| **Reasoning Stripping (70% $$)**| ✅ Automated history scrubbing | ❌ Full context kept | ❌ Full context kept | ❌ Full context kept |
+| **Google Thought Signatures** | ✅ Auto-store & re-inject | ❌ Manual handling | ❌ N/A | ❌ Not supported |
+| **HTTP/2 ALPN + Heartbeats** | ✅ Native multiplexing | ❌ HTTP/1.1 default | ❌ Gateway dependent| ⚠️ Partial |
+| **Midnight UTC Key Conserve** | ✅ Auto-parks to 00:00 UTC | ❌ Fixed cooldown | ❌ N/A | ❌ Manual rules |
+| **Self-Hostable** | ✅ 100% Free & Open Source | ✅ Open Source | ❌ Closed SaaS | ⚠️ Commercial core |
+
+---
+
+## 🚀 30-Second Quick Start
+
+LiteRouter requires **only Bun 1.2+**. No Docker, no Redis, no background databases.
+
+### 1. Clone & Install
 ```bash
 git clone https://github.com/Acivar-Digital/literouter.git
 cd literouter
 bun install
-cp .env.example .env
 ```
 
-### Configuration
-Edit `.env`:
-```env
-# Server
-LITEROUTER_PORT=7766
-LITEROUTER_AUTH_KEY={{API_KEY}}
-
-# Redis (REQUIRED — the gateway fails loud if Redis/Valkey is unreachable)
-REDIS_HOST=localhost
-REDIS_PORT=6379
-REDIS_PASSWORD=your-redis-password
-
-# Default template + provider (used when model has no prefix)
-LITEROUTER_TEMPLATE=openai
-LITEROUTER_PROVIDER=openrouter
-
-# ── Provider: OpenRouter ──
-OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
-OPENROUTER_API_KEYS={{API_KEY_1}},{{API_KEY_2}},{{API_KEY_3}}
-OPENROUTER_MIN_DELAY_MS=3000
-
-# ── Provider: Nvidia ──
-NVIDIA_BASE_URL=https://integrate.api.nvidia.com/v1
-NVIDIA_API_KEYS={{API_KEY_1}},{{API_KEY_2}},{{API_KEY_3}}
-NVIDIA_MIN_DELAY_MS=3000
-
-# ── Provider: Anthropic (optional) ──
-# ANTHROPIC_BASE_URL=https://api.anthropic.com
-# ANTHROPIC_API_KEYS=sk-ant-key1,sk-ant-key2
-# ANTHROPIC_MODEL=claude-sonnet-4-6
-```
-
-Add as many providers as you want — just follow the `{PROVIDER}_BASE_URL` + `{PROVIDER}_API_KEYS` naming convention. The config scanner picks them up automatically.
-
-### Running
+### 2. Configure Environment
 ```bash
-./scripts/setup_certs.sh   # (optional) Issue localhost TLS certs via mkcert for HTTPS
-./scripts/start.sh        # Start (daemonizes in tmux, writes PID file)
-./scripts/stop.sh         # Stop
-./scripts/restart.sh      # Restart (flushes Valkey, re-reads config)
+cp .env.example .env.local
+```
+Edit `.env.local` with your preferred provider keys:
+```env
+LITEROUTER_PORT=7766
+LITEROUTER_AUTH_KEY=sk-lr-my-secret-key
 
-tmux attach -t literouter   # View runtime logs (Press Ctrl+B then D to detach)
+# Upstream API Key Pools (comma-separated for automatic rotation)
+OPENROUTER_API_KEYS=sk-or-key1,sk-or-key2
+NVIDIA_API_KEYS=nvapi-key1,nvapi-key2
+GOOGLE_API_KEYS=AIzaSyKey1,AIzaSyKey2
+ZEN_API_KEYS=zen-key1
 ```
 
-If `certs/localhost.pem` and `certs/localhost-key.pem` exist, LiteRouter serves HTTPS with HTTP/2 + HTTP/1.1 ALPN on port 7766. Otherwise it runs plaintext HTTP/1.1.
+### 3. Launch Gateway
+```bash
+bash scripts/start.sh
+```
+LiteRouter starts as a resilient background daemon managed via `tmux`.
+
+- **Check Status**: `bash scripts/status.sh`
+- **View Live Logs**: `tmux attach -t literouter` *(Press Ctrl+B then D to detach)*
+- **Stop Gateway**: `bash scripts/stop.sh`
+- **Restart Gateway**: `bash scripts/restart.sh`
 
 ---
 
-## Operations, Diagnostics & Process Management
+## 🌐 Endpoints & Protocols
 
-LiteRouter includes built-in tools for live API key diagnostics (`doctor.ts`) and daemon process control (`tmux`).
+| Endpoint | Method | Supported Directives / Usage | Protocol |
+|---|---|---|---|
+| `/v1/chat/completions` | `POST` | Standard OpenAI Chat (`lr-*-oa-ch-*`, `lr-*-ao-ch-*`) | HTTP/2 or HTTP/1.1 |
+| `/v1/messages` | `POST` | Anthropic Messages API (`lr-*-cl-ms-*`) for Claude Code | HTTP/2 or HTTP/1.1 |
+| `/v1/responses` | `POST` | OpenAI Responses API (`lr-*-oo-rs-*`) for ACP agents | HTTP/2 or HTTP/1.1 |
+| `/v1beta/models/*` | `POST` | Direct Google Gemini REST (`lr-gg-gg-gc-no`) | HTTP/2 or HTTP/1.1 |
+| `/v1/models` | `GET` | Dynamic model discovery and registered fusion chains | HTTP/2 or HTTP/1.1 |
+| `/health` | `GET` | Auth-free health probe, active key counts, and circuit breaker stats | HTTP/2 or HTTP/1.1 |
+| `/reset` | `POST` | Auth-free hot reload of provider headers and key pools | HTTP/2 or HTTP/1.1 |
 
-### 1. Diagnostic Key Doctor (`doctor.ts`)
-Before or after starting LiteRouter, run the pre-flight doctor script to validate all configured API keys against real provider endpoints and check your Redis/Valkey connection:
+> **Transport**: When certificates (`certs/localhost.pem`, `certs/localhost-key.pem`) exist, LiteRouter negotiates **HTTP/2 ALPN over HTTPS** on port 7766. Without certs, it operates over high-speed HTTP/1.1. Run `bash scripts/setup_certs.sh` to generate local TLS certificates with `mkcert`.
 
+---
+
+## 🔑 Directive Key Anatomy
+
+Directive keys pass through the standard `Authorization: Bearer <KEY>` header.
+
+Format: `lr-<provider>-<wire>-<endpoint>-<nuance>`
+
+```text
+lr - zn - oa - ch - no
+│    │    │    │    └── Nuance: "no" (none), "dp" (dots/XML tools), "ts" (keep thinking)
+│    │    │    └─────── Endpoint: "ch" (chat), "ms" (messages), "rs" (responses), "gc" (generateContent)
+│    │    └──────────── Wire Format: "oa" (OpenAI), "cl" (Anthropic), "oo" (Responses native), "ao" (Anthropic->OpenAI)
+│    └───────────────── Provider: "zn" (Zen), "or" (OpenRouter), "nv" (Nvidia), "gg" (Google), "an" (Anthropic)
+└────────────────────── LiteRouter Prefix
+```
+
+### Top Directive Keys
+
+| Directive Key | Target Client / Workflow | Wire & Gateway Behavior |
+|---|---|---|
+| `lr-zn-oa-ch-no` | OpenCode 2 (Zen Free) | OpenAI Chat Completions ➔ Zen with OpenCode headers & key rotation |
+| `lr-zn-oo-rs-no` | OpenCode 2 (Zen Responses) | Native Responses API passthrough (`POST /v1/responses`) |
+| `lr-or-oa-ch-no` | OpenCode / Cursor (OpenRouter) | Standard OpenAI Chat with agentic attribution headers |
+| `lr-nv-oa-ch-ts` | OpenCode 2 (NVIDIA NIM) | NIM Chat with thinking chunks preserved (`ts`) |
+| `lr-or-cl-ms-no` | Claude Code (via OpenRouter) | Anthropic Messages API passthrough to OpenRouter |
+| `lr-an-cl-ms-no` | Claude Code (Direct Anthropic) | Direct Anthropic Messages API with key rotation |
+| `lr-gg-gg-gc-no` | Google Native (`@ai-sdk/google`)| Direct Google REST forwarder + Native Google Fusion cascades |
+| `lr-nv-oa-ch-no` | Pydantic AI / Python SDK | High-throughput HTTP/2 binary multiplexed chat completions |
+| `lr-or-ao-ch-dp` | Dots / Open-Weights XML Tools | Anthropic-to-OpenAI cross-wire with XML tool & thinking extraction |
+
+---
+
+## 🧪 60-Second Model Evaluation Gauntlet
+
+Run empirical benchmarks against any model with one command:
+
+```bash
+# Full Gauntlet: Speed + Coding + Web Generation
+bun run eval/eval.ts deepseek-ai/deepseek-r1
+
+# Targeted Runs
+bun run eval/eval.ts meta-llama/llama-3.3-70b-instruct --suites speed,code
+bun run eval/speed.ts mistralai/mistral-large-2411
+bun run eval/code.ts qwen/qwen-2.5-coder-32b-instruct --stage 4
+bun run eval/web.ts google/gemini-2.5-flash --stage 2
+```
+
+Results and detailed telemetry are automatically formatted and saved to `eval/reports/`.
+
+---
+
+## 🛠️ Diagnostics & Health Probes
+
+### 1. Pre-Flight Doctor (`scripts/doctor.ts`)
+Probe all configured upstream provider API keys concurrently to verify authentication and quota status:
 ```bash
 bun run scripts/doctor.ts
 ```
+Outputs live status (`PASS`, `RATE_LIMITED`, or `FAIL`) for every key across Google, NVIDIA, OpenRouter, and Zen.
 
-What `doctor.ts` checks:
-- **Redis Health**: Verifies connection, latency, and Lua script engine readiness.
-- **Key Probing**: Probes each API key in parallel against its provider API.
-- **Status Classification**:
-  - `PASS`: Key is active and authorized.
-  - `RATE_LIMITED`: Key hit a provider 429 limit (placed on automatic cooldown).
-  - `FAIL`: Key is revoked/invalid (automatically excluded from rotation).
+### 2. Live Health Endpoint
+```bash
+curl -sk http://localhost:7766/health
+```
+```json
+{
+  "status": "healthy",
+  "version": "4.0.0",
+  "uptime_seconds": 3600,
+  "circuit_breakers": { "open_circuits": 0 },
+  "key_pools": {
+    "openrouter": { "total": 3, "active": 3, "cooldown": 0 },
+    "nvidia": { "total": 2, "active": 2, "cooldown": 0 }
+  }
+}
+```
 
 ---
 
-### 2. Tmux Background Management
-LiteRouter uses `tmux` to run as a resilient background daemon. This allows the service to survive terminal closures and SSH disconnects.
+## 🔌 Client Integrations
 
-- **Start Daemon**: `./scripts/start.sh` (launches background session `literouter`)
-- **View Live Logs**:
-  ```bash
-  tmux attach -t literouter
-  ```
-  *(To detach from the log view without stopping LiteRouter, press `Ctrl+B` then `D`)*
-- **Stop Daemon**: `./scripts/stop.sh`
-- **Restart Daemon**: `./scripts/restart.sh` (re-scans `.env` for new keys/providers)
-
----
-
-## How to Add New Providers & Models (Zero-Code Extension)
-
-LiteRouter dynamically discovers providers using environment variable patterns. **No TypeScript code modifications are required.**
-
-### Adding any OpenAI-Compatible Provider (e.g., DeepSeek, Groq, Together, Cerebras, Ollama)
-
-1. Open `.env` and add the provider configuration using the pattern `{PROVIDER}_BASE_URL` + `{PROVIDER}_API_KEYS`:
-
-```env
-# ── Provider: DeepSeek ──
-DEEPSEEK_BASE_URL=https://api.deepseek.com/v1
-DEEPSEEK_API_KEYS=sk-ds-key1,sk-ds-key2,sk-ds-key3
-DEEPSEEK_MIN_DELAY_MS=1000
-
-# ── Provider: Groq ──
-GROQ_BASE_URL=https://api.groq.com/openai/v1
-GROQ_API_KEYS=gsk_key1,gsk_key2
-GROQ_MIN_DELAY_MS=2000
-
-# ── Provider: Local Ollama ──
-OLLAMA_BASE_URL=http://localhost:11434/v1
-OLLAMA_API_KEYS=ollama-local-key
-```
-
-2. Restart LiteRouter to pick up the new configuration:
-```bash
-./scripts/restart.sh
-```
-
-3. Route requests to your new provider using the `{provider}/{model}` prefix:
-```bash
-curl -X POST https://localhost:7766/v1/chat/completions \
-  -H "Authorization: Bearer $LITEROUTER_AUTH_KEY" \
-  -H "Content-Type: application/json" \
-  --cacert certs/localhost.pem \
-  -d '{
-    "model": "deepseek/deepseek-chat",
-    "messages": [{"role": "user", "content": "Hello!"}]
-  }'
-```
-
-## Usage
-
-### Non-streaming
-```bash
-curl -X POST https://localhost:7766/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer {{API_KEY}}" \
-  --cacert certs/localhost.pem \
-  -d '{
-    "model": "openrouter/owl-alpha",
-    "messages": [{"role": "user", "content": "Hello!"}]
-  }'
-```
-
-### Streaming
-```bash
-curl -X POST https://localhost:7766/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer {{API_KEY}}" \
-  --cacert certs/localhost.pem \
-  -d '{
-    "model": "nvidia/openai/gpt-oss-120b",
-    "messages": [{"role": "user", "content": "Tell me a story"}],
-    "stream": true
-  }'
-```
-
-### Model Availability
-```bash
-curl https://localhost:7766/v1/models \
-  -H "Authorization: Bearer {{API_KEY}}" \
-  --cacert certs/localhost.pem
-```
-
-### Health
-```bash
-curl https://localhost:7766/health --cacert certs/localhost.pem
-```
-
-Returns per-provider stats: key counts, health scores, active cooldowns, rotation counter position, and Redis connection status.
-
-## OpenCode Integration
-
-> [!WARNING]
-> **CRITICAL SDK REQUIREMENT**: You MUST use `@ai-sdk/openai-compatible` instead of `@ai-sdk/openai` in your `opencode.json` configuration. 
-> 
-> *Why?* `@ai-sdk/openai` requests the `/v1/responses` endpoint (Agentic Communication Protocol/ACP format) by default. Upstream providers like OpenRouter and Nvidia only accept standard OpenAI `/v1/chat/completions`. Translating between these formats in flight is highly fragile, causing tool-call failures (Zod validation errors) and SSE stream corruption. Using `@ai-sdk/openai-compatible` forces the client to use `/v1/chat/completions` natively, bypassing all translation logic.
-
-Point any OpenCode provider at LiteRouter to get automatic key rotation:
-
+### OpenCode 2 (`~/.config/opencode2/opencode.json`)
 ```json
 {
   "provider": {
-    "openrouter": {
+    "literouter": {
       "npm": "@ai-sdk/openai-compatible",
-      "baseURL": "https://localhost:7766/v1",
-      "apiKey": "{{API_KEY}}",
-      "models": {}
-    },
-    "nvidia": {
-      "npm": "@ai-sdk/openai-compatible",
-      "baseURL": "https://localhost:7766/v1",
-      "apiKey": "{{API_KEY}}",
+      "baseURL": "http://localhost:7766/v1",
+      "apiKey": "lr-or-oa-ch-no",
       "models": {}
     }
   }
 }
 ```
 
-Both providers point to the same LiteRouter endpoint. Routing is determined by the model prefix:
-- `opencode run -m openrouter/owl-alpha "..."` → OpenRouter key pool
-- `opencode run -m nvidia/openai/gpt-oss-120b "..."` → Nvidia key pool
+### Claude Code CLI
+```bash
+export ANTHROPIC_BASE_URL="http://localhost:7766"
+export ANTHROPIC_API_KEY="lr-or-cl-ms-no"
+claude
+```
 
-## Deployment Targets
+### Python (OpenAI SDK)
+```python
+from openai import OpenAI
 
-> [!IMPORTANT]
-> **DO NOT ASSUME DIRECTIVE**: Before starting or testing any configuration changes, you **MUST** verify which LiteRouter target is active.
->
-> Check your OpenCode configuration at `~/.config/opencode/opencode.json` (or `~/.config/opencode2/config.json` for OpenCode 2). The `baseURL` under the provider options determines the routing target:
-> - If `baseURL` points to `localhost` (e.g. `https://localhost:7766/v1`), your requests route to your **local** LiteRouter instance.
-> - If `baseURL` points to a remote IP, requests route to that **remote** LiteRouter instance.
->
-> **Never assume that updates to your local `.env` will take effect on a remote instance.** If OpenCode is configured to point to a remote host:
-> 1. You must apply/sync configuration changes (such as API keys) directly on that instance.
-> 2. You must monitor/verify that instance's logs instead of local ones.
-> 3. Verify the deployment target explicitly before declaring success.
+client = OpenAI(
+    base_url="http://localhost:7766/v1",
+    api_key="lr-nv-oa-ch-no"
+)
 
-## Configuration Reference
+response = client.chat.completions.create(
+    model="nvidia/llama-3.1-nemotron-70b-instruct",
+    messages=[{"role": "user", "content": "Explain quantum computing in 2 sentences."}]
+)
+print(response.choices[0].message.content)
+```
 
-| Variable | Description |
-|---|---|
-| `LITEROUTER_PORT` | Server port (default: `7766`) |
-| `LITEROUTER_AUTH_KEY` | Bearer token for client auth |
-| `LITEROUTER_TEMPLATE` | Default template: `anthropic` or `openai` |
-| `LITEROUTER_PROVIDER` | Default provider (used when model has no prefix) |
-| `LITEROUTER_ROTATE_DELAY_MS` | Default min delay between calls (ms) |
-| `{PROVIDER}_BASE_URL` | Upstream API base URL |
-| `{PROVIDER}_API_KEYS` | Comma-separated API keys for rotation |
-| `{PROVIDER}_MIN_DELAY_MS` | Min delay between calls to this provider (ms) |
-| `{PROVIDER}_MODEL` | Default model for this provider (optional) |
-| `{PROVIDER}_TEMPERATURE` | Default temperature for this provider (optional) |
+---
 
-## Project Structure
+## 📁 Repository Structure
 
 ```
 literouter/
 ├── src/
-│   └── index.ts             # Bun server: routing, ZSET+Lua quota, fusion, streaming
-├── models.json              # Model routing registry (system_id → upstream)
-├── fusion.json              # Fusion group definitions (priority chains)
-├── models/                  # Per-model metadata (from OpenRouter catalog)
-│   ├── google/
-│   ├── openrouter/
-│   ├── nvidia/
-│   └── zen/
-├── scripts/                 # start.sh / stop.sh / restart.sh
-├── tests/                   # Test matrix files
-├── .env                     # Secrets (gitignored)
-├── .env.example             # Template with all options
-└── CHANGELOG.md
+│   ├── index.ts               # Core Bun gateway server & router
+│   ├── directive/             # Directive key parser & wire dispatcher
+│   ├── handlers/              # OpenAI, Anthropic, Google native handlers
+│   ├── network/               # HTTP/2 connection pool & token bucket pacer
+│   ├── pools/                 # In-memory key pools & rotation engine
+│   └── transform/             # Reasoning scrubbers & XML tool extractors
+├── eval/
+│   ├── eval.ts                # Master 60-second evaluation orchestrator
+│   ├── speed.ts               # TTFT & tokens/sec speed benchmark
+│   ├── code.ts                # 5-stage agentic coding benchmark
+│   ├── web.ts                 # 5-stage frontend DOM/React benchmark
+│   └── reports/               # Auto-generated model report cards
+├── config/
+│   ├── providers.json         # Upstream provider headers & endpoints
+│   └── fusion.json            # Fusion fallback chains & presets
+├── scripts/
+│   ├── start.sh               # Background tmux daemon launcher
+│   ├── stop.sh                # Graceful gateway shutdown
+│   ├── restart.sh             # Zero-downtime gateway restart
+│   ├── doctor.ts              # Upstream API key diagnostic probe
+│   └── setup_certs.sh         # Local TLS certificate generator
+├── .env.example               # Configuration template
+└── CHANGELOG.md               # Version history
 ```
 
-## Redis Key Schema
+---
 
-| Pattern | Description |
-|---|---|
-| `rolling:{provider}:{hash}:{model}` | ZSET — atomic rolling 60s quota window (Lua) |
-| `cooldown:{provider}:{hash}:{model}` | Per-key, per-model cooldown state (rate_limited: 65s, timed_out: 10s, quarantined: 7d) |
+## 📜 License
 
-Redis/Valkey is REQUIRED. When unavailable, the gateway exits(1) on the connection error (no in-memory fallback).
-
-## License
-
-MIT
+MIT License. Built with ❤️ by the Acivar Digital team for the AI builder community.

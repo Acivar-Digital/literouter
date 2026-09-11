@@ -1,6 +1,6 @@
 # LiteRouter Fusion Multi-Tier Setup & Sticky Fallback Architecture
 
-LiteRouter Fusion (`v3.1`) encompasses two high-availability resilience architectures:
+LiteRouter Fusion (`v4.0`) encompasses two high-availability resilience architectures:
 1. **Google Native Flash & Flash-Lite Fusion (`gemini-flash`, `gemini-flash-lite`)**: High-performance, zero-disk-I/O descending fallback cascades specifically designed for Google Generative Language REST / `@ai-sdk/google` endpoints.
 2. **OpenAI-Compatible Virtual Presets (`quad`, `pydn`, `fast`, `deep`)**: Cross-provider sticky fallback engine with TTL-based position caching across OpenAI, Anthropic, OpenRouter, NVIDIA, and DeepSeek backends.
 
@@ -193,7 +193,8 @@ Client applications targeting `/v1/chat/completions` pass a Fusion preset direct
 
 ### 2.2 Sticky Fallback Caching Mechanism
 When an upstream tier fails due to transient rate limits (429), capacity overload, or server errors (5xx), LiteRouter falls back to subsequent tiers defined in the preset:
-- **Sticky Locking**: If a request succeeds on a fallback tier (Priority > 1), `StickyPositionCache` (`src/fusion/sticky.ts`) records the winning tier for that `${preset}:${model}`.
+- **Sticky Locking**: If a request succeeds on a fallback tier (Priority > 1), in-memory `StickyPositionCache` (`src/fusion/sticky.ts`) records the winning tier for that `${preset}:${model}`.
+- **In-Memory Zero-Disk Operation**: Sticky state and tier indices live entirely in process memory (via in-memory `StickyPositionCache` and `nativeTierIndices` map, with zero Redis/Valkey dependencies and zero disk I/O), guaranteeing sub-millisecond route resolution on hot paths.
 - **TTL Expiry**: The sticky position remains active for **300,000 ms (5 minutes)** by default (`FUSION_STICKY_TTL_MS`), routing subsequent requests straight to the successful fallback tier.
 - **Auto-Healing**: When Tier 1 succeeds again, `handleTierSuccess` clears the sticky position, reinstating Tier 1 as primary.
 

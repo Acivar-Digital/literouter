@@ -1,4 +1,4 @@
-# LiteRouter Operational Playbook & Setup Workflows (v3.1 / v3.2)
+# LiteRouter Operational Playbook & Setup Workflows (v4.0)
 
 This document details executable operational workflows for running LiteRouter proxy services, updating upstream API key pools, registering models, managing fusion presets, executing health checks, and validating test suites.
 
@@ -66,7 +66,7 @@ GOOGLE_API_KEYS=AIzaSyKey1...,AIzaSyKey2...
    ```
    - Validates `config/providers.json`, `config/fusion.json`, and `config/models.json` JSON schema.
    - Pings local `/health` endpoint.
-   - Sequentially probes (with 1s pacing) live upstream key health across Google Gemini (`gemini-2.5-flash`), NVIDIA NIM (`meta/llama-3.1-8b-instruct`), OpenRouter (`nvidia/nemotron-3-nano-30b-a3b:free`), and Zen (`big-pickle`) using `mkcert` root CA TLS verification.
+   - Sequentially probes (with 1s pacing) live upstream key health across Google Gemini (`gemma-4-31b-it`), NVIDIA NIM (`nvidia/nemotron-3-super-120b-a12b`), OpenRouter (`openrouter/free:nitro`), and Zen (`big-pickle`) using `mkcert` root CA TLS verification.
 
 ---
 

@@ -1,211 +1,293 @@
-# LiteRouter Technical Architecture
+# LiteRouter Technical Architecture (v4.0)
 
-This document serves as the technical blueprint for LiteRouter, detailing the system design, architectural constraints, and key implementation decisions.
+This document serves as the technical blueprint for LiteRouter v4.0, detailing the core system design, in-memory networking stack, protocol multiplexing, directive-driven dispatch, and model evaluation pipeline.
 
-## Known Design Decisions (DO NOT REVERSE)
+---
 
-### Tier 1 DM Strength Formula: Flat 0.3 Hidden Stems
-The pedagogical Tier 1 formula in `module2_root.py:calculate_dm_strength_tier1()` uses
-a flat 0.3 for ALL hidden stems regardless of internal weight proportion. This is
-INTENTIONAL - the book uses a simplified model. The production formula
-`get_root_sub_score()` uses proper `weight x pillar_weight` proportional weighting.
-BUG 4 in the Chapter 12 audit was reviewed and SKIPPED for this reason.
+## 1. System Overview & Architectural Vision
 
-### Clash Hidden Stem Extraction: Uniform hidden_ratio
-`calculate_clash_adjusted_dm_score()` (module2_root.py:462-470) applies `hidden_ratio=1.0`
-to ALL hidden stems in a clashed branch (not just DM-element stems). The book's Case 12.1
-is inconsistent on this point. The code's uniform treatment is architecturally cleaner
-and follows Chapter 02 Rule 2.1 literally. Audited and confirmed in BUGS_CHAP12_AUDIT.md.
+LiteRouter is a zero-dependency, ultra-low-latency AI API Gateway built on Bun and TypeScript. It acts as an intelligent layer-7 reverse proxy and translation bridge between client development environments (OpenCode, Claude Code, Cursor, Antigravity, Pydantic AI) and multiple upstream generative AI providers (OpenRouter, NVIDIA NIM, Google AI Studio, Google Cloud Vertex AI, Zen, Anthropic, and custom endpoints).
 
-### Output Drain in Clash-Adjusted Formula
-`calculate_clash_adjusted_dm_score()` includes `- (output_dm x 1.0)` even though the
-book's Case 12.1 doesn't show it. Preserved as a safety net - when a clashed branch
-releases strong output elements, draining the DM is a real effect. See s10.2 in audit.
+### Core Design Principles
+- **Sub-Millisecond Overhead**: Single Bun process running native TypeScript, eliminating Python runtime bottlenecks and heavy database dependencies.
+- **Zero External Database Dependency**: Fully in-memory state management. External Redis/Valkey instances and Lua scripts are completely replaced by lock-free, in-memory key pooling, precise cooldown timers, and FIFO pacing queues.
+- **Protocol & ALPN Multiplexing**: Dual HTTP/2 and HTTP/1.1 support with Application-Layer Protocol Negotiation (ALPN) over native TLS, coupled with persistent outbound HTTP/2 session pooling (`h2_pool`).
+- **Declarative Directive Keys**: Client authorization tokens carry routing, wire protocol, endpoint targeting, and transformation directives (`lr-<prov>-<payload>-<compl>-<nuances>`).
+- **Token Bleed Defense**: Dynamic reasoning scrubber that strips historical reasoning blocks (`<thought>`, `delta.reasoning_content`) to prevent multi-turn prompt ballooning while preserving active tool-use context and Google thought signatures.
+- **Audit-First Evaluation**: Built-in 3-pillar evaluation harness (`eval/eval.ts`) to benchmark throughput, agentic coding adherence, and frontend capabilities before promoting models to production routing.
 
-### True Rolling Window Rate Limiting (Atomic)
-The `ModelFirstRouter` class in `src/index.ts` implements a professional-grade rolling 60-second window for RPM and TPM tracking using Redis Sorted Sets (ZSETs) and an atomic Lua script.
-- **Mechanism**: Every request is recorded as a timestamped member in a ZSET.
-- **Atomicity**: The quota check and recording are performed in a single Redis Lua script to prevent race conditions (boundary bursting) and ensure strict adherence to provider limits.
-- **Verification**: The router purges events older than 60s and sums the remaining members to verify quota.
-- **Why**: Matches professional upstream provider behavior and prevents API key bans caused by request spikes at the edge of fixed-minute buckets.
+---
 
-### Gemma Payload Sanitization
-To prevent upstream engine crashes, all requests targeting Gemma models must be sanitized.
-- **Requirement**: The properties `thinkingConfig` and `thinking_config` must be recursively stripped from the payload.
-- **Enforcement**: This is handled in `src/index.ts` (payload sanitization) and is applied to both the Native Google route and the OpenAI compatibility route.
+## 2. In-Memory Key & Traffic Architecture (Replacing Redis/Valkey)
 
-## Code Style & Conventions
-- Python 3.14+ required (see pyproject.toml)
-- Use `lunar-python` for all Bazi calculations - never implement Pillar/strength logic manually
-- All Bazi data is in `src/engine/bazi_data.py` as deterministic lookup tables
-- Classical citations must use `BaziRAG` with technical Chinese keywords only
-- No LLM inference for Bazi math - only for narrative generation
-- **Zero-Speculation**: Before suggesting architectural changes, consult `_docs/PM/GRAVEYARD.md` to avoid proposing rejected "shit" ideas (e.g., Medallion, DST, LLM-Math).
-
-## Key Architecture
-- `src/engine/` - Pure Python deterministic Bazi engine (modules 0-5, 8-12)
-- `src/bot/` - Telegram bot, intake, validation, orchestration
-- `src/config/intake_schema.json` - Defines auto vs manual intake modes
-- `src/bot/conductor.py` - LLM-driven conversational intake (3 states: CHOOSING, COLLECTING, CONFIRM)
-- `src/index.ts` - LLM API calls / upstream proxying for all providers (OpenRouter, Nvidia, Anthropic, Google)
-- `_docs/IMPACT_MAP.md` - **Change Impact Map**: Internal module dependency graph organized by blast radius. **Always consult before making architectural changes.**
-
-## LiteRouter Proxy Guidelines
-
-**High-Level Purpose**: LiteRouter is a high-performance proxy that distributes requests across multiple API keys using round-robin routing with automatic cooldown, quarantine, and rate limiting. It translates upstream calls for providers like OpenRouter, Nvidia, and Anthropic.
-
-### 🚨 MANDATORY SKILL 🚨
-**For ANY LiteRouter work, load the playbook first:**
-`skill load "literouter"` (or read `.opencode2/skills/literouter/SKILL.md`)
-
-Then read the relevant appendix:
-- **[`setup.md`](../.opencode2/skills/literouter/setup.md)** — Ops, routing, adding models/keys/providers
-- **[`troubleshoot.md`](../.opencode2/skills/literouter/troubleshoot.md)** — `ZodValidationError`, JSON Parse errors, and rotating proxy debugging
-- **[`antigravity.md`](../.opencode2/skills/literouter/antigravity.md)** — Antigravity Agent Interactions API (`/v1beta/interactions`), sandbox execution, guardrails, and deep research patterns
-
-### ⚠️ THE MANDATORY SDK REQUIREMENT: `@ai-sdk/openai-compatible` ⚠️
-
-**DO NOT use `@ai-sdk/openai` in OpenCode config (`opencode.json`) for LiteRouter endpoints. You MUST use `@ai-sdk/openai-compatible` instead.**
-
-#### Why? (The Protocol Mismatch Root Cause)
-1. **The Endpoint Mismatch**: `@ai-sdk/openai` uses the modern `/v1/responses` (Agentic Communication Protocol / ACP) endpoint by default. However, upstream providers like OpenRouter and Nvidia only accept standard OpenAI ChatCompletions (`/v1/chat/completions`).
-2. **Fragile Protocol Translation (Removed):** LiteRouter previously included an endpoint mapping layer to translate `/v1/responses` ↔ `/v1/chat/completions`. This layer was extremely fragile and prone to:
-   - **Tool Call Failures**: Upstream models emitting `finish_reason: "tool_calls"` had their structured tool outputs dropped or malformed by the ACP translator, leading to client-side `ZodValidationError` errors.
-   - **Stream Corruption**: Attempting to inject missing ACP structures/tokens into the SSE stream often broke the `\n\n` event delimiters, resulting in consecutive events fusing and throwing JSON Parse errors.
-   **Consequently, this translation layer has been REMOVED. LiteRouter now acts as a pure rotating proxy for standard OpenAI endpoints.**
-3. **The Simple Solution**: By switching the provider npm package in `opencode.json` to `@ai-sdk/openai-compatible`, the client communicates natively via standard `/v1/chat/completions`. LiteRouter then behaves as a pure rotating proxy (only swapping authorization headers and forwarding bytes), completely bypassing the fragile protocol translation code.
-
-### Core Architecture & File Map
-- `src/index.ts` - **The Core Engine** (single Bun process, port 7766): Handles `/v1/chat/completions` (OpenAI compatible) and native Google REST routes (`/v1beta/...`), implements reasoning normalization, payload sanitization, fusion, and key rotation.
-- `src/index.ts` - **Provider Discovery**: Scans env vars ending with `_BASE_URL` to build the provider table. No hardcoded routing here — providers are purely data-driven from `.env`.
-- `src/index.ts` (`ModelFirstRouter`) - **Key Rotation**: Uses Redis/Valkey ZSET+Lua to atomically cycle through available API keys per provider. Redis/Valkey is REQUIRED — the gateway exits(1) on a connection error (no in-memory fallback).
-- `logs/literouter.log` & `logs/literouter_logs.db` - **The Truth**: The primary locations to check for stack traces, Zod validation errors, and raw incoming/outgoing request bodies. (Local logs under `logs/` are ignored in Git to prevent leaks.)
-- `models.json` - **Model Registry**: Central mapping of system IDs to providers and upstream model IDs.
-
-### Operations & Testing
-- Run LiteRouter locally: `bash scripts/start.sh` (daemonizes in tmux) or `bun run src/index.ts` (foreground).
-- Redis/Valkey is REQUIRED — the gateway exits(1) on a connection error (no in-memory fallback).
-- **Mandatory E2E Test Protocol**: All testing must follow the "right-way" testing protocol detailed in `tests/right-way-test.md`. You must read `tests/right-way-test.md` and verify the live running daemon process using actual client requests before asserting complete status.
-- **Code Change Test Protocol (`right-way-test`)**:
-  1. Check all API keys are healthy for rotation.
-  2. Run a Python script to perform a curl test. Send "hi" to the model $N + 1$ times (where $N$ is the number of keys; e.g., if there are 5 keys, say "hi" 6 times) and log down if key rotation occurred.
-  3. Check logs to verify that the keys were indeed rotated.
-  4. Insert the configuration into OpenCode if necessary.
-  5. Otherwise, test the OpenCode CLI model using the setup in step 2 but via OpenCode directly.
-  6. Verify the logs again to ensure rotation happened.
-  7. Consider the test passed only when all steps pass successfully.
-
-### Model Naming Quick Reference
-
-The first segment of the model ID (before `/`) IS the provider name. No keyword overrides, no catch-all.
-
-| OpenCode model key | Routes to | Sent upstream as |
-|---|---|---|
-| `openrouter/owl-alpha` | OpenRouter | `owl-alpha` |
-| `openrouter/openai/gpt-oss-120b:free` | OpenRouter | `openai/gpt-oss-120b:free` |
-| `openrouter/cohere/north-mini-code:free` | OpenRouter | `cohere/north-mini-code:free` |
-| `nvidia/deepseek-ai/deepseek-v4-flash` | Nvidia | `deepseek-ai/deepseek-v4-flash` |
-
-To remove a model: delete from `opencode.json` and `models.json`.
-
-### Valkey Database Backend
-- **No Redis Dependency**: LiteRouter does NOT run a Redis database server. We use **Valkey** (the fully open-source key-value database engine) on port `6379`.
-- **Client Library Driver**: The codebase uses the standard Python `redis` package for API and protocol compatibility with third-party libraries (e.g. `redisvl`).
-- **Environment Variables**: We use standard Redis-compatible environment variable keys (`REDIS_HOST`, `REDIS_PASSWORD`, etc.) to configure connection endpoints to Valkey.
-- **Scanner Warnings**: Any code hygiene alerts flagging environment drift or missing packages for "Redis" are false positives. Valkey and Redis are used interchangeably here.
-
-## Target Modular Architecture Blueprint
-
-LiteRouter is designed as a high-density, layered proxy pipeline prioritizing maintainability, non-blocking resilience, and strict type safety across all generative AI providers.
+LiteRouter v4.0 completely eliminates external Redis/Valkey infrastructure in favor of an optimized, in-memory coordination engine residing within the Bun process:
 
 ```
-┌──────────────────────────────────────────────────────────────────┐
-│                      Client Request (Port 7766)                  │
-└──────────────────────────────────────────────────────────────────┘
-                                 │
-                                 ▼
-┌──────────────────────────────────────────────────────────────────┐
-│ 1. Gateway Ingress & Auth (`src/ingress/`)                       │
-│    - API Key Auth & CORS                                         │
-│    - Endpoint Routing (/v1/chat/completions vs /v1beta/models)   │
-└──────────────────────────────────────────────────────────────────┘
-                                 │
-                                 ▼
-┌──────────────────────────────────────────────────────────────────┐
-│ 2. Pipeline & Transformation Layer (`src/transformers/`)         │
-│    - Payload Cleaning (Gemma filter, thought signatures)         │
-│    - Thinking Translation (google.thinking_config ➔ reasoning)  │
-│    - Message Merging (`mergeConsecutiveMessages`)                │
-└──────────────────────────────────────────────────────────────────┘
-                                 │
-                                 ▼
-┌──────────────────────────────────────────────────────────────────┐
-│ 3. Key Manager & Circuit Breaker (`src/router/`)                 │
-│    - Valkey ZSET Atomic Quota Check (RPM/TPM Lua Script)         │
-│    - Cooldown & Circuit Breaker State (65s floor, 1wk 401/403)   │
-│    - Fusion Chain Fallback & Sticky Window Manager               │
-└──────────────────────────────────────────────────────────────────┘
-                                 │
-                                 ▼
-┌──────────────────────────────────────────────────────────────────┐
-│ 4. Resilient Network Dispatcher (`src/network/`)                  │
-│    - First-Byte Ghosting Protection (`LITEROUTER_NO_RESPONSE...`)│
-│    - 2-Second Key Rotation Loop (No 65-second client stalls)     │
-│    - Stream Pipe Transformer (`createStreamTransformer`)         │
-└──────────────────────────────────────────────────────────────────┘
-                                 │
-                                 ▼
-┌──────────────────────────────────────────────────────────────────┐
-│ 5. Upstream Providers (OpenRouter, NVIDIA, Google Native, Zen)    │
-└──────────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                             INCOMING REQUEST                                │
+│                   (Bearer lr-<prov>-<payload>-<compl>-<nuance>)             │
+└──────────────────────────────────────┬──────────────────────────────────────┘
+                                       │
+                                       ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ 1. Ingress Request Pacer (`RequestPacer` / `FastFifoQueue`)                 │
+│    - Smooths request bursts into deterministic intervals per provider       │
+│    - Tracks dwell times via Exponential Moving Average (EMA)                │
+│    - Fast FIFO queue drops gracefully via `PacerQueueOverflowError`         │
+└──────────────────────────────────────┬──────────────────────────────────────┘
+                                       │
+                                       ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ 2. In-Memory Key Pool Manager (`KeyPool`)                                   │
+│    - Per-provider rotating key pools with atomic pointer advancement        │
+│    - Skips keys currently in cooldown or quarantine                         │
+│    - Event-driven notifications (`available:<provider>`) upon key readiness │
+└──────────────────────────────────────┬──────────────────────────────────────┘
+                                       │
+                                       ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ 3. Granular Cooldown & Conserve Manager (`CooldownManager`)                 │
+│    - Automatic penalty clamping (5s to 2hr) and Retry-After header parsing  │
+│    - Status-specific cooldowns (429: 65s, 401/403: 7 days, 5xx: 10s)        │
+│    - Decoupled Key Conserve Engine with UTC Midnight rollover logic         │
+└─────────────────────────────────────────────────────────────────────────────┘
 ```
 
-### Core Resilience & Performance Guarantees
+### 2.1 KeyPool (`src/network/pool.ts`)
+- **Structure**: Uses in-memory `Map<string, readonly string[]>` and atomic index pointer maps (`Map<string, number>`).
+- **Rotation**: Selects keys via round-robin, automatically skipping quarantined or cooling keys.
+- **Asynchronous Wakeup**: When a key's quarantine or cooldown expires, `KeyPool` fires Node.js event emitter signals (`available:<provider>` and `available`) to notify queued requests without polling.
+- **Reset & Reload**: Supports instant hot-reset per provider (`/admin/pool/reset?provider=<prov>`) or global reset (`/reset`).
 
-1. **2-Second 429 Key Rotation**:
-   - Rate limit (`429`) responses trigger a 65s Valkey cooldown on the offending key.
-   - The loop waits **2,000ms** before cleanly rotating the request to Key #2.
+### 2.2 CooldownManager (`src/network/cooldown.ts`)
+- **State Map**: In-memory `Map<string, KeyCooldownState>` storing `quarantinedUntil`, `reason`, and `lastErrorStatus`.
+- **Intelligent Header Extraction**: Inspects upstream responses for `Retry-After` (seconds or HTTP date formats), `quotaResetDelay` in JSON bodies, or provider-specific headers.
+- **Grace Retries**: Transient delays under 2,000ms trigger a micro-wait without penalizing key reputation.
+- **Clamping**: Cooldown intervals are safely clamped between a 5-second floor and a 2-hour ceiling.
 
-2. **Anti-Stall Guarantee (No 65s Client Delays)**:
-   - When all API keys for a given model hit rate limits or cooldown, LiteRouter **never** forces the client's HTTP request to sleep in outer 65-second backoff loops.
-   - It fails fast or immediately advances down the **Fusion Fallback Chain** to the next available model.
+### 2.3 RequestPacer & FastFifoQueue (`src/network/pacer.ts`)
+- **Traffic Shaping**: Prevents rate-limit spikes by enforcing minimum inter-request dispatch intervals (`minIntervalMs` or derived from `maxRpm`).
+- **FastFifoQueue**: Doubly-linked node list (`QueueNode<T>`) providing $O(1)$ enqueue, dequeue, and arbitrary removal (e.g. when an inbound request aborts while queued).
+- **EMA Dwell Telemetry**: Maintains exponential moving average (EMA) of queue wait times, logged transparently in gateway telemetry.
 
-3. **.env-Driven First-Byte Ghosting Protection**:
-   - Applies to **all non-Google providers** (OpenRouter, NVIDIA, Zen, etc.).
-   - Driven by `.env`: `LITEROUTER_NO_RESPONSE_TIMEOUT=5` (default: 5 seconds).
-   - If an upstream opens the TCP connection but sends 0 bytes within the configured window, `fetchWithFirstByteTimeout` aborts.
-   - The key's health is preserved (no cooldown penalty), and the exact request is immediately re-sent to Key #2, preventing client/upstream timeouts in OpenCode.
+---
 
-## Critical Patterns
-- Auto mode collects only: alias, gender, dob, location -> engine computes all pillars/strength
-- Never ask for computed fields: year_pillar, month_pillar, day_pillar, hour_pillar, da_yun_pillar, etc.
-- Natal Sacrosanctity: full 4-pillar birth data injected into every Chronomancer prompt
-- 3-Pillar Robustness: The engine supports profiles without birth hours (3 pillars); do not treat missing hours as a critical failure.
-- Deterministic math only - fix `src/engine/` if calculations are wrong, never the LLM prompts
+## 3. Decoupled Key Conserve Engine (Midnight UTC Rollover)
 
-## BaziRAG Usage
+Certain providers (such as OpenRouter's free tier) enforce hard daily quotas (e.g., 200 requests/day per key) reset strictly at 00:00:00 UTC. Treating daily quota exhaustion as a short 65-second rate limit causes continuous 429 loops and rapid key exhaustion across pools.
 
-BaziRAG MCP provides classical text retrieval from four Chinese sources:
-- Yuan Hai Zi Ping
-- San Ming Tong Hui
-- Di Tian Sui
-- Qiong Tong Bao Jian
+LiteRouter v4.0 implements a decoupled key conservation subsystem:
 
-**Usage**: The `query_classical_text_async` tool performs semantic search over these classical texts for grounding and verification.
+### 3.1 Conserve Rules Matching
+Providers define declarative `conserve_rules` in `config/providers.json`:
+```json
+{
+  "conserve_rules": [
+    {
+      "status": 429,
+      "contains": "free-models-per-day",
+      "ttl": "midnight_utc",
+      "reason": "daily_free_limit"
+    }
+  ]
+}
+```
 
-**Keywords**: Always use technical Chinese terminology (e.g., cai xing, guan sha, yang ren, shi shang, zheng yin, pian cai, etc.)
-English search terms will fail - always translate concepts to Chinese technical terms first.
+### 3.2 Midnight UTC Calculation (`calculateMidnightUtcSec`)
+When a conserve rule with `ttl: "midnight_utc"` triggers:
+1. The engine calculates the exact milliseconds remaining until the next UTC midnight:
+   $$\text{nextMidnightUtc} = \text{Date.UTC}(\text{year}, \text{month}, \text{day} + 1, 0, 0, 0, 0)$$
+2. A **60-second safety buffer** is appended to ensure the upstream quota window has completely rolled over:
+   $$\text{ttlSec} = \lceil (\text{nextMidnightUtc} - \text{nowMs}) / 1000 \rceil + 60$$
+3. The specific key is parked until midnight UTC without quarantining the entire provider pool or penalizing paid keys.
 
-**Best practices**:
-- Use `rerank` with original query if results are too broad
-- BaziRAG failures raise RuntimeError (no silent degradation, per our guiding principles)
-- Validate returned citations against query context
-- RAG cache (`rag_cache/`) available as fallback if BaziRAG is unavailable
+---
 
-## Ironclad Stability (V31-T10)
-- **Zero-Fault Pipeline**: Content is sanitized (\xa0, CRLF normalization) *before* AST validation to ensure resilience against dirty input.
-- **Windows Concurrency Retry**: If you encounter `PermissionError` (Access Denied) on Windows, the server now automatically retries the write 5 times.
-- **Transactional Atomicity**: `move_symbol` now uses a "Two-Phase Commit" pattern. If the destination write fails, the source file is automatically restored from memory.
-- **Verification**: After making structural changes to the MCP server itself, always run `uv run python codebase/test_codebase_mcp.py` to verify the 100% stability score.
-- **Physical Dependency Map**: `build_repo_graph` now resolves imports to physical `.py` files, preventing the discovery of "ghost" modules.
-- **Zero-Speculation Edits**: Never "clean up" adjacent code while performing a surgical edit. Maintain absolute functional parsimony.
+## 4. HTTP/2 ALPN Multiplexing & Outbound `h2_pool`
+
+LiteRouter features full end-to-end HTTP/2 capabilities for both inbound clients and outbound upstreams.
+
+```
+┌─────────────────────────┐                     ┌─────────────────────────┐
+│     Client (OpenCode,   │                     │  Upstream Provider API  │
+│    Claude Code, Cursor) │                     │ (OpenRouter, NIM, etc.) │
+└────────────┬────────────┘                     └────────────▲────────────┘
+             │                                               │
+             │ TLS ALPN (h2, http/1.1)                       │ Multiplexed Streams
+             ▼                                               │ (Single TCP/TLS Socket)
+┌────────────────────────────────────────────────────────────┴────────────┐
+│ LiteRouter v4.0 Gateway (Port 7766)                                     │
+│                                                                         │
+│  [Inbound Secure Server]                                                │
+│  - http2.createSecureServer({ allowHTTP1: true, ALPNProtocols: [...] }) │
+│  - Backpressure pipe with drain handling (`pipeWebResponseToNode`)     │
+│  - Clean client abort propagation (SIGABRT / ERR_HTTP2_STREAM_CANCEL)   │
+│                                                                         │
+│  [Outbound Session Pool: `Http2SessionPool` (`src/network/h2_pool.ts`)] │
+│  - Single-Flight Connection Mutex (`connectionLocks`)                  │
+│  - Active stream multiplexing (up to 80 concurrent streams/session)     │
+│  - Health probing, idle draining (30s), max session lifespan (180s)     │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+### 4.1 Inbound ALPN Secure Server (`src/index.ts`)
+- **Native Dual-Protocol**: Uses `node:http2`'s `createSecureServer` with `ALPNProtocols: ["h2", "http/1.1"]` and `allowHTTP1: true`.
+- **Stream Lifecycle & Backpressure**: Streams are piped chunk-by-chunk. If the underlying TCP buffer saturates (`nodeRes.write(value) === false`), streaming pauses until the `"drain"` event fires.
+- **Client Disconnect Handling**: Early client termination cancels the active reader immediately and releases upstream stream handles without dangling socket leaks.
+
+### 4.2 Outbound `Http2SessionPool` (`src/network/h2_pool.ts`)
+- **Single-Flight Connection Mutex**: Outbound connection requests to the same origin share an in-flight promise (`connectionLocks`), preventing thundering herds during cold boots or connection recreation.
+- **Multiplexing Thresholds**: Up to 80 active streams per HTTP/2 session (`maxStreamsPerSession: 80`).
+- **Session Lifecycle & Recycling**:
+  - Unhealthy sessions (closed, destroyed, or socket-reset) are purged automatically.
+  - Sessions older than 180 seconds (`maxSessionAgeMs`) enter graceful draining (`isDraining: true`).
+  - Active streams complete on draining sessions, while new requests spin up a fresh session.
+  - Emergency overflow sessions are created if all existing sessions reach maximum concurrency.
+
+---
+
+## 5. Directive Key Grammar & Routing Dispatch
+
+LiteRouter uses a structured, self-describing API key convention known as **Directive Keys**. The client's Authorization header dynamically specifies provider routing, wire protocol adaptation, completion endpoints, and behavioral nuances.
+
+### 5.1 Grammar Specification
+$$\mathbf{Directive} = \texttt{lr-}\{\mathbf{Provider}\}\texttt{-}\{\mathbf{Payload}\}\texttt{-}\{\mathbf{Completion}\}\texttt{-}\{\mathbf{Nuances}\}$$
+
+- **Provider (13)**: `or` (OpenRouter), `nv` (NVIDIA NIM), `gg` (Google Studio), `oa` (OpenAI), `an` (Anthropic), `gq` (Groq), `cb` (Cerebras), `ds` (DeepSeek), `ms` (Mistral), `tg` (Together), `zn` (Zen), `gc` (Google Cloud Vertex), `tp` (Test Provider).
+- **Payload / Wire (6)**:
+  - `oa`: Standard OpenAI ChatCompletions (scrubs historical reasoning tokens).
+  - `oo`: Native OpenAI Responses API (preserves raw response structure).
+  - `cl`: Anthropic Messages wire format.
+  - `gg`: Google Generative Language REST format.
+  - `rs`: Responses format adapted/translated.
+  - `ao`: Anthropic-inbound to OpenAI-outbound cross-wire.
+- **Completion Endpoint (10)**: `ch` (`/v1/chat/completions`), `ms` (`/v1/messages`), `rs` (`/v1/responses`), `gc` (`generateContent`), `ob`, `g1`, `im`, `em`, `au`, `md`.
+- **Nuances (8, combinable with `+`)**:
+  - `no`: Standard / No special nuance.
+  - `dp`: Deep reasoning / Tool extraction mode.
+  - `ts`: Thinking preserved (retains thinking chunks).
+  - `sb`: Strict sanitize / Force strip reasoning for all clients.
+  - `gm`: Gemma payload sanitization (`thinkingConfig` stripped).
+  - `g3`: Gemini 3 preview adaptations.
+  - `tc`: Tool compaction enabled.
+  - `lg`: Legacy compatibility pass-through.
+
+### 5.2 Fusion Virtual Model Keys
+Format: `lr-fse-<preset>`
+- Presets: `quad` (balanced 4-model cluster), `pydn` (Pydantic / structured output specialist), `fast` (sub-second latency cluster), `deep` (deep reasoning & math fallback).
+- Configured in `config/fusion.json` with sticky 5-minute fallback caching (`FusionStickyCache`).
+
+### 5.3 Ingress Routing Table
+Directives are validated and dispatched by `dispatchRoute()` in `src/index.ts`:
+
+| Route Path | Method | Handler Source | Applicable Directives |
+|---|---|---|---|
+| `/v1/chat/completions` | `POST` | `src/handlers/openai_compat.ts` | `lr-*-oa-ch-*`, `lr-*-ao-ch-*` |
+| `/v1/messages`, `/messages` | `POST` | `src/handlers/anthropic_compat.ts` | `lr-*-cl-ms-*` |
+| `/v1/responses` | `POST` | `src/handlers/openai_original.ts` | `lr-*-oo-rs-*` |
+| `/v1beta/models/*:generateContent` | `POST` | `src/handlers/google_native.ts` | `lr-gg-gg-gc-*` |
+| `/v1beta/openai/*` | `POST` | `src/handlers/gcp_compat.ts` | `lr-gc-oa-ch-*` |
+| `/v1/models`, `/v1beta/models` | `GET` | `src/handlers/discovery.ts` | Dynamic discovery via provider credentials |
+| `/health`, `/hello` | `GET` | `src/index.ts` | Auth-free system health and pool metrics |
+| `/reset` | `POST` | `src/index.ts` | Auth-free hard gateway state reload |
+| `/admin/pool/reset` | `POST` | `src/index.ts` | Authenticated per-provider key pool reset |
+
+---
+
+## 6. Transformations, Thought Signatures & Token Bleed
+
+### 6.1 Reasoning Scrubber (`src/transformers/thinking.ts`)
+Multi-turn agent sessions (OpenCode, Claude Code) compound prompt costs exponentially when previous turns contain large `<thinking>` blocks.
+- **Dynamic Historical Stripping**: LiteRouter strips reasoning tokens from previous assistant messages in the conversation history while leaving the current turn's active reasoning intact.
+- **70% Cost Reduction**: By stripping stale thinking artifacts, context token counts drop by 50% to 70% in long-running agent workflows.
+
+### 6.2 Google Thought Signature Preservation
+Google Gemini models require an opaque `thought_signature` token to accompany tool-call responses across consecutive turns.
+- When Gemini emits a tool call with a thought signature, LiteRouter records the mapping.
+- On subsequent tool responses submitted by the client, LiteRouter injects the corresponding thought signature into the payload, preventing upstream `"Invalid tool call signature"` failures.
+
+### 6.3 Gemma Payload Sanitization
+Gemma 2 and Gemma 3 models crash when upstream payloads include `thinkingConfig` or `thinking_config`. LiteRouter recursively scrubs these keys from incoming requests targeting Gemma models.
+
+---
+
+## 7. The 3-Pillar Model Evaluation Gauntlet (`eval/eval.ts`)
+
+LiteRouter includes an automated, production-grade model auditing suite to evaluate upstream model viability across three distinct capabilities:
+
+```
+                          ┌───────────────────────────┐
+                          │     Master Evaluator      │
+                          │      (eval/eval.ts)       │
+                          └─────────────┬─────────────┘
+                                        │
+           ┌────────────────────────────┼────────────────────────────┐
+           ▼                            ▼                            ▼
+┌───────────────────────┐   ┌───────────────────────┐   ┌───────────────────────┐
+│       Pillar 1:       │   │       Pillar 2:       │   │       Pillar 3:       │
+│   Speed & Throughput  │   │  Agentic & Code Eval  │   │  Web Vision-Language  │
+│    (eval/speed.ts)    │   │    (eval/code.ts)     │   │    (eval/web.ts)      │
+└───────────────────────┘   └───────────────────────┘   └───────────────────────┘
+```
+
+### Pillar 1: Speed & Latency Benchmark (`eval/speed.ts`)
+- **Metrics Tracked**:
+  - **TTFT (Time to First Token)**: Measures cold and warm responsiveness in milliseconds.
+  - **Output Throughput (tokens/sec)**: Measures sustained generation speed.
+  - **Total Latency**: Measures wall-clock turn duration across varying prompt sizes.
+
+### Pillar 2: Agentic & Coding Capability Harness (`eval/code.ts`)
+Evaluates dual wire protocols (ChatCompletions and Responses API) across a 5-stage pipeline:
+1. **Stage 1 (Wire Integrity)**: Validates JSON structure, header conformity, and clean SSE stream framing.
+2. **Stage 2 (Pydantic / Schema Adherence)**: Strict JSON schema enforcement for structured tool arguments.
+3. **Stage 3 (Agentic Multi-Step Loop)**: Executes multi-turn tool calling and thought signature tracking.
+4. **Stage 4 (Surgical Patching)**: Evaluates search-and-replace code patching accuracy without line drift.
+5. **Stage 5 (Security & Prompt Injection)**: Tests guardrails against jailbreaks, delimiter escape, and credential leakage.
+
+### Pillar 3: Web Frontend & Vision-Language Suite (`eval/web.ts`)
+1. **Stage 1 (DOM & Semantic Structure)**: Evaluates semantic HTML5 hierarchies and CSS containment.
+2. **Stage 2 (Responsive Layouts)**: Validates flexbox, grid, and fluid viewport scaling.
+3. **Stage 3 (State & React Logic)**: Checks state transitions, hooks lifecycle, and event wiring.
+4. **Stage 4 (Code Hygiene)**: Detects memory leaks, uncancelled intervals, and anti-patterns.
+5. **Stage 5 (Accessibility & WCAG)**: Audits ARIA roles, contrast standards, and keyboard navigation.
+
+### Synthesis & Report Card
+The harness synthesizes results into an executive report card (`eval/reports/<model>.md`) with unbiased pass@k metrics ($k=1$) and provides an **Architectural Role Recommendation**:
+- **Orchestrator**: High reasoning precision, resilient tool calling, and strict schema compliance.
+- **General Coder**: Rapid patch application, strong syntax accuracy, and consistent diff generation.
+- **Explorer**: High throughput and cost efficiency suited for wide-breadth discovery and summarization.
+
+---
+
+## 8. Directory & File Map
+
+```
+src/
+├── config/
+│   ├── env.ts             # Zod environment schema and configuration loader
+│   ├── keys.ts            # Key pool loader and static key validator
+│   ├── providers.json     # Declarative provider endpoints, headers, and conserve rules
+│   └── fusion.json        # Virtual model fallback chains and models registry
+├── directive/
+│   ├── parser.ts          # Directive key tokenizer and grammar parser
+│   └── validator.ts       # Endpoint matching rules and credential extraction
+├── handlers/
+│   ├── openai_compat.ts   # /v1/chat/completions route with key rotation and streaming
+│   ├── anthropic_compat.ts# /v1/messages native Claude Code route
+│   ├── openai_original.ts # /v1/responses native ACP route
+│   ├── google_native.ts   # Google Generative Language REST forwarder and cascades
+│   ├── gcp_compat.ts      # Vertex AI Gemini & Gemma router
+│   └── discovery.ts       # /v1/models dynamic model enumeration
+├── network/
+│   ├── pool.ts            # In-memory KeyPool implementation
+│   ├── cooldown.ts        # CooldownManager and Midnight UTC conserve calculation
+│   ├── pacer.ts           # RequestPacer with FastFifoQueue and EMA dwell tracking
+│   ├── h2_pool.ts         # Outbound HTTP/2 session pool with single-flight mutex
+│   ├── circuit_breaker.ts # Provider circuit breaker and failure tracking
+│   └── fetcher.ts         # Resilient HTTP fetcher with first-byte timeout
+├── transformers/
+│   ├── thinking.ts        # Reasoning scrubber and Google thought signature injector
+│   ├── nuances.ts         # Nuance code transformers (deep, strict, compact)
+│   └── payload.ts         # Gemma sanitizer and payload normalizer
+└── index.ts               # Bun HTTP/2 server entrypoint and route dispatcher
+```

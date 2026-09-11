@@ -28,7 +28,7 @@ function buildBannerLines(options: BannerOptions): string[] {
 
   return [
     "================================================================================",
-    "🚀 LITEROUTER v3.1 GATEWAY [BUN RUNTIME]",
+    "🚀 LITEROUTER v4.0 GATEWAY [BUN RUNTIME]",
     "================================================================================",
     `Port           : ${options.port}`,
     `Protocol       : ${protocol}`,

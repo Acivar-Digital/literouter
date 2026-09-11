@@ -4,6 +4,53 @@ All notable changes to LiteRouter will be documented in this file.
 
 ## [Unreleased]
 
+## [4.0.0] - 2026-09-11
+
+> *"All models are wrong, but some are useful. So use our eval, we will tell you what is wrong."*
+
+LiteRouter 4.0.0 is a milestone release delivering enterprise-grade performance, a 100% in-memory Bun architecture, and universal multi-provider interoperability. This release establishes polymorphic token-driven routing, a comprehensive native evaluation gauntlet, single-port HTTP/2 ALPN multiplexing, context bloat defense, and resilient quota management.
+
+### Major Architectural Milestones
+
+1. **Polymorphic Directive Key Routing (`lr-*`)**:
+   - The API token **is** the router (`lr-<provider>-<wire>-<endpoint>-<nuance>`).
+   - Achieves universal client interoperability across OpenCode, Claude Code CLI, Pydantic AI, and custom harnesses without YAML edits, config drift, or gateway reboots.
+   - Dynamic wire translation between OpenAI Chat Completions, Anthropic Messages, Google Native REST, and OpenAI Responses API protocols.
+
+2. **60-Second Model Evaluation Gauntlet (`eval/eval.ts`)**:
+   - Built-in 3-pillar benchmark (`eval/speed.ts`, `eval/code.ts`, `eval/web.ts`) running natively in Bun in <60 seconds with zero Docker or Chromium overhead.
+   - 5-stage agentic coding benchmark (wire conformance, Pydantic AI contracts, multi-turn tool loops, `str_replace` indentation preservation, and prompt injection defense) supporting dual Chat Completions and Responses API pipelines.
+   - 5-stage vision-to-frontend web generation harness auditing semantic DOM layouts, responsive breakpoints, React hook state binding, code hygiene, and WCAG accessibility.
+   - Production hardening (M1–M6): 2-minute stage timeouts, air-gapped unit test graders (`tests/unit/eval_graders/`), tiered statistical engine (`pass@k` estimators, p95 latency, 95% CI), inter-stage cooldown pacing, and hard disqualification vetoes for AST poison (`VETO_AST_POISON`) and test tampering (`VETO_TEST_TAMPERING`).
+
+3. **100% In-Memory Bun Architecture**:
+   - Retired legacy Redis/Valkey requirements, reducing operational footprint to zero external database dependencies.
+   - Native event-driven key pools (`KeyPool`) with round-robin balancing, lock-free token buckets (`RequestPacer`), and adaptive cooldowns (`CooldownManager`).
+   - Sub-millisecond in-memory key state tracking, quota resets, and health monitoring.
+
+4. **HTTP/2 ALPN Native Multiplexing & Synthetic Heartbeats**:
+   - Single-port HTTP/2 ALPN multiplexing transparently serving HTTP/1.1 and binary HTTP/2 on port 7766.
+   - Outbound connection pooling (`h2_pool`) with graceful socket backpressure draining.
+   - Throttled synthetic keep-alive heartbeats (`: keep-alive` comment frames) preventing client and reverse-proxy timeout drops during extended model reasoning turns.
+
+5. **Context Bloat Shield & 70% Reasoning Cost Stripping**:
+   - Automatic historical `<think>` and `reasoning_content` scrubbing preventing agent SQLite database explosions.
+   - Slashes downstream token consumption costs by up to 70%.
+   - Granular per-directive control: default stripping for chat completions, preserved with `ts` (thinking stream), or explicitly forced with `sb` (strip bloat).
+
+6. **Google Native Flash Cascades & Thought Signature Preservation**:
+   - Automatic sticky tier failovers for Google Native endpoints (`gemini-flash` 3.8 -> 3.7 -> 3.6 -> 3.5 and `gemini-flash-lite` 3.5 -> 3.1).
+   - Independent sticky tier tracking (`nativeTierIndices`) ensuring automatic failover without service interruption during upstream rate limits.
+   - Gemini `thought_signature` preservation across multi-turn tool calls for `@ai-sdk/google` and native Google REST routes.
+
+7. **Decoupled Key Conserve Engine**:
+   - Dedicated key conservation system (`conserve_rules` in `config/providers.json`) isolating hard daily quota limits from transient RPM bursts.
+   - Automatic midnight UTC rollover calculation parking daily quota exhausted keys until provider reset (`00:00:00 UTC` + 60s safety buffer) without locking out transient burst capacity.
+
+---
+
+### Detailed Changes & Incremental Features
+
 ### Feat / Evaluation Harness Hardening, Logic Gap Closure & Latency Profiling (literouter-gn4g) - 2026-09-11
 - **Multi-Tool-Call Veto Scanning**:
   - Hardened veto evaluators in Stage 4 (`stage4_patch.ts`) and Stage 5 (`stage5_security.ts`) across both Chat Completions and Responses API pipelines to iterate over all emitted `tool_calls` in a turn.

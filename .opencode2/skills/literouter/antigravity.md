@@ -1,4 +1,4 @@
-# Antigravity Remote Gateway & Proxy Integration (v3.1 / v3.2)
+# Antigravity Remote Gateway & Proxy Integration (v4.0)
 
 This guide documents the integration of remote Antigravity services (`agy-gemini`, `agy-claude`) and Google Native RPC routing through LiteRouter.
 
@@ -57,9 +57,10 @@ In `~/.config/opencode2/opencode.json`:
 
 ---
 
-## 3. LiteRouter Local Google Routing (`lr-gg`)
+## 3. LiteRouter Local Routing & Directive Keys (HTTP/2 Port 7766)
 
-For local rotating Google Gemini keys:
-- **OpenAI-Compat Beta**: `https://localhost:7766/v1` with `apiKey: "lr-gg-oa-ob-gm"`
-- **Native RPC (`:generateContent`)**: `https://localhost:7766/v1beta` with `apiKey: "lr-gg-gg-gc-gm"`
+To route local requests through LiteRouter over HTTP/2 on port 7766:
+- **Google Native RPC (`:generateContent`)**: `https://localhost:7766/v1beta` with `apiKey: "lr-gg-gg-gc-no"` (or `lr-gg-gg-gc-gm` for Gemma nuance)
+- **Google OpenAI-Compat Beta**: `https://localhost:7766/v1` with `apiKey: "lr-gg-oa-ob-no"` (or `lr-gg-oa-ob-gm`)
+- **OpenRouter Model Forwarding**: `https://localhost:7766/v1` with `apiKey: "lr-or-ao-ch-dp"` (Anthropic wire format with dots-preserve) or `lr-or-oa-ch-no`
 - **Turn Merging & Gemma Nuance (`gm`)**: Merges consecutive turns and strips unsupported parameters before forwarding to Google.
