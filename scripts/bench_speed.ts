@@ -127,6 +127,10 @@ async function runSingleBenchmark(
 
         try {
           const json = JSON.parse(trimmed.slice(6));
+          if (json.error) {
+            result.status = "ERROR";
+            result.errorMessage = typeof json.error === "object" ? (json.error.message || JSON.stringify(json.error)) : String(json.error);
+          }
           if (json.usage) {
             reportedUsage = json.usage;
           }
@@ -154,6 +158,12 @@ async function runSingleBenchmark(
     const end = performance.now();
     result.ttftMs = firstTokenTime ? Math.round(firstTokenTime - start) : Math.round(end - start);
     result.totalDurationMs = Math.round(end - start);
+
+    if (result.status === "ERROR") {
+      result.totalTokens = 0;
+      result.speedTokPerSec = 0;
+      return result;
+    }
 
     // Calculate token counts:
     // If provider sent usage in stream, use completion_tokens.
@@ -229,14 +239,22 @@ function computeAggregate(model: string, runs: BenchResult[]): ModelAggregate {
 
 export async function runBenchmarkCLI() {
   const args = process.argv.slice(2);
-  let models = DEFAULT_MODELS;
+  let models: string[] = [];
   let runsCount = 2; // Default 2 runs per model
   let directiveKey = "lr-or-oa-ch-no";
   let endpoint = "https://localhost:7766/v1/chat/completions";
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
-    if (arg === "--models" && i + 1 < args.length) {
+    if (!arg) continue;
+    if (arg === "--help" || arg === "-h") {
+      console.log(`Usage: bun run scripts/bench_speed.ts [model] [options]`);
+      console.log(`  --models <m1,m2>   Comma-separated list of models`);
+      console.log(`  --runs <n>         Number of runs per model (default: 2)`);
+      console.log(`  --directive <key>  Directive key (default: lr-or-oa-ch-no)`);
+      console.log(`  --url <url>        Gateway URL`);
+      process.exit(0);
+    } else if (arg === "--models" && i + 1 < args.length) {
       const val = args[++i];
       if (val) models = val.split(",").map((m) => m.trim());
     } else if (arg === "--runs" && i + 1 < args.length) {
@@ -248,7 +266,14 @@ export async function runBenchmarkCLI() {
     } else if (arg === "--url" && i + 1 < args.length) {
       const val = args[++i];
       if (val) endpoint = val;
+    } else if (!arg.startsWith("-")) {
+      // Positional model argument
+      models = [arg.trim()];
     }
+  }
+
+  if (models.length === 0) {
+    models = DEFAULT_MODELS;
   }
 
   console.log(`\n========================================================================`);

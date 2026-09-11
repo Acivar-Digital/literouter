@@ -257,7 +257,26 @@ export async function runStage1Structure(ctx: StageContext): Promise<StageResult
       };
     }
 
-    const data = (await response.json()) as { choices?: Array<{ message?: { content?: string } }> };
+    const data = (await response.json()) as {
+      choices?: Array<{ message?: { content?: string; reasoning?: string }; finish_reason?: string }>;
+      error?: { message?: string; code?: number } | string;
+    };
+
+    if (data.error) {
+      const errMsg = typeof data.error === "object" ? data.error.message || JSON.stringify(data.error) : data.error;
+      console.log(`   ❌ Upstream provider error: ${errMsg}`);
+      return {
+        stageNumber: 1,
+        stageName: "Stage 1: DOM Structure & Layout Fidelity",
+        passed: false,
+        score: 0,
+        durationMs: Date.now() - startTime,
+        checks: [{ name: "Upstream Availability", passed: false, detail: errMsg }],
+        error: errMsg,
+        notes: [errMsg],
+      };
+    }
+
     const rawContent = data.choices?.[0]?.message?.content || "";
     const cleanCode = extractCodeBlock(rawContent);
 

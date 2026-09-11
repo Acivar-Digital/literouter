@@ -253,7 +253,26 @@ export async function runStage2Responsive(ctx: StageContext): Promise<StageResul
       };
     }
 
-    const data = (await response.json()) as { choices?: Array<{ message?: { content?: string } }> };
+    const data = (await response.json()) as {
+      choices?: Array<{ message?: { content?: string } }>;
+      error?: { message?: string; code?: number } | string;
+    };
+
+    if (data.error) {
+      const errMsg = typeof data.error === "object" ? data.error.message || JSON.stringify(data.error) : data.error;
+      console.log(`   ❌ Upstream provider error: ${errMsg}`);
+      return {
+        stageNumber: 2,
+        stageName: "Stage 2: Responsive Design & Mobile Scaling",
+        passed: false,
+        score: 0,
+        durationMs: Date.now() - startTime,
+        checks: [{ name: "Upstream Availability", passed: false, detail: errMsg }],
+        error: errMsg,
+        notes: [errMsg],
+      };
+    }
+
     const rawContent = data.choices?.[0]?.message?.content || "";
     const cleanCode = extractCodeBlock(rawContent);
 
