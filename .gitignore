@@ -68,6 +68,4 @@ vps/
 memories.md
 .env
 .beads/backup/manifest
-.beads/embeddeddolt/literouter/.dolt/noms/journal.idx
-.beads/embeddeddolt/literouter/.dolt/noms/manifest
-.beads/embeddeddolt/literouter/.dolt/noms/vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv
+.beads/embeddeddolt/

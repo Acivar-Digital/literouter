@@ -61,7 +61,15 @@ When editing configs, verify which variant you are targeting. Using the wrong ke
    skill load "literouter"
    ```
 3. **Verify**: Ensure you have the latest issue context.
-4. **Ticket**: If the user's request is not already an issue, create it: `bd create "..." -t task -p 2`.
+4. **Ticket (MANDATORY DEFINITION OF DONE)**: If the user's request is not already an issue, create it with `--acceptance`:
+   ```bash
+   bd create "..." -t task -p 2 \
+     -d "Detailed context of what needs to be done" \
+     --acceptance="1. Deterministic verification passes (e.g. bun test exit code 0)
+2. Specific files or report cards produced
+3. No regressions or unhandled errors"
+   ```
+   *(Note: `validation.on-create: error` is strictly enforced. Any creation command without `--acceptance` will fail with exit code 1).*
 5. **Claim**: `bd update <id> --claim`.
 
 > **DO NOT PROCEED** without tracking the task in beads and loading the `literouter` skill.
@@ -504,11 +512,19 @@ Goal: Enforce execution consistency and tool awareness.
 bd ready --json
 ```
 
-**Create new issues:**
+**Create new issues (Definition of Done is MANDATORY):**
 
 ```bash
-bd create "Issue title" --description="Detailed context" -t bug|feature|task -p 0-4 --json
-bd create "Issue title" --description="What this issue is about" -p 1 --deps discovered-from:bd-123 --json
+# Standard task or feature (must provide --acceptance)
+bd create "Issue title" -t task -p 2 \
+  -d "Detailed context" \
+  --acceptance="1. Test command passes\n2. Output artifact exists" --json
+
+# Discovered work linked to parent
+bd create "Issue title" -p 1 \
+  -d "What this issue is about" \
+  --acceptance="1. Regression test added\n2. Bug resolved" \
+  --deps discovered-from:bd-123 --json
 ```
 
 **Claim and update:**
@@ -549,9 +565,23 @@ bd close bd-42 --reason "Completed" --json
    - `bd create "Found bug" --description="Details about what was found" -p 1 --deps discovered-from:<parent-id>`
 5. **Complete**: `bd close <id> --reason "Done"`
 
-### Quality
-- Use `--acceptance` and `--design` fields when creating issues
-- Use `--validate` to check description completeness
+### Quality & Validation Enforcement (Definition of Done)
+- **Hard Enforcement Active**: `validation.on-create: error` is enabled in `.beads/config.yaml`. Any `bd create` command missing required criteria will fail immediately with exit code 1.
+- **Required Sections Matrix**:
+  - `task` & `feature`: Requires `## Acceptance Criteria` (pass via `--acceptance="..."` flag or in markdown body).
+  - `bug`: Requires `## Steps to Reproduce` (in `--description`) AND `## Acceptance Criteria` (via `--acceptance`).
+  - `epic`: Requires `## Success Criteria` (pass via `--acceptance="..."` or in markdown body).
+  - `decision`: Requires `## Decision`, `## Rationale`, and `## Alternatives Considered` in markdown body.
+  - `chore`: No extra sections required (zero-friction maintenance).
+- **Emergency Bailout (Anti-Looping Hook)**:
+  If a non-Claude model or subagent gets trapped in an endless retry loop trying to create an issue without criteria, pull the hook immediately:
+  ```bash
+  # Soften to warning (allows creation, breaks the retry doom loop):
+  bd config set validation.on-create warn
+
+  # Re-enable strict enforcement once unstuck:
+  bd config set validation.on-create error
+  ```
 
 ### Lifecycle
 - `bd defer <id>` / `bd supersede <id>` for issue management

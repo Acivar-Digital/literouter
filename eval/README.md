@@ -1,8 +1,14 @@
 # 🛡️ LiteRouter Model Evaluation Gauntlet
 
+> *"All models are wrong, but some are useful."* — **George E. P. Box**  
+> *"So use our eval, we will tell you what is wrong."* — **Francis Yap**
+
 > **Pragmatic, Zero-Overhead Evaluation Harness for Real-World AI Agents & Web Generation**
 
 LiteRouter's evaluation suite provides empirical, fail-fast verification of LLM capabilities across agentic coding, protocol resilience, streaming speed, and frontend website generation.
+
+> ℹ️ **Scope & The "Lite" Irony:**  
+> This evaluation gauntlet is merely a targeted subset of LiteRouter's broader mission. LiteRouter operates as an industrial-grade multi-provider gateway, intelligent pacer, protocol scrubber, key rotator, circuit breaker, and sticky fallback orchestrator. Given the depth of its proxy architecture and autonomous agent routing, the name **"Lite"Router** is becoming delightfully ironic.
 
 Unlike synthetic or heavyweight benchmarks (e.g. SWE-bench, HumanEval) that require multi-gigabyte Docker sandboxes, headless Chromium browsers, or hours of runtime, LiteRouter's gauntlet runs **100% natively in Bun in <60 seconds**.
 

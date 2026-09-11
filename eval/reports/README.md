@@ -1,8 +1,13 @@
 # 📊 Model Evaluation Reports (`eval/reports/`)
 
+> *"All models are wrong, but some are useful."* — **George E. P. Box**  
+> *"So use our eval, we will tell you what is wrong."* — **Francis Yap**
+
 > **Empirical Scorecards and Role Assignment Archives for LLMs Tested on LiteRouter**
 
 This directory stores automatically generated Markdown report cards created by `eval/eval.ts`. Each report acts as an empirical audit artifact certifying a model's speed, agentic tool capabilities, and web frontend viability.
+
+*(Note: This evaluation harness is just a small subset of what LiteRouter accomplishes as an industrial proxy, protocol sanitizer, and adaptive pacer—the prefix "Lite" is rapidly becoming an ironic misnomer!)*
 
 ---
 

@@ -56,6 +56,7 @@
 
 # sync.remote: "git+https://github.com/Acivar-Digital/literouter.git"
 validation:
-    on-create: warn
+    on-create: error
+    on-close: error
 sync:
     remote: "git+ssh://git@github.com/Acivar-Digital/literouter.git"
