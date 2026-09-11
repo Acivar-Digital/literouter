@@ -279,18 +279,13 @@ Status mapping (all probes): `200` → `PASS`; `401`/`403` → `FAIL` (replace
 key); `429`, other 4xx/5xx, timeouts, connection errors → `WARN` (key stays
 in pool). Zero keys in a pool → `⏭️ Skipped`, never a failure.
 
-### 4.2 Unified 5-Stage Model Certification Harnesses — `eval/onboard.ts` & `eval/onboard_rs.ts`
+### 4.2 Unified 5-Stage Model Certification Harness — `eval/code.ts`
 
-The dedicated evaluation harnesses in `eval/` certify models end-to-end across an industrial 5-stage pipeline:
+The dedicated evaluation harness in `eval/` certifies models end-to-end across an industrial 5-stage pipeline, supporting both Chat Completions (`POST /v1/chat/completions`) and OpenAI Responses API (`POST /v1/responses`):
 
-**Chat Completions Models (`POST /v1/chat/completions`):**
 ```bash
-bun run eval/onboard.ts <model_name> [options]
-```
-
-**OpenAI Responses API Models (`POST /v1/responses`):**
-```bash
-bun run eval/onboard_rs.ts <model_name> [options]
+bun run eval/code.ts <model_name> [options]
+# Options: --wire <chat|rs>, --directive <key>, --stage <1-5>, --continue
 ```
 
 **Modular Stage Architecture (`eval/stages/` & `eval/stages_rs/`):**
@@ -319,12 +314,21 @@ bun run eval/onboard_rs.ts <model_name> [options]
 - `--runs <n>`: Number of benchmark runs (default: 2).
 - `--directive <key>`: Directive key (default: `lr-or-oa-ch-no` for Chat, `lr-zn-oo-rs-no` for Responses).
 
-### 4.2.1 Web Vision-Language Model Evaluation Harness — `eval/build_web.ts`
+### 4.2.1 Web Vision-Language Model Evaluation Harness — `eval/web.ts`
 
 The dedicated evaluation harness in `eval/` specifically tailored for front-end website generation and Vision-Language models (e.g. `inclusionai/ling-3.0-flash-vl:free`, GPT-4o, Sonnet):
 
 ```bash
-bun run eval/build_web.ts [model_name] [options]
+bun run eval/web.ts [model_name] [options]
+```
+
+### 4.2.2 Master Evaluation Orchestrator — `eval/eval.ts`
+
+Runs the complete gauntlet (speed, coding/agentic, and web UI) in one pass, classifies the model's architectural role (Orchestrator, General Coder, or Explorer), and produces an executive Markdown report card in `eval/reports/`:
+
+```bash
+bun run eval/eval.ts <model_name> [options]
+# Options: --suites speed,code,web, --reasoning <none|medium|high>, --stage <1-5>
 ```
 
 **5 Specialized Frontend Evaluation Stages (`eval/stages_web/`):**

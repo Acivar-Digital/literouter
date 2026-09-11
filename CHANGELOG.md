@@ -8,13 +8,19 @@ All notable changes to LiteRouter will be documented in this file.
 - **Unified Evaluation Taxonomy**:
   - Reorganized the evaluation suite into a clear, intuitive 3-pillar taxonomy:
     - `eval/speed.ts`: Model latency, TTFT, and tokens/sec throughput benchmark (moved from `scripts/bench_speed.ts`).
-    - `eval/code.ts`: 5-stage agentic & coding capability harness supporting dual Chat Completions and Responses API protocols polymorphically (renamed from `eval/onboard.ts`).
-    - `eval/web.ts`: 5-stage Vision-Language web frontend generation harness (renamed from `eval/build_web.ts`).
-  - Maintained zero-breakage backward compatibility: `scripts/bench_speed.ts`, `eval/onboard.ts`, and `eval/build_web.ts` preserved as thin delegation stubs.
+    - `eval/code.ts`: 5-stage agentic & coding capability harness supporting dual Chat Completions and Responses API protocols polymorphically (replaces `eval/onboard.ts` and `eval/onboard_rs.ts`).
+    - `eval/web.ts`: 5-stage Vision-Language web frontend generation harness (replaces `eval/build_web.ts`).
+  - Pruned deprecated entrypoints (`eval/build_web.ts`, `eval/onboard.ts`, `eval/onboard_rs.ts`) and updated skill references in `.opencode2/skills/literouter/`.
 - **Master Evaluation Orchestrator (`eval/eval.ts`)**:
   - Built a comprehensive CLI and programmatic orchestrator coordinating `speed`, `code`, and `web` evaluation suites in a single command.
   - Generates executive Markdown report cards saved directly into `eval/reports/<sanitized_model_name>.md`.
   - Implements automatic **Architectural Role Recommendation** classifying models as Orchestrator, General Coder, or Explorer based on empirical benchmark criteria.
+- **Comprehensive Documentation**:
+  - Added dedicated README guides across the evaluation hierarchy:
+    - `eval/README.md`: Master gauntlet guide, 3 pillars, CLI flags, architectural roles, and community contribution guide.
+    - `eval/stages/README.md`: Specification and scoring rubrics for the 5-stage coding & agentic harness.
+    - `eval/stages_web/README.md`: Specification and scoring rubrics for the 5-stage web vision-language harness.
+    - `eval/reports/README.md`: Scorecard schema, reporting archives, and tested model Hall of Fame.
 - **Resilience & Testing**:
   - Added unit test suite `tests/unit/eval_orchestrator.test.ts` (7 passing tests), raising total unit tests to 730 passing.
   - Zero `.env.local` or key modifications; 100% native Bun execution.

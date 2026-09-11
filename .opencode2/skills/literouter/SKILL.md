@@ -23,9 +23,9 @@ description: LiteRouter API Gateway operational guide for Bun/TypeScript proxy o
 | Hard key reset (auth-free) | `curl -sk -X POST https://localhost:7766/reset` |
 | Unit tests | `bun test` |
 | Diagnostics | `bun run scripts/doctor.ts` (JSON schema + live upstream key probes for Google, NVIDIA, OpenRouter, Zen) |
-| Unified Model Onboarding (Chat) | `bun run eval/onboard.ts <model_name>` (runs 5-stage capability probe, speed benchmark & reasoning audit) |
-| Unified Model Onboarding (Responses) | `bun run eval/onboard_rs.ts <model_name>` (runs 5-stage certification for POST /v1/responses) |
-| Web Model Evaluation (Vision/Code) | `bun run eval/build_web.ts <model_name>` (runs 5-stage visual, responsive, state, hygiene & a11y audit) |
+| Master Model Evaluation Gauntlet | `bun run eval/eval.ts <model_name>` (orchestrates speed, code & web, outputs markdown report card) |
+| Coding & Agentic Benchmark | `bun run eval/code.ts <model_name>` (5-stage wire, pydantic, loop, str_replace & injection audit; dual Chat/Responses) |
+| Web Frontend Evaluation | `bun run eval/web.ts <model_name>` (5-stage DOM structure, responsive, React state, hygiene & a11y audit) |
 | Model probe & onboarding | `bun run scripts/probe_model.ts <model_name>` (validates OpenCode 2, Claude Code CLI & Pydantic AI) |
 | Model speed & throughput | `bun run eval/speed.ts` (measures TTFT, duration, tokens/sec; alias: `scripts/bench_speed.ts`) |
 | OpenCode2 Auto-Patch | `bash scripts/opencode2_autopatch.sh` (fast <5ms self-heal & binary verification) |
