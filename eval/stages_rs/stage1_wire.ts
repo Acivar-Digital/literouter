@@ -41,6 +41,7 @@ export async function runStage1Wire(ctx: StageContext): Promise<StageResult> {
 
   // --- Sub-test 1.1: Single-tool structured invocation via Responses API ---
   console.log(`   [1.1] Testing Responses API Flat Tool Calling Primitives...`);
+  const startTime = performance.now();
   try {
     const bashTool: ResponsesToolDefinition = {
       type: "function",
@@ -68,6 +69,8 @@ export async function runStage1Wire(ctx: StageContext): Promise<StageResult> {
       }),
     });
 
+    result.durationMs = Math.round(performance.now() - startTime);
+
     if (!resp1.ok) {
       const errText = await resp1.text();
       result.notes.push(`Test 1.1 failed with HTTP ${resp1.status}: ${errText}`);
@@ -75,6 +78,13 @@ export async function runStage1Wire(ctx: StageContext): Promise<StageResult> {
       console.log(`         ❌ Test 1.1 Failed: HTTP ${resp1.status} - ${errText.slice(0, 120)}`);
     } else {
       const data1 = (await resp1.json()) as ResponsesApiResponse;
+      const usage1 = data1.usage as { output_tokens?: number; completion_tokens?: number } | undefined;
+      const completionTokens = usage1?.output_tokens ?? usage1?.completion_tokens;
+      if (typeof completionTokens === "number") {
+        result.completionTokens = completionTokens;
+        result.tokensPerSec = Number((completionTokens / (result.durationMs / 1000)).toFixed(1));
+      }
+
       const functionCalls = extractFunctionCalls(data1.output);
       const text = extractAssistantText(data1.output);
 
@@ -91,6 +101,7 @@ export async function runStage1Wire(ctx: StageContext): Promise<StageResult> {
       }
     }
   } catch (err: unknown) {
+    result.durationMs = Math.round(performance.now() - startTime);
     if (err instanceof Error && (err.name === "TimeoutError" || err.name === "AbortError")) {
       result.notes.push("Request timed out after " + (ctx.timeoutMs ?? 120000) + "ms");
       console.log(`         ❌ Test 1.1 Timeout: Request timed out after ${ctx.timeoutMs ?? 120000}ms`);

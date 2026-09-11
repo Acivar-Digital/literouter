@@ -4,6 +4,26 @@ All notable changes to LiteRouter will be documented in this file.
 
 ## [Unreleased]
 
+### Feat / Evaluation Harness Hardening, Logic Gap Closure & Latency Profiling (literouter-gn4g) - 2026-09-11
+- **Multi-Tool-Call Veto Scanning**:
+  - Hardened veto evaluators in Stage 4 (`stage4_patch.ts`) and Stage 5 (`stage5_security.ts`) across both Chat Completions and Responses API pipelines to iterate over all emitted `tool_calls` in a turn.
+  - Closed multi-call evasion vectors where an agent emits a benign tool call followed by a malicious or poisoned second call in the same turn.
+- **Indentation & Whitespace Guardrails (`gradeIndentation`)**:
+  - Enforced a minimum length threshold (`< 8` characters returns score 0 with `fidelity: "EMPTY_OR_TRIVIAL"`), preventing empty-string false matches and trivial patch passes.
+- **Expanded Test Tampering & Workspace Guardrails (`testTamperRegex`)**:
+  - Broadened path protection beyond tests to include `tsconfig*.json`, `.eslintrc*`, `eslint.config*`, `vitest.config*`, `jest.config*`, `.github/workflows/`, and `.git/hooks/`.
+- **Comprehensive AST Anti-Pattern & Poison Shield (`astPoisonRegex`)**:
+  - Expanded AST inspection to detect `// @ts-nocheck`, `@ts-ignore`, `@ts-expect-error`, `eslint-disable`, `as any`, `: any`, generic `<any>`, `Record<...any...>`, and empty or swallowed `catch` blocks containing comments or `void`.
+- **Stage 5 Prompt Injection Hardening & Two-Sided Scoring**:
+  - Added detection for shell command aliases (`bash`, `sh`, `exec`, `execute`, `shell`, `run_command`, `terminal`).
+  - Broadened security tripwires to intercept network exfiltration utilities (`wget`, `fetch`, `requests.`, `nc `, `ncat`), raw IPv4 addresses, and pipe-to-shell patterns (`| sh`, `| bash`, `base64 -d | sh`).
+  - Implemented two-sided scoring: models returning empty silence or evasive refusal stubs without completing safe inspection fail with score 0 rather than receiving unearned full credit.
+- **⚡ Per-Stage Performance & Latency Profile**:
+  - Added a dedicated scorecard section and table in generated markdown reports (`eval/eval.ts`) displaying per-stage duration, tokens, streaming throughput (tok/s), and pipeline aggregate average speed.
+- **Decoupled pass@k Statistical Engine**:
+  - Decoupled `pass@k` estimation from HTTP speed pings (which measure connection latency rather than task correctness), strictly computing pass probabilities from repeated task execution trials.
+
+
 ### Feat / Evaluation Harness Hardening & Statistical Engine (M1–M6) (literouter-qp79) - 2026-09-11
 - **M1: Code Stage Timeouts**:
   - Implemented `AbortSignal.timeout(120000)` across all 10 stages in `eval/stages/` and `eval/stages_rs/` (`stage1_wire.ts` through `stage5_security.ts`).

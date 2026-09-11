@@ -92,6 +92,7 @@ export async function runStage2Pydantic(ctx: StageContext): Promise<StageResult>
   console.log(`   [2.1] Testing Strict Complex Schema Extraction...`);
   let initialParsed: ComplexPayload | null = null;
 
+  const startTime = performance.now();
   try {
     const resp1 = await fetch(ctx.gatewayUrl, {
       method: "POST",
@@ -113,8 +114,16 @@ export async function runStage2Pydantic(ctx: StageContext): Promise<StageResult>
       signal: AbortSignal.timeout(ctx.timeoutMs ?? 120000),
     });
 
+    result.durationMs = Math.round(performance.now() - startTime);
+
     if (resp1.ok) {
       const data1 = (await resp1.json()) as Record<string, unknown>;
+      const usage = data1.usage as Record<string, unknown> | undefined;
+      const completionTokens = typeof usage?.completion_tokens === "number" ? usage.completion_tokens : undefined;
+      if (typeof completionTokens === "number") {
+        result.completionTokens = completionTokens;
+        result.tokensPerSec = Number((completionTokens / (result.durationMs / 1000)).toFixed(1));
+      }
       const choice = (data1.choices as Array<Record<string, unknown>>)?.[0];
       const content = ((choice?.message as Record<string, unknown>)?.content as string) || "";
       const cleaned = cleanJsonText(content);
@@ -135,6 +144,7 @@ export async function runStage2Pydantic(ctx: StageContext): Promise<StageResult>
       console.log(`         ❌ Test 2.1 Failed: HTTP ${resp1.status}`);
     }
   } catch (err) {
+    result.durationMs = Math.round(performance.now() - startTime);
     if (err instanceof Error && err.name === "TimeoutError") {
       result.notes.push("Request timed out after " + (ctx.timeoutMs ?? 120000) + "ms");
     } else {

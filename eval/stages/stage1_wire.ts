@@ -39,6 +39,7 @@ export async function runStage1Wire(ctx: StageContext): Promise<StageResult> {
 
   // --- Sub-test 1.1: Single-tool structured invocation via Chat Completions ---
   console.log(`   [1.1] Testing OpenAI Wire & Tool Calling Primitives...`);
+  const startTime = performance.now();
   try {
     const resp1 = await fetch(ctx.gatewayUrl, {
       method: "POST",
@@ -68,6 +69,8 @@ export async function runStage1Wire(ctx: StageContext): Promise<StageResult> {
       }),
     });
 
+    result.durationMs = Math.round(performance.now() - startTime);
+
     if (!resp1.ok) {
       const errText = await resp1.text();
       result.notes.push(`Test 1.1 failed with HTTP ${resp1.status}: ${errText}`);
@@ -75,6 +78,13 @@ export async function runStage1Wire(ctx: StageContext): Promise<StageResult> {
       console.log(`         ❌ Test 1.1 Failed: HTTP ${resp1.status} - ${errText.slice(0, 120)}`);
     } else {
       const data1 = (await resp1.json()) as Record<string, unknown>;
+      const usage1 = data1.usage as Record<string, unknown> | undefined;
+      const completionTokens = typeof usage1?.completion_tokens === "number" ? usage1.completion_tokens : undefined;
+      if (typeof completionTokens === "number") {
+        result.completionTokens = completionTokens;
+        result.tokensPerSec = Number((completionTokens / (result.durationMs / 1000)).toFixed(1));
+      }
+
       const choice = (data1.choices as Array<Record<string, unknown>>)?.[0];
       const message = choice?.message as Record<string, unknown>;
       const toolCalls = message?.tool_calls as Array<Record<string, unknown>>;
@@ -93,6 +103,7 @@ export async function runStage1Wire(ctx: StageContext): Promise<StageResult> {
       }
     }
   } catch (err) {
+    result.durationMs = Math.round(performance.now() - startTime);
     if (
       err instanceof Error &&
       (err.name === "TimeoutError" || err.name === "AbortError" || err.message.includes("timed out"))

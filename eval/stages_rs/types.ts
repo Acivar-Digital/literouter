@@ -19,6 +19,9 @@ export interface StageResult {
   details: Record<string, unknown>;
   notes: string[];
   vetoTriggered?: string;
+  durationMs?: number;
+  completionTokens?: number;
+  tokensPerSec?: number;
 }
 
 export interface ResponsesToolFunction {

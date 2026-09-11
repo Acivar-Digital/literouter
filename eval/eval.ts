@@ -229,25 +229,122 @@ function extractSpeedRunData(summary: EvalOrchestratorSummary): {
   return extractSpeedFromAgg(summary);
 }
 
-function resolvePassCounts(
-  speedData: { successCount: number; totalCount: number },
-  summary: EvalOrchestratorSummary,
-  runs: number
+export interface PipelineTelemetry {
+  totalDurationMs: number;
+  totalTokens: number;
+  pipelineAvgSpeed: number;
+}
+
+/**
+ * Normalizes stage names (e.g., "Stage 1: Wire Protocol" -> "1. Wire Protocol").
+ */
+export function formatStageName(rawName: string, index: number): string {
+  const match = rawName.match(/^(?:Stage\s*)?(\d+)[:\s.-]*(.*)$/i);
+  if (match && match[1]) {
+    const num = match[1];
+    const rest = match[2]?.trim() || `Stage ${num}`;
+    return `${num}. ${rest}`;
+  }
+  return `${index + 1}. ${rawName}`;
+}
+
+/**
+ * Aggregates duration, tokens, and computes pipeline average speed (tokens / duration_sec).
+ */
+export function computePipelineAvgSpeed(
+  codeResults: CodeStageResult[] = [],
+  webStages: WebStageResult[] = []
+): PipelineTelemetry {
+  let totalDurationMs = 0;
+  let totalTokens = 0;
+  let tokenDurationMs = 0;
+
+  for (const r of codeResults) {
+    if (typeof r.durationMs === "number" && r.durationMs > 0) {
+      totalDurationMs += r.durationMs;
+    }
+    if (typeof r.completionTokens === "number" && r.completionTokens > 0) {
+      totalTokens += r.completionTokens;
+      if (typeof r.durationMs === "number" && r.durationMs > 0) {
+        tokenDurationMs += r.durationMs;
+      }
+    }
+  }
+
+  for (const s of webStages) {
+    if (typeof s.durationMs === "number" && s.durationMs > 0) {
+      totalDurationMs += s.durationMs;
+    }
+  }
+
+  const durationSec = (tokenDurationMs > 0 ? tokenDurationMs : totalDurationMs) / 1000;
+  const pipelineAvgSpeed = totalTokens > 0 && durationSec > 0 ? totalTokens / durationSec : 0;
+
+  return { totalDurationMs, totalTokens, pipelineAvgSpeed };
+}
+
+/**
+ * Resolves the number of trials (n) and successful trials (c) for pass@k statistical analysis.
+ *
+ * CRITICAL STATISTICAL CONSTRAINTS:
+ * 1. NEVER use speedData (HTTP round-trip success/failure) for pass@k. Speed benchmarks
+ *    test network latency and throughput, NOT task correctness!
+ * 2. pass@k is only statistically valid over repeated trials of the same evaluation run.
+ * 3. When runs > 1, compute pass@k from the overall multi-run pass rate of the evaluation.
+ * 4. When runs === 1, do not masquerade single-attempt runs as multi-trial statistics:
+ *    set pass@1 to the actual completion percentage, and do not compute invalid pass@k factors.
+ */
+export function resolvePassCounts(
+  summaryOrSpeedData: any,
+  summaryOrRuns?: any,
+  maybeRuns?: any
 ): { n: number; c: number } {
-  if (speedData.totalCount > 0) {
-    return { n: speedData.totalCount, c: speedData.successCount };
+  let summary: EvalOrchestratorSummary;
+  let runs = 1;
+
+  if (summaryOrSpeedData && typeof summaryOrSpeedData === "object" && "model" in summaryOrSpeedData) {
+    summary = summaryOrSpeedData as EvalOrchestratorSummary;
+    runs = typeof summaryOrRuns === "number" ? summaryOrRuns : (summary.runs ?? 1);
+  } else if (summaryOrRuns && typeof summaryOrRuns === "object" && "model" in summaryOrRuns) {
+    // Legacy signature: resolvePassCounts(speedData, summary, runs)
+    // NEVER use speedData!
+    summary = summaryOrRuns as EvalOrchestratorSummary;
+    runs = typeof maybeRuns === "number" ? maybeRuns : (summary.runs ?? 1);
+  } else {
+    return { n: 1, c: 0 };
   }
-  const codeResults = summary.codeSummary?.results;
-  if (codeResults && codeResults.length > 0) {
-    const passed = codeResults.filter((r) => r.passed).length;
-    return { n: codeResults.length, c: passed };
+
+  const codeResults = summary.codeSummary?.results ?? [];
+  const webStages = summary.webResult?.stages ?? [];
+  const totalStages = codeResults.length + webStages.length;
+  const passedStages =
+    codeResults.filter((r) => r.passed).length +
+    webStages.filter((s) => s.passed).length;
+
+  if (runs <= 1) {
+    // Single-attempt run: pass@1 is the actual completion percentage
+    if (totalStages > 0) {
+      return { n: totalStages, c: passedStages };
+    }
+    return { n: 1, c: summary.allSuitesPassed ? 1 : 0 };
   }
-  const webStages = summary.webResult?.stages;
-  if (webStages && webStages.length > 0) {
-    const passed = webStages.filter((s) => s.passed).length;
-    return { n: webStages.length, c: passed };
+
+  // Multi-run evaluation (runs > 1):
+  // Compute pass@k from the overall multi-run pass rate of the evaluation.
+  const passRate = totalStages > 0
+    ? passedStages / totalStages
+    : (summary.allSuitesPassed ? 1.0 : 0.0);
+
+  const n = runs;
+  let c = Math.round(passRate * runs);
+  if (summary.allSuitesPassed && c < runs) {
+    c = runs;
   }
-  return { n: runs, c: summary.allSuitesPassed ? runs : 0 };
+  if (!summary.allSuitesPassed && passRate === 0) {
+    c = 0;
+  }
+  c = Math.max(0, Math.min(n, c));
+  return { n, c };
 }
 
 function formatLatencyMetrics(speedData: { ttfts: number[]; latencies: number[] }): {
@@ -285,13 +382,12 @@ export function buildStatisticalAnalysisSection(
 ): string[] {
   const lines: string[] = [];
   const speedData = extractSpeedRunData(summary);
-  const { n, c } = resolvePassCounts(speedData, summary, runs);
+  const { n, c } = resolvePassCounts(summary, runs);
   const k = Math.max(1, Math.min(runs, n));
 
-  const pass1 = computePassAtK(n, c, 1);
-  const passK = computePassAtK(n, c, k);
+  const pass1 = n > 0 ? c / n : 0;
   const pass1Str = `${(pass1 * 100).toFixed(1)}%`;
-  const passKStr = `${(passK * 100).toFixed(1)}%`;
+  const passKStr = runs > 1 ? `${(computePassAtK(n, c, k) * 100).toFixed(1)}%` : "N/A (Single Attempt)";
   const latencyMetrics = formatLatencyMetrics(speedData);
 
   lines.push(`## 📊 Statistical Analysis (Runs: ${runs})`);
@@ -419,11 +515,73 @@ export function determineArchitecturalRole(
 }
 
 /**
+ * Renders the dedicated Per-Stage Performance & Latency Profile table.
+ */
+export function buildPerStageProfileSection(
+  summary: EvalOrchestratorSummary,
+  telemetry: PipelineTelemetry
+): string[] {
+  const codeResults = (summary.codeSummary?.results ?? []) as CodeStageResult[];
+  const webStages = (summary.webResult?.stages ?? []) as WebStageResult[];
+
+  if (codeResults.length === 0 && webStages.length === 0) {
+    return [];
+  }
+
+  const lines: string[] = [];
+  lines.push("## ⚡ Per-Stage Performance & Latency Profile");
+  lines.push("");
+  lines.push("| Stage / Test | Duration | Tokens | Speed (tok/s) | Status |");
+  lines.push("|---|:---:|:---:|:---:|:---:|");
+
+  for (let i = 0; i < codeResults.length; i++) {
+    const r = codeResults[i]!;
+    const stageLabel = formatStageName(r.stageName, i);
+    const durStr = typeof r.durationMs === "number" ? `${r.durationMs} ms` : "-";
+    const tokStr = typeof r.completionTokens === "number" ? `${r.completionTokens}` : "-";
+    let spdStr = "-";
+    if (typeof r.tokensPerSec === "number") {
+      spdStr = `${r.tokensPerSec.toFixed(1)} tok/s`;
+    } else if (typeof r.completionTokens === "number" && typeof r.durationMs === "number" && r.durationMs > 0) {
+      spdStr = `${((r.completionTokens / r.durationMs) * 1000).toFixed(1)} tok/s`;
+    }
+    const statusStr = r.passed ? "✅ Passed" : "❌ Failed";
+    lines.push(`| ${stageLabel} | ${durStr} | ${tokStr} | ${spdStr} | ${statusStr} |`);
+  }
+
+  for (const s of webStages) {
+    const stageLabel = `Web ${s.stageNumber}. ${s.stageName}`;
+    const durStr = typeof s.durationMs === "number" ? `${s.durationMs} ms` : "-";
+    const tokStr = "-";
+    const spdStr = "-";
+    const statusStr = s.passed ? "✅ Passed" : "❌ Failed";
+    lines.push(`| ${stageLabel} | ${durStr} | ${tokStr} | ${spdStr} | ${statusStr} |`);
+  }
+
+  const { totalDurationMs, totalTokens, pipelineAvgSpeed } = telemetry;
+  const aggDurStr = totalDurationMs > 0 ? `**${totalDurationMs} ms**` : `**-**`;
+  const aggTokStr = totalTokens > 0 ? `**${totalTokens}**` : `**-**`;
+  const aggSpdStr = pipelineAvgSpeed > 0 ? `**${pipelineAvgSpeed.toFixed(1)} tok/s (avg)**` : `**-**`;
+  const allPassed =
+    (codeResults.length === 0 || codeResults.every((r) => r.passed)) &&
+    (webStages.length === 0 || webStages.every((s) => s.passed));
+  const aggStatusStr = allPassed ? "✅ Passed" : "❌ Failed";
+
+  lines.push(`| **Pipeline Aggregate** | ${aggDurStr} | ${aggTokStr} | ${aggSpdStr} | ${aggStatusStr} |`);
+  lines.push("");
+
+  return lines;
+}
+
+/**
  * Generates an executive Markdown report card from evaluation results.
  */
 export function generateMarkdownReport(summary: EvalOrchestratorSummary): string {
   const lines: string[] = [];
   const rec = summary.roleRecommendation;
+  const codeResults = (summary.codeSummary?.results ?? []) as CodeStageResult[];
+  const webStages = (summary.webResult?.stages ?? []) as WebStageResult[];
+  const telemetry = computePipelineAvgSpeed(codeResults, webStages);
 
   lines.push(`# 🏛️ Model Evaluation Report Card: \`${summary.model}\``);
   lines.push("");
@@ -432,6 +590,9 @@ export function generateMarkdownReport(summary: EvalOrchestratorSummary): string
   lines.push(`> **Wire Protocol:** \`${summary.wire.toUpperCase()}\`  `);
   lines.push(`> **Gateway Target:** \`${summary.gatewayUrl}\`  `);
   lines.push(`> **Evaluated Suites:** \`${summary.suitesRun.join(", ")}\`  `);
+  if (telemetry.pipelineAvgSpeed > 0) {
+    lines.push(`> **Pipeline Avg Speed:** \`${telemetry.pipelineAvgSpeed.toFixed(1)} tok/s\`  `);
+  }
   lines.push("");
   lines.push("---");
   lines.push("");
@@ -565,6 +726,14 @@ export function generateMarkdownReport(summary: EvalOrchestratorSummary): string
 
   lines.push("---");
   lines.push("");
+
+  // Per-Stage Performance & Latency Profile Section
+  const stageProfileLines = buildPerStageProfileSection(summary, telemetry);
+  if (stageProfileLines.length > 0) {
+    lines.push(...stageProfileLines);
+    lines.push("---");
+    lines.push("");
+  }
 
   // Statistical Analysis Section (Runs > 1)
   const runs = summary.runs ??

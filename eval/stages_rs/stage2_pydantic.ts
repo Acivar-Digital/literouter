@@ -80,6 +80,20 @@ function cleanJsonText(raw: string): string {
   return cleaned.trim();
 }
 
+function extractCompletionTokens(data: ResponsesApiResponse): number | undefined {
+  const usage = data.usage as { output_tokens?: number; completion_tokens?: number } | undefined;
+  return usage?.output_tokens ?? usage?.completion_tokens;
+}
+
+function finalizeTelemetry(result: StageResult, startTime: number, totalTokens: number): void {
+  result.durationMs = Math.round(performance.now() - startTime);
+  if (totalTokens > 0) {
+    result.completionTokens = totalTokens;
+    const durationSec = result.durationMs > 0 ? result.durationMs / 1000 : 0.001;
+    result.tokensPerSec = Number((totalTokens / durationSec).toFixed(1));
+  }
+}
+
 export async function runStage2Pydantic(ctx: StageContext): Promise<StageResult> {
   const result: StageResult = {
     stageName: "Stage 2: Pydantic Schema & Self-Correction Retry",
@@ -88,6 +102,9 @@ export async function runStage2Pydantic(ctx: StageContext): Promise<StageResult>
     details: {},
     notes: [],
   };
+
+  const startTime = performance.now();
+  let totalCompletionTokens = 0;
 
   console.log(`\n========================================================================`);
   console.log(`🛡️  STAGE 2: RESPONSES API SCHEMA & RETRY BENCHMARK`);
@@ -118,8 +135,15 @@ export async function runStage2Pydantic(ctx: StageContext): Promise<StageResult>
       }),
     });
 
+    result.durationMs = Math.round(performance.now() - startTime);
+
     if (resp1.ok) {
       const data1 = (await resp1.json()) as ResponsesApiResponse;
+      const tokens1 = extractCompletionTokens(data1);
+      if (typeof tokens1 === "number") {
+        totalCompletionTokens += tokens1;
+      }
+
       const text = extractAssistantText(data1.output);
       const cleaned = cleanJsonText(text);
       const parsed = JSON.parse(cleaned);
@@ -140,6 +164,7 @@ export async function runStage2Pydantic(ctx: StageContext): Promise<StageResult>
       console.log(`         ❌ Test 2.1 Failed: HTTP ${resp1.status}`);
     }
   } catch (err: unknown) {
+    result.durationMs = Math.round(performance.now() - startTime);
     if (err instanceof Error && (err.name === "TimeoutError" || err.name === "AbortError")) {
       result.notes.push("Request timed out after " + (ctx.timeoutMs ?? 120000) + "ms");
       console.log(`         ❌ Test 2.1 Timeout: Request timed out after ${ctx.timeoutMs ?? 120000}ms`);
@@ -180,8 +205,15 @@ export async function runStage2Pydantic(ctx: StageContext): Promise<StageResult>
       }),
     });
 
+    result.durationMs = Math.round(performance.now() - startTime);
+
     if (resp2.ok) {
       const data2 = (await resp2.json()) as ResponsesApiResponse;
+      const tokens2 = extractCompletionTokens(data2);
+      if (typeof tokens2 === "number") {
+        totalCompletionTokens += tokens2;
+      }
+
       const text2 = extractAssistantText(data2.output);
       const cleaned2 = cleanJsonText(text2);
       const parsed2 = JSON.parse(cleaned2);
@@ -201,6 +233,7 @@ export async function runStage2Pydantic(ctx: StageContext): Promise<StageResult>
       console.log(`         ❌ Test 2.2 Failed: HTTP ${resp2.status}`);
     }
   } catch (err: unknown) {
+    result.durationMs = Math.round(performance.now() - startTime);
     if (err instanceof Error && (err.name === "TimeoutError" || err.name === "AbortError")) {
       result.notes.push("Request timed out after " + (ctx.timeoutMs ?? 120000) + "ms");
       console.log(`         ❌ Test 2.2 Timeout: Request timed out after ${ctx.timeoutMs ?? 120000}ms`);
@@ -210,6 +243,7 @@ export async function runStage2Pydantic(ctx: StageContext): Promise<StageResult>
     }
   }
 
+  finalizeTelemetry(result, startTime, totalCompletionTokens);
   result.passed = result.score >= 50;
   return result;
 }

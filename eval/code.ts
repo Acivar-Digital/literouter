@@ -185,19 +185,48 @@ function printHeader(
   console.log(`========================================================================`);
 }
 
+function formatStageDuration(result: StageResult): string {
+  if (result.durationMs === undefined) return "N/A";
+  return `${result.durationMs}ms`;
+}
+
+function formatStageSpeed(result: StageResult): string {
+  if (result.tokensPerSec !== undefined) {
+    return `${result.tokensPerSec} tok/s`;
+  }
+  if (result.completionTokens !== undefined && result.durationMs && result.durationMs > 0) {
+    const spd = (result.completionTokens / (result.durationMs / 1000)).toFixed(1);
+    return `${spd} tok/s`;
+  }
+  return "N/A";
+}
+
+function formatStageLoopLog(stageNum: number, result: StageResult): string {
+  const statusText = result.passed ? "Passed" : "Failed";
+  const latencyPart = result.durationMs !== undefined ? ` | Latency: ${result.durationMs}ms` : "";
+  const speed = formatStageSpeed(result);
+  const speedPart = speed !== "N/A" ? ` | Speed: ${speed}` : "";
+  return `Stage ${stageNum}: ${statusText} (${result.score} pts)${latencyPart}${speedPart}`;
+}
+
 export function printFinalSummary(model: string, wire: string, results: StageResult[]): void {
-  console.log(`\n========================================================================`);
+  const divider = `|${"-".repeat(56)}|${"-".repeat(9)}|${"-".repeat(8)}|${"-".repeat(12)}|${"-".repeat(15)}|`;
+  const banner = "=".repeat(106);
+
+  console.log(`\n${banner}`);
   console.log(`📊 CERTIFICATION AUDIT REPORT: \x1b[1m${model}\x1b[0m [${wire.toUpperCase()}]`);
-  console.log(`========================================================================`);
-  console.log(`| Stage Name                                           | Score | Status |`);
-  console.log(`|------------------------------------------------------|-------|--------|`);
+  console.log(banner);
+  console.log(`| ${"Stage".padEnd(54)} | ${"Score".padStart(7)} | ${"Status".padEnd(6)} | ${"Duration".padStart(10)} | ${"Speed (tok/s)".padStart(13)} |`);
+  console.log(divider);
 
   let allPassed = results.length > 0;
   for (const r of results) {
-    const padName = r.stageName.padEnd(52).slice(0, 52);
-    const padScore = `${r.score}/100`.padStart(5);
+    const padName = r.stageName.padEnd(54).slice(0, 54);
+    const padScore = `${r.score}/100`.padStart(7);
     const statusStr = r.passed ? `\x1b[32mPASSED\x1b[0m` : `\x1b[31mFAILED\x1b[0m`;
-    console.log(`| ${padName} | ${padScore} | ${statusStr} |`);
+    const padDur = formatStageDuration(r).padStart(10);
+    const padSpeed = formatStageSpeed(r).padStart(13);
+    console.log(`| ${padName} | ${padScore} | ${statusStr} | ${padDur} | ${padSpeed} |`);
     if (!r.passed) {
       allPassed = false;
       for (const note of r.notes) {
@@ -206,13 +235,18 @@ export function printFinalSummary(model: string, wire: string, results: StageRes
     }
   }
 
-  console.log(`========================================================================`);
+  const totalTokens = results.reduce((acc, r) => acc + (r.completionTokens ?? 0), 0);
+  const totalDurationSec = results.reduce((acc, r) => acc + (r.durationMs ?? 0), 0) / 1000;
+  const avgSpeed = totalDurationSec > 0 ? (totalTokens / totalDurationSec).toFixed(1) : "N/A";
+
+  console.log(banner);
+  console.log(`⚡ Overall Pipeline Average Speed: ${avgSpeed} tok/s`);
   if (allPassed) {
     console.log(`🏁 FINAL VERDICT: \x1b[32mCERTIFIED PRODUCTION-READY FOR OPENCODE 2 & CLAUDE CODE\x1b[0m`);
   } else {
     console.log(`🏁 FINAL VERDICT: \x1b[31mREJECTED - FAILED CRITICAL CERTIFICATION GATES\x1b[0m`);
   }
-  console.log(`========================================================================\n`);
+  console.log(`${banner}\n`);
 }
 
 export async function runCodeEvaluation(options: CodeEvalOptions = {}): Promise<CodeEvalSummary> {
@@ -246,6 +280,7 @@ export async function runCodeEvaluation(options: CodeEvalOptions = {}): Promise<
 
     const result = await s.runner(ctx);
     stageResults.push(result);
+    console.log(formatStageLoopLog(s.stageNum, result));
 
     if (!result.passed && !stageFilter && !continueOnFailure) {
       console.log(`\n🛑 Pipeline Aborted: Failed Stage ${s.stageNum} (${result.stageName}).`);

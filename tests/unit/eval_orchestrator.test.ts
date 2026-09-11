@@ -12,6 +12,11 @@ import {
   computePercentile,
   computeMeanAndStdDev,
   computeConfidenceInterval,
+  resolvePassCounts,
+  computePipelineAvgSpeed,
+  formatStageName,
+  buildPerStageProfileSection,
+  buildStatisticalAnalysisSection,
   type EvalOrchestratorSummary,
 } from "../../eval/eval";
 
@@ -388,6 +393,223 @@ describe("eval/eval.ts Master Orchestrator Unit Tests", () => {
         const ci = computeConfidenceInterval([10, 20], 0.95);
         expect(ci.lower).toBeCloseTo(5.2, 1);
         expect(ci.upper).toBeCloseTo(24.8, 1);
+      });
+    });
+  });
+
+  describe("Statistical pass@k Decoupling & Per-Stage Latency Profile (literouter-0rs5)", () => {
+    describe("resolvePassCounts", () => {
+      it("should NEVER use speedData for pass@k counts", () => {
+        const fakeSpeedData = { successCount: 100, totalCount: 100 };
+        const summary: EvalOrchestratorSummary = {
+          model: "test-model",
+          sanitizedModelName: "test-model",
+          timestamp: "2026-09-11T09:00:00.000Z",
+          directiveKey: "lr-or-oa-ch-no",
+          gatewayUrl: "https://localhost:7766/v1/chat/completions",
+          wire: "chat",
+          suitesRun: ["code", "speed"],
+          runs: 1,
+          codeSummary: {
+            model: "test-model",
+            wire: "chat",
+            directiveKey: "lr-or-oa-ch-no",
+            gatewayUrl: "https://localhost:7766/v1/chat/completions",
+            allPassed: false,
+            results: [
+              { stageName: "Stage 1: Wire Protocol", passed: true, score: 100, details: {}, notes: [] },
+              { stageName: "Stage 2: Strict Pydantic", passed: true, score: 100, details: {}, notes: [] },
+              { stageName: "Stage 3: Agentic Loop", passed: false, score: 40, details: {}, notes: [] },
+              { stageName: "Stage 4: Surgical Patch", passed: true, score: 90, details: {}, notes: [] },
+              { stageName: "Stage 5: Security Boundary", passed: true, score: 95, details: {}, notes: [] },
+            ],
+          },
+          roleRecommendation: {
+            role: "General Coder",
+            badge: "💻 GENERAL CODER",
+            rationale: "Decent coder",
+            strengths: [],
+            caveats: [],
+          },
+          allSuitesPassed: false,
+        };
+
+        // Pass fakeSpeedData as first argument (legacy signature)
+        const counts = resolvePassCounts(fakeSpeedData, summary, 1);
+        // Must reflect the 5 stages (4 passed, 1 failed), NOT the 100 speed runs!
+        expect(counts.n).toBe(5);
+        expect(counts.c).toBe(4);
+      });
+
+      it("should set pass@1 to actual completion percentage when runs === 1", () => {
+        const summary: EvalOrchestratorSummary = {
+          model: "test-model",
+          sanitizedModelName: "test-model",
+          timestamp: "2026-09-11T09:00:00.000Z",
+          directiveKey: "lr-or-oa-ch-no",
+          gatewayUrl: "https://localhost:7766/v1/chat/completions",
+          wire: "chat",
+          suitesRun: ["code"],
+          runs: 1,
+          codeSummary: {
+            model: "test-model",
+            wire: "chat",
+            directiveKey: "lr-or-oa-ch-no",
+            gatewayUrl: "https://localhost:7766/v1/chat/completions",
+            allPassed: false,
+            results: [
+              { stageName: "Stage 1: Wire Protocol", passed: true, score: 100, details: {}, notes: [] },
+              { stageName: "Stage 2: Pydantic Contract", passed: true, score: 100, details: {}, notes: [] },
+              { stageName: "Stage 3: Agentic Tool Calling", passed: true, score: 100, details: {}, notes: [] },
+              { stageName: "Stage 4: Patch Application", passed: true, score: 100, details: {}, notes: [] },
+              { stageName: "Stage 5: Security Boundary", passed: false, score: 0, details: {}, notes: [] },
+            ],
+          },
+          roleRecommendation: {
+            role: "General Coder",
+            badge: "💻 GENERAL CODER",
+            rationale: "Solid coder",
+            strengths: [],
+            caveats: [],
+          },
+          allSuitesPassed: false,
+        };
+
+        const counts = resolvePassCounts(summary, 1);
+        expect(counts.n).toBe(5);
+        expect(counts.c).toBe(4);
+        const pass1 = computePassAtK(counts.n, counts.c, 1);
+        expect(pass1).toBe(0.8);
+      });
+
+      it("should compute pass@k from multi-run pass rate when runs > 1", () => {
+        const summary: EvalOrchestratorSummary = {
+          model: "test-model",
+          sanitizedModelName: "test-model",
+          timestamp: "2026-09-11T09:00:00.000Z",
+          directiveKey: "lr-or-oa-ch-no",
+          gatewayUrl: "https://localhost:7766/v1/chat/completions",
+          wire: "chat",
+          suitesRun: ["code"],
+          runs: 4,
+          codeSummary: {
+            model: "test-model",
+            wire: "chat",
+            directiveKey: "lr-or-oa-ch-no",
+            gatewayUrl: "https://localhost:7766/v1/chat/completions",
+            allPassed: false,
+            results: [
+              { stageName: "Stage 1: Wire Protocol", passed: true, score: 100, details: {}, notes: [] },
+              { stageName: "Stage 2: Pydantic Contract", passed: true, score: 100, details: {}, notes: [] },
+              { stageName: "Stage 3: Agentic Tool Calling", passed: false, score: 50, details: {}, notes: [] },
+              { stageName: "Stage 4: Patch Application", passed: true, score: 90, details: {}, notes: [] },
+            ],
+          },
+          roleRecommendation: {
+            role: "General Coder",
+            badge: "💻 GENERAL CODER",
+            rationale: "Good coder",
+            strengths: [],
+            caveats: [],
+          },
+          allSuitesPassed: false,
+        };
+
+        const counts = resolvePassCounts(summary, 4);
+        expect(counts.n).toBe(4);
+        // 3 of 4 stages passed (75% pass rate), so over 4 runs: Math.round(0.75 * 4) = 3
+        expect(counts.c).toBe(3);
+      });
+    });
+
+    describe("computePipelineAvgSpeed & formatStageName", () => {
+      it("should normalize stage names cleanly", () => {
+        expect(formatStageName("Stage 1: Wire Protocol", 0)).toBe("1. Wire Protocol");
+        expect(formatStageName("Stage 2: Strict Pydantic AI 2.0 Types", 1)).toBe("2. Strict Pydantic AI 2.0 Types");
+        expect(formatStageName("3. Agentic Tool Calling", 2)).toBe("3. Agentic Tool Calling");
+        expect(formatStageName("Custom Test", 3)).toBe("4. Custom Test");
+      });
+
+      it("should calculate pipeline average speed accurately as total tokens / duration_sec", () => {
+        const codeResults = [
+          { stageName: "Stage 1: Wire Protocol", passed: true, score: 100, details: {}, notes: [], durationMs: 1000, completionTokens: 100, tokensPerSec: 100 },
+          { stageName: "Stage 2: Pydantic Contract", passed: true, score: 100, details: {}, notes: [], durationMs: 2000, completionTokens: 300, tokensPerSec: 150 },
+        ];
+        const webStages = [
+          { stageNumber: 1, stageName: "Visual DOM", passed: true, score: 90, durationMs: 500, checks: [] },
+        ];
+
+        const telemetry = computePipelineAvgSpeed(codeResults, webStages);
+        expect(telemetry.totalDurationMs).toBe(3500);
+        expect(telemetry.totalTokens).toBe(400);
+        // Token duration = 1000 + 2000 = 3000 ms (3.0s), 400 / 3.0 ~ 133.3 tok/s
+        expect(telemetry.pipelineAvgSpeed).toBeCloseTo(133.33, 1);
+      });
+    });
+
+    describe("Per-Stage Performance & Latency Profile Table in generateMarkdownReport", () => {
+      it("should render the dedicated latency profile table and pipeline avg speed banner", () => {
+        const summary: EvalOrchestratorSummary = {
+          model: "qwen/qwen-2.5-coder-32b-instruct",
+          sanitizedModelName: "qwen_qwen-2.5-coder-32b-instruct",
+          timestamp: "2026-09-11T10:00:00.000Z",
+          directiveKey: "lr-or-oa-ch-no",
+          gatewayUrl: "https://localhost:7766/v1/chat/completions",
+          wire: "chat",
+          suitesRun: ["code", "web"],
+          runs: 1,
+          codeSummary: {
+            model: "qwen/qwen-2.5-coder-32b-instruct",
+            wire: "chat",
+            directiveKey: "lr-or-oa-ch-no",
+            gatewayUrl: "https://localhost:7766/v1/chat/completions",
+            allPassed: true,
+            results: [
+              { stageName: "Stage 1: Wire Protocol", passed: true, score: 100, details: {}, notes: [], durationMs: 800, completionTokens: 120, tokensPerSec: 150.0 },
+              { stageName: "Stage 2: Pydantic Contract", passed: true, score: 100, details: {}, notes: [], durationMs: 1200, completionTokens: 240, tokensPerSec: 200.0 },
+              { stageName: "Stage 3: Agentic Tool Calling", passed: true, score: 100, details: {}, notes: [], durationMs: 2000, completionTokens: 400, tokensPerSec: 200.0 },
+              { stageName: "Stage 4: Patch Application", passed: true, score: 100, details: {}, notes: [], durationMs: 1500, completionTokens: 300, tokensPerSec: 200.0 },
+              { stageName: "Stage 5: Security Boundary", passed: true, score: 100, details: {}, notes: [], durationMs: 1000, completionTokens: 200, tokensPerSec: 200.0 },
+            ],
+          },
+          webResult: {
+            model: "qwen/qwen-2.5-coder-32b-instruct",
+            directiveKey: "lr-or-oa-ch-no",
+            gatewayUrl: "https://localhost:7766/v1/chat/completions",
+            allPassed: true,
+            compositeScore: 95,
+            totalDurationMs: 1500,
+            isProductionReady: true,
+            stages: [
+              { stageNumber: 1, stageName: "Responsive Design", passed: true, score: 95, durationMs: 1500, checks: [] },
+            ],
+          },
+          roleRecommendation: {
+            role: "Orchestrator",
+            badge: "🧠 MASTER ORCHESTRATOR",
+            rationale: "Elite capabilities across all stages.",
+            strengths: ["100% Code Certification Gates Passed"],
+            caveats: [],
+          },
+          allSuitesPassed: true,
+        };
+
+        const md = generateMarkdownReport(summary);
+
+        // 1. Check summary banner update
+        expect(md).toContain("> **Pipeline Avg Speed:** `193.8 tok/s`");
+
+        // 2. Check dedicated per-stage latency profile table
+        expect(md).toContain("## ⚡ Per-Stage Performance & Latency Profile");
+        expect(md).toContain("| Stage / Test | Duration | Tokens | Speed (tok/s) | Status |");
+        expect(md).toContain("|---|:---:|:---:|:---:|:---:|");
+        expect(md).toContain("| 1. Wire Protocol | 800 ms | 120 | 150.0 tok/s | ✅ Passed |");
+        expect(md).toContain("| 2. Pydantic Contract | 1200 ms | 240 | 200.0 tok/s | ✅ Passed |");
+        expect(md).toContain("| 3. Agentic Tool Calling | 2000 ms | 400 | 200.0 tok/s | ✅ Passed |");
+        expect(md).toContain("| 4. Patch Application | 1500 ms | 300 | 200.0 tok/s | ✅ Passed |");
+        expect(md).toContain("| 5. Security Boundary | 1000 ms | 200 | 200.0 tok/s | ✅ Passed |");
+        expect(md).toContain("| Web 1. Responsive Design | 1500 ms | - | - | ✅ Passed |");
+        expect(md).toContain("| **Pipeline Aggregate** | **8000 ms** | **1260** | **193.8 tok/s (avg)** | ✅ Passed |");
       });
     });
   });

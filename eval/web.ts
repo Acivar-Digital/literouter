@@ -61,6 +61,7 @@ export interface WebEvalOptions {
   image?: string;
   stage?: number;
   continueOnFailure?: boolean;
+  cooldownMs?: number;
   runs?: number;
   timeoutMs?: number;
   maxTokens?: number;
@@ -75,9 +76,13 @@ export interface WebEvalResult {
   allPassed: boolean;
   compositeScore: number;
   totalDurationMs: number;
+  durationMs?: number;
   isProductionReady: boolean;
   stages: StageResult[];
 }
+
+export type WebPipelineResult = WebEvalResult;
+export type WebStageResult = StageResult;
 
 export interface StageDefinition {
   stageNumber: number;
@@ -136,6 +141,7 @@ export function printHelp(): void {
   --stage <n>           Run ONLY stage n (1 to 5)
   --continue            Run all stages even if failure occurs (diagnostic mode)
   --runs <n>            Number of test runs/iterations per check (default: 2)
+  --cooldown <ms>       Cooldown delay between stages in milliseconds (default: 2000)
   --timeout <ms>        HTTP request timeout per stage in ms (default: 180000)
   --max-tokens <n>      Max completion tokens (default: 8192)
   --reasoning <effort>  Reasoning effort: high, medium, none
@@ -153,6 +159,7 @@ export function printHelp(): void {
 export function parseArgs(argv: string[] = process.argv.slice(2)): WebEvalOptions {
   const opts: WebEvalOptions = {
     continueOnFailure: false,
+    cooldownMs: 2000,
   };
 
   for (let i = 0; i < argv.length; i++) {
@@ -169,6 +176,9 @@ export function parseArgs(argv: string[] = process.argv.slice(2)): WebEvalOption
       opts.gatewayUrl = argv[++i];
     } else if (arg === "--image" && i + 1 < argv.length) {
       opts.image = argv[++i];
+    } else if (arg === "--cooldown" && i + 1 < argv.length) {
+      const parsedCooldown = Number.parseInt(argv[++i] ?? "", 10);
+      if (!Number.isNaN(parsedCooldown) && parsedCooldown >= 0) opts.cooldownMs = parsedCooldown;
     } else if (arg === "--timeout" && i + 1 < argv.length) {
       const parsedTimeout = Number.parseInt(argv[++i] ?? "", 10);
       if (!Number.isNaN(parsedTimeout) && parsedTimeout > 0) opts.timeoutMs = parsedTimeout;
@@ -210,6 +220,7 @@ export function normalizeWebOptions(opts: WebEvalOptions = {}): Required<Omit<We
   let directiveKey = opts.directiveKey ?? "lr-or-oa-ch-no";
   let gatewayUrl = opts.gatewayUrl ?? "https://localhost:7766/v1/chat/completions";
   const continueOnFailure = opts.continueOnFailure ?? false;
+  const cooldownMs = opts.cooldownMs ?? 2000;
   const runs = opts.runs ?? 2;
   const timeoutMs = opts.timeoutMs ?? 180000;
   const maxTokens = opts.maxTokens ?? 8192;
@@ -233,6 +244,7 @@ export function normalizeWebOptions(opts: WebEvalOptions = {}): Required<Omit<We
     image: opts.image,
     stage: opts.stage,
     continueOnFailure,
+    cooldownMs,
     runs,
     timeoutMs,
     maxTokens,
@@ -320,6 +332,7 @@ function printHeader(ctx: StageContext, opts: ReturnType<typeof normalizeWebOpti
   console.log(`🚪 Gateway URL   : ${ctx.gatewayUrl}`);
   console.log(`🖼️  Image Input   : ${opts.image ? opts.image : "[Internal SaaS Dashboard Mockup SVG]"}`);
   console.log(`⚙️  Stage Scope   : ${opts.stage ? `Stage ${opts.stage} Only` : "All 5 Stages (Sequential)"}`);
+  console.log(`⏱️  Cooldown      : ${opts.cooldownMs}ms`);
   console.log(`🔂 Diagnostic    : ${opts.continueOnFailure ? "Enabled (Continue on failure)" : "Disabled (Fail-Fast)"}`);
   console.log(`========================================================================`);
 }
@@ -331,7 +344,7 @@ async function executeStage(
   const startTime = Date.now();
   try {
     const res = await stageDef.runner(ctx);
-    if (!res.durationMs) {
+    if (!res.durationMs || res.durationMs <= 0) {
       res.durationMs = Date.now() - startTime;
     }
     return res;
@@ -383,7 +396,16 @@ export async function runWebEvaluation(options: WebEvalOptions = {}): Promise<We
 
   const results: StageResult[] = [];
 
+  let isFirstStage = true;
   for (const stageDef of stagesToRun) {
+    if (!isFirstStage && norm.cooldownMs > 0) {
+      if (!norm.silent) {
+        console.log(`[Web Eval] Sleeping ${norm.cooldownMs}ms between stages...`);
+      }
+      await Bun.sleep(norm.cooldownMs);
+    }
+    isFirstStage = false;
+
     if (!norm.silent) {
       console.log(`\n▶ Running Stage ${stageDef.stageNumber}: ${stageDef.stageName}...`);
     }
@@ -429,6 +451,7 @@ export async function runWebEvaluation(options: WebEvalOptions = {}): Promise<We
     allPassed,
     compositeScore,
     totalDurationMs: totalDuration,
+    durationMs: totalDuration,
     isProductionReady,
     stages: results,
   };

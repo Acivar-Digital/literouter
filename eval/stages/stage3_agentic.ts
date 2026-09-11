@@ -58,9 +58,10 @@ export async function runStage3Agentic(ctx: StageContext): Promise<StageResult> 
 
   let toolCallId = "call_test_01";
   let toolArgs = "";
+  let completionTokens = 0;
 
+  const startTime = performance.now();
   try {
-    const start = performance.now();
     let ttftMs = 0;
 
     const resp1 = await fetch(ctx.gatewayUrl, {
@@ -81,6 +82,7 @@ export async function runStage3Agentic(ctx: StageContext): Promise<StageResult> 
     if (!resp1.ok || !resp1.body) {
       result.notes.push(`Stage 3 Turn 1 failed with HTTP ${resp1.status}`);
       console.log(`         ❌ Turn 1 Failed: HTTP ${resp1.status}`);
+      result.durationMs = Math.round(performance.now() - startTime);
       return result;
     }
 
@@ -103,7 +105,7 @@ export async function runStage3Agentic(ctx: StageContext): Promise<StageResult> 
           const json = JSON.parse(trimmed.slice(6));
           const delta = json.choices?.[0]?.delta;
           if (ttftMs === 0 && (delta?.content || delta?.tool_calls || delta?.reasoning_content)) {
-            ttftMs = Math.round(performance.now() - start);
+            ttftMs = Math.round(performance.now() - startTime);
           }
           if (delta?.tool_calls) {
             for (const tc of delta.tool_calls) {
@@ -112,8 +114,12 @@ export async function runStage3Agentic(ctx: StageContext): Promise<StageResult> 
               if (tc.function?.arguments) toolArgs += tc.function.arguments;
             }
           }
+          const streamUsage = (json as Record<string, unknown>).usage as { completion_tokens?: number } | undefined;
+          if (typeof streamUsage?.completion_tokens === "number") {
+            completionTokens += streamUsage.completion_tokens;
+          }
         } catch (parseErr) {
-          void parseErr;
+          result.notes.push(`Failed to parse arguments JSON: ${parseErr instanceof Error ? parseErr.message : String(parseErr)}`);
         }
       }
     }
@@ -167,6 +173,10 @@ export async function runStage3Agentic(ctx: StageContext): Promise<StageResult> 
 
     if (resp2.ok) {
       const data2 = (await resp2.json()) as Record<string, unknown>;
+      const usage2 = data2.usage as { completion_tokens?: number } | undefined;
+      if (typeof usage2?.completion_tokens === "number") {
+        completionTokens += usage2.completion_tokens;
+      }
       const content = ((data2.choices as Array<Record<string, unknown>>)?.[0]?.message as Record<string, unknown>)?.content as string || "";
       if (content.toLowerCase().includes("127.0.0.1") || content.toLowerCase().includes("localhost")) {
         result.score += 25;
@@ -217,6 +227,10 @@ export async function runStage3Agentic(ctx: StageContext): Promise<StageResult> 
 
     if (resp3.ok) {
       const data3 = (await resp3.json()) as Record<string, unknown>;
+      const usage3 = data3.usage as { completion_tokens?: number } | undefined;
+      if (typeof usage3?.completion_tokens === "number") {
+        completionTokens += usage3.completion_tokens;
+      }
       const content3 = (((data3.choices as Array<Record<string, unknown>>)?.[0]?.message as Record<string, unknown>)?.content as string || "").toLowerCase();
       if (content3.includes("permission") || content3.includes("denied") || content3.includes("unable") || content3.includes("cannot access")) {
         result.score += 50;
@@ -229,6 +243,13 @@ export async function runStage3Agentic(ctx: StageContext): Promise<StageResult> 
     } else {
       result.notes.push(`Stage 3 exception: ${String(err)}`);
     }
+  }
+
+  result.durationMs = Math.round(performance.now() - startTime);
+  if (completionTokens > 0) {
+    result.completionTokens = completionTokens;
+    const durSec = result.durationMs > 0 ? result.durationMs / 1000 : 0.001;
+    result.tokensPerSec = Number((completionTokens / durSec).toFixed(1));
   }
 
   result.passed = result.score >= 50;
