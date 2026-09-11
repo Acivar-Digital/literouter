@@ -27,7 +27,7 @@ description: LiteRouter API Gateway operational guide for Bun/TypeScript proxy o
 | Unified Model Onboarding (Responses) | `bun run eval/onboard_rs.ts <model_name>` (runs 5-stage certification for POST /v1/responses) |
 | Web Model Evaluation (Vision/Code) | `bun run eval/build_web.ts <model_name>` (runs 5-stage visual, responsive, state, hygiene & a11y audit) |
 | Model probe & onboarding | `bun run scripts/probe_model.ts <model_name>` (validates OpenCode 2, Claude Code CLI & Pydantic AI) |
-| Model speed & throughput | `bun run scripts/bench_speed.ts` (measures TTFT, duration, tokens/sec) |
+| Model speed & throughput | `bun run eval/speed.ts` (measures TTFT, duration, tokens/sec; alias: `scripts/bench_speed.ts`) |
 | OpenCode2 Auto-Patch | `bash scripts/opencode2_autopatch.sh` (fast <5ms self-heal & binary verification) |
 | Typecheck & lint | `bun x tsc --noEmit && uv run ruff check .` |
 

@@ -4,6 +4,22 @@ All notable changes to LiteRouter will be documented in this file.
 
 ## [Unreleased]
 
+### Feat / Unified Evaluation Suite Taxonomy & Master Orchestrator (literouter-cu6s) - 2026-09-11
+- **Unified Evaluation Taxonomy**:
+  - Reorganized the evaluation suite into a clear, intuitive 3-pillar taxonomy:
+    - `eval/speed.ts`: Model latency, TTFT, and tokens/sec throughput benchmark (moved from `scripts/bench_speed.ts`).
+    - `eval/code.ts`: 5-stage agentic & coding capability harness supporting dual Chat Completions and Responses API protocols polymorphically (renamed from `eval/onboard.ts`).
+    - `eval/web.ts`: 5-stage Vision-Language web frontend generation harness (renamed from `eval/build_web.ts`).
+  - Maintained zero-breakage backward compatibility: `scripts/bench_speed.ts`, `eval/onboard.ts`, and `eval/build_web.ts` preserved as thin delegation stubs.
+- **Master Evaluation Orchestrator (`eval/eval.ts`)**:
+  - Built a comprehensive CLI and programmatic orchestrator coordinating `speed`, `code`, and `web` evaluation suites in a single command.
+  - Generates executive Markdown report cards saved directly into `eval/reports/<sanitized_model_name>.md`.
+  - Implements automatic **Architectural Role Recommendation** classifying models as Orchestrator, General Coder, or Explorer based on empirical benchmark criteria.
+- **Resilience & Testing**:
+  - Added unit test suite `tests/unit/eval_orchestrator.test.ts` (7 passing tests), raising total unit tests to 730 passing.
+  - Zero `.env.local` or key modifications; 100% native Bun execution.
+
+
 ### Feat / Decoupled Key Conserve Logic & OpenRouter Daily Limit Shield (literouter-q4ov) - 2026-09-11
 - **Decoupled Key Conserve / Ban Prevention (`conserve_rules`)**:
   - Implemented a dedicated "Conserve" mechanism configured in `config/providers.json` that immediately parks keys encountering hard daily quota limits (e.g. OpenRouter `Rate limit exceeded: free-models-per-day-high-balance.`) to prevent upstream account bans and eliminate repeated failed retry cycles.

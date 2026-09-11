@@ -381,11 +381,13 @@ bun run scripts/probe_model.ts <model_name> [--directive <directive_key>] [--url
    - Native: Probes `response_format: {"type": "json_object"}` against complex nested schemas with enums and typed integers (HTTP 200 vs 400 rejection).
    - Prompted: Probes markdown fence wrapping and validates downstream extraction (`_strip_json_fences`).
 
-### 4.4 Model Speed & Throughput Benchmark — `scripts/bench_speed.ts`
+### 4.4 Model Speed & Throughput Benchmark — `eval/speed.ts` (legacy alias: `scripts/bench_speed.ts`)
 
 Measures TTFT (Time To First Token), total duration, token counts, and generation speed (tokens/sec) across models on a standard coding task (LRU cache).
 
 ```bash
+bun run eval/speed.ts [--models "model1,model2"] [--runs 2] [--directive <directive_key>]
+# Or via backward-compatibility stub:
 bun run scripts/bench_speed.ts [--models "model1,model2"] [--runs 2] [--directive <directive_key>]
 ```
 

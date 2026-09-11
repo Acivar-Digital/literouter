@@ -36,7 +36,7 @@ import {
   PacerQueueOverflowError,
 } from "./network/pacer";
 import { type BannerOptions, printBanner } from "./ui/banner";
-import { logAmber, logError, logPacer } from "./ui/logger";
+import { logAmber, logError, logInfo, logPacer } from "./ui/logger";
 
 function loadTlsOptions(tlsEnabledFlag?: boolean): { cert: string; key: string } | undefined {
   if (process.env.LITEROUTER_TLS_ENABLED === "false" || tlsEnabledFlag === false) {
@@ -440,7 +440,21 @@ export async function handleAppRequest(req: Request): Promise<Response> {
   }
   try {
     return await dispatchRoute(req, rawKey, reqId);
-  } catch (err) {
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err ?? "");
+    const isStreamAbort =
+      (req.signal && req.signal.aborted) ||
+      msg.includes("The pending stream has been canceled") ||
+      msg.includes("ERR_HTTP2_STREAM_CANCEL") ||
+      msg.includes("aborted");
+
+    if (isStreamAbort) {
+      logInfo(reqId, "Client aborted / stream canceled");
+      return Response.json(
+        { error: { message: "Request aborted by client", type: "client_closed_request" } },
+        { status: 499 }
+      );
+    }
     logError(reqId, "Unhandled exception in request handler", err);
     return Response.json({ error: { message: "Internal Gateway Error", type: "server_error" } }, { status: 500 });
   }

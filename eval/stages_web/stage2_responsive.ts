@@ -8,8 +8,15 @@
  *   2.3 Horizontal overflow prevention (absence of rigid w-[1400px] / min-w-[1000px], fluid w-full / max-w-*)
  */
 
-import type { StageContext, StageResult, SubCheck } from "./types";
-import { DEFAULT_DASHBOARD_MOCKUP } from "./types";
+import {
+  type StageContext,
+  type StageResult,
+  type SubCheck,
+  DEFAULT_DASHBOARD_MOCKUP,
+  buildStageHeaders,
+  extractCompletionText,
+  isResponsesEndpoint,
+} from "./types";
 import { extractCodeBlock } from "./stage1_structure";
 
 export interface ResponsiveEvaluation {
@@ -187,8 +194,7 @@ export function evaluateResponsive(code: string): ResponsiveEvaluation {
 /**
  * Helper to construct messages payload for model invocation.
  */
-function buildMessages(imageUri: string) {
-  const promptText = `
+export const PROMPT_RESPONSIVE = `
 You are a senior frontend engineer specializing in responsive web design.
 Implement a modern, fully mobile-responsive dashboard using HTML and Tailwind CSS based on the provided mockup.
 Key requirements:
@@ -198,11 +204,12 @@ Key requirements:
 Output only the clean HTML/Tailwind code block.
 `.trim();
 
+function buildMessages(imageUri: string) {
   return [
     {
       role: "user",
       content: [
-        { type: "text", text: promptText },
+        { type: "text", text: PROMPT_RESPONSIVE },
         { type: "image_url", image_url: { url: imageUri } },
       ],
     },
@@ -222,19 +229,32 @@ export async function runStage2Responsive(ctx: StageContext): Promise<StageResul
   console.log(`   [2.1] Querying model for responsive dashboard code...`);
 
   try {
+    const isResponses = isResponsesEndpoint(ctx.gatewayUrl, ctx.directiveKey);
+    const bodyPayload = isResponses
+      ? {
+          model: ctx.model,
+          stream: false,
+          max_output_tokens: ctx.maxTokens ?? 8192,
+          input: [
+            {
+              role: "user",
+              content: PROMPT_RESPONSIVE,
+            },
+          ],
+        }
+      : {
+          model: ctx.model,
+          stream: false,
+          max_tokens: ctx.maxTokens ?? 8192,
+          ...(ctx.reasoningEffort ? { reasoning: { effort: ctx.reasoningEffort } } : {}),
+          messages: buildMessages(imageUri),
+        };
+
     const response = await fetch(ctx.gatewayUrl, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${ctx.directiveKey}`,
-      },
-      body: JSON.stringify({
-        model: ctx.model,
-        stream: false,
-        max_tokens: 4096,
-        messages: buildMessages(imageUri),
-      }),
-      signal: AbortSignal.timeout(60000),
+      headers: buildStageHeaders(ctx),
+      body: JSON.stringify(bodyPayload),
+      signal: AbortSignal.timeout(ctx.timeoutMs ?? 180000),
     });
 
     if (!response.ok) {
@@ -253,10 +273,7 @@ export async function runStage2Responsive(ctx: StageContext): Promise<StageResul
       };
     }
 
-    const data = (await response.json()) as {
-      choices?: Array<{ message?: { content?: string } }>;
-      error?: { message?: string; code?: number } | string;
-    };
+    const data = (await response.json()) as any;
 
     if (data.error) {
       const errMsg = typeof data.error === "object" ? data.error.message || JSON.stringify(data.error) : data.error;
@@ -273,7 +290,7 @@ export async function runStage2Responsive(ctx: StageContext): Promise<StageResul
       };
     }
 
-    const rawContent = data.choices?.[0]?.message?.content || "";
+    const rawContent = extractCompletionText(data);
     const cleanCode = extractCodeBlock(rawContent);
 
     const evalResult = evaluateResponsive(cleanCode);

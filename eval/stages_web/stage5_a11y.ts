@@ -15,7 +15,13 @@
  * 5. Scoring 0 - 100 based on zero critical accessibility violations.
  */
 
-import type { StageContext, StageResult } from "./types";
+import {
+  type StageContext,
+  type StageResult,
+  buildStageHeaders,
+  extractCompletionText,
+  isResponsesEndpoint,
+} from "./types";
 import { FIXTURES } from "./fixtures";
 
 export interface A11yViolation {
@@ -237,20 +243,41 @@ export async function runStage5A11y(ctx: StageContext): Promise<StageResult> {
   ];
 
   try {
+    const isResponses = isResponsesEndpoint(ctx.gatewayUrl, ctx.directiveKey);
+    const bodyPayload = isResponses
+      ? {
+          model: ctx.model,
+          stream: false,
+          max_output_tokens: ctx.maxTokens ?? 8192,
+          input: [
+            {
+              role: "system",
+              content:
+                "You are an expert frontend engineer producing WCAG 2.1 AA accessible React and Tailwind CSS components. " +
+                "Always use semantic HTML (<button>, <label htmlFor=...>, <input>), accessible ARIA attributes (role='dialog', aria-modal='true', aria-live='assertive' for errors), " +
+                "and never use <div onClick> for interactive elements. Return only the React component code.",
+            },
+            {
+              role: "user",
+              content:
+                "Implement the following authentication modal dialog with error state. Ensure strict ARIA compliance, semantic buttons, labeled inputs, and dialog roles.",
+            },
+          ],
+        }
+      : {
+          model: ctx.model,
+          messages: prompt,
+          stream: false,
+          max_tokens: ctx.maxTokens ?? 8192,
+          ...(ctx.reasoningEffort ? { reasoning: { effort: ctx.reasoningEffort } } : {}),
+          temperature: 0.1,
+        };
+
     const resp = await fetch(ctx.gatewayUrl, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${ctx.directiveKey}`,
-      },
-      body: JSON.stringify({
-        model: ctx.model,
-        messages: prompt,
-        stream: false,
-        max_tokens: 4096,
-        temperature: 0.1,
-      }),
-      signal: AbortSignal.timeout(60000),
+      headers: buildStageHeaders(ctx),
+      body: JSON.stringify(bodyPayload),
+      signal: AbortSignal.timeout(ctx.timeoutMs ?? 180000),
     });
 
     result.durationMs = Date.now() - startTime;
@@ -268,8 +295,21 @@ export async function runStage5A11y(ctx: StageContext): Promise<StageResult> {
       return result;
     }
 
-    const json = (await resp.json()) as { choices?: Array<{ message?: { content?: string } }> };
-    const generatedCode = json.choices?.[0]?.message?.content || "";
+    const json = (await resp.json()) as any;
+
+    if (json.error) {
+      const errMsg = typeof json.error === "object" ? json.error.message || JSON.stringify(json.error) : json.error;
+      notes.push(`Upstream error: ${errMsg}`);
+      result.checks.push({
+        name: "Upstream Response",
+        passed: false,
+        detail: errMsg,
+      });
+      result.error = errMsg;
+      return result;
+    }
+
+    const generatedCode = extractCompletionText(json);
     result.rawOutput = generatedCode;
 
     if (!generatedCode) {

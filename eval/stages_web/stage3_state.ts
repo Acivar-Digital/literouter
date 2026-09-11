@@ -9,7 +9,14 @@
  *   3.4 State toggle for interactive elements (error messages, modal visibility, loading spinner)
  */
 
-import type { StageContext, StageResult, SubCheck } from "./types";
+import {
+  type StageContext,
+  type StageResult,
+  type SubCheck,
+  buildStageHeaders,
+  extractCompletionText,
+  isResponsesEndpoint,
+} from "./types";
 
 export interface StateAnalysisResult {
   score: number;
@@ -325,19 +332,27 @@ Return the complete, working TSX code inside a \`\`\`tsx ... \`\`\` block.
         ]
       : prompt;
 
+    const isResponses = isResponsesEndpoint(ctx.gatewayUrl, ctx.directiveKey);
+    const bodyPayload = isResponses
+      ? {
+          model: ctx.model,
+          stream: false,
+          max_output_tokens: ctx.maxTokens ?? 8192,
+          input: [{ role: "user", content: prompt }],
+        }
+      : {
+          model: ctx.model,
+          stream: false,
+          max_tokens: ctx.maxTokens ?? 8192,
+          ...(ctx.reasoningEffort ? { reasoning: { effort: ctx.reasoningEffort } } : {}),
+          messages: [{ role: "user", content: userMessageContent }],
+        };
+
     const resp = await fetch(ctx.gatewayUrl, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${ctx.directiveKey}`,
-      },
-      body: JSON.stringify({
-        model: ctx.model,
-        stream: false,
-        max_tokens: 4096,
-        messages: [{ role: "user", content: userMessageContent }],
-      }),
-      signal: AbortSignal.timeout(60000),
+      headers: buildStageHeaders(ctx),
+      body: JSON.stringify(bodyPayload),
+      signal: AbortSignal.timeout(ctx.timeoutMs ?? 180000),
     });
 
     const latencyMs = Math.round(performance.now() - startTime);
@@ -367,8 +382,26 @@ Return the complete, working TSX code inside a \`\`\`tsx ... \`\`\` block.
       };
     }
 
-    const data = (await resp.json()) as { choices?: Array<{ message?: { content?: string } }> };
-    const rawContent = data.choices?.[0]?.message?.content ?? "";
+    const data = (await resp.json()) as any;
+
+    if (data.error) {
+      const errMsg = typeof data.error === "object" ? data.error.message || JSON.stringify(data.error) : data.error;
+      notes.push(`Upstream error: ${errMsg}`);
+      console.log(`         ❌ Stage 3 Failed: ${errMsg}`);
+      return {
+        stageNumber: 3,
+        stageName: "Stage 3: Interactive State & Event Architecture",
+        passed: false,
+        score: 0,
+        durationMs: latencyMs,
+        checks: [{ name: "Upstream Response", passed: false, detail: errMsg }],
+        error: errMsg,
+        details,
+        notes,
+      };
+    }
+
+    const rawContent = extractCompletionText(data);
 
     if (!rawContent) {
       notes.push("Model returned empty response content.");
