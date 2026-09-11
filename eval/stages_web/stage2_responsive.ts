@@ -231,9 +231,10 @@ export async function runStage2Responsive(ctx: StageContext): Promise<StageResul
       body: JSON.stringify({
         model: ctx.model,
         stream: false,
+        max_tokens: 4096,
         messages: buildMessages(imageUri),
       }),
-      signal: AbortSignal.timeout(10000),
+      signal: AbortSignal.timeout(60000),
     });
 
     if (!response.ok) {

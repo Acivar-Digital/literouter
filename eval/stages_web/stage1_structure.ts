@@ -23,11 +23,20 @@ export interface StructureEvaluation {
  * Extracts HTML/JSX code block from markdown or returns trimmed string.
  */
 export function extractCodeBlock(raw: string): string {
+  // First try complete fenced code blocks: ```...```
   const codeBlockRegex = /```(?:html|tsx|jsx|javascript|typescript)?\s*([\s\S]*?)```/i;
   const match = codeBlockRegex.exec(raw);
   if (match && match[1]) {
     return match[1].trim();
   }
+
+  // If the model truncated mid-generation (e.g. finish_reason: "length"), extract everything after the opening fence
+  const unclosedFenceRegex = /```(?:html|tsx|jsx|javascript|typescript)?\s*([\s\S]*)$/i;
+  const unclosedMatch = unclosedFenceRegex.exec(raw);
+  if (unclosedMatch && unclosedMatch[1] && unclosedMatch[1].trim().length > 0) {
+    return unclosedMatch[1].trim();
+  }
+
   return raw.trim();
 }
 
@@ -184,12 +193,13 @@ export function evaluateStructure(code: string): StructureEvaluation {
  */
 function buildMessages(imageUri: string) {
   const promptText = `
-You are a senior frontend engineer. Implement the frontend for the provided dashboard mockup using semantic HTML and Tailwind CSS.
-Requirements:
-1. Use semantic landmarks: <header>, <nav>, <main>, <aside>, <footer>.
-2. Use modern layout primitives: CSS Grid (e.g. grid-cols-3) and Flexbox (flex, flex-col, items-center, justify-between).
-3. Create a 3-column metric cards grid without using absolute positioning hacks.
-Output only the clean HTML/Tailwind code block.
+You are a senior frontend engineer. Implement a complete, concise, self-contained single-page component for the provided dashboard mockup using semantic HTML and Tailwind CSS.
+Strict Rules:
+1. Wrap the entire layout in semantic landmarks: <header>, <nav>, <main>, <aside>, and <footer>.
+2. Use modern layout primitives: CSS Grid (grid, grid-cols-3) and Flexbox (flex, flex-col, items-center, justify-between).
+3. Ensure you create a 3-column metric card grid (grid-cols-3) without absolute positioning hacks.
+4. Keep the code compact and focused on the key layout so that it completes within 1000 tokens without getting cut off.
+Output only the clean HTML/Tailwind code block inside \`\`\`html and \`\`\`.
 `.trim();
 
   return [
@@ -225,9 +235,10 @@ export async function runStage1Structure(ctx: StageContext): Promise<StageResult
       body: JSON.stringify({
         model: ctx.model,
         stream: false,
+        max_tokens: 4096,
         messages: buildMessages(imageUri),
       }),
-      signal: AbortSignal.timeout(10000),
+      signal: AbortSignal.timeout(60000),
     });
 
     if (!response.ok) {

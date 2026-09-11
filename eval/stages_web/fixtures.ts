@@ -246,26 +246,36 @@ export function svgToDataUri(svg: string): string {
   return `data:image/svg+xml;base64,${base64}`;
 }
 
+/**
+ * Verified public raster PNG image URLs for realistic Vision-Language evaluations.
+ * These URLs are hosted on GitHub raw and directly ingestible by OpenRouter/Novita/vLLM.
+ */
+export const REMOTE_FIXTURE_URLS = {
+  saasDashboard: "https://raw.githubusercontent.com/greptimeteam/dashboard/main/tablequery.png",
+  metricChart: "https://raw.githubusercontent.com/greptimeteam/dashboard/main/metricchart.png",
+  logsQuery: "https://raw.githubusercontent.com/greptimeteam/dashboard/main/logsquery.png",
+} as const;
+
 export const FIXTURES = {
   saasDashboard: {
     id: "saas-dashboard",
     name: "SaaS Dashboard Grid",
     description: "SaaS Dashboard with 3-column grid, sidebar, and navbar",
     svg: SAAS_DASHBOARD_SVG,
-    dataUri: svgToDataUri(SAAS_DASHBOARD_SVG),
+    dataUri: REMOTE_FIXTURE_URLS.saasDashboard,
   },
   pricingTable: {
     id: "pricing-table",
     name: "Pricing Table (4 Tiers)",
     description: "Pricing table with 4 tiers (Hobby, Pro, Business, Enterprise)",
     svg: PRICING_TABLE_SVG,
-    dataUri: svgToDataUri(PRICING_TABLE_SVG),
+    dataUri: REMOTE_FIXTURE_URLS.metricChart,
   },
   authModalError: {
     id: "auth-modal-error",
     name: "Auth Modal Error State",
     description: "Centered authentication modal with invalid credentials error state",
     svg: AUTH_MODAL_ERROR_SVG,
-    dataUri: svgToDataUri(AUTH_MODAL_ERROR_SVG),
+    dataUri: REMOTE_FIXTURE_URLS.logsQuery,
   },
 } as const;

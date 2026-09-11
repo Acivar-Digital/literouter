@@ -247,8 +247,10 @@ export async function runStage5A11y(ctx: StageContext): Promise<StageResult> {
         model: ctx.model,
         messages: prompt,
         stream: false,
+        max_tokens: 4096,
         temperature: 0.1,
       }),
+      signal: AbortSignal.timeout(60000),
     });
 
     result.durationMs = Date.now() - startTime;

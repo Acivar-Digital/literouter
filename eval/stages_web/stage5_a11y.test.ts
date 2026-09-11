@@ -8,12 +8,11 @@ describe("Web Stages Fixtures & A11y Audit", () => {
     expect(FIXTURES.pricingTable).toBeDefined();
     expect(FIXTURES.authModalError).toBeDefined();
 
-    expect(FIXTURES.saasDashboard.dataUri).toStartWith("data:image/svg+xml;base64,");
-    expect(FIXTURES.pricingTable.dataUri).toStartWith("data:image/svg+xml;base64,");
-    expect(FIXTURES.authModalError.dataUri).toStartWith("data:image/svg+xml;base64,");
+    expect(FIXTURES.saasDashboard.dataUri).toMatch(/^https?:\/\//);
+    expect(FIXTURES.pricingTable.dataUri).toMatch(/^https?:\/\//);
+    expect(FIXTURES.authModalError.dataUri).toMatch(/^https?:\/\//);
 
-    const decoded = Buffer.from(FIXTURES.authModalError.dataUri.split(",")[1] ?? "", "base64").toString("utf-8");
-    expect(decoded).toContain("<svg");
+    expect(FIXTURES.authModalError.svg).toContain("<svg");
   });
 
   test("auditA11y detects <div onClick> violations", () => {

@@ -334,8 +334,10 @@ Return the complete, working TSX code inside a \`\`\`tsx ... \`\`\` block.
       body: JSON.stringify({
         model: ctx.model,
         stream: false,
+        max_tokens: 4096,
         messages: [{ role: "user", content: userMessageContent }],
       }),
+      signal: AbortSignal.timeout(60000),
     });
 
     const latencyMs = Math.round(performance.now() - startTime);
