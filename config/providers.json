@@ -663,7 +663,7 @@
         "success_threshold_to_close": 2
       },
       "key_cooldown": {
-        "enabled": true,
+        "enabled": false,
         "initial_cooldown_ms": 10000,
         "backoff_factor": 1.5,
         "max_cooldown_ms": 60000,
@@ -772,7 +772,7 @@
         "success_threshold_to_close": 2
       },
       "key_cooldown": {
-        "enabled": true,
+        "enabled": false,
         "initial_cooldown_ms": 10000,
         "backoff_factor": 1.5,
         "max_cooldown_ms": 60000,

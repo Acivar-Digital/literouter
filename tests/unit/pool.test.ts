@@ -57,23 +57,23 @@ describe("KeyPool & Dynamic Provider Quarantine", () => {
       expect(isProviderQuarantineEnabled("oa")).toBe(true);
       expect(isProviderQuarantineEnabled("an")).toBe(true);
 
-      // gg, gc and zn have key_cooldown.enabled: true configured in providers.json
+      // gg has key_cooldown.enabled: true configured in providers.json; gc and zn have it disabled (false)
       expect(isProviderQuarantineEnabled("gg")).toBe(true);
       expect(pool.isQuarantineEnabled("gg")).toBe(true);
 
-      expect(isProviderQuarantineEnabled("gc")).toBe(true);
-      expect(pool.isQuarantineEnabled("gc")).toBe(true);
+      expect(isProviderQuarantineEnabled("gc")).toBe(false);
+      expect(pool.isQuarantineEnabled("gc")).toBe(false);
 
-      expect(isProviderQuarantineEnabled("zn")).toBe(true);
-      expect(pool.isQuarantineEnabled("zn")).toBe(true);
+      expect(isProviderQuarantineEnabled("zn")).toBe(false);
+      expect(pool.isQuarantineEnabled("zn")).toBe(false);
     });
 
     it("handles case-insensitive provider codes", () => {
       expect(isProviderQuarantineEnabled("OR")).toBe(true);
       expect(isProviderQuarantineEnabled("NV")).toBe(true);
       expect(isProviderQuarantineEnabled("Gg")).toBe(true);
-      expect(isProviderQuarantineEnabled("zN")).toBe(true);
-      expect(isProviderQuarantineEnabled("gC")).toBe(true);
+      expect(isProviderQuarantineEnabled("zN")).toBe(false);
+      expect(isProviderQuarantineEnabled("gC")).toBe(false);
     });
 
     it("returns true for unregistered providers as default fallback", () => {

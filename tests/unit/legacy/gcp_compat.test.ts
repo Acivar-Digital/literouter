@@ -176,7 +176,7 @@ describe("GCP Compatibility Architecture (gc)", () => {
       expect(prov.request_retry.max_attempts).toBe(3);
       expect(prov.request_retry.delay.min_ms).toBe(200);
       expect(prov.request_retry.delay.max_ms).toBe(500);
-      expect(prov.key_cooldown.enabled).toBe(true);
+      expect(prov.key_cooldown.enabled).toBe(false);
       expect(prov.circuit_breaker.enabled).toBe(false);
     });
 
@@ -356,7 +356,7 @@ describe("GCP Compatibility Architecture (gc)", () => {
       initProviderRegistry();
 
       expect(getProviderConfig("gc").request_retry.enabled).toBe(true);
-      expect(getProviderConfig("gc").key_cooldown.enabled).toBe(true);
+      expect(getProviderConfig("gc").key_cooldown.enabled).toBe(false);
       expect(getProviderConfig("gc").circuit_breaker.enabled).toBe(false);
     });
   });

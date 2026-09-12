@@ -30,6 +30,10 @@ All notable changes to LiteRouter will be documented in this file.
 - Isolated 179 legacy handler and legacy transport tests into `tests/unit/legacy/`, cleanly separating modern v4 development iteration from legacy fallback tests.
 
 ### Fixed
+- **Zero-Quarantine Transparent Forwarding for Zen (`zn`) & GCP (`gc`) (`config/providers.json`)**:
+  - Restored `key_cooldown.enabled: false` for Zen (`zn`) and GCP (`gc`) in `config/providers.json`.
+  - Eliminated erroneous 19,883s key cooldown lockouts caused by upstream 429 `Retry-After` headers on Zen free-tier models.
+  - Enforced canonical zero-quarantine transparent dumb-forwarder operation for Zen (per `zen-provider.md §6`) and GCP so keys remain round-robin eligible without getting jailed.
 - **Dispatch Retry Resilience, Key Rotation Telemetry & Error Surfacing (`src/engine/dispatch.ts`)**:
   - **Retry Error Visibility**: When upstream calls fail (4xx/5xx), LiteRouter reads the upstream error body, extracts the error message, and logs it loudly via `[LIMIT]` telemetry across every retry attempt instead of failing silently.
   - **Elimination of Key Quarantine on Retries**: Removed forced `quarantineKey` locking during in-flight retries so transient rate limits and free-tier throttles do not lock keys into cooldown jail; requests cleanly rotate and retry.

@@ -443,7 +443,7 @@ describe("ProviderConfigEntrySchema", () => {
         expect(provider.strategy).toBeDefined();
         expect(provider.request_retry).toBeDefined();
         expect(provider.circuit_breaker).toBeDefined();
-        expect(provider.key_cooldown.enabled).toBe(true);
+        expect(typeof provider.key_cooldown.enabled).toBe("boolean");
       }
     }
   });
