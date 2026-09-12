@@ -126,7 +126,7 @@ export function safeEnqueue(
     if (isClosedRef) {
       isClosedRef.isClosed = true;
     }
-    console.debug("[Stream] Suppressed enqueue on closed stream:", err);
+    console.debug(`[Stream] Suppressed enqueue on closed stream: ${err instanceof Error ? err.message : String(err)}`);
     return false;
   }
 }
@@ -147,7 +147,7 @@ export function safeClose(
   try {
     controller.close();
   } catch (err: unknown) {
-    console.debug("[Stream] Suppressed controller close error:", err);
+    console.debug(`[Stream] Suppressed controller close error: ${err instanceof Error ? err.message : String(err)}`);
   }
 }
 
@@ -168,7 +168,7 @@ export function safeError(
   try {
     controller.error(err instanceof Error ? err : new Error(String(err)));
   } catch (e: unknown) {
-    console.debug("[Stream] Suppressed controller error dispatch:", e);
+    console.debug(`[Stream] Suppressed controller error dispatch: ${e instanceof Error ? e.message : String(e)}`);
   }
 }
 
