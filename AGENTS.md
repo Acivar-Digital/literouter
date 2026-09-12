@@ -393,28 +393,8 @@ Provide clear, reproducible error messages. If possible, include guidance for
 next steps or recovery actions. For complex operations, emit progress markers
 so it's clear how far execution got before failure.
 
-### d. Grounding & Anti-Hallucination: Never Guess Signatures or Field Names
-
-LLMs frequently hallucinate function signatures, options objects, and data structures by copying patterns from external libraries (e.g., assuming `logWarn` takes a Winston/Pino logger metadata object). **You must strictly ground every call in the codebase's actual definitions.**
-
-#### 🟢 ZERO-TOKEN PARSIMONY & SKILL AUTHORITY (MANDATORY):
-1. **Trust the Skill & Plan:** The `literouter` skill and task instructions are canonical ground truth. DO NOT perform exploratory `read` or `grep` sweeps on definitions already documented in SKILL.md.
-2. **Zero Pre-Flight Reading:** Subagents must make the assigned surgical edit directly without exploratory inspection loops. Only read files if an edit fails validation.
-3. **No Gratuitous Git Probing:** Never run `git status`, `git diff`, or log dumps autonomously unless explicitly requested by the user. Rely on test command exit codes (0 vs 1).
-4. **Verify Parameter Types:** In TypeScript, check parameter lists (e.g., `logWarn(emoji: string, msg: string)` requires an emoji string and a string message, not `{ error: ... }`).
-5. **Clean Lifecycle Hooks:** When using asynchronous timers or intervals (`setInterval`), always implement explicit teardown (`cancel()` on `TransformStream`, `stopKeepAlive()` on error).
-
-#### 🔴 NEGATIVES (Never Do This):
-1. **DO NOT assume external conventions:** Never assume an internal helper behaves like an npm package or external framework (e.g., passing `{ error }` objects to `logWarn`).
-2. **DO NOT invent fields or options:** Never add speculative fields to API payloads, headers, or config objects without verifying against upstream docs or internal schemas.
-3. **DO NOT leave ungrounded catch blocks:** When adding logging to catch blocks, verify the logger function signature rather than guessing.
-4. **DO NOT introduce un-cleared background intervals:** Never start a timer or background task without guaranteeing cancellation on error or reader disconnect.
-
-| Scenario | 🔴 Anti-Pattern (Hallucinated) | 🟢 Grounded Pattern (Verified) |
-|---|---|---|
-| Logging warning in TS | `logWarn("error", { err })` *(causes `[object Object]`)* | `logWarn(EMOJI.warn, \`Error details: \${err}\`)` |
-| Internal helper invocation | Assuming parameter order/types from intuition | `read` declaration in `src/config/env.ts` first |
-| SSE keepalive timers | Starting `setInterval` with no `cancel()` hook | Implementing `cancel() { stopTimer(); }` on stream |
+### d. Decisive Execution & Compiler-Led Grounding
+Execute surgical edits directly from the architectural plan without exploratory inspection loops or pre-flight reading sweeps. Rely on TypeScript static typechecking (`bun run typecheck`), AST validation (`clean_ts`), and test runners (`bun test`) to catch contract mismatches.
 
 ## MCP Tools (for AI agents)
 
