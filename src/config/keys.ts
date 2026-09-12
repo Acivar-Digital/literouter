@@ -1,3 +1,4 @@
+import { getProviderConfig, getAllProviders, isRegisteredProvider } from "./providers";
 import type { ProviderCode } from "./schema";
 
 const PROVIDER_ENV_MAP: Readonly<Record<ProviderCode, string>> = {
@@ -58,6 +59,12 @@ export function maskKey(apiKey: string): string {
 }
 
 export function getProviderEnvVarName(provider: ProviderCode): string {
+  if (isRegisteredProvider(provider)) {
+    const config = getProviderConfig(provider);
+    if (config.env_key) {
+      return config.env_key;
+    }
+  }
   return PROVIDER_ENV_MAP[provider];
 }
 
@@ -65,9 +72,17 @@ export function loadKeyPools(
   envSource: Record<string, string | undefined>
 ): ReadonlyMap<ProviderCode, readonly string[]> {
   const poolMap = new Map<ProviderCode, readonly string[]>();
-  const entries = Object.entries(PROVIDER_ENV_MAP) as Array<[ProviderCode, string]>;
-  for (const [code, envName] of entries) {
-    let rawVal = envSource[envName];
+  const codes = new Set<ProviderCode>(
+    Object.keys(PROVIDER_ENV_MAP) as ProviderCode[]
+  );
+
+  for (const provider of getAllProviders()) {
+    codes.add(provider.code as ProviderCode);
+  }
+
+  for (const code of codes) {
+    const envName = getProviderEnvVarName(code);
+    let rawVal = envName ? envSource[envName] : undefined;
     if (code === "gc" && !rawVal) {
       rawVal = envSource.GCP_API_KEYS;
     }

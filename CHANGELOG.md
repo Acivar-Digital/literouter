@@ -13,6 +13,12 @@ All notable changes to LiteRouter will be documented in this file.
 - **Reasoning-transcript capture default-ON for the code eval suite (`eval/stages/types.ts`, `eval/code.ts`, `eval/eval.ts`)**: collects per-stage `reasoning_content` deltas under the `ts-nuance` key, renders an unscored collapsible transcript appendix in markdown report cards, opt-out via `--no-reasoning-transcript` (literouter-pqi9).
 
 ### Changed
+- **Zero-Hardcoding Configuration & Dynamic Provider Binding (`config/providers.json`, `src/config/keys.ts`, handlers)**:
+  - **Single Source of Truth**: `config/providers.json` is now the Single Source of Truth across all active and catalog providers. All 13 providers now have explicit `name`, `env_key`, `strategy`, `request_retry`, `pacer`, and `circuit_breaker` configurations.
+  - **Zen Single-Flight Policy**: Zen provider (`zn`) is explicitly configured for single-flight execution (`max_attempts: 1`, `delay: { min_ms: 0, max_ms: 0 }`), preventing upstream OpenCode session burning and `429 FreeUsageLimitError`.
+  - **Dynamic Environment Key Resolution**: Dynamically resolved `env_key` in `src/config/keys.ts` via `getProviderConfig(provider).env_key` with fallback to `PROVIDER_ENV_MAP`.
+  - **Registry Unification & Memory Efficiency**: Completely eliminated redundant in-memory file parsing (`getProvidersRegistry`, `cachedRegistry`) in `src/handlers/openai_compat.ts`, wiring directly to `getProviderConfig()` and `initProviderRegistry()`.
+  - **Eradication of Hardcoded Magic Numbers**: Eradicated hardcoded magic numbers (`Math.min(3, Math.max(1, poolSize))` and hardcoded `isZenLoop` conditions) across all four handlers (`openai_compat.ts`, `anthropic_compat.ts`, `openai_original.ts`, `gcp_compat.ts`), dynamically driving retry attempts and bounded jitter delays directly from `provConfig.request_retry`.
 - Partitioned 186 model evaluation grader tests from `tests/unit/` and `tests/unit/eval_graders/` into `tests/eval/` (`graders/` and web evaluators), isolating false alarm terminal alarm banners (`🚨 VETO TRIGGERED`) from core gateway unit tests.
 - Isolated 179 legacy handler and legacy transport tests into `tests/unit/legacy/`, cleanly separating modern v4 development iteration from legacy fallback tests.
 

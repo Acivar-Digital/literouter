@@ -13,6 +13,8 @@ import { type SelectedKey } from "../network/pool";
 import { sanitizeAndTransformPayload } from "../transformers/payload";
 import type { OpenAIRequestPayload } from "../transformers/nuances";
 import { getEnv } from "../config/env";
+import { getProviderConfig } from "../config/providers";
+import { calculateRetryDelay } from "../engine/retry";
 import { getPacerForProvider, PacerQueueOverflowError } from "../network/pacer";
 import { getCircuitBreakerForProvider } from "../network/circuit_breaker";
 import {
@@ -481,8 +483,9 @@ async function executeGcpAttemptLoop(
 ): Promise<Response> {
   const env = getEnv();
   const poolSize = globalKeyPool.getPoolSize("gc");
-  const maxAttempts = env.GCP_ENABLE_RETRIES
-    ? Math.min(3, Math.max(1, poolSize))
+  const provConfig = getProviderConfig("gc");
+  const maxAttempts = provConfig.request_retry.enabled
+    ? Math.min(provConfig.request_retry.max_attempts, poolSize > 0 ? poolSize : 1)
     : 1;
   let lastError: unknown = null;
   let prevKeyIndex = -1;
@@ -597,6 +600,12 @@ async function executeGcpAttemptLoop(
     }
     if (!outcome.retryable) {
       throw lastError;
+    }
+    if (attempt < maxAttempts) {
+      const delayMs = calculateRetryDelay(provConfig.request_retry.delay, attempt);
+      if (delayMs > 0) {
+        await Bun.sleep(delayMs);
+      }
     }
   }
 

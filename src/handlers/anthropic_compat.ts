@@ -41,6 +41,7 @@ import {
   pruneAnthropicPayload,
 } from "../transformers/context_pruner";
 import { getEnv } from "../config/env";
+import { getProviderConfig } from "../config/providers";
 import { getPacerForProvider, PacerQueueOverflowError } from "../network/pacer";
 import { getCircuitBreakerForProvider } from "../network/circuit_breaker";
 import type { DirectDirective } from "../directive/parser";
@@ -1294,14 +1295,17 @@ async function executeAnthropicDirectLoop(
   clientHeaders?: Headers
 ): Promise<Response> {
   const poolSize = globalKeyPool.getPoolSize(directive.provider);
-  const maxAttempts = Math.min(3, Math.max(1, poolSize));
+  const provConfig = getProviderConfig(directive.provider);
+  const maxAttempts = provConfig.request_retry.enabled
+    ? Math.min(provConfig.request_retry.max_attempts, poolSize > 0 ? poolSize : 1)
+    : 1;
   let lastError: unknown = null;
   let prevKeyIndex = -1;
   const startTime = Date.now();
   const env = getEnv();
   const maxWaitMs = env.LITEROUTER_PACER_MAX_QUEUE_WAIT_MS || 20000;
 
-  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     const dwellMs = Date.now() - startTime;
     if (globalKeyPool.shouldLoadShed(directive.provider, dwellMs, maxWaitMs)) {
       const minTtl = globalKeyPool.getMinQuarantineTtlMs(directive.provider);
@@ -1359,13 +1363,13 @@ async function executeAnthropicDirectLoop(
       );
     }
 
-    if (attempt > 0) {
-      logRotate(reqId, directive.provider, prevKeyIndex, selected.index, selected.totalKeys, attempt + 1, maxAttempts);
+    if (attempt > 1) {
+      logRotate(reqId, directive.provider, prevKeyIndex, selected.index, selected.totalKeys, attempt, maxAttempts);
     }
     prevKeyIndex = selected.index;
 
     try {
-      return await executeAnthropicDirectCall(directive, payload, clientSignal, selected, reqId, attempt + 1, maxAttempts, clientHeaders);
+      return await executeAnthropicDirectCall(directive, payload, clientSignal, selected, reqId, attempt, maxAttempts, clientHeaders);
     } catch (err: unknown) {
       lastError = err;
       if (clientSignal?.aborted || (err instanceof Error && err.message.includes("aborted"))) {
@@ -1390,11 +1394,29 @@ async function executeAnthropicDirectLoop(
         );
       }
       if (err instanceof UpstreamRetryableError) {
+        if (attempt < maxAttempts) {
+          const { min_ms, max_ms } = provConfig.request_retry.delay;
+          const delayMs = min_ms < max_ms
+            ? min_ms + Math.floor(Math.random() * (max_ms - min_ms + 1))
+            : min_ms;
+          if (delayMs > 0) {
+            await Bun.sleep(delayMs);
+          }
+        }
         continue;
       }
       if (err instanceof NoResponseError) {
         if (globalKeyPool.isQuarantineEnabled(directive.provider)) {
           globalKeyPool.reportFailure(directive.provider, selected.index, 0, undefined, err.message, Date.now(), 2);
+        }
+        if (attempt < maxAttempts) {
+          const { min_ms, max_ms } = provConfig.request_retry.delay;
+          const delayMs = min_ms < max_ms
+            ? min_ms + Math.floor(Math.random() * (max_ms - min_ms + 1))
+            : min_ms;
+          if (delayMs > 0) {
+            await Bun.sleep(delayMs);
+          }
         }
         continue;
       }

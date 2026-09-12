@@ -25,7 +25,13 @@ import {
   transformResponsesToOpenAi,
 } from "../transformers/responses";
 
-import type { FusionConfig, FusionTier } from "../config/schema";
+import type { FusionConfig, FusionTier, ProviderConfigEntry } from "../config/schema";
+import {
+  getProviderConfig,
+  isRegisteredProvider,
+  initProviderRegistry,
+  getAllProviders,
+} from "../config/providers";
 import { getEnv } from "../config/env";
 import { getPacerForProvider, PacerQueueOverflowError } from "../network/pacer";
 import { getCircuitBreakerForProvider } from "../network/circuit_breaker";
@@ -57,49 +63,18 @@ import {
   pruneOpenAIPayload,
 } from "../transformers/context_pruner";
 
-interface ProviderEndpointConfig {
-  readonly code: string;
-  readonly base_url: string;
-  readonly auth_header?: "Bearer" | "x-api-key";
-  readonly headers?: Record<string, string>;
-  readonly endpoints: Record<string, string>;
+export interface ProviderEndpointConfig extends Omit<ProviderConfigEntry, "conserve_rules"> {
   readonly conserve_rules?: readonly ConserveRule[];
 }
 
-interface ProvidersRegistry {
-  readonly providers: Record<string, ProviderEndpointConfig>;
-}
-
-let cachedRegistry: ProvidersRegistry | null = null;
-
 export function resetProvidersRegistryCache(): void {
-  cachedRegistry = null;
-}
-
-function getProvidersRegistry(): ProvidersRegistry {
-  if (cachedRegistry !== null) {
-    return cachedRegistry;
-  }
-  const filePath = resolve(process.cwd(), "config", "providers.json");
-  if (!existsSync(filePath)) {
-    return { providers: {} };
-  }
-  try {
-    cachedRegistry = JSON.parse(readFileSync(filePath, "utf-8")) as ProvidersRegistry;
-    return cachedRegistry;
-  } catch {
-    return { providers: {} };
-  }
+  initProviderRegistry();
 }
 
 export function getProviderEndpointConfig(providerCode: string): ProviderEndpointConfig | undefined {
-  const reg = getProvidersRegistry();
-  for (const [provKey, p] of Object.entries(reg.providers)) {
-    if (p.code === providerCode || provKey === providerCode) {
-      return p;
-    }
-  }
-  return undefined;
+  return isRegisteredProvider(providerCode)
+    ? (getProviderConfig(providerCode) as unknown as ProviderEndpointConfig)
+    : undefined;
 }
 
 export function overrideProviderUrl(url: string, providerCode: string): string {
@@ -122,10 +97,11 @@ export function resolveUpstreamEndpoint(
   completionCode: string,
   model: string
 ): { url: string; authHeader: "Bearer" | "x-api-key"; rawPath: string; headers: Record<string, string> } {
-  const reg = getProvidersRegistry();
-  for (const p of Object.values(reg.providers)) {
-    if (p.code === providerCode && p.endpoints[completionCode]) {
-      const rawPath = p.endpoints[completionCode] as string;
+  if (isRegisteredProvider(providerCode)) {
+    const p = getProviderConfig(providerCode);
+    const endpoints = p.endpoints as Record<string, string | undefined>;
+    if (endpoints[completionCode]) {
+      const rawPath = endpoints[completionCode] as string;
       const formatted = rawPath.replace("{model}", model);
       const originalUrl = `${p.base_url}${formatted}`;
       return {
@@ -176,14 +152,12 @@ export function buildAuthHeaders(
     headers["x-goog-api-key"] = key;
   }
   if (provider) {
-    const reg = getProvidersRegistry();
-    for (const [provKey, p] of Object.entries(reg.providers)) {
-      if (p.code === provider || provKey === provider) {
-        if (p.headers) {
-          Object.assign(headers, p.headers);
-        }
-        break;
-      }
+    const norm = provider.toLowerCase();
+    const entry = getAllProviders().find(
+      (p) => p.code.toLowerCase() === norm || p.name?.toLowerCase() === norm
+    );
+    if (entry?.headers) {
+      Object.assign(headers, entry.headers);
     }
   }
   if (incomingHeaders) {
@@ -796,10 +770,10 @@ async function executeSingleAttemptLoop(
 ): Promise<Response> {
   const env = getEnv();
   const poolSize = globalKeyPool.getPoolSize(directive.provider);
-  const isZenLoop = directive.provider === "zn";
-  const maxAttempts = isZenLoop && !env.ZEN_ENABLE_RETRIES
-    ? 1
-    : Math.min(3, Math.max(1, poolSize));
+  const provConfig = getProviderConfig(directive.provider);
+  const maxAttempts = provConfig.request_retry.enabled
+    ? Math.min(provConfig.request_retry.max_attempts, poolSize > 0 ? poolSize : 1)
+    : 1;
   let lastError: unknown = null;
   let prevKeyIndex = -1;
   const startTime = Date.now();
@@ -889,6 +863,16 @@ async function executeSingleAttemptLoop(
     }
     if (!outcome.retryable) {
       throw lastError;
+    }
+
+    if (attempt + 1 < maxAttempts) {
+      const { min_ms, max_ms } = provConfig.request_retry.delay;
+      const delayMs = min_ms < max_ms
+        ? min_ms + Math.floor(Math.random() * (max_ms - min_ms + 1))
+        : min_ms;
+      if (delayMs > 0) {
+        await Bun.sleep(delayMs);
+      }
     }
   }
   logError(reqId, "Direct request attempts exhausted", lastError);

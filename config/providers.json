@@ -212,6 +212,9 @@
     },
     "openai": {
       "code": "oa",
+      "name": "OpenAI",
+      "env_key": "OPENAI_API_KEYS",
+      "strategy": "standard",
       "base_url": "https://api.openai.com",
       "auth_header": "Bearer",
       "endpoints": {
@@ -228,10 +231,31 @@
           "rpd": 10000,
           "tpm": 2000000
         }
+      },
+      "request_retry": {
+        "enabled": true,
+        "max_attempts": 3,
+        "delay": {
+          "min_ms": 150,
+          "max_ms": 300
+        }
+      },
+      "pacer": {
+        "enabled": true,
+        "min_delay_ms": 100,
+        "max_delay_ms": 500,
+        "max_queue_depth": 100,
+        "max_queue_wait_ms": 15000
+      },
+      "circuit_breaker": {
+        "enabled": true
       }
     },
     "anthropic": {
       "code": "an",
+      "name": "Anthropic",
+      "env_key": "ANTHROPIC_API_KEYS",
+      "strategy": "anthropic_direct",
       "base_url": "https://api.anthropic.com",
       "auth_header": "x-api-key",
       "endpoints": {
@@ -244,10 +268,31 @@
           "rpd": 10000,
           "tpm": 1000000
         }
+      },
+      "request_retry": {
+        "enabled": true,
+        "max_attempts": 3,
+        "delay": {
+          "min_ms": 150,
+          "max_ms": 300
+        }
+      },
+      "pacer": {
+        "enabled": true,
+        "min_delay_ms": 100,
+        "max_delay_ms": 500,
+        "max_queue_depth": 100,
+        "max_queue_wait_ms": 15000
+      },
+      "circuit_breaker": {
+        "enabled": true
       }
     },
     "groq": {
       "code": "gq",
+      "name": "Groq",
+      "env_key": "GROQ_API_KEYS",
+      "strategy": "standard",
       "base_url": "https://api.groq.com/openai",
       "auth_header": "Bearer",
       "endpoints": {
@@ -262,10 +307,31 @@
           "rpd": 14400,
           "tpm": 500000
         }
+      },
+      "request_retry": {
+        "enabled": true,
+        "max_attempts": 3,
+        "delay": {
+          "min_ms": 150,
+          "max_ms": 300
+        }
+      },
+      "pacer": {
+        "enabled": true,
+        "min_delay_ms": 100,
+        "max_delay_ms": 500,
+        "max_queue_depth": 100,
+        "max_queue_wait_ms": 15000
+      },
+      "circuit_breaker": {
+        "enabled": true
       }
     },
     "cerebras": {
       "code": "cb",
+      "name": "Cerebras",
+      "env_key": "CEREBRAS_API_KEYS",
+      "strategy": "standard",
       "base_url": "https://api.cerebras.ai",
       "auth_header": "Bearer",
       "endpoints": {
@@ -278,10 +344,31 @@
           "rpd": 14400,
           "tpm": 1000000
         }
+      },
+      "request_retry": {
+        "enabled": true,
+        "max_attempts": 3,
+        "delay": {
+          "min_ms": 150,
+          "max_ms": 300
+        }
+      },
+      "pacer": {
+        "enabled": true,
+        "min_delay_ms": 100,
+        "max_delay_ms": 500,
+        "max_queue_depth": 100,
+        "max_queue_wait_ms": 15000
+      },
+      "circuit_breaker": {
+        "enabled": true
       }
     },
     "deepseek": {
       "code": "ds",
+      "name": "DeepSeek",
+      "env_key": "DEEPSEEK_API_KEYS",
+      "strategy": "standard",
       "base_url": "https://api.deepseek.com",
       "auth_header": "Bearer",
       "endpoints": {
@@ -294,10 +381,31 @@
           "rpd": 10000,
           "tpm": 1000000
         }
+      },
+      "request_retry": {
+        "enabled": true,
+        "max_attempts": 3,
+        "delay": {
+          "min_ms": 150,
+          "max_ms": 300
+        }
+      },
+      "pacer": {
+        "enabled": true,
+        "min_delay_ms": 100,
+        "max_delay_ms": 500,
+        "max_queue_depth": 100,
+        "max_queue_wait_ms": 15000
+      },
+      "circuit_breaker": {
+        "enabled": true
       }
     },
     "mistral": {
       "code": "ms",
+      "name": "Mistral",
+      "env_key": "MISTRAL_API_KEYS",
+      "strategy": "standard",
       "base_url": "https://api.mistral.ai",
       "auth_header": "Bearer",
       "endpoints": {
@@ -311,10 +419,31 @@
           "rpd": 10000,
           "tpm": 1000000
         }
+      },
+      "request_retry": {
+        "enabled": true,
+        "max_attempts": 3,
+        "delay": {
+          "min_ms": 150,
+          "max_ms": 300
+        }
+      },
+      "pacer": {
+        "enabled": true,
+        "min_delay_ms": 100,
+        "max_delay_ms": 500,
+        "max_queue_depth": 100,
+        "max_queue_wait_ms": 15000
+      },
+      "circuit_breaker": {
+        "enabled": true
       }
     },
     "together": {
       "code": "tg",
+      "name": "Together AI",
+      "env_key": "TOGETHER_API_KEYS",
+      "strategy": "standard",
       "base_url": "https://api.together.xyz",
       "auth_header": "Bearer",
       "endpoints": {
@@ -329,6 +458,24 @@
           "rpd": 10000,
           "tpm": 1000000
         }
+      },
+      "request_retry": {
+        "enabled": true,
+        "max_attempts": 3,
+        "delay": {
+          "min_ms": 150,
+          "max_ms": 300
+        }
+      },
+      "pacer": {
+        "enabled": true,
+        "min_delay_ms": 100,
+        "max_delay_ms": 500,
+        "max_queue_depth": 100,
+        "max_queue_wait_ms": 15000
+      },
+      "circuit_breaker": {
+        "enabled": true
       }
     },
     "zen": {
@@ -377,6 +524,9 @@
     },
     "testprovider": {
       "code": "tp",
+      "name": "Test Provider",
+      "env_key": "TESTPROVIDER_API_KEYS",
+      "strategy": "standard",
       "base_url": "http://127.0.0.1:8999",
       "auth_header": "Bearer",
       "endpoints": {
@@ -391,6 +541,24 @@
           "rpd": 100000,
           "tpm": 10000000
         }
+      },
+      "request_retry": {
+        "enabled": true,
+        "max_attempts": 3,
+        "delay": {
+          "min_ms": 150,
+          "max_ms": 300
+        }
+      },
+      "pacer": {
+        "enabled": true,
+        "min_delay_ms": 100,
+        "max_delay_ms": 500,
+        "max_queue_depth": 100,
+        "max_queue_wait_ms": 15000
+      },
+      "circuit_breaker": {
+        "enabled": true
       }
     },
     "gcp": {

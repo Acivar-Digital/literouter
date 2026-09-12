@@ -160,10 +160,32 @@ describe("ProviderRegistry — In-Memory Store", () => {
   });
 
   it("getProviderDisplayName() falls back to the raw key when name is absent", () => {
-    // 'openai' entry in config/providers.json omits `name`, so init fills name = key
-    expect(getProviderConfig("oa").name).toBe("openai");
-    expect(getProviderDisplayName("oa")).toBe("openai");
-    expect(getProviderDisplayName("OA")).toBe("openai");
+    const unnamedConfig = {
+      providers: {
+        unnamedprov: {
+          code: "up",
+          base_url: "https://unnamed.ai",
+          endpoints: {
+            ch: "/v1/chat/completions",
+          },
+        },
+      },
+    };
+    initProviderRegistry(unnamedConfig);
+    expect(getProviderConfig("up").name).toBe("unnamedprov");
+    expect(getProviderDisplayName("up")).toBe("unnamedprov");
+    expect(getProviderDisplayName("UP")).toBe("unnamedprov");
+  });
+
+  it("resolves explicit name and env_key for configured providers such as OpenAI and Anthropic", () => {
+    expect(getProviderConfig("oa").name).toBe("OpenAI");
+    expect(getProviderConfig("oa").env_key).toBe("OPENAI_API_KEYS");
+    expect(getProviderDisplayName("oa")).toBe("OpenAI");
+    expect(getProviderDisplayName("OA")).toBe("OpenAI");
+
+    expect(getProviderConfig("an").name).toBe("Anthropic");
+    expect(getProviderConfig("an").env_key).toBe("ANTHROPIC_API_KEYS");
+    expect(getProviderConfig("an").strategy).toBe("anthropic_direct");
   });
 
   it("hot reload swaps the registry and queries return the new values", () => {

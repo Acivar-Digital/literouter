@@ -1,6 +1,8 @@
 import type { ParsedDirective } from "../directive/parser";
 import { validateDirective } from "../directive/validator";
 import { getEnv } from "../config/env";
+import { getProviderConfig } from "../config/providers";
+import { calculateRetryDelay } from "../engine/retry";
 import { classifyUpstreamError } from "../network/classifier";
 import { getCircuitBreakerForProvider } from "../network/circuit_breaker";
 import {
@@ -744,8 +746,9 @@ async function dispatchUpstreamFetch(
   // (or/oa) keep the legacy single-flight path: maxAttempts=1, unconditional
   // failure reporting, no breaker, no load-shed.
   const poolSize = globalKeyPool.getPoolSize(route.provider);
-  const maxAttempts = isZen
-    ? (env.ZEN_ENABLE_RETRIES ? Math.min(3, Math.max(1, poolSize)) : 1)
+  const provConfig = getProviderConfig(route.provider);
+  const maxAttempts = provConfig.request_retry.enabled
+    ? Math.min(provConfig.request_retry.max_attempts, poolSize > 0 ? poolSize : 1)
     : 1;
   const maxWaitMs = env.LITEROUTER_PACER_MAX_QUEUE_WAIT_MS || 300000;
   const totalKeys = poolSize > 0 ? poolSize : 1;
@@ -850,6 +853,10 @@ async function dispatchUpstreamFetch(
       }
       if (isZen && zenRetriesEnabled && attempt < maxAttempts && !signal.aborted) {
         logWarn(EMOJI.zap, `[ZEN ${reqId}] Transport error on attempt ${attempt}/${maxAttempts}, rotating key...`);
+        const delayMs = calculateRetryDelay(provConfig.request_retry.delay, attempt);
+        if (delayMs > 0) {
+          await Bun.sleep(delayMs);
+        }
         continue;
       }
       logError(reqId, `Upstream request to ${route.upstreamUrl} failed`, err);
@@ -917,6 +924,10 @@ async function dispatchUpstreamFetch(
         ? classification.quarantineTtlSec
         : undefined;
       logLimit(reqId, "zn", currentKeyIndex, res.status, ttlSec, totalKeys, extractErrorMessage(errBodyText));
+      const delayMs = calculateRetryDelay(provConfig.request_retry.delay, attempt);
+      if (delayMs > 0) {
+        await Bun.sleep(delayMs);
+      }
       continue;
     }
 

@@ -173,11 +173,12 @@ Per-provider model handling on the passthrough path (transforms, not gates):
 ## 3. `config/providers.json` — providers + headers registry
 
 Top-level shape: `{ "providers": { "<name>": { ... } } }`.
-Entry keys (verified): `code`, `base_url`, `auth_header`, optional `headers`,
-`endpoints`, `limits`, optional `strategy` (default `"standard"`; enum in
-`ProviderStrategySchema`, `src/config/schema.ts:113-121`), plus optional
-`name`, `env_key`, `request_retry`, `key_cooldown`, `pacer`,
-`circuit_breaker`, `conserve_rules`.
+Entry keys (verified): `code`, `name`, `env_key`, `base_url`, `auth_header`,
+`endpoints`, `limits`, `strategy` (enum in `ProviderStrategySchema`,
+`src/config/schema.ts:113-121`), `request_retry`, `pacer`, `circuit_breaker`,
+optional `headers`, `key_cooldown`, `conserve_rules`.
+All active and catalog providers explicitly declare their operational
+parameters (`strategy`, `request_retry`, `pacer`, `circuit_breaker`).
 
 > Canonical provider table: §3.1 below is the single source of truth for
 > name → code → base_url → strategy. Other skill files link here instead of
@@ -195,20 +196,22 @@ default `"Bearer"`; `endpoints` is a record keyed by `CompletionCodeSchema`;
 | `openrouter` | `or` | `https://openrouter.ai` | `standard` |
 | `nvidia` | `nv` | `https://integrate.api.nvidia.com` | `standard` |
 | `google` | `gg` | `https://generativelanguage.googleapis.com` | `native_cascade` |
-| `openai` | `oa` | `https://api.openai.com` | `standard` (omitted → default) |
-| `anthropic` | `an` | `https://api.anthropic.com` | `standard` (omitted → default) |
-| `groq` | `gq` | `https://api.groq.com/openai` | `standard` (omitted → default) |
-| `cerebras` | `cb` | `https://api.cerebras.ai` | `standard` (omitted → default) |
-| `deepseek` | `ds` | `https://api.deepseek.com` | `standard` (omitted → default) |
-| `mistral` | `ms` | `https://api.mistral.ai` | `standard` (omitted → default) |
-| `together` | `tg` | `https://api.together.xyz` | `standard` (omitted → default) |
+| `openai` | `oa` | `https://api.openai.com` | `standard` |
+| `anthropic` | `an` | `https://api.anthropic.com` | `anthropic_direct` |
+| `groq` | `gq` | `https://api.groq.com/openai` | `standard` |
+| `cerebras` | `cb` | `https://api.cerebras.ai` | `standard` |
+| `deepseek` | `ds` | `https://api.deepseek.com` | `standard` |
+| `mistral` | `ms` | `https://api.mistral.ai` | `standard` |
+| `together` | `tg` | `https://api.together.xyz` | `standard` |
 | `zen` | `zn` | `https://opencode.ai/zen` | `zen_single_flight` |
-| `testprovider` | `tp` | `http://127.0.0.1:8999` | `standard` (omitted → default) |
+| `testprovider` | `tp` | `http://127.0.0.1:8999` | `standard` |
 | `gcp` | `gc` | `https://generativelanguage.googleapis.com` | `gcp_guarded` |
 
 Codes must stay in sync with `ProviderCodeSchema`
 (`src/config/schema.ts:3-17`); directive parsing, `globalKeyPool`, and the
-pacer all key off the two-letter code.
+pacer all key off the two-letter code. All 13 providers on disk explicitly
+declare `name`, `env_key`, `strategy`, `request_retry`, `pacer`, and
+`circuit_breaker` configurations.
 
 ### 3.2 `headers` registry (static per-provider headers)
 
@@ -236,34 +239,50 @@ Endpoint codes observed on disk: `ch`, `ms`, `ob`, `gc`, `g1`, `em`, `md`,
 `/v1beta/models/{model}:generateContent` (`{model}` is substituted in
 `resolveUpstreamEndpoint`, `src/handlers/openai_compat.ts:106-131`).
 
-### 3.4 `limits` (`rpm` / `rpd` / `tpm`)
+### 3.4 `limits` (`rpm` / `rpd` / `tpm`) and Registry Lifecycle
 
 Each provider has a `default` limit; `google` additionally carries per-model
 overrides mirroring the `quota` values in `config/models.json` (e.g.
 `gemini-3.1-flash-lite`, `gemini-3.5-flash`, `gemma-4-26b`,
 `text-embedding-004`, `antigravity`).
 
-Providers state is **cached** in `cachedRegistry`
-(`src/handlers/openai_compat.ts:69`), loaded once from
-`resolve(process.cwd(), "config", "providers.json")` (`:79`). Edits require
-`POST /reset` (see §6).
+Provider registry state is managed centrally by `initProviderRegistry()` and
+`getProviderConfig()` in `src/config/providers.ts`. Redundant in-memory duplicate
+file parsing (`cachedRegistry`, `getProvidersRegistry`) in
+`src/handlers/openai_compat.ts` has been completely eliminated. Provider edits
+are hot-reloaded via `POST /reset` (which re-invokes `initProviderRegistry()`, see §6).
 
 ### 3.5 `strategy` registry (fail-fast on unknown strategy)
 
 `strategy` selects the per-provider execution engine. Valid values
 (`ProviderStrategySchema`, `src/config/schema.ts:113-121`):
 `standard`, `native_cascade`, `gcp_guarded`, `zen_single_flight`,
-`anthropic_direct` (default `"standard"` when omitted, `:133`).
+`anthropic_direct`.
 Wiring on disk: `google` (`gg`) → `native_cascade`
-(`config/providers.json:112`), `zen` (`zn`) → `zen_single_flight`
-(`:338`), `gcp` (`gc`) → `gcp_guarded` (`:400`); `openrouter` (`or`) and
-`nvidia` (`nv`) pin `standard` explicitly.
+(`config/providers.json`), `zen` (`zn`) → `zen_single_flight`,
+`anthropic` (`an`) → `anthropic_direct`, `gcp` (`gc`) → `gcp_guarded`; all
+other providers pin `standard` explicitly.
 
 `initStrategyRegistry()` (`src/engine/strategy_registry.ts:46-67`) resolves
 each provider's factory at boot; an unknown `strategy` string throws
 `Unknown strategy "<type>" for provider "<code>"` (`:62-64`). The boot block
 in `src/index.ts:49-57` catches registry failures and calls
 `process.exit(1)` — a bad strategy is fatal, never fail-open.
+
+### 3.6 Operational Governance: `request_retry`, `pacer`, `circuit_breaker`
+
+Operational parameters in `config/providers.json` directly govern all four gateway handlers (`openai_compat.ts`, `anthropic_compat.ts`, `openai_original.ts`, `gcp_compat.ts`), replacing legacy hardcoded magic numbers (`Math.min(3, Math.max(1, poolSize))` and hardcoded `isZenLoop` conditions):
+
+- **`request_retry`**: Handlers compute maximum attempts dynamically:
+  ```ts
+  const maxAttempts = provConfig.request_retry.enabled
+    ? Math.min(provConfig.request_retry.max_attempts, poolSize > 0 ? poolSize : 1)
+    : 1;
+  ```
+  and calculate bounded jitter delay from `provConfig.request_retry.delay` (`min_ms`, `max_ms`).
+- **Zen Single-Flight Execution**: Zen (`zn`) is explicitly configured in `config/providers.json` with `max_attempts: 1` and `delay: { min_ms: 0, max_ms: 0 }`. This prevents upstream OpenCode session burning and `429 FreeUsageLimitError` without needing hardcoded special-cased loop branches in handler code.
+- **`pacer`**: Provider-level conveyor queue pacing (`min_delay_ms`, `max_delay_ms`, `max_queue_depth`, `max_queue_wait_ms`) smooths bursts and enforces spacing.
+- **`circuit_breaker`**: Controls failure thresholds, failure sliding windows, open duration, and half-open probe caps per provider.
 
 ---
 

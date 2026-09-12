@@ -51,6 +51,9 @@ export function initProviderRegistry(rawConfig?: unknown): void {
 }
 
 export function getProviderConfig(codeOrName: string): ProviderConfigEntry {
+  if (registry.byCode.size === 0) {
+    initProviderRegistry();
+  }
   const norm = codeOrName.toLowerCase();
   const snap = registry; // Read once — consistent snapshot
   const entry = snap.byCode.get(norm) ?? snap.byName.get(norm);
@@ -61,6 +64,9 @@ export function getProviderConfig(codeOrName: string): ProviderConfigEntry {
 }
 
 export function getProviderDisplayName(codeOrName: string): string {
+  if (registry.byCode.size === 0) {
+    initProviderRegistry();
+  }
   const norm = codeOrName.toLowerCase();
   const snap = registry;
   const entry = snap.byCode.get(norm) ?? snap.byName.get(norm);
@@ -68,9 +74,15 @@ export function getProviderDisplayName(codeOrName: string): string {
 }
 
 export function isRegisteredProvider(code: string): boolean {
+  if (registry.byCode.size === 0) {
+    initProviderRegistry();
+  }
   return registry.byCode.has(code.toLowerCase());
 }
 
 export function getAllProviders(): readonly ProviderConfigEntry[] {
+  if (registry.byCode.size === 0) {
+    initProviderRegistry();
+  }
   return Array.from(registry.byCode.values());
 }
