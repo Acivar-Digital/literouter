@@ -162,7 +162,11 @@ is by path, not by directive segment.
 
 ## 9. Dispatch order cheat-sheet
 
-`dispatchRoute` (`src/index.ts:353-409`): admin reset → system
+Engine gate first: `resolveEngine` (`src/config/env.ts:130-140`) branches
+at `src/index.ts:414-417` — `v4` goes to `dispatchV4`, otherwise the legacy
+order below applies. Default engine is `legacy` (see §11).
+
+`dispatchRoute` (`src/index.ts:392-409`): admin reset → system
 (`/health /reset /hello`) → models discovery → `validateEndpointMatch` →
 ingress pacer (`or/nv/zn/gg` only; `gc` handler-paced, `src/index.ts:216-230`)
 → `/v1/responses` → `gc` chat/beta → `ROUTE_MAP` (`src/index.ts:148-156`) →
@@ -178,3 +182,23 @@ provider), `lr-nv-oa-ch-` (empty nuance, `src/directive/parser.ts:97-99`),
 `lr-nv-oa-ch` (4 parts — neither 5-part direct nor 3-part fusion,
 `src/directive/parser.ts:201-204`), `sk-anything` (no `lr-` prefix,
 `src/directive/parser.ts:194-196`).
+
+## 11. Engine selection & v4-only routes
+
+Default engine is `legacy`: `LITEROUTER_ENGINE: "legacy"`
+(`src/config/env.ts:51`), `LiteRouterEngineSchema =
+z.enum(["legacy", "v4"]).default("legacy")` (`src/config/schema.ts:199`).
+Per-request override via `x-literouter-engine: legacy|v4` header applies
+only when `LITEROUTER_ENGINE_OVERRIDE` is true
+(`src/config/env.ts:126-140`); otherwise the env default wins and the
+header is ignored.
+
+Branch: `resolveEngine(req)` at `src/index.ts:414-417` — `v4` goes to
+`dispatchV4` (`src/handlers/v4/router.ts:201-211`), anything else runs the
+legacy dispatch (§9).
+
+`/v1/traces` is v4-only: `isTracePath` (`src/handlers/v4/router.ts:93-95`)
+is reachable solely through `dispatchV4` (`router.ts:209-211`). On the
+default legacy engine the same path falls through legacy routing to `404`
+— a `404` on `/v1/traces` means the gateway is running legacy, not that
+tracing is broken.

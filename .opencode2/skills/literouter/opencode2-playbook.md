@@ -79,15 +79,8 @@ OpenCode 2 connects to LiteRouter on `https://localhost:7766/v1` using declarati
         "chunkTimeout": 120000
       },
       "models": {
-        "meta/llama-3.1-8b-instruct": {
-          "name": "Llama 3.1 8B Instruct",
-          "limit": {
-            "context": 131072,
-            "output": 16384
-          }
-        },
-        "meta/llama-3.1-70b-instruct": {
-          "name": "Llama 3.1 70B Instruct",
+        "nvidia/nemotron-3-super-120b-a12b": {
+          "name": "Nemotron 3 Super 120B",
           "limit": {
             "context": 131072,
             "output": 16384
@@ -225,4 +218,12 @@ To configure a read-only codebase explorer routed through LiteRouter without wri
          effect: allow
      ```
 3. **Model Pinning**: Pin to LiteRouter endpoints, e.g. `model: lr-gg/gemini-flash-lite` (routes to LiteRouter port 7766 Google Native endpoint with `lr-gg-gg-gc-no`). Denied tools (`edit`, `shell`, etc.) are automatically stripped from the tool schema sent to the model.
+
+---
+
+## 7. Directive Validity Notes (canon: `directive-grammar.md`)
+
+- ⛔ `gb` is never valid — it appears nowhere in `src/`; any key containing it fails parsing.
+- `lg` is parser-only — accepted by `src/directive/parser.ts:93` but absent from `NuanceCodeSchema` (`src/config/schema.ts:34-42`), so config-file validation rejects what the gateway parser accepts.
+- `tp` is tests-only — a loopback test double (`http://127.0.0.1:8999`); never use it outside unit tests.
 

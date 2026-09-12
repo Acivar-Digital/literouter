@@ -23,6 +23,11 @@ Endpoint (`ch` vs `rs`) does **not** change this. `src/index.ts:285`
 `oa` — the compat handler still runs the `oa` scrub path, then
 `transformOpenAiToResponses` converts `messages[]` → Responses `input`.
 
+Engine scope: the routing above is the default `legacy` engine. `v4`
+(`LITEROUTER_ENGINE=v4` or override header) branches to `dispatchV4`
+before any of this (`src/index.ts:414-417`) — see
+`directive-grammar.md` §11 for engine selection and v4-only routes.
+
 ## 2. What `oa` Scrubs
 
 `src/handlers/openai_compat.ts:872` → `sanitizeAndTransformPayload()` →

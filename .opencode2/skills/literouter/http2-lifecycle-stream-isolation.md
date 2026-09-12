@@ -79,10 +79,14 @@ async function pipeWebResponseToNode(
   const cancelReader = () => {
     if (isAborted) return;
     isAborted = true;
-    reader.cancel().catch((err: unknown) => {
-      console.debug("[H2 Server] Reader cancel error:", err);
+    reader.cancel().catch((cancelErr: unknown) => {
+      const cancelMsg = cancelErr instanceof Error ? cancelErr.message : String(cancelErr ?? "");
+      console.debug(`[H2 Server] Reader cancel error: ${cancelMsg}`);
     });
   };
+  // Contract: cancel log is one-line message-only `console.debug`
+  // (`src/index.ts:555-562`) — never the full `err` object. Client aborts
+  // are quiet: matched aborts skip `logError` (`src/index.ts:585-596`).
 
   const onResClose = () => {
     if (!nodeRes.writableEnded) {

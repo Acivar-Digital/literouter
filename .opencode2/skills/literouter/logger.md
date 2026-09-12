@@ -163,3 +163,18 @@ bun test tests/unit/visual_telemetry.test.ts   # 18-test contract suite
 3. Reuse `EMOJI` values; add a new key only if no existing icon fits.
 4. Update `tests/unit/visual_telemetry.test.ts` with an `includes()` assertion per new line.
 5. Run `bun run typecheck && bun test tests/unit/visual_telemetry.test.ts`.
+
+## 7. Message-only `console.debug` + quiet client-abort contract
+
+- Transport/stream teardown helpers log message-only one-liners, never the
+  full `err` object: `safeEnqueue` (`src/network/fetcher.ts:125-131`),
+  `safeClose` (`src/network/fetcher.ts:147-151`), H2 `cancelReader`
+  (`src/index.ts:555-562`, `[H2 Server] Reader cancel error: <msg>`).
+  This keeps client-cancel noise out of terminal scrollback.
+- Client aborts are quiet end-to-end: edge maps aborts to 499 without
+  `logError` (`src/index.ts:493-504,282-286`); dispatch rethrows pre-fetch
+  aborts with no breaker write (`src/engine/dispatch.ts:610-612`);
+  mid-stream aborts close with no `[DONE]`, no breaker failure, no
+  telemetry 500 (`tests/unit/engine/dispatch_abort.test.ts:126-175`).
+  Genuine upstream errors still emit `[DONE]` + breaker failure + telemetry
+  error (`tests/unit/engine/dispatch_abort.test.ts:177-197`).

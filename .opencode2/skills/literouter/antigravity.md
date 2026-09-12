@@ -59,6 +59,10 @@ In `~/.config/opencode2/opencode.json`:
 
 ## 3. LiteRouter Local Routing & Directive Keys (HTTP/2 Port 7766)
 
+> Canonical provider table (codes, base URLs, strategies, limits):
+> [`config-schemas.md` §3](config-schemas.md#3-configprovidersjson-providers-headers-registry).
+> Google (`gg`) uses `strategy: "native_cascade"` (`config/providers.json:112`).
+
 To route local requests through LiteRouter over HTTP/2 on port 7766:
 - **Google Native RPC (`:generateContent`)**: `https://localhost:7766/v1beta` with `apiKey: "lr-gg-gg-gc-no"` (or `lr-gg-gg-gc-gm` for Gemma nuance)
 - **Google OpenAI-Compat Beta**: `https://localhost:7766/v1` with `apiKey: "lr-gg-oa-ob-no"` (or `lr-gg-oa-ob-gm`)

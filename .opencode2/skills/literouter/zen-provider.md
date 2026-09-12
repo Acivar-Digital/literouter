@@ -7,6 +7,10 @@
 
 ## 1. Endpoint & Registry (ground truth: `config/providers.json:247-261`)
 
+> Canonical provider table (all codes, base URLs, strategies, limits):
+> [`config-schemas.md` §3](config-schemas.md#3-configprovidersjson-providers-headers-registry).
+> Zen (`zn`) uses `strategy: "zen_single_flight"` (`config/providers.json:338`).
+
 - Base URL: `https://opencode.ai/zen`
 - Auth header: `Bearer` with `ZEN_API_KEYS` pool entries (live keys in git-ignored `.env.local`, never hardcoded)
 - Static attribution headers (hot-reloaded via `POST /reset`):
@@ -22,6 +26,7 @@ Clients send bare model names with a Zen directive key
 (e.g. `Authorization: Bearer lr-zn-oa-ch-no`):
 `big-pickle`, `hy3-free`, `deepseek-v4-flash-free`, `qwen3.6-plus-free`,
 `minimax-m3-free`, `nemotron-3-ultra-free`, `north-mini-code-free`.
+Never send a `zen/` prefix — Zen models accept bare names only.
 
 ## 3. OpenCode Identity Gating (two failure modes)
 

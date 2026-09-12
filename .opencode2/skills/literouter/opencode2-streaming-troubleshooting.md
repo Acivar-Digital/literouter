@@ -110,3 +110,11 @@ LiteRouter guarantees strict client isolation:
 | **Curl / Generic Requests** | `isOpenCodeClient` == false | **100% Preserved** | Untouched | Not attached |
 | **Explicit Nuance `ts`** | Directive has `+ts` (e.g. `lr-or-oa-ch-ts`) | **Preserved for OpenCode** | Preserved | Not attached |
 | **Explicit Nuance `sb`** | Directive has `+sb` (e.g. `lr-or-oa-ch-sb`) | **Stripped for all clients** | Full scrub & tool flatten | Active (5s interval) |
+
+---
+
+## 6. Directive Validity Notes (canon: `directive-grammar.md`)
+
+- ⛔ `gb` is never valid — it appears nowhere in `src/`; any key containing it fails parsing.
+- `lg` is parser-only — accepted by `src/directive/parser.ts:93` but absent from `NuanceCodeSchema` (`src/config/schema.ts:34-42`), so config-file validation rejects what the gateway parser accepts.
+- `tp` is tests-only — a loopback test double (`http://127.0.0.1:8999`); never use it outside unit tests.

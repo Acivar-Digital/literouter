@@ -22,28 +22,28 @@ description: LiteRouter API Gateway operational guide for Bun/TypeScript proxy o
 | Health probe (auth-free) | `curl -sk https://localhost:7766/health` |
 | Hard key reset (auth-free) | `curl -sk -X POST https://localhost:7766/reset` |
 | Unit tests | `bun test` |
-| Diagnostics | `bun run scripts/doctor.ts` (JSON schema + live upstream key probes for Google, NVIDIA, OpenRouter, Zen) |
+| Diagnostics | `bun run scripts/doctor.ts` (JSON schema + live upstream key probes for Google, NVIDIA, OpenRouter, Zen, GCP) |
 | Master Model Evaluation Gauntlet | `bun run eval/eval.ts <model_name>` (orchestrates speed, code & web, outputs markdown report card) |
 | Coding & Agentic Benchmark | `bun run eval/code.ts <model_name>` (5-stage wire, pydantic, loop, str_replace & injection audit; dual Chat/Responses) |
 | Web Frontend Evaluation | `bun run eval/web.ts <model_name>` (5-stage DOM structure, responsive, React state, hygiene & a11y audit) |
 | Model probe & onboarding | `bun run scripts/probe_model.ts <model_name>` (validates OpenCode 2, Claude Code CLI & Pydantic AI) |
 | Model speed & throughput | `bun run eval/speed.ts` (measures TTFT, duration, tokens/sec; alias: `scripts/bench_speed.ts`) |
 | OpenCode2 Auto-Patch | `bash scripts/opencode2_autopatch.sh` (fast <5ms self-heal & binary verification) |
-| Typecheck & lint | `bun x tsc --noEmit && uv run ruff check .` |
+| Typecheck & lint | `bun run typecheck` && `uv run ruff check .` |
 
 > Auth scope: `GET /health` and `POST /reset` perform **no auth check and no method check** — see [scripts-ops.md §2](scripts-ops.md#2-get-health-liveness-probe-no-auth-any-method) and [§3](scripts-ops.md#3-post-reset-hard-reset-no-auth-any-method-hot-reload-scope). The authenticated variant is `POST /admin/pool/reset` ([§3.3](scripts-ops.md#33-auth-gated-variant-post-adminpoolreset)).
 
 ## §2. Active Key Pools (summary)
 
-> 📖 **Full registry**: [`config-schemas.md` §3](config-schemas.md#3-configprovidersjson-providers-headers-registry) (providers, headers, endpoints, limits).
+> 📖 **Full registry**: [`config-schemas.md` §3](config-schemas.md#3-configprovidersjson-providers-headers-registry) (providers, headers, endpoints, limits, strategies — §3.1 is the single source of truth for name → code → base_url → strategy).
 
-| Provider | Code | Environment Variable | Upstream Target |
-|---|---|---|---|
-| **OpenRouter** | `or` | `OPENROUTER_API_KEYS` | `https://openrouter.ai` |
-| **NVIDIA NIM** | `nv` | `NVIDIA_API_KEYS` | `https://integrate.api.nvidia.com` |
-| **Google AI Studio** | `gg` | `GOOGLE_API_KEYS` | `https://generativelanguage.googleapis.com` |
-| **Zen** | `zn` | `ZEN_API_KEYS` | `https://opencode.ai/zen` |
-| **Google Cloud (GCP)** | `gc` | `GCP_KEYS` / `GCP_API_KEYS` | `https://generativelanguage.googleapis.com` |
+| Provider | Code | Environment Variable | Upstream Target | Strategy |
+|---|---|---|---|---|
+| **OpenRouter** | `or` | `OPENROUTER_API_KEYS` | `https://openrouter.ai` | `standard` |
+| **NVIDIA NIM** | `nv` | `NVIDIA_API_KEYS` | `https://integrate.api.nvidia.com` | `standard` |
+| **Google AI Studio** | `gg` | `GOOGLE_API_KEYS` | `https://generativelanguage.googleapis.com` | `native_cascade` |
+| **Zen** | `zn` | `ZEN_API_KEYS` | `https://opencode.ai/zen` | `zen_single_flight` |
+| **Google Cloud (GCP)** | `gc` | `GCP_KEYS` / `GCP_API_KEYS` | `https://generativelanguage.googleapis.com` | `gcp_guarded` |
 
 *Validation*: Discards tokens `< 4` chars or matching `changeme`, `todo`, `undefined`, `null`. Non-destructive mock keys injected during unit tests.
 
@@ -62,7 +62,7 @@ description: LiteRouter API Gateway operational guide for Bun/TypeScript proxy o
 
 ## §4. Directive Key Grammar (summary)
 
-> 📖 **Full matrix**: [`directive-grammar.md`](directive-grammar.md) — shapes ([§1](directive-grammar.md#1-key-shapes)), providers ([§2](directive-grammar.md#2-provider-codes-13)), wires ([§3](directive-grammar.md#3-payload-wire-codes-6)), endpoints ([§4](directive-grammar.md#4-completion-endpoint-codes-10)), nuances ([§5](directive-grammar.md#5-nuance-codes-8-compoundable-with-)), top-10 ([§6](directive-grammar.md#6-top-10-keys-expanded-handler-why)), fusion presets ([§7](directive-grammar.md#7-fusion-presets-lr-fse-)), 400 rules ([§8](directive-grammar.md#8-endpoint-mismatch-400-rules)), dispatch order ([§9](directive-grammar.md#9-dispatch-order-cheat-sheet)), validity checks ([§10](directive-grammar.md#10-quick-validity-checks)).
+> 📖 **Full matrix**: [`directive-grammar.md`](directive-grammar.md) — shapes ([§1](directive-grammar.md#1-key-shapes)), providers ([§2](directive-grammar.md#2-provider-codes-13)), wires ([§3](directive-grammar.md#3-payload-wire-codes-6)), endpoints ([§4](directive-grammar.md#4-completion-endpoint-codes-10)), nuances ([§5](directive-grammar.md#5-nuance-codes-8-compoundable-with-)), top-10 ([§6](directive-grammar.md#6-top-10-keys-expanded-handler-why)), fusion presets ([§7](directive-grammar.md#7-fusion-presets-lr-fse-)), 400 rules ([§8](directive-grammar.md#8-endpoint-mismatch-400-rules)), dispatch order ([§9](directive-grammar.md#9-dispatch-order-cheat-sheet)), validity checks ([§10](directive-grammar.md#10-quick-validity-checks)), engine gate ([§11](directive-grammar.md#11-engine-selection-v4-only-routes)).
 
 Format: `lr-<provider>-<payload>-<completion>-<nuance>`
 - **Providers**: `or`, `nv`, `gg`, `zn`, `gc`, `oa`, `an`, `gq`, `cb`, `ds`, `ms`, `tg` (+ `tp` tests-only loopback double — never use outside unit tests).
@@ -70,6 +70,7 @@ Format: `lr-<provider>-<payload>-<completion>-<nuance>`
 - **Completion (endpoint)**: `ch`, `ms`, `rs`, `gc`, `ob`, `em`, `md` (+ map-only codes `g1`, `im`, `au` — `g1` is a **completion-code slot, not a nuance**).
 - **Nuances**: `no`, `dp`, `ts`, `sb`, `gm`, `g3`, `tc`, `lg` (compound with `+`, e.g. `dp+ts`). `lg` is **parser-only** (accepted by `src/directive/parser.ts:93`, absent from `NuanceCodeSchema` `src/config/schema.ts:34-42` — config-file validation rejects what the gateway parser accepts).
 - ⛔ **`gb` appears nowhere in `src/` and must never be used.** Any key containing it fails parsing.
+- **Engine gate**: default engine is `legacy` (`src/config/env.ts:51`, `src/config/schema.ts:199`). `v4` runs only via `LITEROUTER_ENGINE=v4` or an `x-literouter-engine: legacy|v4` header when `LITEROUTER_ENGINE_OVERRIDE` is true (`src/config/env.ts:126-140`); the branch is `src/index.ts:414-417`. `/v1/traces` is v4-only — a `404` there means the gateway is running legacy, not that tracing is broken ([directive-grammar.md §11](directive-grammar.md#11-engine-selection-v4-only-routes)).
 
 | Top 10 Key | Target Client / Workflow | Model Example | Wire & Behavior |
 |---|---|---|---|
@@ -94,6 +95,7 @@ Fusion presets: `lr-fse-<preset>` where preset is ONLY one of `quad` / `pydn` / 
 - **Agentic Attribution**: loaded from `config/providers.json`; hot-reloaded via `POST /reset` ([config-schemas.md §3.2](config-schemas.md#32-headers-registry-static-per-provider-headers)).
 - **Native Google Fusion Chains**: `gemini-flash` cascades `3.8 ➔ 3.7 ➔ 3.6 ➔ 3.5`; `gemini-flash-lite` cascades `3.5 ➔ 3.1` ([config-schemas.md §1.2](config-schemas.md#12-native_chains-google-native-cascades), [§1.3](config-schemas.md#13-nativetierindices-sticky-position-for-native-cascades)).
 - **Payload rule**: `oa` scrubs / `oo` preserves — keyed off payload segment, not provider ([error-action-matrix.md §2](error-action-matrix.md#2-retry-quarantine-call-chain-wiring)).
+- **Engine-conditional fusion**: under the `v4` engine the native cascade is decided by `classifyFailure` (`src/engine/strategies/native_cascade.ts:82-102`) — `404` → `advance_target`, `429`/`5xx` → `retry_same_target`, anything else → `fail_fast` ([fusion.md §1.5b](fusion.md#15b-v4-engine-mapping-nativecascadestrategy)); engine selection is [directive-grammar.md §11](directive-grammar.md#11-engine-selection-v4-only-routes).
 
 ---
 
@@ -105,8 +107,9 @@ Fusion presets: `lr-fse-<preset>` where preset is ONLY one of `quad` / `pydn` / 
 
 > 📖 **Full schemas**: [`config-schemas.md` §5](config-schemas.md#5-zod-validators-srcconfigschemats) (Zod validators), [`error-action-matrix.md` §4](error-action-matrix.md#4-env-knob-quick-reference) (env knob reference).
 
-- **`.env.local`** (git-ignored secrets): live upstream API key pools (`OPENROUTER_API_KEYS`, `NVIDIA_API_KEYS`, `ZEN_API_KEYS`, `GOOGLE_API_KEYS`).
-- **`.env`** (tracked): operational parameters (port, timeouts, TTFT guards, reasoning defaults, GCP/Zen/OpenRouter retry/quarantine/breaker/pacer toggles, `COOLDOWN_RATE_LIMIT_TTL_SEC`).
+- **`.env.local`** (git-ignored secrets): live upstream API key pools (`OPENROUTER_API_KEYS`, `NVIDIA_API_KEYS`, `ZEN_API_KEYS`, `GOOGLE_API_KEYS`, `GCP_KEYS` / `GCP_API_KEYS`).
+- **`.env`** (tracked): operational parameters (port, timeouts, TTFT guards, reasoning defaults, GCP/Zen/OpenRouter retry/quarantine/breaker/pacer toggles, `COOLDOWN_RATE_LIMIT_TTL_SEC`, `LITEROUTER_ENGINE` + `LITEROUTER_ENGINE_OVERRIDE`).
+- **`LITEROUTER_ENGINE` (default `"legacy"`) + `LITEROUTER_ENGINE_OVERRIDE` (default `"false"`)**: `resolveEngine(req)` (`src/config/env.ts:130-140`) returns the env default unless override is enabled **and** a request carries `x-literouter-engine: legacy|v4` — any other value falls back to the env default ([config-schemas.md §7](config-schemas.md#7-literouter_engine-legacy-default-per-request-override-gate)).
 - ⚠️ `FUSION_UPSTREAM_URL` / `FUSION_UPSTREAM_URL_NATIVE` are **legacy Python fusion-sidecar env vars** (`docs/swap_env.md`, `docs/Longrunning_Mode.md`) — there is **no `FUSION_UPSTREAM_URL` constant in `src/`**. The TS gateway resolves upstreams from `config/providers.json` via `resolveUpstreamEndpoint()` — see [config-schemas.md §4](config-schemas.md#4-fusion_upstream_url-what-it-is-and-is-not).
 
 ## §8. Cooldown & Quarantine Knobs (summary)
@@ -138,7 +141,7 @@ After editing `.env`: `bash scripts/restart.sh`. After editing `config/providers
 | 10 | Mid-stream error interceptor + auto-resend | In-band 5xx/socket-reset/EOF → isolate key, resend into open downstream stream | `architecture.md` |
 | 11 | H2 staggered pool + anti-pinning aging (`h2_pool.ts`) | Persistent H2 sessions, least-loaded balancing, 180s±15s drain aging, GOAWAY handling | `http2-lifecycle-stream-isolation.md` |
 | 12 | Token-bucket pacer / ingress conveyor (`pacer.ts`) | `minIntervalMs` 2000ms `gg`/`gc`, 500ms others; gateway-edge ingress + handler mid-stream pacing | [error-action-matrix.md §4](error-action-matrix.md#4-env-knob-quick-reference) |
-| 13 | Provider circuit breaker (3-state, 60s canary) | `CLOSED`/`OPEN`/`HALF_OPEN` per provider | [error-action-matrix.md §2](error-action-matrix.md#2-retry-quarantine-call-chain-wiring) |
+| 13 | Provider circuit breaker (3-state: 5-in-60s → OPEN 30s → HALF_OPEN 2 probes) | `CLOSED`/`OPEN`/`HALF_OPEN` per provider; 503 `breaker_open` (probe-cap, no `Retry-After`) vs `circuit_breaker_open` (OPEN reject, with `Retry-After`) | [error-action-matrix.md §2](error-action-matrix.md#2-retry-quarantine-call-chain-wiring) + [taxonomy](error-action-matrix.md#taxonomy-breaker_open-vs-circuit_breaker_open-vs-pacer-overflow) |
 | 14 | OpenCode reasoning filter + bloat shield | Strips reasoning deltas for `opencode*` clients; control-char healing; `content: null` delete; throttled empty-delta heartbeats | `opencode2-reasoning-scrubber.md` |
 | 15 | OpenCode2 auto-patcher (`opencode2_autopatch.sh`) | Sub-5ms idempotent CLI self-heal, integrated into `~/.local/bin/opencode2` | [scripts-ops.md §1.5](scripts-ops.md#15-scriptsopencode2_autopatchsh-opencode2-cli-self-heal-idempotent) |
 | 16 | Two-leg streaming (`docs/Fix_Streaming_01.md`) | Zero-cutoff ingress conveyor + resilient replay on upstream drops | `opencode2-streaming-troubleshooting.md` |
@@ -181,6 +184,7 @@ Canonical grammar companion — read it before guessing any key:
 | Endpoint-mismatch 400 rules | [directive-grammar.md §8](directive-grammar.md#8-endpoint-mismatch-400-rules) |
 | Dispatch order cheat-sheet | [directive-grammar.md §9](directive-grammar.md#9-dispatch-order-cheat-sheet) |
 | Quick validity checks | [directive-grammar.md §10](directive-grammar.md#10-quick-validity-checks) |
+| Engine selection & v4-only routes (`legacy` default, override gate, `/v1/traces`) | [directive-grammar.md §11](directive-grammar.md#11-engine-selection-v4-only-routes) |
 
 ## §12. Config & Schemas Index
 
@@ -193,15 +197,17 @@ Canonical config companion — every `config/` file and its validator:
 | `native_chains` (Google cascades) | [config-schemas.md §1.2](config-schemas.md#12-native_chains-google-native-cascades) |
 | `nativeTierIndices` sticky positions | [config-schemas.md §1.3](config-schemas.md#13-nativetierindices-sticky-position-for-native-cascades) |
 | Validation gap (no `fusion.schema.json` on disk; `native_chains` fail-open) | [config-schemas.md §1.4](config-schemas.md#14-validation-gap-verified-on-disk) |
-| `models.json` catalog | [config-schemas.md §2](config-schemas.md#2-configmodelsjson--legacy-advertisement-only-catalog-not-a-serving-gate) |
-| `providers.json` registry (providers + headers + endpoints + limits) | [config-schemas.md §3](config-schemas.md#3-configprovidersjson-providers-headers-registry) |
-| Providers on disk (name → code → base_url) | [config-schemas.md §3.1](config-schemas.md#31-providers-on-disk-name-code-base_url) |
+| `models.json` catalog | [config-schemas.md §2](config-schemas.md#2-configmodelsjson-legacy-advertisement-only-catalog-not-a-serving-gate) |
+| `providers.json` registry (providers + headers + endpoints + limits + strategies) | [config-schemas.md §3](config-schemas.md#3-configprovidersjson-providers-headers-registry) |
+| Providers on disk (name → code → base_url → strategy) | [config-schemas.md §3.1](config-schemas.md#31-providers-on-disk-name-code-base_url-strategy) |
 | Headers registry (static per-provider headers) | [config-schemas.md §3.2](config-schemas.md#32-headers-registry-static-per-provider-headers) |
 | Endpoints (completion-code → path) | [config-schemas.md §3.3](config-schemas.md#33-endpoints-completion-code-path) |
 | Limits (`rpm` / `rpd` / `tpm`) | [config-schemas.md §3.4](config-schemas.md#34-limits-rpm-rpd-tpm) |
+| `strategy` registry (fail-fast throw on unknown) | [config-schemas.md §3.5](config-schemas.md#35-strategy-registry-fail-fast-on-unknown-strategy) |
 | `FUSION_UPSTREAM_URL` legacy-Python note (not a TS constant) | [config-schemas.md §4](config-schemas.md#4-fusion_upstream_url-what-it-is-and-is-not) |
 | Zod validators (`src/config/schema.ts`) | [config-schemas.md §5](config-schemas.md#5-zod-validators-srcconfigschemats) |
 | Edit → `POST /reset` hot-reload workflow | [config-schemas.md §6](config-schemas.md#6-edit-post-reset-hot-reload-workflow) |
+| `LITEROUTER_ENGINE` legacy default + per-request override gate | [config-schemas.md §7](config-schemas.md#7-literouter_engine-legacy-default-per-request-override-gate) |
 
 > ⚠️ `config/fusion.json` declares `"$schema": "./fusion.schema.json"`, but **no such file exists in the repo** — the pointer is informational only. Do not link or reference it as a file.
 
@@ -274,13 +280,13 @@ bun run scripts/probe_model.ts <model_name> [--directive <directive_key>] [--url
 
 | Topic | File | When to read it |
 |---|---|---|
-| **Directive grammar (full `lr-*` matrix, validity, dispatch)** | `directive-grammar.md` (§11) | User asks about any directive key, provider/payload/completion/nuance code, `gb`/`g1`/`tp`/`lg`, fusion preset names, or 400 mismatch errors |
-| **Config schemas (`fusion.json`, `models.json`, `providers.json`, Zod)** | `config-schemas.md` (§12) | User asks about config files, headers registry, endpoints, limits, validators, `FUSION_UPSTREAM_URL`, or edit→reset workflow |
+| **Directive grammar (full `lr-*` matrix, validity, dispatch, engine gate)** | `directive-grammar.md` (§11) | User asks about any directive key, provider/payload/completion/nuance code, `gb`/`g1`/`tp`/`lg`, fusion preset names, 400 mismatch errors, engine selection, or `/v1/traces` 404s |
+| **Config schemas (`fusion.json`, `models.json`, `providers.json`, Zod)** | `config-schemas.md` (§12) | User asks about config files, headers registry, endpoints, limits, provider strategies, engine env, `FUSION_UPSTREAM_URL`, or edit→reset workflow |
 | **Scripts & ops (lifecycle, `/health`, `/reset`, doctor, runbooks)** | `scripts-ops.md` (§13) | User asks about `start/stop/restart`, health, reset scope, `doctor.ts`/`doctor_zn.ts`, Zen probing, or operator runbooks |
 | **Error → action matrix (status, wiring, file index, env knobs)** | `error-action-matrix.md` (§13) | User asks about 429/5xx handling, retry/quarantine wiring, cooldown env knobs, or where a file lives in `src/` |
-| **LiteRouter master architecture, keys, endpoints & directives** | `architecture.md` | Complete system design, routing matrix, compatibility layers, resilience mechanics |
+| **LiteRouter master architecture, in-memory engine, keys, endpoints & directives** | `architecture.md` | Complete system design, in-memory vs Redis/Valkey ("We choose not to") rationale, routing matrix, compatibility layers, resilience mechanics |
 | **Zen provider (identity gating, sessions, directives, toggles)** | `zen-provider.md` | User asks about Zen, `zn`, `big-pickle`, `MissingSessionID`, `FreeUsageLimitError`, session-id forwarding, Zen directive keys, or Zen retry/quarantine toggles |
-| **Fusion setup, Native Google Fusion chains (`gemini-flash`, `gemini-flash-lite`) & virtual presets (`quad`, `pydn`, `fast`, `deep`)** | `fusion.md` | User asks about Fusion multi-tier routing, native cascades, `nativeTierIndices`, sticky fallback caching, `config/fusion.json`, `FusionEngine`, or execution plans |
+| **Fusion setup, Native Google Fusion chains (`gemini-flash`, `gemini-flash-lite`) & virtual presets (`quad`, `pydn`, `fast`, `deep`)** | `fusion.md` | User asks about Fusion multi-tier routing, native cascades, `nativeTierIndices`, sticky fallback caching, `config/fusion.json`, `FusionEngine`, v4 `classifyFailure` mapping, or execution plans |
 | **Doctor diagnostics & health probes (`doctor.ts`, `doctor_zn.ts`)** | `doctor.md` | User asks about key health probes, upstream diagnostics, status codes, or provider probe errors |
 | **Claude Code integration** | `claude-code.md` | User asks about Claude Code, Anthropic Messages API, `ANTHROPIC_BASE_URL`, or routing Claude Code through LiteRouter |
 | **OpenCode2 integration** | `opencode2-playbook.md` | User asks about OpenCode2, V2 plugins, `~/.config/opencode2/`, or V1/V2 isolation |
@@ -311,10 +317,11 @@ bun run scripts/probe_model.ts <model_name> [--directive <directive_key>] [--url
 6. **No `fusion.schema.json` on disk.** The `$schema` pointer inside `config/fusion.json` is informational only; never link it as a file ([config-schemas.md §1.4](config-schemas.md#14-validation-gap-verified-on-disk)).
 7. **`FUSION_UPSTREAM_URL` is a legacy Python sidecar env var, not a TS constant** (zero hits in `src/`) — see [config-schemas.md §4](config-schemas.md#4-fusion_upstream_url-what-it-is-and-is-not).
 8. **`POST /reset` hot-reloads `config/providers.json` headers but cannot rebind port** — port/host/cert changes need `bash scripts/restart.sh`. `GET /health` + `POST /reset` are **auth-free** ([scripts-ops.md §3](scripts-ops.md#3-post-reset-hard-reset-no-auth-any-method-hot-reload-scope), [§3.2](scripts-ops.md#32-hot-reload-scope-configprovidersjson-headers-included)).
+9. **Pure In-Memory Architecture (Zero Redis/Valkey Dependency)**: LiteRouter deliberately chooses NOT to use Redis, Valkey, or `Bun.redis` for core state. Single-threaded non-preemptive event-loop atomicity, `RequestPacer` FIFO burst smoothing, <0.05ms RAM lookups, and zero external failure domains eliminate external daemon baggage for single-instance gateways (see `architecture.md` §1 & `docs/ARCHITECTURE.md` §2.4).
 
 ## §16. Appendix — Lazy Pointers (load only on topic match)
 
 - **TUI LaTeX & math rendering**: [tui-latex-math-rendering.md](tui-latex-math-rendering.md) — overview ([§1](tui-latex-math-rendering.md#1-executive-overview-rendering-environments)), raw-math root cause ([§2](tui-latex-math-rendering.md#2-root-cause-of-raw-math-artifacts-in-tui)), upstream tracking ([§3](tui-latex-math-rendering.md#3-upstream-opencode-github-tracking)), mitigations ([§5](tui-latex-math-rendering.md#5-recommended-engineering-practices-mitigations)).
 - **Antigravity IDE setup (LiteRouter wiring only)**: [agy-ide-setup.md](agy-ide-setup.md) — architecture ([§1](agy-ide-setup.md#1-antigravity-ide-architecture)), connecting to LiteRouter ([§2](agy-ide-setup.md#2-connecting-antigravity-ide-to-literouter)), verifying connectivity ([§3](agy-ide-setup.md#3-verifying-connectivity)).
-- **Test suite hygiene & test parking (Zero-LLM hermetic testing)**: [test-hygiene-playbook.md](test-hygiene-playbook.md) — architecture & air-gap ([§2](test-hygiene-playbook.md#2-architecture-the-air-gap-barrier)), parking taxonomy ([§3](test-hygiene-playbook.md#3-parking-taxonomy-where-new-tests-belong)), simulation banners ([§4](test-hygiene-playbook.md#4-test-simulation-transparency-banner-rule)), teardown symmetry ([§5](test-hygiene-playbook.md#5-state-teardown--anti-flake-symmetry)), pytest live gate ([§6](test-hygiene-playbook.md#6-pytest-integration-gate---live)).
+- **Test suite hygiene & test parking (Zero-LLM hermetic testing)**: [test-hygiene-playbook.md](test-hygiene-playbook.md) — architecture & air-gap ([§2](test-hygiene-playbook.md#2-architecture-the-air-gap-barrier)), parking taxonomy ([§3](test-hygiene-playbook.md#3-parking-taxonomy-where-new-tests-belong)), simulation banners ([§4](test-hygiene-playbook.md#4-test-simulation-transparency-banner-rule)), teardown symmetry ([§5](test-hygiene-playbook.md#5-state-teardown-anti-flake-symmetry)), pytest live gate ([§6](test-hygiene-playbook.md#6-pytest-integration-gate-live)).
 - **Canonical IDE skill (cross-skill)**: `../agy-ide-playbook/SKILL.md` — IDE install/upgrade/config is owned there ([Quick Start & Commands](../agy-ide-playbook/SKILL.md#quick-start-commands), [User-Space Mandate](../agy-ide-playbook/SKILL.md#-critical-architecture-mandate-user-space-first-no-sudo), [Installation & Upgrade Protocol](../agy-ide-playbook/SKILL.md#installation-upgrade-protocol-step-by-step)). LiteRouter-side proxy wiring stays in `agy-ide-setup.md`; do not duplicate IDE procedures here.

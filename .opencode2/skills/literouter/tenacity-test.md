@@ -129,3 +129,23 @@ uv run python scripts/probe_resilience.py
 3. **Zen** (`Authorization: Bearer lr-zn-oa-ch-no`, model: `hy3-free`)
 4. **Google Gemini** (`Authorization: Bearer lr-gg-oa-ob-no`, model: `gemini-3.1-flash-lite`)
 5. **Fusion Sticky Fallback** (`Authorization: Bearer lr-fse-fast`, model: `gemini-3.1-flash-lite`)
+
+---
+
+## 5. Gateway 503 / 429 taxonomy for clients (dispatch engine)
+
+Do not treat every 503/429 the same. Dispatch short-circuits breakers
+before pacer/fetch (`src/engine/dispatch.ts:320-363` → `:401` → `:462`):
+
+| Signal | Code | Status | Retry guidance |
+|---|---|---|---|
+| Half-open probe cap | `breaker_open` | 503, no `Retry-After` | back off briefly, retry; pool is probing recovery (`src/engine/dispatch.ts:337-363`) |
+| Breaker OPEN reject | `circuit_breaker_open` | 503 with `Retry-After` | honor `Retry-After`, rotate provider (`src/engine/circuit_breaker.ts:160-181`) |
+| Pacer overflow (local backpressure) | `rate_limit_exceeded` | 429 with `Retry-After` | honor `Retry-After`; message `LiteRouter rate limit capacity (<depth>) saturated.` (`src/network/pacer.ts:129-130`, edge `src/index.ts:288-304`) |
+| TTFT expiry (retries exhausted) | `ttft_timeout` | 504 | safe to retry; per-attempt linked-`AbortController` guard (`src/engine/dispatch.ts:160-191,614-630`) |
+
+Client aborts stay quiet: pre-fetch abort rethrows with no breaker write
+(`src/engine/dispatch.ts:610-612`); mid-stream abort closes with no `[DONE]`,
+no breaker failure, no telemetry 500
+(`tests/unit/engine/dispatch_abort.test.ts:126-175`). Never retry a
+request your own side aborted.

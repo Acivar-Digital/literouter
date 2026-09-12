@@ -136,6 +136,9 @@ When using open-weights or OpenAI-format models with Claude Code:
 
 ## 5. How the Routing Works
 
+> Canonical provider table (codes, base URLs, strategies, limits):
+> [`config-schemas.md` §3](config-schemas.md#3-configprovidersjson-providers-headers-registry).
+
 ```
 Claude Code
   │  POST /v1/messages  (native Anthropic payload)

@@ -179,6 +179,10 @@ Any updates to `config/providers.json` can be hot-reloaded without restarting th
 
 These can also be customized in `.env` (e.g. set `LITEROUTER_USER_AGENT=unknown` or custom harness identities) without requiring code modifications. Non-agentic providers (NVIDIA NIM, Google Vertex) remain isolated and do not receive these headers, while Zen receives matching OpenCode headers configured declaratively in `config/providers.json` to bypass FreeUsageLimitError.
 
+> Canonical registry: provider codes, base URLs, headers, limits, and per-provider
+> `strategy` values live in [`config-schemas.md` §3](config-schemas.md#3-configprovidersjson-providers-headers-registry).
+> OpenRouter (`or`) uses `strategy: "standard"` (`config/providers.json:7`).
+
 ### App Attribution Side-Effect (`/apps/url/...` Is Not a Redirect)
 
 - `HTTP-Referer: https://opencode.ai` (no trailing slash; OpenRouter normalizes to `https://opencode.ai/` when URL-encoding) attributes all LiteRouter traffic to the shared `opencode.ai` app id.

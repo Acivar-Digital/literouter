@@ -139,6 +139,19 @@ The cascade combines **tier fallback** with **inner key pool rotation**:
 - **1-Cycle Safeguard**: The loop is strictly capped at `totalTiers` (4 for `gemini-flash`, 2 for `gemini-flash-lite`). If all tiers in the chain are exhausted, it terminates with HTTP 503 `{"error": {"message": "All Google native fusion tiers exhausted", "type": "service_unavailable"}}`.
 - **Pre-Stream vs Mid-Stream Safety**: Cascades apply strictly before stream initiation. If upstream drops the connection after headers or bytes are sent downstream, the stream closes cleanly without attempting a cascade into an active downstream body.
 
+### 1.5b v4 Engine Mapping (`NativeCascadeStrategy`)
+
+Under the `v4` engine (`LITEROUTER_ENGINE=v4`, default is `legacy` — see
+`directive-grammar.md` §11), the same cascade is decided by
+`classifyFailure` (`src/engine/strategies/native_cascade.ts:82-95`):
+
+- `404` on a chained model → `advance_target` (tier index pinned forward,
+  zero extra keys burned — same fast-advance as §1.5).
+- `429` / `500–504` → `retry_same_target` (key rotation first, cascade
+  only after pool exhaustion).
+- Anything else (400 / 401 / 403 and deterministics) → `fail_fast`
+  (pass through downstream, no cascade).
+
 ### 1.6 Telemetry & Headers
 - **Downstream Headers**:
   - `x-literouter-model: <active_tier_model>` (e.g. `gemini-3.7-flash` or `gemini-3.1-flash-lite`)

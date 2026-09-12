@@ -122,3 +122,18 @@ H2 (`src/network/fetcher.ts:565`, `isFetchMocked` at `:541-543`).
   active, `destroy()` otherwise (`:320-328`).
 - `getSessionStats` excludes draining/closed sessions from `activeSessions`
   (`:165,181`).
+
+## 8. Breaker short-circuit fires before H2 (dispatch engine)
+
+- Dispatch order is breaker → pacer → fetch: `breaker.isOpen()` → 503
+  `circuit_breaker_open` (`src/engine/dispatch.ts:320-335` via
+  `breaker.rejectResponse`, `src/engine/circuit_breaker.ts:160-181`) →
+  half-open `!canProbe()` → 503 `breaker_open` (`src/engine/dispatch.ts:337-363`)
+  → `acquirePacer` (`src/engine/dispatch.ts:401`) → `fetchWithTtftGuard`
+  (`src/engine/dispatch.ts:462`).
+- Over-cap probes never reach the pacer or the H2 pool: no stream is
+  acquired, no `activeStreams++`, no quarantine TTL. Taxonomy:
+  `circuit_breaker_open` (OPEN reject, carries `Retry-After`) vs
+  `breaker_open` (half-open probe-cap, no `Retry-After`) vs pacer
+  `PacerQueueOverflowError` → 429 `rate_limit_exceeded` (local backpressure,
+  `src/network/pacer.ts:3-10,108-133`; edge mapping `src/index.ts:288-304`).

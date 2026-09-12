@@ -35,13 +35,14 @@ bash scripts/stop.sh
 
 ## 2. Managing Upstream API Keys
 
-LiteRouter manages four upstream key pools stored exclusively in `.env.local`:
+LiteRouter manages five upstream key pools stored exclusively in `.env.local`:
 
 ```env
 OPENROUTER_API_KEYS=sk-or-v1-key1...,sk-or-v1-key2...
 NVIDIA_API_KEYS=nvapi-key1...,nvapi-key2...
 ZEN_API_KEYS=sk-zen-key1...,sk-zen-key2...
 GOOGLE_API_KEYS=AIzaSyKey1...,AIzaSyKey2...
+GCP_KEYS=gcp-key1...,gcp-key2...
 ```
 
 ### Workflow: Adding / Rotating Keys
@@ -66,7 +67,7 @@ GOOGLE_API_KEYS=AIzaSyKey1...,AIzaSyKey2...
    ```
    - Validates `config/providers.json`, `config/fusion.json`, and `config/models.json` JSON schema.
    - Pings local `/health` endpoint.
-   - Sequentially probes (with 1s pacing) live upstream key health across Google Gemini (`gemma-4-31b-it`), NVIDIA NIM (`nvidia/nemotron-3-super-120b-a12b`), OpenRouter (`openrouter/free:nitro`), and Zen (`big-pickle`) using `mkcert` root CA TLS verification.
+   - Sequentially probes (with 1s pacing) live upstream key health across Google AI Studio (`gemma-4-31b-it`), NVIDIA NIM (`nvidia/nemotron-3-super-120b-a12b`), OpenRouter (`openrouter/free:nitro`), Zen (`big-pickle`), and GCP (`gemma-4-31b-it`) using `mkcert` root CA TLS verification.
 
 ---
 
@@ -120,7 +121,7 @@ Run the complete validation pipeline after any modification:
 
 ```bash
 # 1. Typecheck and Python linting
-bun x tsc --noEmit && uv run ruff check .
+bun run typecheck && uv run ruff check .
 
 # 2. Complete Unit and Integration Test Suite
 bun test
@@ -128,6 +129,6 @@ bun test
 # 3. Live Model Verification via OpenCode v2 CLI
 bash scripts/test_opencode2_models.sh
 
-# 4. Diagnostic Key Pool Health Probe (Local validation + live upstream auth probe for Google, NVIDIA, OpenRouter, Zen)
+# 4. Diagnostic Key Pool Health Probe (Local validation + live upstream auth probe for Google, NVIDIA, OpenRouter, Zen, GCP)
 bun run scripts/doctor.ts
 ```

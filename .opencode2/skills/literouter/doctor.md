@@ -10,7 +10,7 @@ This document is the sole source of truth for `doctor.ts` and `doctor_zn.ts` dia
 ## 1. Overview & Operational Role
 
 `scripts/doctor.ts` is an out-of-band diagnostic probe script. It sequentially validates:
-1. **JSON Configuration Schema**: Validates `config/models.json` and `config/fusion.json` against LiteRouter Zod schemas.
+1. **JSON Configuration Schema**: Validates `config/providers.json`, `config/fusion.json`, and `config/models.json` against LiteRouter Zod schemas (`scripts/doctor.ts:378-384`; all three required, advisory-only — never gates boot).
 2. **TLS Certificates**: Checks existence and validity of mkcert root CA and server certificates in `certs/`.
 3. **Provider Key Pools**: Performs live sequential HTTP probes against all configured upstream providers (`Google`, `NVIDIA NIM`, `OpenRouter`, `Zen`, `GCP Vertex`).
 
@@ -58,9 +58,9 @@ Every probe uses sequential pacing (default **1000ms delay** between successive 
 
 | Provider | Code | Probe Target URL | Model Target | Injected Headers & Requirements |
 |---|---|---|---|---|
-| **Google AI Studio** | `gg` | `generativelanguage.googleapis.com/v1beta/openai/chat/completions` | `gemini-2.5-flash` | `Authorization: Bearer <key>`, `x-goog-api-key: <key>` |
-| **NVIDIA NIM** | `nv` | `integrate.api.nvidia.com/v1/chat/completions` | `meta/llama-3.1-8b-instruct` | `Authorization: Bearer <key>` |
-| **OpenRouter** | `or` | `openrouter.ai/api/v1/chat/completions` | `nvidia/nemotron-3-nano-30b-a3b:free` | `HTTP-Referer`, `Referer`, `X-Title`, `User-Agent: OpenCode/1.18.29` (Bypasses 403 agentic harness gate) |
+| **Google AI Studio** | `gg` | `generativelanguage.googleapis.com/v1beta/models/gemma-4-31b-it:generateContent?key=<key>` (key in query string, no auth header) | `gemma-4-31b-it` | `{contents:[{parts:[{text:"ping"}]}], generationConfig:{maxOutputTokens:10}}` |
+| **NVIDIA NIM** | `nv` | `integrate.api.nvidia.com/v1/chat/completions` | `nvidia/nemotron-3-super-120b-a12b` | `Authorization: Bearer <key>` |
+| **OpenRouter** | `or` | `openrouter.ai/api/v1/chat/completions` | `openrouter/free:nitro` | `HTTP-Referer`, `Referer`, `X-Title`, `User-Agent: OpenCode/1.18.29` (Bypasses 403 agentic harness gate) |
 | **Zen** | `zn` | `opencode.ai/zen/v1/chat/completions` | `big-pickle` | Fresh random `ses_...` session ID per key + OpenCode identity headers via `doctor_zn.ts` |
 | **GCP Vertex** | `gc` | `generativelanguage.googleapis.com/v1beta/openai/chat/completions` | `gemma-4-31b-it` | `Authorization: Bearer <key>`, `x-goog-api-key: <key>` |
 

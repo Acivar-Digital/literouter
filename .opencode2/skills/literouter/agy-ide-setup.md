@@ -41,3 +41,11 @@ curl -sk --http2 -X POST https://localhost:7766/v1/chat/completions \
   -d '{"model": "dots-studio/dots-3-note-preview:free", "messages": [{"role": "user", "content": "ping"}], "max_tokens": 10}'
 ```
 Expected response: HTTP `200 OK` with JSON completion payload.
+
+---
+
+## 4. Directive Validity Notes (canon: `directive-grammar.md`)
+
+- ⛔ `gb` is never valid — it appears nowhere in `src/`; any key containing it fails parsing.
+- `lg` is parser-only — accepted by `src/directive/parser.ts:93` but absent from `NuanceCodeSchema` (`src/config/schema.ts:34-42`), so config-file validation rejects what the gateway parser accepts.
+- `tp` is tests-only — a loopback test double (`http://127.0.0.1:8999`); never use it outside unit tests.

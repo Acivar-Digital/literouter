@@ -12,7 +12,9 @@ All symbols grounded in `src/` reads. Line numbers are source of truth.
 | 3 | 401 / 403 tier 1 (1st consecutive auth failure) | `classifyUpstreamError` (`src/network/classifier.ts:162-174`) / `KeyPool.computeTieredAuthTtl` (`src/network/pool.ts:135-145`) | 300s | `action: retry_rotate`, `isRetryable: true` → `reportFailure` applies tiered TTL when `customTtlSec` undefined (`src/network/pool.ts:165-167`) | reason `auth_failure_key_quarantined` (`src/network/classifier.ts:171`) |
 | 4 | 401 / 403 tier 2 (2nd consecutive) | same as row 3 | 1800s (`src/network/classifier.ts:165`, `src/network/pool.ts:141-143`) | same as row 3 | same reason string |
 | 5 | 401 / 403 tier 3+ (3rd consecutive and beyond) | same as row 3 | 86400s (1 day) (`src/network/classifier.ts:166`, `src/network/pool.ts:144`); note `STATUS_TTL_MAP` default for 401/403 is 7 days (`src/network/cooldown.ts:111-112`) — tiered path overrides when no custom TTL | same as row 3; success clears counter via `reportSuccess` (`src/network/pool.ts:122-133`) | same reason string |
-| 6 | 5xx (500/502/503/504+) | `classifyUpstreamError` (`src/network/classifier.ts:187-194`); `computeStatusTtlSec` (`src/network/cooldown.ts:121-130`) via `STATUS_TTL_MAP` (`src/network/cooldown.ts:109-119`) | 10s (`SERVER_ERROR_DEFAULT_SEC`, `src/network/cooldown.ts:16`) | `action: retry_rotate`, `isRetryable: true`; provider breaker counts critical 5xx toward threshold 5 → OPEN 60s → single-canary HALF_OPEN (`src/network/circuit_breaker.ts:17-19,62-80`); mid-stream path reports status 500 with classified TTL (`src/handlers/openai_compat.ts:532-535`) | reason `Transient upstream server error (<status>)` (`src/network/classifier.ts:192`) |
+| 6 | 5xx (500/502/503/504+) | `classifyUpstreamError` (`src/network/classifier.ts:187-194`); `computeStatusTtlSec` (`src/network/cooldown.ts:121-130`) via `STATUS_TTL_MAP` (`src/network/cooldown.ts:109-119`) | 10s (`SERVER_ERROR_DEFAULT_SEC`, `src/network/cooldown.ts:16`) | `action: retry_rotate`, `isRetryable: true`; provider breaker counts critical 5xx toward threshold 5 → OPEN 30s → HALF_OPEN max 2 probes, 2 successes to close (`src/engine/circuit_breaker.ts:5-12,132-158`); mid-stream path reports status 500 with classified TTL (`src/handlers/openai_compat.ts:532-535`) | reason `Transient upstream server error (<status>)` (`src/network/classifier.ts:192`) |
+| 6a | 503 half-open probe-cap (dispatch engine, before pacer/fetch) | `breaker.getState() === "HALF_OPEN" && !breaker.canProbe()` (`src/engine/dispatch.ts:337`, probes `src/engine/circuit_breaker.ts:101-113`) | n/a (no quarantine TTL; no stream acquired) | short-circuit 503 `breaker_open`, no `Retry-After` — distinct from row 6b OPEN reject and row 15 pacer overflow | code `breaker_open` (`src/engine/dispatch.ts:344,353`) |
+| 6b | 503 breaker OPEN reject (dispatch engine, before pacer/fetch) | `breaker.isOpen()` (`src/engine/dispatch.ts:321`) → `breaker.rejectResponse` (`src/engine/circuit_breaker.ts:160-181`) | open window remainder | short-circuit 503 `circuit_breaker_open` with `Retry-After` | code `circuit_breaker_open` (`src/engine/dispatch.ts:328`, `src/engine/circuit_breaker.ts:168`) |
 | 7 | `NoResponseError` (network transport failure, empty body, status-0 timeout) | `fetchWithTtftGuard` throws `NoResponseError` (`src/network/fetcher.ts:588,604,609`); handler maps via status-0 branch of `classifyUpstreamError` (`src/network/classifier.ts:102-117`) or `classifyTransportError` (`src/network/classifier.ts:52-84`) | 2s (`ttft_timeout_exceeded` / `transport_reset_cooldown`); handler passes explicit TTL 2 for `NoResponseError` (`src/handlers/openai_compat.ts:710-713`) | `retry_rotate`, rotate key, `reportFailure(provider, idx, 0, undefined, err.message, now, 2)` | `Network transport failure: <msg>` / `Upstream response has no body stream` / `Upstream emitted 0 bytes before closing` (`src/network/fetcher.ts:588,609,274`) |
 | 8 | ECONNRESET / socket reset / GOAWAY / H2 connect timeout | `classifyTransportError` (`src/network/classifier.ts:52-84`); H2 layer: `purgeSession` (`src/network/h2_pool.ts:53-60`), GOAWAY → `startDraining` (`src/network/h2_pool.ts:302-305`), connect timeout reject (`src/network/h2_pool.ts:291-295`); H2 failure falls back to HTTP/1.1 fetch inside `fetchWithTtftGuard` (`src/network/fetcher.ts:571-590`) | 2s (`transport_reset_cooldown`, `src/network/classifier.ts:78-83`); 0s for stream-cancel match (`src/network/classifier.ts:56-63`) | `retry_rotate`, `isRetryable: true`; unhealthy sessions purged, draining sessions kept for in-flight releases (`src/network/h2_pool.ts:206-226`) | `HTTP/2 connection timeout to origin <origin>` (`src/network/h2_pool.ts:294`); runtime purge debug `[H2 Pool] Runtime socket error for <poolKey>, purging session` (`src/network/h2_pool.ts:273`); frame-error purge (`src/network/h2_pool.ts:278`) |
 | 9 | Ghost 200 (HTTP 200, zero content tokens) | `readFirstContentChunkWithTimeout` (`src/network/fetcher.ts:257-291`) → `hasContentToken` (`src/network/fetcher.ts:86-97`) | n/a (throws before quarantine decision; surfaces as `NoResponseError` → row 7 TTL 2s) | throws `NoResponseError` → caller retries/rotates per row 7 | `HTTP 200 returned ghost response with 0 content tokens` (`src/network/fetcher.ts:278`) |
@@ -52,6 +54,25 @@ and `getStatus` reports all keys active (`src/network/pool.ts:258-260`).
 6. Exhaustion backoff ladder for full-pool stalls: `getExhaustionBackoffMs`
    65s → 90s → 120s (`src/network/cooldown.ts:23,132-136`); queue-depth guard
    `getDynamicMaxQueueDepth` / `shouldLoadShed` (`src/network/pool.ts:279-296`).
+7. Dispatch-engine TTFT guard: `fetchWithTtftGuard` links the client signal
+   into a per-attempt `AbortController` (`src/engine/dispatch.ts:160-191`);
+   TTFT expiry aborts the fetch and rejects `NoResponseError`, retried while
+   `attempt < maxAttempts`, else 504 `ttft_timeout`
+   (`src/engine/dispatch.ts:462-473,614-630`). Client-abort (`clientSignal.aborted`)
+   rethrows quiet with no breaker write (`src/engine/dispatch.ts:610-612`);
+   mid-stream abort discrimination is pinned by `tests/unit/engine/dispatch_abort.test.ts`
+   (quiet close: zero breaker failures, no `[DONE]`, no telemetry 500).
+
+### Taxonomy: `breaker_open` vs `circuit_breaker_open` vs pacer overflow
+
+- `breaker_open`: half-open probe cap (`src/engine/dispatch.ts:337-363`), 503, no `Retry-After`.
+- `circuit_breaker_open`: OPEN reject (`src/engine/dispatch.ts:320-335` +
+  `src/engine/circuit_breaker.ts:160-181`), 503 with `Retry-After`.
+- Pacer overflow: local backpressure `PacerQueueOverflowError`
+  (`src/network/pacer.ts:3-10,108-133`) → 429 `rate_limit_exceeded` with
+  `Retry-After` (edge mapping `src/index.ts:288-304`). There is no
+  `conveyor_saturated` signal string — saturated capacity surfaces as the
+  pacer message `LiteRouter rate limit capacity (<depth>) saturated.`
 
 ## 3. Full repo file index
 

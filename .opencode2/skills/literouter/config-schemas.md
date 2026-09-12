@@ -174,30 +174,37 @@ Per-provider model handling on the passthrough path (transforms, not gates):
 
 Top-level shape: `{ "providers": { "<name>": { ... } } }`.
 Entry keys (verified): `code`, `base_url`, `auth_header`, optional `headers`,
-`endpoints`, `limits`.
+`endpoints`, `limits`, optional `strategy` (default `"standard"`; enum in
+`ProviderStrategySchema`, `src/config/schema.ts:113-121`), plus optional
+`name`, `env_key`, `request_retry`, `key_cooldown`, `pacer`,
+`circuit_breaker`, `conserve_rules`.
+
+> Canonical provider table: §3.1 below is the single source of truth for
+> name → code → base_url → strategy. Other skill files link here instead of
+> duplicating it.
 
 Validated by `ProviderConfigEntrySchema` / `ProvidersConfigSchema` in
-`src/config/schema.ts:55-65` (`auth_header` is `"Bearer" | "x-api-key"`,
+`src/config/schema.ts:123-142` (`auth_header` is `"Bearer" | "x-api-key"`,
 default `"Bearer"`; `endpoints` is a record keyed by `CompletionCodeSchema`;
 `limits` is a record of name → `RateLimitSchema`).
 
-### 3.1 Providers on disk (name → `code` → `base_url`)
+### 3.1 Providers on disk (name → `code` → `base_url` → `strategy`)
 
-| name | code | base_url |
-|---|---|---|
-| `openrouter` | `or` | `https://openrouter.ai` |
-| `nvidia` | `nv` | `https://integrate.api.nvidia.com` |
-| `google` | `gg` | `https://generativelanguage.googleapis.com` |
-| `openai` | `oa` | `https://api.openai.com` |
-| `anthropic` | `an` | `https://api.anthropic.com` |
-| `groq` | `gq` | `https://api.groq.com/openai` |
-| `cerebras` | `cb` | `https://api.cerebras.ai` |
-| `deepseek` | `ds` | `https://api.deepseek.com` |
-| `mistral` | `ms` | `https://api.mistral.ai` |
-| `together` | `tg` | `https://api.together.xyz` |
-| `zen` | `zn` | `https://opencode.ai/zen` |
-| `testprovider` | `tp` | `http://127.0.0.1:8999` |
-| `gcp` | `gc` | `https://generativelanguage.googleapis.com` |
+| name | code | base_url | strategy |
+|---|---|---|---|
+| `openrouter` | `or` | `https://openrouter.ai` | `standard` |
+| `nvidia` | `nv` | `https://integrate.api.nvidia.com` | `standard` |
+| `google` | `gg` | `https://generativelanguage.googleapis.com` | `native_cascade` |
+| `openai` | `oa` | `https://api.openai.com` | `standard` (omitted → default) |
+| `anthropic` | `an` | `https://api.anthropic.com` | `standard` (omitted → default) |
+| `groq` | `gq` | `https://api.groq.com/openai` | `standard` (omitted → default) |
+| `cerebras` | `cb` | `https://api.cerebras.ai` | `standard` (omitted → default) |
+| `deepseek` | `ds` | `https://api.deepseek.com` | `standard` (omitted → default) |
+| `mistral` | `ms` | `https://api.mistral.ai` | `standard` (omitted → default) |
+| `together` | `tg` | `https://api.together.xyz` | `standard` (omitted → default) |
+| `zen` | `zn` | `https://opencode.ai/zen` | `zen_single_flight` |
+| `testprovider` | `tp` | `http://127.0.0.1:8999` | `standard` (omitted → default) |
+| `gcp` | `gc` | `https://generativelanguage.googleapis.com` | `gcp_guarded` |
 
 Codes must stay in sync with `ProviderCodeSchema`
 (`src/config/schema.ts:3-17`); directive parsing, `globalKeyPool`, and the
@@ -241,6 +248,23 @@ Providers state is **cached** in `cachedRegistry`
 `resolve(process.cwd(), "config", "providers.json")` (`:79`). Edits require
 `POST /reset` (see §6).
 
+### 3.5 `strategy` registry (fail-fast on unknown strategy)
+
+`strategy` selects the per-provider execution engine. Valid values
+(`ProviderStrategySchema`, `src/config/schema.ts:113-121`):
+`standard`, `native_cascade`, `gcp_guarded`, `zen_single_flight`,
+`anthropic_direct` (default `"standard"` when omitted, `:133`).
+Wiring on disk: `google` (`gg`) → `native_cascade`
+(`config/providers.json:112`), `zen` (`zn`) → `zen_single_flight`
+(`:338`), `gcp` (`gc`) → `gcp_guarded` (`:400`); `openrouter` (`or`) and
+`nvidia` (`nv`) pin `standard` explicitly.
+
+`initStrategyRegistry()` (`src/engine/strategy_registry.ts:46-67`) resolves
+each provider's factory at boot; an unknown `strategy` string throws
+`Unknown strategy "<type>" for provider "<code>"` (`:62-64`). The boot block
+in `src/index.ts:49-57` catches registry failures and calls
+`process.exit(1)` — a bad strategy is fatal, never fail-open.
+
 ---
 
 ## 4. `FUSION_UPSTREAM_URL` — what it is (and is not)
@@ -274,15 +298,17 @@ native base override via `MOCK_GG_PORT` / `GOOGLE_NATIVE_BASE_URL`
 | `NuanceCodeSchema` | `:34-42` | `no dp ts gm g3 sb tc` |
 | `RateLimitSchema` | `:44-48` | `{ rpm, rpd, tpm }` non-negative ints |
 | `ProviderEndpointsSchema` | `:50-53` | record `CompletionCode → path` |
-| `ProviderConfigEntrySchema` | `:55-61` | one `config/providers.json` entry |
-| `ProvidersConfigSchema` | `:63-65` | `{ providers: {...} }` |
+| `ProviderConfigEntrySchema` | `:123-138` | one `config/providers.json` entry |
+| `ProviderStrategySchema` | `:113-121` | `standard native_cascade gcp_guarded zen_single_flight anthropic_direct` (default `standard`) |
+| `ProvidersConfigSchema` | `:140-142` | `{ providers: {...} }` |
 | `FusionTierSchema` | `:67-71` | `{ priority, apikey, model }` |
 | `FusionModelConfigSchema` | `:73-75` | `{ tiers: [...] }` (min 1) |
 | `FusionPresetSchema` | `:77-81` | `{ strategy: "sticky_fallback", timeout_ms, models }` |
 | `FusionConfigSchema` | `:83-87` | `{ $schema?, version, presets }` — no `native_chains` (§1.4) |
 | `ModelCatalogEntrySchema` | `:89-97` | one `config/models.json` entry |
 | `ModelsConfigSchema` | `:99-101` | `{ models: [...] }` |
-| `EnvConfigSchema` | `:122-170` | gateway env incl. pacer/cooldown/GCP/Zen toggles |
+| `EnvConfigSchema` | `:202-274` | gateway env incl. pacer/cooldown/GCP/Zen toggles |
+| `LiteRouterEngineSchema` | `:199` | `"legacy" \| "v4"` (default `"legacy"`) |
 
 All schemas and their inferred types are re-exported from `src/lib.ts:3-25`.
 
@@ -320,3 +346,17 @@ Cache cheat-sheet (which edits need the reset):
 
 The same reset sequence is available in-process as `resetAllState()`
 (`src/index.ts:411-421`, re-exported from `src/lib.ts:49-54`) for tests.
+
+---
+
+## 7. `LITEROUTER_ENGINE` — legacy default + per-request override gate
+
+- Default engine is `"legacy"` (`LiteRouterEngineSchema`,
+  `src/config/schema.ts:199`; default in `src/config/env.ts:51`).
+- `LITEROUTER_ENGINE_OVERRIDE` defaults to `"false"` (`src/config/env.ts:52`).
+  `resolveEngine(req)` (`src/config/env.ts:130-140`) returns the env default
+  unless override is enabled **and** a request is present; then only an
+  `x-literouter-engine` header of exactly `"legacy"` or `"v4"` switches
+  engines — any other value falls back to the env default.
+- Helpers in the same file: `getLiteRouterEngine()` (`:122`),
+  `isLiteRouterEngineOverrideEnabled()` (`:126`), `isV4Engine(req)` (`:142`).
