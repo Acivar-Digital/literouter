@@ -393,8 +393,11 @@ Provide clear, reproducible error messages. If possible, include guidance for
 next steps or recovery actions. For complex operations, emit progress markers
 so it's clear how far execution got before failure.
 
-### d. Decisive Execution & Compiler-Led Grounding
-Execute surgical edits directly from the architectural plan without exploratory inspection loops or pre-flight reading sweeps. Rely on TypeScript static typechecking (`bun run typecheck`), AST validation (`clean_ts`), and test runners (`bun test`) to catch contract mismatches.
+### d. Decisive Execution, Targeted Exploration & Multi-Tool Dispatch
+- **Context Bloat Prevention**: To avoid context window degradation in long sessions, never dump large raw source files into the main orchestration session.
+- **Explorer Agents for Reading**: When file inspection is genuinely necessary, delegate reading to dedicated `explore` subagents (1 file = 1 agent) to extract only the relevant signatures, AST nodes, and contracts.
+- **Parallel Multi-Tool Execution**: Never serialize independent tool calls turn-by-turn. When multiple files, checks, or tasks are known, dispatch all tool calls simultaneously in parallel (multi-tool calls all at once).
+- **Compiler & Test Grounding**: Rely on TypeScript static typecheck (`bun run typecheck`), AST validation (`clean_ts`), and test suites (`bun test`) to catch contract mismatches rather than manual reading loops.
 
 ## MCP Tools (for AI agents)
 
