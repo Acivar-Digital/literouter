@@ -489,6 +489,11 @@ export function createStreamingResponse(
   telemetry?: ResponsesTelemetry,
   pacerRelease?: () => void
 ): Response {
+  if (upstreamResponse.status >= 400) {
+    pacerRelease?.();
+    return upstreamResponse;
+  }
+
   let released = false;
   const safeRelease = () => {
     if (!released) {
@@ -1103,6 +1108,12 @@ export async function handleOpenAiOriginal(
     startTime,
     status: upstreamRes.status,
   };
+
+  if (upstreamRes.status >= 400) {
+    cleanup();
+    fetchResult.pacerRelease?.();
+    return upstreamRes;
+  }
 
   if (isStream) {
     return createStreamingResponse(
