@@ -2,13 +2,17 @@ import { existsSync, readFileSync } from "node:fs";
 import http2 from "node:http2";
 import { resolve } from "node:path";
 import type { Server } from "bun";
-import { getEnv } from "./config/env";
+import { emitEnvDeprecationWarnings } from "./config/deprecation";
+import { getEnv, resolveEngine } from "./config/env";
 import { loadKeyPools } from "./config/keys";
+import { getAllProviders, initProviderRegistry } from "./config/providers";
+import { initStrategyRegistry } from "./engine/strategy_registry";
 import { parseDirective, type ParsedDirective } from "./directive/parser";
 import { extractDirectiveToken } from "./directive/validator";
 import { handleAnthropicCompat, handleAnthropicCountTokens } from "./handlers/anthropic_compat";
 import { handleModelsDiscovery } from "./handlers/discovery";
 import { handleGcpCompat } from "./handlers/gcp_compat";
+import { dispatchV4 } from "./handlers/v4/router";
 import {
   handleGoogleInteractionsPassthrough,
   handleGoogleNative,
@@ -30,6 +34,9 @@ import {
 } from "./handlers/openai_original";
 import { getHttp2Pool, resetHttp2Pool } from "./network/h2_pool";
 import { getAllCircuitBreakers, clearCircuitBreakerRegistry } from "./network/circuit_breaker";
+import { resetCircuitBreakers } from "./engine/circuit_breaker";
+import { traceBuffer } from "./telemetry/ring_buffer";
+import { traceWriter } from "./telemetry/trace_writer";
 import {
   clearPacerRegistry,
   getPacerForProvider,
@@ -37,6 +44,20 @@ import {
 } from "./network/pacer";
 import { type BannerOptions, printBanner } from "./ui/banner";
 import { logAmber, logError, logInfo, logPacer } from "./ui/logger";
+
+// Boot initialization: Load provider registry and emit deprecation warnings
+try {
+  initProviderRegistry();
+  initStrategyRegistry();
+  traceWriter.init();
+  console.log(`[BOOT] Provider registry loaded: ${getAllProviders().length} providers`);
+} catch (err) {
+  console.error(`[BOOT] FATAL: Provider registry failed to load`, err);
+  process.exit(1);
+}
+
+initializeKeyPools(process.env);
+emitEnvDeprecationWarnings();
 
 function loadTlsOptions(tlsEnabledFlag?: boolean): { cert: string; key: string } | undefined {
   if (process.env.LITEROUTER_TLS_ENABLED === "false" || tlsEnabledFlag === false) {
@@ -58,24 +79,40 @@ function loadTlsOptions(tlsEnabledFlag?: boolean): { cert: string; key: string }
   return undefined;
 }
 
-function handleHardReset(): Response {
-  globalCooldownManager.clearAll();
-  globalKeyPool.reset();
-  initializeKeyPools();
-  clearCircuitBreakerRegistry();
-  clearPacerRegistry();
-  resetHttp2Pool();
-  resetProvidersRegistryCache();
-  loadAndCacheNativeChains();
-  resetNativeFlashTierIndex();
-  return Response.json(
-    {
-      status: "ok",
-      message: "Hard reset successful. Cooldowns, circuit breakers, pacers, and H2 pools reloaded.",
-      timestamp: new Date().toISOString(),
-    },
-    { status: 200 }
-  );
+export function handleHardReset(): Response {
+  try {
+    initProviderRegistry();
+    initStrategyRegistry();
+    traceWriter.init();
+    globalCooldownManager.clearAll();
+    globalKeyPool.reset();
+    initializeKeyPools();
+    clearCircuitBreakerRegistry();
+    resetCircuitBreakers();
+    clearPacerRegistry();
+    traceBuffer.clear();
+    resetHttp2Pool();
+    resetProvidersRegistryCache();
+    loadAndCacheNativeChains();
+    resetNativeFlashTierIndex();
+    return Response.json(
+      {
+        status: "ok",
+        message: "Hard reset successful. Cooldowns, circuit breakers, pacers, and H2 pools reloaded.",
+        timestamp: new Date().toISOString(),
+      },
+      { status: 200 }
+    );
+  } catch (err) {
+    console.error(`[RESET] Registry reload failed, keeping previous config`, err);
+    return Response.json(
+      {
+        status: "error",
+        message: err instanceof Error ? err.message : String(err),
+      },
+      { status: 500 }
+    );
+  }
 }
 
 async function handleAdminPoolReset(req: Request, rawKey: string): Promise<Response> {
@@ -350,6 +387,8 @@ function dispatchResponsesRoute(
   return null;
 }
 
+export { dispatchV4 };
+
 export async function dispatchRoute(
   req: Request,
   rawKey: string,
@@ -370,6 +409,11 @@ export async function dispatchRoute(
   const modelsRes = dispatchModelsRoute(path, req, rawKey);
   if (modelsRes !== null) {
     return modelsRes;
+  }
+
+  const engine = resolveEngine(req);
+  if (engine === "v4") {
+    return dispatchV4(req, rawKey, reqId);
   }
 
   const directive = parseDirectiveWithEndpoint(rawKey);
@@ -409,11 +453,16 @@ export async function dispatchRoute(
 }
 
 export function resetAllState(): void {
+  initProviderRegistry();
+  initStrategyRegistry();
+  traceWriter.init();
   globalCooldownManager.clearAll();
   globalKeyPool.reset();
   initializeKeyPools();
   clearCircuitBreakerRegistry();
+  resetCircuitBreakers();
   clearPacerRegistry();
+  traceBuffer.clear();
   resetHttp2Pool();
   resetProvidersRegistryCache();
   loadAndCacheNativeChains();
@@ -426,20 +475,19 @@ export function getCooldownState(): Record<string, unknown> {
 
 export async function handleAppRequest(req: Request): Promise<Response> {
   initializeKeyPools();
-  const reqId = `req_${Math.random().toString(36).slice(2, 9)}`;
+  const reqId =
+    req.headers.get("x-request-id") ||
+    req.headers.get("x-req-id") ||
+    `req_${Math.random().toString(36).slice(2, 9)}`;
   const rawKey = extractDirectiveToken(req) || "";
-  const path = new URL(req.url).pathname;
-  const directive = parseDirectiveWithEndpoint(rawKey);
-  const mismatchRes = validateEndpointMatch(path, directive);
-  if (mismatchRes !== null) {
-    return mismatchRes;
-  }
-  const pacerGate = await acquireIngressPacer(req, rawKey, reqId);
-  if (pacerGate !== null) {
-    return pacerGate;
-  }
   try {
-    return await dispatchRoute(req, rawKey, reqId);
+    const res = await dispatchRoute(req, rawKey, reqId);
+    try {
+      res.headers.set("x-request-id", reqId);
+    } catch (headerErr) {
+      logAmber(reqId, `Could not set x-request-id header: ${headerErr}`);
+    }
+    return res;
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err ?? "");
     const isStreamAbort =
@@ -508,7 +556,8 @@ async function pipeWebResponseToNode(
     if (isAborted) return;
     isAborted = true;
     reader.cancel().catch((cancelErr: unknown) => {
-      console.debug("[H2 Server] Reader cancel error:", cancelErr);
+      const cancelMsg = cancelErr instanceof Error ? cancelErr.message : String(cancelErr ?? "");
+      console.debug(`[H2 Server] Reader cancel error: ${cancelMsg}`);
     });
   };
 
@@ -570,6 +619,9 @@ export interface LiteRouterServer {
 }
 
 export function createServer(portOverride?: number): Server<unknown> | LiteRouterServer {
+  initProviderRegistry();
+  initStrategyRegistry();
+  traceWriter.init();
   initializeKeyPools();
   loadAndCacheNativeChains();
   const env = getEnv();
@@ -683,6 +735,7 @@ export function createServer(portOverride?: number): Server<unknown> | LiteRoute
       port,
       stop: () =>
         new Promise<void>((resolve) => {
+          traceWriter.drainSync();
           h2Server.close(() => resolve());
         }),
     };
@@ -697,6 +750,14 @@ export function createServer(portOverride?: number): Server<unknown> | LiteRoute
       return handleAppRequest(req);
     },
   });
+}
+
+export function closeServer(server?: Server<unknown> | LiteRouterServer): void {
+  traceWriter.drainSync();
+  if (!server) return;
+  if ("stop" in server && typeof server.stop === "function") {
+    server.stop();
+  }
 }
 
 const isClientAbortReason = (reason: unknown): boolean => {
@@ -718,6 +779,7 @@ process.on("uncaughtException", (err) => {
     return;
   }
   console.error("FATAL: Uncaught exception in gateway process:", err);
+  traceWriter.drainSync();
   process.exit(1);
 });
 
@@ -726,6 +788,20 @@ process.on("unhandledRejection", (reason) => {
     return;
   }
   console.error("Unhandled promise rejection in gateway process:", reason);
+});
+
+process.on("SIGINT", () => {
+  traceWriter.drainSync();
+  process.exit(0);
+});
+
+process.on("SIGTERM", () => {
+  traceWriter.drainSync();
+  process.exit(0);
+});
+
+process.on("beforeExit", () => {
+  traceWriter.drainSync();
 });
 
 if (import.meta.main) {

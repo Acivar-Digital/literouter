@@ -4,6 +4,145 @@ All notable changes to LiteRouter will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- Mid-stream client aborts no longer recorded as telemetry 500 / breaker failures (abort discrimination via client signal + AbortError code 20).
+- Guarded cutoff-stream close (no more `Controller is already closed` secondary throw).
+- H2 reader-cancel log reduced to single message-only debug line.
+
+## [4.1.0] - 2026-09-12
+
+> *"Modern systems are built on clean abstractions, deterministic boundaries, and uncompromising observability."*
+
+LiteRouter 4.1.0 is a major architecture modernization release delivering the v4.1 Unified Engine. This milestone refactors LiteRouter from monolithic route handlers into a modular, contract-driven pipeline: dynamic provider registries, pure payload transformers, pluggable resilience strategies, in-memory telemetry with zero-cost ring buffering, persistent SQLite tracing, and downstream agent harness parity.
+
+The v4 engine is now the default execution engine (`LITEROUTER_ENGINE="v4"`), while maintaining 100% backward compatibility with legacy handler execution via `LITEROUTER_ENGINE="legacy"` and per-request runtime overrides (`X-LiteRouter-Engine`).
+
+---
+
+### Architectural Highlights
+
+1. **Dual-Path Engine Architecture (`LITEROUTER_ENGINE`)**:
+   - Zero-risk deployment with side-by-side engine co-existence (`v4` default, `legacy` fallback).
+   - Per-request engine routing via `X-LiteRouter-Engine` header when `LITEROUTER_ENGINE_OVERRIDE=true`.
+   - 100% backward-compatible re-exports preserving existing integrations and import contracts.
+
+2. **Dynamic Provider Registry & Configuration (`config/providers.json`)**:
+   - Provider configurations fully externalized into schema-validated JSON with hot reload support via `POST /reset`.
+   - Per-provider specification of base URLs, endpoint mappings, rate limits, retry policies, key cooldowns, pacers, and circuit breakers.
+   - Built-in deprecation subsystem warning operators of obsolete environment variable configurations only when running under the v4 engine.
+
+3. **Pure Payload Transformers Subsystem (`PayloadTransformerContract`)**:
+   - Decoupled bidirectional translation contracts separating wire protocol parsing from gateway dispatch mechanics.
+   - Dedicated transformer implementations for OpenAI Chat (`oa`), Anthropic Messages (`cl`), Google Native REST (`gg`), OpenAI Responses API (`oo`), and Anthropic-to-OpenAI Cross-Wire (`ao`).
+   - Context bloat defense with streaming `<think>` / reasoning scrubbing and Dots XML tool-call parsing.
+
+4. **Resilience & Pluggable Strategy Engine**:
+   - Pluggable provider execution strategies (`ProviderExecutionStrategy`): `StandardStrategy`, `NativeCascadeStrategy`, `GcpGuardedStrategy`, `ZenSingleFlightStrategy`, and `AnthropicDirectStrategy`.
+   - Robust circuit breaker state machine (`CLOSED`, `OPEN`, `HALF_OPEN`) with 429 rate-limit exclusion to prevent false trips during upstream quota exhaustions.
+   - Uniform jittered retry backoff, exponential key cooldown tracking, lock-free token bucket pacers, and in-flight cutoff resilience.
+
+5. **Telemetry, Ring Buffer & Persistent SQLite Tracing**:
+   - Zero-allocation in-memory RAM ring buffer (`TraceBuffer`) providing O(1) ingestion of the latest 1,000 requests.
+   - Monotonic telemetry sessions (`RequestTelemetry`) measuring precise Time-To-First-Token (TTFT) and token consumption throughput.
+   - Background persistent SQLite trace writer (`TraceWriter`) in WAL mode with configurable retention pruning.
+   - Authenticated inspection REST API (`GET /v1/traces`, `GET /v1/traces/:id`) and interactive CLI inspector (`bun run scripts/trace.ts`).
+
+---
+
+### Slices & Phases Detailed Breakdown
+
+#### Phase 0: Baseline & Engine Dual-Path Harness
+- **Slice 0.1 — Git Tagging & Package Versioning (`literouter-exqh.1`)**:
+  - Established `v4.0.0` baseline git checkpoint.
+  - Bumped version in `package.json` to `4.1.0`.
+- **Slice 0.2 — Dual-Path Engine Flag Scaffolding (`literouter-exqh.2`)**:
+  - Implemented `LITEROUTER_ENGINE` (`"v4"` | `"legacy"`) in `src/config/env.ts` and `src/config/schema.ts`.
+  - Added `LITEROUTER_ENGINE_OVERRIDE` for `X-LiteRouter-Engine` per-request header control.
+  - Wired dual-path branch in `src/index.ts` route dispatcher with comprehensive dual-path unit tests.
+
+#### Phase 1: Configuration Foundation & Dynamic Provider Registry
+- **Slice 1.1 — Extended Zod Schemas (`literouter-exqh.3`)**:
+  - Extended Zod schemas in `src/config/schema.ts` defining `ProviderStrategySchema`, `RequestRetrySchema`, `KeyCooldownSchema`, `ProviderPacerConfigSchema`, `CircuitBreakerConfigSchema`, and `ConserveRuleSchema`.
+- **Slice 1.2 — In-Memory Provider Registry & Deprecation System (`literouter-exqh.4`)**:
+  - Created `src/config/providers.ts` in-memory provider registry with O(1) lookups and fallback capabilities.
+  - Created `src/config/deprecation.ts` warning subsystem alerting on obsolete env vars without breaking legacy operations.
+- **Slice 1.3 — Providers JSON Extension & Boot/Reset Integration (`literouter-exqh.5`)**:
+  - Enriched `config/providers.json` with comprehensive resilience configurations across all 13 supported providers.
+  - Integrated provider registry reload into gateway boot and `POST /reset` hot-reload lifecycle.
+
+#### Phase 2: Telemetry & Tracing Subsystem
+- **Slice 2.1 — Sanitization & Redaction Engine (`literouter-exqh.6`)**:
+  - Implemented `src/telemetry/sanitizer.ts` with strict request/response header allowlist.
+  - Implemented recursive body scrubber redacting API keys, Bearer tokens, passwords, and sensitive credentials.
+- **Slice 2.2 — RequestTelemetry Session Class & Logger Interop (`literouter-exqh.7`)**:
+  - Implemented `src/telemetry/session.ts` with high-resolution monotonic timestamps (`performance.now()`).
+  - Recorded TTFT milestones, token usage summaries, speed calculations (tokens/sec), and status transitions.
+- **Slice 2.3 — High-Performance RAM Ring Buffer (`literouter-exqh.8`)**:
+  - Implemented `src/telemetry/buffer.ts` circular buffer retaining up to 1,000 trace summaries and full payloads with zero memory leak risk.
+- **Slice 2.4 — Lazy SQLite Trace Writer & CLI Inspector (`literouter-exqh.9`)**:
+  - Implemented `src/telemetry/writer.ts` utilizing native `bun:sqlite` in WAL mode with batched background flushing and TTL pruning.
+  - Created `scripts/trace.ts` CLI tool for tailing live traces, searching by request ID, and inspecting payloads.
+
+#### Phase 3: Resilience, Retry & Strategy Engine
+- **Slice 3.1 — Math Utilities & Status Classifier (`literouter-exqh.10`)**:
+  - Implemented `src/engine/resilience.ts` containing uniform retry delay calculation with random jitter and HTTP status error classification.
+- **Slice 3.2 — Circuit Breaker State Machine (`literouter-exqh.11`)**:
+  - Implemented `src/engine/circuit_breaker.ts` supporting `CLOSED`, `OPEN`, and `HALF_OPEN` states.
+  - Excluded HTTP 429 status codes from tripping circuit breakers to protect multi-tenant key pools.
+- **Slice 3.3 — Strategy Interface & Strategy Registry (`literouter-exqh.12`)**:
+  - Defined `ProviderExecutionStrategy` contract in `src/engine/strategy.ts` with extensible strategy factory and registry.
+  - Implemented `StandardStrategy` for default Bearer token authentication and JSON handling.
+- **Slice 3.4 — Specialized Provider Strategies (`literouter-exqh.13`)**:
+  - Implemented `NativeCascadeStrategy` for sticky tier failover on Google Native Flash endpoints (`gemini-flash`, `gemini-flash-lite`).
+  - Implemented `GcpGuardedStrategy` enforcing zero-cost Gemma guardrails (blocking paid models with HTTP 403).
+  - Implemented `ZenSingleFlightStrategy` injecting persistent UUID `x-session-id` headers and single-flight controls.
+  - Implemented `AnthropicDirectStrategy` formatting direct Anthropic Messages headers (`x-api-key`, `anthropic-version`).
+- **Slice 3.5 — Unified Dispatch Engine Pipeline (`literouter-exqh.14`)**:
+  - Implemented `src/engine/dispatch.ts` unifying pacer acquisition, key rotation, circuit breaker state tracking, retry execution, streaming translation, and cutoff resilience into a single pipeline.
+- **Slice 3.6 — In-Memory Pacer Wiring Integration (`literouter-exqh.15`)**:
+  - Implemented `src/engine/pacer.ts` wrapping in-memory FIFO token bucket rate limiters with graceful queue draining.
+
+#### Phase 4: Payload Transformers Subsystem
+- **Slice 4.1 — Transformer Contract & OpenAI Chat Transformer (`literouter-exqh.16`)**:
+  - Defined `PayloadTransformerContract` in `src/engine/transformer.ts`.
+  - Implemented pure `OpenAIChatTransformer` in `src/transformers/openai_chat.ts` handling non-streaming transformation and SSE streaming.
+- **Slice 4.2 — Anthropic Messages Transformer (`literouter-exqh.17`)**:
+  - Implemented `AnthropicMessagesTransformer` in `src/transformers/anthropic_messages.ts` for native Claude Code integration and SSE event-stream translation.
+- **Slice 4.3 — Google Native Transformer (`literouter-exqh.18`)**:
+  - Implemented `GoogleNativeTransformer` in `src/transformers/google_native.ts` translating `@ai-sdk/google` requests to upstream Google REST payloads.
+- **Slice 4.4 — OpenAI Responses API Transformer (`literouter-exqh.19`)**:
+  - Implemented `OpenAIResponsesTransformer` in `src/transformers/openai_responses.ts` preserving native Responses API semantics.
+- **Slice 4.5 — Anthropic-OpenAI Cross-Wire Transformer (`literouter-exqh.20`)**:
+  - Implemented `AnthropicOpenAiXWireTransformer` in `src/transformers/anthropic_openai_xwire.ts` enabling cross-wire translation for Dots and open-weights models.
+
+#### Phase 5: Thin Route Handlers & Master Router
+- **Slice 5.1 — V4 Thin Route Handlers (`literouter-exqh.21`)**:
+  - Implemented lightweight v4 route handlers under `src/handlers/v4/` delegating request parsing and dispatching to transformers and dispatch pipeline.
+- **Slice 5.2 — V4 Route Dispatcher (`literouter-exqh.22`)**:
+  - Implemented `src/handlers/v4/router.ts` providing master path routing, REST endpoints, and authenticated `/v1/traces` inspection endpoints.
+- **Slice 5.3 — Master Route Wiring in Server Entry (`literouter-exqh.23`)**:
+  - Wired `dispatchV4` into `src/index.ts` server entrypoint behind dual-path engine routing and request header override.
+
+#### Phase 6: A/B Parity, Gauntlet Verification & GoLive Cutover
+- **Slice 6.1 — A/B Parity & Integration Suite (`literouter-exqh.24`)**:
+  - Implemented `tests/integration/test_v4_ab_parity.py` and `tests/integration/test_v4_smoke.py` validating identical status codes, token usage structures, and error payloads between legacy and v4 engines.
+- **Slice 6.2 — Downstream Agent Gauntlet Verification (`literouter-exqh.25`)**:
+  - Implemented `tests/integration/test_downstream_gauntlet.py` validating end-to-end compatibility against OpenCode 2, Claude Code CLI, and Pydantic AI harnesses.
+- **Slice 6.3 — GoLive Audit, Documentation & Default Flip (`literouter-exqh.26`)**:
+  - Flipped default `LITEROUTER_ENGINE` to `"v4"` across configuration schemas and environment defaults.
+  - Completed release documentation and verifiable GoLive execution audit.
+
+---
+
+### Breaking Changes & Migration Notes
+- **Breaking Changes**: None. All legacy execution paths and environment variables remain fully operational when selecting `LITEROUTER_ENGINE="legacy"` or using `X-LiteRouter-Engine: legacy`.
+- **Migration Guidance**:
+  - Existing installations automatically run on the modernized `v4` engine with zero configuration changes.
+  - To explicitly retain legacy handler routing, set `LITEROUTER_ENGINE="legacy"` in `.env.local`.
+  - Deprecated environment variables (`LITEROUTER_PACER_*`, `GCP_ENABLE_*`, `ZEN_ENABLE_*`) emit console warnings when `v4` is active and can be safely migrated to `config/providers.json`.
+
+---
+
 ## [4.0.0] - 2026-09-11
 
 > *"All models are wrong, but some are useful. So use our eval, we will tell you what is wrong."*
