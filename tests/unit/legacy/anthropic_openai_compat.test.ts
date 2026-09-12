@@ -11,7 +11,7 @@ import {
   translateAnthropicToOpenAI,
   translateOpenAIToAnthropicResponse,
   validateAnthropicPayload,
-} from "../../src/handlers/anthropic_compat";
+} from "../../../src/handlers/anthropic_compat";
 
 describe("Anthropic -> OpenAI Forward Translation", () => {
   it("translates basic system and user messages", () => {

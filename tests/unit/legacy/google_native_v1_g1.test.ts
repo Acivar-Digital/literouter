@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { resetAllState } from "../../src/lib";
-import { parseDirective } from "../../src/directive/parser";
-import { resolveUpstreamEndpoint } from "../../src/handlers/openai_compat";
-import { handleGoogleNative } from "../../src/handlers/google_native";
-import { dispatchRoute } from "../../src/index";
+import { resetAllState } from "../../../src/lib";
+import { parseDirective } from "../../../src/directive/parser";
+import { resolveUpstreamEndpoint } from "../../../src/handlers/openai_compat";
+import { handleGoogleNative } from "../../../src/handlers/google_native";
+import { dispatchRoute } from "../../../src/index";
 
 describe("Google Native v1 & g1 Directive Unit Tests", () => {
   const originalFetch = globalThis.fetch;

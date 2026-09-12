@@ -4,8 +4,20 @@ All notable changes to LiteRouter will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- Partitioned test suite scripts in `package.json`: `test:gateway` (runs `tests/unit`), `test:eval` (runs `tests/eval`), `test:legacy` (runs `tests/unit/legacy`), and `test:failures` (`--only-failures` to eliminate context bloat and silent truncation).
+
+### Changed
+- Partitioned 186 model evaluation grader tests from `tests/unit/` and `tests/unit/eval_graders/` into `tests/eval/` (`graders/` and web evaluators), isolating false alarm terminal alarm banners (`🚨 VETO TRIGGERED`) from core gateway unit tests.
+- Isolated 179 legacy handler and legacy transport tests into `tests/unit/legacy/`, cleanly separating modern v4 development iteration from legacy fallback tests.
+
 ### Fixed
-- Mid-stream client aborts no longer recorded as telemetry 500 / breaker failures (abort discrimination via client signal + AbortError code 20).
+- Fixed SQLite database leak and lingering interval timer in `src/telemetry/trace_writer.ts`: defaults `dbPath` to `:memory:` during testing (`LITEROUTER_TEST_MODE="true"` or `NODE_ENV="test"`), and cleans up active timers upon `drainSync()`.
+- Optimized `tests/unit/engine/dispatch.test.ts`: zeroed out artificial pacer wait delays in test mock and added `afterAll` drain teardown, reducing test file duration from 3.53s to <250ms with zero disk mutation to `logs/traces.db`.
+
+### Retired
+- Permanently retired orphaned `zdist.ts` (RateLimitTracker) and `tests/unit/zdist.test.ts` (6 tests). Client-side preemptive quota counting superseded by `RequestPacer` (conveyor queue pacing) + `CooldownManager` (reactive 429 quarantine with `Retry-After`). Archived in `docs/GRAVEYARD/ZDIST.md`.
+
 - Guarded cutoff-stream close (no more `Controller is already closed` secondary throw).
 - H2 reader-cancel log reduced to single message-only debug line.
 - Restored `legacy` engine default in `src/config/env.ts` + `src/config/schema.ts` (B1, literouter-cry7) — v4 opt-in only.

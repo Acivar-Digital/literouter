@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { resetAllState } from "../../src/lib";
-import { handleGoogleNative } from "../../src/handlers/google_native";
+import { resetAllState } from "../../../src/lib";
+import { handleGoogleNative } from "../../../src/handlers/google_native";
 
 describe("Google Native Dumb Forwarder Unit Tests", () => {
   const originalFetch = globalThis.fetch;

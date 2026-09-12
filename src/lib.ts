@@ -36,7 +36,6 @@ export * from "./network/classifier";
 export * from "./network/cooldown";
 export * from "./network/fetcher";
 export * from "./network/pool";
-export * from "./network/zdist";
 export * from "./transformers/dots";
 export * from "./transformers/ling";
 export * from "./transformers/nuances";

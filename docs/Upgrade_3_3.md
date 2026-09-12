@@ -128,8 +128,7 @@ literouter/
 │   ├── network/
 │   │   ├── fetcher.ts             # Multi-stage timeout, ghost guard, stall auto-resend
 │   │   ├── pool.ts                # Provider key pool state & active index rotation
-│   │   ├── cooldown.ts            # Reason-aware quarantine & Retry-After parser
-│   │   └── zdist.ts               # Sliding-window RPM/RPD rate limit tracker
+│   │   └── cooldown.ts            # Reason-aware quarantine & Retry-After parser (zdist retired -> GRAVEYARD/ZDIST.md)
 │   │
 │   ├── fusion/
 │   │   ├── engine.ts              # Multi-tier fallback execution engine

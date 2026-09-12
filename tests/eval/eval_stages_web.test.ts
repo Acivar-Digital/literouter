@@ -1,5 +1,5 @@
 /**
- * tests/unit/eval_stages_web.test.ts
+ * tests/eval/eval_stages_web.test.ts
  *
  * Unit tests for eval/stages_web/stage1_structure.ts and stage2_responsive.ts
  */

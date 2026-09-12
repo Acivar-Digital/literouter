@@ -289,9 +289,11 @@ When an upstream error occurs, `reportError()` assigns specific cooldown quarant
 
 ---
 
-## 6. Rate Limit Distribution (Zdist) & Quota Accounting
+## 6. Rate Limit Handling: Pacer Conveyor & Reactive Cooldown (Zdist Superseded)
 
-LiteRouter tracks rate limit consumption against configured vendor limits:
+> **Architectural Note (Graveyard)**: Preemptive client-side RPM/RPD counting (`zdist.ts` / `RateLimitTracker`) was formally retired in v4.1. Upstream LLM rate limits are token/concurrency leaky-buckets that drift from local clocks. Instead, LiteRouter uses `RequestPacer` (spacing calls by `min_delay_ms`) to prevent bursts, and `CooldownManager` (reacting to upstream 429s with `Retry-After`) to quarantine tripped keys in <5ms. See [`docs/GRAVEYARD/ZDIST.md`](GRAVEYARD/ZDIST.md).
+
+LiteRouter manages rate limits through deterministic pacing and reactive quarantine:
 
 ### 6.1 Rate Limit Tracking Metrics
 - **RPM (Rounds / Requests Per Minute)**: Sliding 60-second window per key.

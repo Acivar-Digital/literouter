@@ -1,11 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { resetEnvCache } from "../../src/config/env";
+import { resetEnvCache } from "../../../src/config/env";
 import {
   classifyTransportError,
   classifyUpstreamError,
   type UpstreamErrorInfo,
   type ErrorClassification,
-} from "../../src/network/classifier";
+} from "../../../src/network/classifier";
 
 describe("Error Classifier — classifyUpstreamError & classifyTransportError", () => {
   let originalTtl: string | undefined;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { reassembleResponse } from "../../src/network/fetcher";
+import { reassembleResponse } from "../../../src/network/fetcher";
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();

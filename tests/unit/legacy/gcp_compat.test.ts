@@ -1,17 +1,17 @@
 import { describe, expect, it, beforeEach, afterEach } from "bun:test";
-import { parseDirective } from "../../src/directive/parser";
-import { validateDirective } from "../../src/directive/validator";
-import { loadKeyPools } from "../../src/config/keys";
-import { getEnv } from "../../src/config/env";
-import { clearPacerRegistry, getPacerForProvider } from "../../src/network/pacer";
+import { parseDirective } from "../../../src/directive/parser";
+import { validateDirective } from "../../../src/directive/validator";
+import { loadKeyPools } from "../../../src/config/keys";
+import { getEnv } from "../../../src/config/env";
+import { clearPacerRegistry, getPacerForProvider } from "../../../src/network/pacer";
 import {
   buildGcpAuthHeaders,
   handleGcpCompat,
   isGemmaModel,
   normalizeGcpModel,
-} from "../../src/handlers/gcp_compat";
-import { globalCooldownManager, globalKeyPool, initializeKeyPools } from "../../src/handlers/openai_compat";
-import { handleAppRequest } from "../../src/index";
+} from "../../../src/handlers/gcp_compat";
+import { globalCooldownManager, globalKeyPool, initializeKeyPools } from "../../../src/handlers/openai_compat";
+import { handleAppRequest } from "../../../src/index";
 
 describe("GCP Compatibility Architecture (gc)", () => {
   beforeEach(() => {

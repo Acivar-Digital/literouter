@@ -1,5 +1,5 @@
 /**
- * tests/unit/eval_graders/pydantic_grader.test.ts
+ * tests/eval/graders/pydantic_grader.test.ts
  *
  * Hermetic unit tests for Pydantic AI 2.0 schema validation grader
  * exported by eval/stages/stage2_pydantic.ts and eval/stages_rs/stage2_pydantic.ts.

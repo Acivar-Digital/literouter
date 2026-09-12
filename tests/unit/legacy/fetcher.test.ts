@@ -8,7 +8,7 @@ import {
   readFirstChunkWithTimeout,
   readFirstContentChunkWithTimeout,
   resolveTtftTimeout,
-} from "../../src/network/fetcher";
+} from "../../../src/network/fetcher";
 
 const decoder = new TextDecoder();
 

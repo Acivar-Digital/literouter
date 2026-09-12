@@ -1,5 +1,5 @@
 /**
- * tests/unit/eval_web_runner.test.ts
+ * tests/eval/eval_web_runner.test.ts
  *
  * Unit tests for eval/web.ts: CLI arguments, cooldown pacing parity, and speed telemetry.
  */

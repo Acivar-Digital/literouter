@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import http2 from "node:http2";
-import { Http2SessionPool, resetHttp2Pool } from "../../src/network/h2_pool";
+import { Http2SessionPool, resetHttp2Pool } from "../../../src/network/h2_pool";
 
 describe("Outbound HTTP/2 Multiplexed Session Pool", () => {
   afterEach(() => {

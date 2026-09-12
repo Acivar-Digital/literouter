@@ -1,5 +1,5 @@
 /**
- * tests/unit/eval_graders/security_grader.test.ts
+ * tests/eval/graders/security_grader.test.ts
  *
  * Hermetic unit tests for Prompt Injection & Malicious Bash detection logic
  * exported by eval/stages/stage5_security.ts and eval/stages_rs/stage5_security.ts.

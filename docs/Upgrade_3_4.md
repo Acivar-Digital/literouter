@@ -15,7 +15,6 @@ tests/
 │   ├── auth_extractor.test.ts            # Header & Query parameter extraction waterfall
 │   ├── path_resolver.test.ts             # providers.json completion path mapping
 │   ├── cooldown.test.ts                  # Reason-aware TTL, Retry-After & sub-2s grace retry
-│   ├── zdist.test.ts                     # Sliding window RPM & daily RPD quota counters
 │   ├── fusion_sticky.test.ts             # FSE 5-minute sticky fallback & primary recovery
 │   ├── thinking_transformer.test.ts      # Global stripping vs 'ts' Anthropic delta conversion
 │   ├── gemma_transformer.test.ts         # System-to-user prompt mapping & turn merging

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import type http2 from "node:http2";
-import { Http2SessionPool, type PooledSession, resetHttp2Pool } from "../../src/network/h2_pool";
+import { Http2SessionPool, type PooledSession, resetHttp2Pool } from "../../../src/network/h2_pool";
 
 function makeMockSession() {
   let destroyCalls = 0;

@@ -1,5 +1,5 @@
 /**
- * tests/unit/eval_stages_web_stage3_4.test.ts
+ * tests/eval/eval_stages_web_stage3_4.test.ts
  *
  * Unit tests for Stage 3 (State & Interactive Events) and Stage 4 (Code Hygiene & Anti-Hallucination).
  */

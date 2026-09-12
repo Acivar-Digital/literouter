@@ -1,4 +1,10 @@
-import { describe, expect, it, beforeEach, mock } from "bun:test";
+import { describe, expect, it, beforeEach, afterAll, mock } from "bun:test";
+
+mock.module("../../../src/engine/pacer_adapter", () => ({
+  acquirePacer: async () => {},
+  calculatePacerIntervalMs: () => 0,
+}));
+
 import { initProviderRegistry } from "../../../src/config/providers";
 import type { ParsedDirective } from "../../../src/directive/types";
 import { getCircuitBreaker, resetCircuitBreakers } from "../../../src/engine/circuit_breaker";
@@ -483,5 +489,9 @@ describe("TraceWriter Server Lifecycle & Persistence", () => {
     expect(row?.status).toBe(200);
 
     db!.run("DELETE FROM request_traces WHERE req_id = ?", [testReqId]);
+  });
+
+  afterAll(() => {
+    traceWriter.drainSync();
   });
 });

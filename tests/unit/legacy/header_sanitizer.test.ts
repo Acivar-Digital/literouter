@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 import {
   HOP_BY_HOP_AND_ENCODING_HEADERS,
   sanitizeDownstreamHeaders,
-} from "../../src/network/fetcher";
+} from "../../../src/network/fetcher";
 
 describe("Header Sanitizer — Compression and Hop-by-Hop Stripping", () => {
   it("strips content-encoding and compression headers from downstream responses", () => {

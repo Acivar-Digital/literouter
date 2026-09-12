@@ -1,12 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { resetAllState } from "../../src/lib";
+import { resetAllState } from "../../../src/lib";
 import {
   getCurrentFlashTierIndex,
   getNativeTierIndex,
   handleGoogleNative,
   loadAndCacheNativeChains,
   resetNativeFlashTierIndex,
-} from "../../src/handlers/google_native";
+} from "../../../src/handlers/google_native";
 
 interface MockFetchCall {
   readonly url: string;

@@ -8,8 +8,8 @@ import {
   resolveApiKey,
   resolveUpstreamResponsesUrl,
   shouldStreamResponse,
-} from "../../src/handlers/openai_original";
-import { globalKeyPool } from "../../src/handlers/openai_compat";
+} from "../../../src/handlers/openai_original";
+import { globalKeyPool } from "../../../src/handlers/openai_compat";
 
 async function readSseStream(response: Response): Promise<string> {
   const reader = response.body?.getReader();

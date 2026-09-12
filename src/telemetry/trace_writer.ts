@@ -63,15 +63,33 @@ export class TraceWriter {
     this.retentionDays = options.retentionDays ?? RETENTION_DAYS;
   }
 
-  init(dbPath = "logs/traces.db"): void {
+  init(dbPath?: string): void {
+    const resolvedDbPath =
+      dbPath ??
+      (process.env.NODE_ENV === "test" || process.env.LITEROUTER_TEST_MODE === "true"
+        ? ":memory:"
+        : "logs/traces.db");
+
     try {
-      if (dbPath !== ":memory:") {
-        const dir = dirname(dbPath);
+      if (resolvedDbPath !== ":memory:") {
+        const dir = dirname(resolvedDbPath);
         if (dir && dir !== ".") {
           mkdirSync(dir, { recursive: true });
         }
       }
-      this.db = new Database(dbPath, { create: true });
+      if (this.flushTimer) {
+        clearInterval(this.flushTimer);
+        this.flushTimer = null;
+      }
+      if (this.db) {
+        try {
+          this.db.close();
+        } catch (err) {
+          console.warn(`[TraceWriter] Close previous db error: ${err}`);
+        }
+        this.db = null;
+      }
+      this.db = new Database(resolvedDbPath, { create: true });
       this.db.exec("PRAGMA journal_mode = WAL;");
       this.db.exec("PRAGMA synchronous = NORMAL;");
       this.db.exec(SCHEMA_SQL);

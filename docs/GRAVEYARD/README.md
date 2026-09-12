@@ -44,10 +44,11 @@ This directory contains design documents, architectural plans, and deprecated im
 * **Context**: LiteRouter originally relied on direct Redis integration and configuration (`REDIS_HOST`, `REDIS_PASSWORD`, etc.) for persistence, metrics, and key rotation state.
 * **Why it was discarded**: To maintain strict independence and adhere to open-source software principles, direct dependency on Redis has been deprecated in favor of **Valkey** (the fully open-source key-value database fork). The codebase preserves protocol-level compatibility for seamless migration.
 
-### 9. [FUSION_LOCAL_GOOGLE.md](FUSION_LOCAL_GOOGLE.md) — Native `/v1beta` fusion group `local/google`
-* **Status**: 🪦 **Removed (2026-07-17)**
-* **Context**: A fusion group that dumb-forwarded OpenCode native `/v1beta` requests through a Google chain (`gemma-4-31b-it` → `gemini-3.1-flash-lite` → `gemma-4-26b-a4b-it`) to Google's native `generateContent`.
-* **Why it was discarded**: The native fusion path is a dumb forwarder and passed the raw OpenAI body (`stream`/`messages`) to `generateContent`, which expects Gemini `contents` — every request failed `400 INVALID_ARGUMENT`. The chain never advanced past the first hop, so `local/google` was never functional. Removed from `fusion.json`; native traffic should use a directly-routed Google model.
+### 10. [ZDIST.md](ZDIST.md) — Preemptive Client-Side RPM/RPD Rate Limit Tracker & Valkey Lua ZSET
+* **Status**: 🪦 **Canned & Retired (2026-09-12)**
+* **Context**: In v3, an LLM proposed building a preemptive client-side rate limit counter (`src/network/zdist.ts`, `tests/unit/zdist.test.ts`) using sliding-window RPM (60s) and daily RPD (UTC midnight reset) to rotate keys at 95% threshold before hitting 429s, with early ideas suggesting a Valkey/Redis Lua `ZSET` backend.
+* **Why it was discarded**: Upstream LLM limits are concurrency and token-based (TPM leaky buckets), not static request counts; local sliding windows drift from vendor clocks; and preemptive guessing prematurely starves usable keys. In production, LiteRouter already solves this with zero infrastructure using `RequestPacer` (conveyor spacing) + `CooldownManager` (reactive 429 quarantine with `Retry-After` parsing). The orphaned code was cleanly purged.
+
 
 ### 10. [HTTP2_AUDIT_2026-09-10.md](HTTP2_AUDIT_2026-09-10.md) — HTTP/2 audit discussion (multiplexing, per-key pools, telemetry, backpressure)
 * **Status**: 🪦 **Parked (2026-09-10, no code changes)**

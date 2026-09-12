@@ -1,5 +1,5 @@
 /**
- * tests/unit/eval_graders/patch_grader.test.ts
+ * tests/eval/graders/patch_grader.test.ts
  *
  * Unit tests for Stage 4 Patch Grader logic:
  *   - M2: Indentation Grader (exact 6-space indentation fidelity)
@@ -136,6 +136,7 @@ this.logTelemetry("increment", step);
         "tests/integration/bar.py",
         "test/baz.ts",
         "tests/unit/eval_graders/patch_grader.test.ts",
+        "tests/eval/graders/patch_grader.test.ts",
         "/project/tests/unit/something.ts",
         "tests/e2e/workflow.test.ts",
       ];
