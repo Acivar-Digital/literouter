@@ -3,7 +3,6 @@ import { getProviderConfig } from "../config/providers";
 import type { ProviderConfigEntry } from "../config/schema";
 import type { ParsedDirective } from "../directive/types";
 import { getCircuitBreaker } from "./circuit_breaker";
-import { calculateCooldownMs } from "./cooldown";
 import { acquirePacer } from "./pacer_adapter";
 import { calculateRetryDelay } from "./retry";
 import { defaultClassifyFailure, type FailureAction } from "./status_classify";
@@ -16,6 +15,8 @@ import { RequestTelemetry, type UsageRecord } from "../telemetry/session";
 import { traceBuffer, type SanitizedTrace } from "../telemetry/ring_buffer";
 import { traceWriter } from "../telemetry/trace_writer";
 import { sanitizeBody } from "../telemetry/sanitize";
+import { extractErrorMessage } from "../ui/logger";
+import { ensureSessionHeaders } from "./session_id";
 
 export type { OutboundWirePayload, PayloadTransformerContract };
 
@@ -83,12 +84,35 @@ function setHeaderCaseInsensitive(
   headers[key] = value;
 }
 
+export const BANNED_OUTBOUND_HEADERS = new Set([
+  "host",
+  "connection",
+  "keep-alive",
+  "proxy-authenticate",
+  "proxy-authorization",
+  "te",
+  "trailer",
+  "transfer-encoding",
+  "upgrade",
+  "content-encoding",
+  "content-length",
+]);
+
+function isBannedOutboundHeader(key: string): boolean {
+  const lowerKey = key.toLowerCase();
+  return lowerKey === "host" || BANNED_OUTBOUND_HEADERS.has(lowerKey);
+}
+
 function mergeHeaderSource(
   target: Record<string, string>,
-  source?: Record<string, string>
+  source?: Record<string, string>,
+  filterHopByHop = false
 ): void {
   if (!source) return;
   for (const [k, v] of Object.entries(source)) {
+    if (filterHopByHop && isBannedOutboundHeader(k)) {
+      continue;
+    }
     setHeaderCaseInsensitive(target, k, v);
   }
 }
@@ -103,11 +127,13 @@ export function mergeOutboundHeaders(
   const merged: Record<string, string> = {};
   setHeaderCaseInsensitive(merged, "content-type", "application/json");
 
-  mergeHeaderSource(merged, payloadHeaders);
+  mergeHeaderSource(merged, payloadHeaders, true);
   mergeHeaderSource(merged, authHeaders);
   mergeHeaderSource(merged, injectedHeaders);
   mergeHeaderSource(merged, targetExtraHeaders);
   mergeHeaderSource(merged, provHeaders);
+
+  ensureSessionHeaders(merged, payloadHeaders);
 
   return merged;
 }
@@ -204,6 +230,21 @@ function buildTtftTimeoutResponse(reqId: string, timeoutMs: number): Response {
       headers: { "content-type": "application/json", "x-request-id": reqId },
     }
   );
+}
+
+function createCleanErrorResponse(
+  upstreamResponse: Response,
+  errText: string
+): Response {
+  const cleanHeaders = new Headers(upstreamResponse.headers);
+  cleanHeaders.delete("content-encoding");
+  cleanHeaders.delete("content-length");
+  cleanHeaders.delete("transfer-encoding");
+  return new Response(errText, {
+    status: upstreamResponse.status,
+    statusText: upstreamResponse.statusText,
+    headers: cleanHeaders,
+  });
 }
 
 function createCutoffResilientStream(
@@ -367,6 +408,7 @@ export async function executeDispatchPipeline(
 
   const initialCtx: DispatchContext = {
     reqId: req.reqId,
+    path: req.path,
     directive: req.directive,
     providerConfig: provConfig,
     telemetry,
@@ -431,6 +473,8 @@ export async function executeDispatchPipeline(
         }
       );
     }
+
+    telemetry.setKeyIndex(key.index, key.totalKeys);
 
     const currentCtx: DispatchContext = {
       ...initialCtx,
@@ -538,6 +582,18 @@ export async function executeDispatchPipeline(
       }
 
       // Upstream failure classification
+      const errText = await upstreamResponse.text();
+      const rawErrorMsg = extractErrorMessage(errText);
+      const retryAfterSec = parseRetryAfterSec(upstreamResponse.headers.get("retry-after"));
+
+      telemetry.recordLimit({
+        status: upstreamResponse.status,
+        retryAfterSec,
+        totalKeys: key.totalKeys,
+        rawMessage: rawErrorMsg,
+        hasUpstreamRetryAfter: retryAfterSec !== undefined,
+      });
+
       const failureAction: FailureAction = strategy.classifyFailure?.(currentCtx, upstreamResponse.status)
         ?? defaultClassifyFailure(upstreamResponse.status);
 
@@ -548,7 +604,7 @@ export async function executeDispatchPipeline(
           clientInbound: sanitizeBody(req.rawInboundBody),
           upstreamOutbound: sanitizeBody(req.outboundPayload.body),
         });
-        return upstreamResponse;
+        return createCleanErrorResponse(upstreamResponse, errText);
       }
 
       if (failureAction === "advance_target") {
@@ -563,32 +619,12 @@ export async function executeDispatchPipeline(
       }
 
       // failureAction === "retry_same_target"
-      const retryAfterSec = parseRetryAfterSec(upstreamResponse.headers.get("retry-after"));
-      const consecutiveFailures = globalKeyPool.getConsecutiveAuthFailures(providerCode, key.index);
-      const cooldownMs = calculateCooldownMs(
-        provConfig.key_cooldown,
-        consecutiveFailures,
-        retryAfterSec !== undefined ? retryAfterSec * 1000 : undefined
-      );
-
-      const cooldownSec = Math.max(1, Math.ceil(cooldownMs / 1000));
-      globalKeyPool.quarantineKey(
-        providerCode,
-        key.index,
-        cooldownSec,
-        `status_${upstreamResponse.status}`,
-        upstreamResponse.status
-      );
-
       breaker.recordFailure(upstreamResponse.status);
-      telemetry.recordLimit({
-        status: upstreamResponse.status,
-        retryAfterSec: cooldownSec,
-        totalKeys: key.totalKeys,
-      });
 
       if (attempt < maxAttempts) {
-        const delayMs = calculateRetryDelay(retryConfig.delay, attempt);
+        const delayMs = retryAfterSec !== undefined
+          ? Math.min(retryAfterSec * 1000, 15000)
+          : calculateRetryDelay(retryConfig.delay, attempt);
         await Bun.sleep(delayMs);
         telemetry.rotateKey({
           fromIndex: key.index,
@@ -605,7 +641,7 @@ export async function executeDispatchPipeline(
         clientInbound: sanitizeBody(req.rawInboundBody),
         upstreamOutbound: sanitizeBody(req.outboundPayload.body),
       });
-      return upstreamResponse;
+      return createCleanErrorResponse(upstreamResponse, errText);
     } catch (err) {
       if (req.clientSignal.aborted) {
         throw err;

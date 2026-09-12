@@ -41,7 +41,9 @@ No searching or guessing required. These are the definitive components governing
 
 | File | Exact Line / Symbol | Architectural Responsibility |
 |---|---|---|
-| **`src/handlers/google_native.ts`** | `handleGoogleNative` (`:534`)<br>`attemptNativeForward` (`:508`)<br>`createMonitoredStream` (`:355`) | **The Main Forwarder Engine**: Validates `lr-gg-*` directive, buffers request body upfront for replay, executes attempt loop (up to 3 attempts), sanitizes headers, pacing, dispatches upstream, and wraps the response in a monitored stream. |
+| **`src/handlers/google_native.ts`** | `handleGoogleNative` (`:534`)<br>`attemptNativeForward` (`:508`)<br>`createMonitoredStream` (`:355`) | **Legacy Forwarder Engine**: Validates `lr-gg-*` directive, buffers request body upfront for replay, executes attempt loop (up to 3 attempts), sanitizes headers, pacing, dispatches upstream, and wraps the response in a monitored stream. |
+| **`src/handlers/v4/google_native.ts`** | `handleGoogleNative` (`:5`)<br>`handleV4GoogleNative` (`:55`) | **v4 Thin Route Handler**: Parses directive, extracts model from URL path regex `/\/(?:v1beta|v1)\/models\/([^:]+)/` if absent from body, preserves full inbound path in `DispatchRequest`, and delegates to `executeDispatchPipeline`. |
+| **`src/engine/strategies/native_cascade.ts`** | `NativeCascadeStrategy`<br>`buildGoogleUrl` (`:31`)<br>`resolveTarget` (`:49`) | **v4 Strategy & URL Builder**: Resolves cascade chains (`gemini-flash`), falls back to path model extraction, preserves `:streamGenerateContent` action when present in `ctx.path`, and manages tiered fallback. |
 | **`src/index.ts`** | `dispatchRoute` (`:204-206`) | **Inbound Route Dispatcher**: Intercepts all paths starting with `/v1beta/models/` and routes them directly to `handleGoogleNative(req, rawKey, reqId)`. **Legacy engine only** — default engine is `legacy` (`src/config/env.ts:51`, `src/config/schema.ts:199`); under `LITEROUTER_ENGINE=v4` (or `x-literouter-engine` override header when `LITEROUTER_ENGINE_OVERRIDE` is true, `src/config/env.ts:126-140`) Google native goes via `handleV4GoogleNative` (`src/handlers/v4/router.ts:192-194`) after the `src/index.ts:414-417` branch. Engine selection: `directive-grammar.md` §11. |
 | **`src/network/fetcher.ts`** | `fetchWithTtftGuard` (`:104`)<br>`executeH2Fetch` (`:407`) | **Transport & TTFT Guard**: Executes the fetch via persistent HTTP/2 session pool, monitors Time-To-First-Token (5s TTFT guard), and tags negotiated protocol (`[Upstream: HTTP/2]`). |
 | **`src/network/h2_pool.ts`** | `Http2Pool.acquireSession` (`:61`)<br>`poolKey` calculation (`fetcher.ts:414`) | **HTTP/2 Connection Pooling**: Maintains persistent H2 multiplexed sockets keyed by `https://generativelanguage.googleapis.com#gg:<keyIndex>`. Each key gets its own persistent H2 socket supporting up to 80 concurrent streams with 180s anti-pinning aging. |
@@ -115,6 +117,28 @@ Rather than buffering the whole response, `src/handlers/google_native.ts:355-378
 2. **Finish Reason Detection**: Scans SSE lines for `"finishReason": "STOP"` or `"SAFETY"` and calls `logFinishReason(reqId, reason)`.
 3. **Usage Parsing**: Scans for `usageMetadata` (`promptTokenCount`, `candidatesTokenCount`, `totalTokenCount`). When found, calls `logUsage(...)` to log prompt tokens, completion tokens, duration, and calculated generation speed (`tok/s`).
 4. **Stream Completion**: When the stream completes or the client aborts (`cancel()`), calls `emitStreamEndTelemetry` -> `logServed(reqId, durationMs, status, attempt, MAX_NATIVE_ATTEMPTS)` and prints a visual delimiter `logSeparator()`.
+
+### 3.6. Engine v4 Path Model Extraction & Stream Action Preservation
+When running under Engine v4 (`LITEROUTER_ENGINE=v4.1` or header override), Google Native requests route through the thin handler and unified strategy pipeline:
+1. **URL Path Model Extraction** (`src/handlers/v4/google_native.ts:32-37`):
+   Standard Gemini SDK clients (e.g., `@ai-sdk/google`) send requests to `/v1beta/models/{model}:streamGenerateContent` without specifying a `"model"` field in the JSON body. The v4 handler extracts the model directly from the URL pathname using:
+   ```typescript
+   const match = url.pathname.match(/\/(?:v1beta|v1)\/models\/([^:]+)/);
+   if (match?.[1]) {
+     body.model = match[1];
+   }
+   ```
+   `NativeCascadeStrategy.resolveTarget` (`src/engine/strategies/native_cascade.ts:57-62`) mirrors this with a path extraction fallback (`ctx.path?.match(/\/models\/([^:]+)/)?.[1]`), ensuring virtual native chains (`gemini-flash`) and direct models resolve correctly regardless of whether `body.model` was provided.
+2. **Action Preservation (`:streamGenerateContent` vs `:generateContent`)** (`src/engine/strategies/native_cascade.ts:42-44`):
+   Upstream Google endpoint templates default to non-streaming `:generateContent` (`/v1beta/models/{model}:generateContent`). When building the upstream URL, `NativeCascadeStrategy.buildGoogleUrl` checks `ctx.path`:
+   ```typescript
+   if (completionCode === "gc" && ctx.path?.includes(":streamGenerateContent")) {
+     path = path.replace(":generateContent", ":streamGenerateContent");
+   }
+   ```
+   This guarantees that streaming RPC calls retain `:streamGenerateContent` in the upstream URL, preventing stream actions from degrading to non-streaming unary responses.
+3. **Retry-After Backoff & Key Telemetry**:
+   If Google returns HTTP 429 (`RESOURCE_EXHAUSTED`), Engine v4 extracts `Retry-After` and clamps the in-flight pause to `min(retryAfterSec * 1000, 15000)` (up to 15s) before retrying with the next key in `GOOGLE_API_KEYS`. All key indices in terminal logs and session telemetry enforce 1-based indexing (`Key #1` to `Key #N`), eliminating `Key #0`.
 
 ---
 
@@ -228,11 +252,11 @@ A typical Google Native request prints the following sequence:
 ```text
 📥 [Inbound req_123] POST /v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse [HTTP/1.1]
 🎯 [Inbound req_123] Directive: lr-gg-gg-gc-no (Provider: gg, Format: gg, Nuances: no)
-🤖 [Inbound req_123] Model: gemini-2.5-flash | Provider: gg (Key 0/4)
+🤖 [Inbound req_123] Model: gemini-2.5-flash | Provider: gg [Key #1/4]
 🐢 [PACER req_123] Provider: gg | Dwell: 0ms | Depth: 1 | Avg: 0ms | Interval: 2000ms
 🟢 [TTFT req_123] TTFT = 485ms | Stream established [Upstream: HTTP/2]
 💬 [Finish req_123] finish_reason: stop
-🟣 [USAGE req_123] gg:0/4 | Duration: 1420ms
+🟣 [USAGE req_123] Google (Key #1/4) | Duration: 1420ms
 💬 [USAGE req_123] Prompt: 125 | Completion: 84 | Total: 209 | Speed: 59.2 tok/s
  served in 1422ms (status: 200, attempt: 1/3)
 ────────────────────────────────────────────────────────────────────────────────

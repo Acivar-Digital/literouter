@@ -1,12 +1,12 @@
 import { getEnv } from "../../config/env";
+import { ensureSessionHeaders } from "../session_id";
 import type { DispatchContext, ProviderExecutionStrategy } from "../strategy";
 
 export class ZenSingleFlightStrategy implements ProviderExecutionStrategy {
   injectHeaders(_ctx: DispatchContext, headers: Record<string, string>): Record<string, string> {
-    return {
-      ...headers,
-      "x-session-id": crypto.randomUUID(),
-    };
+    const injected = { ...headers };
+    ensureSessionHeaders(injected);
+    return injected;
   }
 
   classifyFailure(

@@ -95,6 +95,7 @@ Emits 2 lines, same timestamp base:
 ```
 - `logRotate`: `oldIdx` param is accepted but not printed (display uses `newIdx+1/total`).
 - `logExhausted` and `logError` go to `console.error`.
+- **Elimination of `Key #0`**: Key numbers are strictly 1-based (`Key #1` to `Key #N`). During in-flight retries where the target key is not yet resolved (`toIndex: -1`), telemetry guards with `toIndex >= 0`, completely eliminating `Key #0` (it formats as `Advancing to <Provider> -> Retrying immediately` without a key number). Similarly, `logInbound` displays `Pool: <Provider> (N keys)` when `keyIndex` is unset.
 
 ### `logPacer(reqId, provider, dwellMs, {queueDepth, avgDwellMs, minIntervalMs})` (`logger.ts:303-314`)
 ```

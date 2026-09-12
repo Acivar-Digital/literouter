@@ -181,4 +181,44 @@ describe("Slice 3.4: NativeCascadeStrategy", () => {
       /No endpoint for completion code/
     );
   });
+
+  it("extracts requestedModel from ctx.path when body.model is missing", () => {
+    const customChains = {
+      "gemini-flash": ["gemini-2.5-flash", "gemini-2.0-flash"],
+    };
+    const strategy = new NativeCascadeStrategy(customChains);
+    const ctx = createMockContext({
+      path: "/v1beta/models/gemini-flash:generateContent",
+      directive: {
+        type: "direct",
+        provider: "gg",
+        payload: "gg",
+        completion: "gc",
+        nuance: "no",
+      } as any,
+    });
+
+    const resolved = strategy.resolveTarget(ctx, {});
+    expect(resolved.model).toBe("gemini-2.5-flash");
+    expect(resolved.upstreamUrl).toBe(
+      "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"
+    );
+    expect(resolved.extraHeaders?.["x-literouter-chain"]).toBe("gemini-flash");
+  });
+
+  it("preserves :streamGenerateContent action when ctx.path requests stream", () => {
+    const customChains = {
+      "gemini-flash": ["gemini-2.5-flash"],
+    };
+    const strategy = new NativeCascadeStrategy(customChains);
+    const ctx = createMockContext({
+      path: "/v1beta/models/gemini-flash:streamGenerateContent",
+    });
+
+    const resolved = strategy.resolveTarget(ctx, { model: "gemini-flash" });
+    expect(resolved.model).toBe("gemini-2.5-flash");
+    expect(resolved.upstreamUrl).toBe(
+      "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:streamGenerateContent"
+    );
+  });
 });

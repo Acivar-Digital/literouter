@@ -1,4 +1,4 @@
-import { describe, expect, it, beforeEach, afterAll, mock } from "bun:test";
+import { describe, expect, it, beforeEach, afterAll, mock, spyOn } from "bun:test";
 
 mock.module("../../../src/engine/pacer_adapter", () => ({
   acquirePacer: async () => {},
@@ -28,6 +28,7 @@ import {
   resetDrainState,
   trackInFlight,
 } from "../../../src/lifecycle/shutdown";
+import { RequestTelemetry } from "../../../src/telemetry/session";
 import { traceWriter } from "../../../src/telemetry/trace_writer";
 import { resetAllState } from "../../../src/index";
 
@@ -208,6 +209,34 @@ describe("Unified Dispatch Pipeline (Slice 3.5)", () => {
     expect(breaker.isOpen()).toBe(false);
   });
 
+  it("caps retry-after delay at 15000ms when retrying on 429", async () => {
+    let fetchCount = 0;
+    const sleepSpy = spyOn(Bun, "sleep").mockImplementation(async () => {});
+
+    const fetchFn = async () => {
+      fetchCount += 1;
+      if (fetchCount === 1) {
+        return new Response(JSON.stringify({ error: "Rate limit exceeded" }), {
+          status: 429,
+          headers: { "content-type": "application/json", "retry-after": "60" },
+        });
+      }
+
+      return new Response(JSON.stringify({ choices: [] }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    };
+
+    const req = buildRequest();
+    const res = await executeDispatchPipeline(req, fetchFn);
+
+    expect(res.status).toBe(200);
+    expect(fetchCount).toBe(2);
+    expect(sleepSpy).toHaveBeenCalledWith(15000);
+    sleepSpy.mockRestore();
+  });
+
   it("fails fast immediately on status 400 without retrying", async () => {
     let fetchCount = 0;
 
@@ -224,6 +253,56 @@ describe("Unified Dispatch Pipeline (Slice 3.5)", () => {
 
     expect(res.status).toBe(400);
     expect(fetchCount).toBe(1);
+  });
+
+  it("strips content-encoding, content-length, and transfer-encoding on upstream error responses", async () => {
+    const fetchFn = async () => {
+      return new Response(JSON.stringify({ error: { message: "Gzip error test" } }), {
+        status: 400,
+        headers: {
+          "content-type": "application/json",
+          "content-encoding": "gzip",
+          "content-length": "123",
+          "transfer-encoding": "chunked",
+        },
+      });
+    };
+
+    const req = buildRequest();
+    const res = await executeDispatchPipeline(req, fetchFn);
+
+    expect(res.status).toBe(400);
+    expect(res.headers.get("content-encoding")).toBeNull();
+    expect(res.headers.get("content-length")).toBeNull();
+    expect(res.headers.get("transfer-encoding")).toBeNull();
+    const body = (await res.json()) as { error: { message: string } };
+    expect(body.error.message).toBe("Gzip error test");
+  });
+
+  it("does not quarantine key on 429 retry flow", async () => {
+    const quarantineSpy = spyOn(globalKeyPool, "quarantineKey");
+    let fetchCount = 0;
+
+    const fetchFn = async () => {
+      fetchCount += 1;
+      if (fetchCount === 1) {
+        return new Response(JSON.stringify({ error: { message: "Rate limit reached" } }), {
+          status: 429,
+          headers: { "content-type": "application/json", "retry-after": "1" },
+        });
+      }
+      return new Response(JSON.stringify({ choices: [] }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    };
+
+    const req = buildRequest();
+    const res = await executeDispatchPipeline(req, fetchFn);
+
+    expect(res.status).toBe(200);
+    expect(quarantineSpy).not.toHaveBeenCalled();
+    quarantineSpy.mockRestore();
   });
 
   it("executes transformer and records breaker success on successful non-streaming response", async () => {
@@ -444,6 +523,88 @@ describe("Outbound Header Case-Insensitive Deduplication", () => {
     expect(contentTypeKeys).toHaveLength(1);
     expect(capturedHeaders!["X-Pipeline-Header"]).toBe("pipeline-value");
   });
+
+  it("strips host and hop-by-hop headers present in payloadHeaders", () => {
+    const authHeaders = { Authorization: "Bearer test-token" };
+    const injectedHeaders = { "X-Trace-Id": "trace-123" };
+    const provHeaders = { "HTTP-Referer": "https://opencode.ai" };
+    const targetExtra = { "x-custom": "1" };
+    const payloadHeaders = {
+      Host: "localhost:7766",
+      host: "localhost:7766",
+      connection: "keep-alive",
+      "Keep-Alive": "timeout=5",
+      "proxy-authenticate": "basic",
+      "proxy-authorization": "basic token",
+      te: "trailers",
+      trailer: "custom-trailer",
+      "transfer-encoding": "chunked",
+      upgrade: "websocket",
+      "content-encoding": "gzip",
+      "content-length": "42",
+      "x-allowed-client-header": "pass-through",
+    };
+
+    const merged = mergeOutboundHeaders(
+      authHeaders,
+      injectedHeaders,
+      provHeaders,
+      targetExtra,
+      payloadHeaders
+    );
+
+    const lowerKeys = Object.keys(merged).map((k) => k.toLowerCase());
+
+    expect(lowerKeys).not.toContain("host");
+    expect(lowerKeys).not.toContain("connection");
+    expect(lowerKeys).not.toContain("keep-alive");
+    expect(lowerKeys).not.toContain("proxy-authenticate");
+    expect(lowerKeys).not.toContain("proxy-authorization");
+    expect(lowerKeys).not.toContain("te");
+    expect(lowerKeys).not.toContain("trailer");
+    expect(lowerKeys).not.toContain("transfer-encoding");
+    expect(lowerKeys).not.toContain("upgrade");
+    expect(lowerKeys).not.toContain("content-encoding");
+    expect(lowerKeys).not.toContain("content-length");
+
+    expect(merged["x-allowed-client-header"]).toBe("pass-through");
+    expect(merged.Authorization).toBe("Bearer test-token");
+    expect(merged["HTTP-Referer"]).toBe("https://opencode.ai");
+  });
+
+  it("never forwards Host or hop-by-hop headers from outboundPayload.headers in dispatch pipeline", async () => {
+    let capturedHeaders: Record<string, string> | undefined;
+
+    const fetchFn = async (_url: unknown, init?: RequestInit) => {
+      capturedHeaders = init?.headers as Record<string, string>;
+      return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    };
+
+    const req = buildRequest({
+      outboundPayload: {
+        endpointKey: "ch",
+        method: "POST",
+        headers: {
+          Host: "localhost:7766",
+          Connection: "close",
+          "Content-Length": "999",
+          "X-Safe-Header": "ok",
+        },
+        body: { model: "test-model" },
+        isStreaming: false,
+      },
+    });
+
+    const res = await executeDispatchPipeline(req, fetchFn);
+    expect(res.status).toBe(200);
+    expect(capturedHeaders).toBeDefined();
+
+    const lowerKeys = Object.keys(capturedHeaders!).map((k) => k.toLowerCase());
+    expect(lowerKeys).not.toContain("host");
+    expect(lowerKeys).not.toContain("connection");
+    expect(lowerKeys).not.toContain("content-length");
+    expect(capturedHeaders!["X-Safe-Header"]).toBe("ok");
+  });
 });
 
 describe("TraceWriter Server Lifecycle & Persistence", () => {
@@ -493,5 +654,201 @@ describe("TraceWriter Server Lifecycle & Persistence", () => {
 
   afterAll(() => {
     traceWriter.drainSync();
+  });
+});
+
+describe("Dispatch Error Handling, Retry Telemetry & Quarantine Prevention", () => {
+  beforeEach(() => {
+    resetCircuitBreakers();
+    resetStrategyRegistry();
+    resetDrainState();
+    initProviderRegistry();
+    initStrategyRegistry();
+    globalKeyPool.reset();
+    globalKeyPool.setPool("or", [
+      "sk-or-test-key-1",
+      "sk-or-test-key-2",
+      "sk-or-test-key-3",
+    ]);
+  });
+
+  it("strips stale content-encoding, content-length, and transfer-encoding headers on fail-fast error response (403)", async () => {
+    const sleepSpy = spyOn(Bun, "sleep").mockImplementation(async () => {});
+    const errorBody = JSON.stringify({
+      error: { message: "Developer key invalid or forbidden", code: "key_invalid" },
+    });
+
+    const fetchFn = async () => {
+      return new Response(errorBody, {
+        status: 403,
+        statusText: "Forbidden",
+        headers: {
+          "content-type": "application/json",
+          "content-encoding": "gzip",
+          "content-length": "9999",
+          "transfer-encoding": "chunked",
+          "x-custom-header": "preserve-me",
+        },
+      });
+    };
+
+    const req = buildRequest();
+    const res = await executeDispatchPipeline(req, fetchFn);
+
+    expect(res.status).toBe(403);
+    // Header verification: compression and length headers are stripped to prevent ZlibError
+    expect(res.headers.get("content-encoding")).toBeNull();
+    expect(res.headers.get("content-length")).not.toBe("9999");
+    expect(res.headers.get("transfer-encoding")).toBeNull();
+    expect(res.headers.get("x-custom-header")).toBe("preserve-me");
+
+    // Client can parse text and json cleanly without ZlibError
+    const text = await res.text();
+    expect(text).toBe(errorBody);
+    const parsed = JSON.parse(text) as { error: { code: string } };
+    expect(parsed.error.code).toBe("key_invalid");
+    sleepSpy.mockRestore();
+  });
+
+  it("strips stale compression and length headers on exhausted retry error response (429)", async () => {
+    const sleepSpy = spyOn(Bun, "sleep").mockImplementation(async () => {});
+    const errorBody = JSON.stringify({
+      error: { message: "Provider rate limit reached", code: "rate_limit_exceeded" },
+    });
+
+    let attempts = 0;
+    const fetchFn = async () => {
+      attempts += 1;
+      return new Response(errorBody, {
+        status: 429,
+        statusText: "Too Many Requests",
+        headers: {
+          "content-type": "application/json",
+          "content-encoding": "gzip",
+          "content-length": "8888",
+          "transfer-encoding": "chunked",
+          "retry-after": "1",
+        },
+      });
+    };
+
+    const req = buildRequest();
+    const res = await executeDispatchPipeline(req, fetchFn);
+
+    expect(res.status).toBe(429);
+    expect(attempts).toBe(3); // OpenRouter default max_attempts is 3
+    expect(res.headers.get("content-encoding")).toBeNull();
+    expect(res.headers.get("content-length")).not.toBe("8888");
+    expect(res.headers.get("transfer-encoding")).toBeNull();
+
+    const text = await res.text();
+    expect(text).toBe(errorBody);
+    sleepSpy.mockRestore();
+  });
+
+  it("advances telemetry key index on retry attempts via setKeyIndex", async () => {
+    const sleepSpy = spyOn(Bun, "sleep").mockImplementation(async () => {});
+    const setKeyIndexSpy = spyOn(RequestTelemetry.prototype, "setKeyIndex");
+
+    let attempts = 0;
+    const fetchFn = async () => {
+      attempts += 1;
+      if (attempts < 3) {
+        return new Response(JSON.stringify({ error: "Transient rate limit" }), {
+          status: 429,
+          headers: { "content-type": "application/json", "retry-after": "1" },
+        });
+      }
+      return new Response(JSON.stringify({ id: "success-on-key-3" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    };
+
+    const req = buildRequest();
+    const res = await executeDispatchPipeline(req, fetchFn);
+
+    expect(res.status).toBe(200);
+    expect(attempts).toBe(3);
+
+    // Verify setKeyIndex was called for each attempt with the appropriate index
+    expect(setKeyIndexSpy).toHaveBeenCalled();
+    const calls = setKeyIndexSpy.mock.calls;
+    expect(calls.length).toBeGreaterThanOrEqual(3);
+    // Key index advances across attempts: key 0 -> key 1 -> key 2
+    expect(calls[0]?.[0]).toBe(0);
+    expect(calls[1]?.[0]).toBe(1);
+    expect(calls[2]?.[0]).toBe(2);
+
+    setKeyIndexSpy.mockRestore();
+    sleepSpy.mockRestore();
+  });
+
+  it("records upstream error message in telemetry on 4xx/5xx failures", async () => {
+    const sleepSpy = spyOn(Bun, "sleep").mockImplementation(async () => {});
+    const recordLimitSpy = spyOn(RequestTelemetry.prototype, "recordLimit");
+
+    const upstreamErrorPayload = JSON.stringify({
+      error: { message: "Model is currently experiencing high load", code: "overloaded" },
+    });
+
+    let attempts = 0;
+    const fetchFn = async () => {
+      attempts += 1;
+      if (attempts === 1) {
+        return new Response(upstreamErrorPayload, {
+          status: 429,
+          headers: { "content-type": "application/json", "retry-after": "1" },
+        });
+      }
+      return new Response(JSON.stringify({ id: "recovered" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    };
+
+    const req = buildRequest();
+    const res = await executeDispatchPipeline(req, fetchFn);
+
+    expect(res.status).toBe(200);
+    expect(recordLimitSpy).toHaveBeenCalled();
+    const firstCall = recordLimitSpy.mock.calls[0]?.[0];
+    expect(firstCall?.status).toBe(429);
+    expect(firstCall?.rawMessage).toContain("Model is currently experiencing high load");
+
+    recordLimitSpy.mockRestore();
+    sleepSpy.mockRestore();
+  });
+
+  it("does not quarantine keys during retry attempts", async () => {
+    const sleepSpy = spyOn(Bun, "sleep").mockImplementation(async () => {});
+    const quarantineSpy = spyOn(globalKeyPool, "quarantineKey");
+
+    let attempts = 0;
+    const fetchFn = async () => {
+      attempts += 1;
+      if (attempts === 1) {
+        return new Response(JSON.stringify({ error: { message: "Temporary 429" } }), {
+          status: 429,
+          headers: { "content-type": "application/json", "retry-after": "1" },
+        });
+      }
+      return new Response(JSON.stringify({ choices: [] }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    };
+
+    const req = buildRequest();
+    const res = await executeDispatchPipeline(req, fetchFn);
+
+    expect(res.status).toBe(200);
+    expect(attempts).toBe(2);
+
+    // Mandate verification: globalKeyPool.quarantineKey is NOT invoked on retries
+    expect(quarantineSpy).not.toHaveBeenCalled();
+
+    quarantineSpy.mockRestore();
+    sleepSpy.mockRestore();
   });
 });

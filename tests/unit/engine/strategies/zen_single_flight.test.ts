@@ -50,7 +50,7 @@ describe("Slice 3.4: ZenSingleFlightStrategy", () => {
     resetEnvCache();
   });
 
-  it("injects a valid v4 UUID x-session-id into headers while preserving existing headers", () => {
+  it("injects a canonical OpenCode session-id and x-session-id into headers while preserving existing headers", () => {
     const ctx = createMockContext();
     const existingHeaders = {
       Authorization: "Bearer zen-key",
@@ -63,12 +63,13 @@ describe("Slice 3.4: ZenSingleFlightStrategy", () => {
     expect(injected.Authorization).toBe("Bearer zen-key");
     expect(injected["Content-Type"]).toBe("application/json");
     expect(injected["x-custom-foo"]).toBe("bar");
+    expect(injected["session-id"]).toBeDefined();
     expect(injected["x-session-id"]).toBeDefined();
 
-    // Standard UUID v4 regex validation
-    const uuidV4Regex =
-      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-    expect(injected["x-session-id"]).toMatch(uuidV4Regex);
+    // Canonical OpenCode session ID regex validation
+    const sesRegex = /^ses_[a-zA-Z0-9]{26}$/;
+    expect(injected["session-id"]).toMatch(sesRegex);
+    expect(injected["x-session-id"]).toMatch(sesRegex);
   });
 
   it("injects unique session IDs for different invocations", () => {

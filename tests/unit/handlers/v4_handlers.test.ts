@@ -79,6 +79,58 @@ describe("v4 thin route handlers", () => {
       const res = await handleGoogleNative(req, "lr-bad");
       expect(res.status).toBe(400);
     });
+
+    it("extracts model from pathname when body.model is missing", async () => {
+      const originalFetch = globalThis.fetch;
+      let upstreamUrl = "";
+      globalThis.fetch = (async (input: string | URL | Request) => {
+        upstreamUrl = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+        return new Response(JSON.stringify({ candidates: [] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }) as any;
+
+      try {
+        globalKeyPool.setPool("gg", ["AIzaSyDummyKey12345678901234567890"]);
+        const req = new Request("http://localhost:7766/v1beta/models/gemini-2.5-flash:generateContent", {
+          method: "POST",
+          body: JSON.stringify({ contents: [{ parts: [{ text: "hi" }] }] }),
+          headers: { "content-type": "application/json" },
+        });
+        const res = await handleGoogleNative(req, "lr-gg-gg-gc-no");
+        expect(res.status).toBe(200);
+        expect(upstreamUrl).toContain("/models/gemini-2.5-flash:generateContent");
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it("preserves :streamGenerateContent action in upstream URL", async () => {
+      const originalFetch = globalThis.fetch;
+      let upstreamUrl = "";
+      globalThis.fetch = (async (input: string | URL | Request) => {
+        upstreamUrl = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+        return new Response(JSON.stringify({ candidates: [] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }) as any;
+
+      try {
+        globalKeyPool.setPool("gg", ["AIzaSyDummyKey12345678901234567890"]);
+        const req = new Request("http://localhost:7766/v1beta/models/gemini-2.5-flash:streamGenerateContent", {
+          method: "POST",
+          body: JSON.stringify({ contents: [{ parts: [{ text: "hi" }] }] }),
+          headers: { "content-type": "application/json" },
+        });
+        const res = await handleGoogleNative(req, "lr-gg-gg-gc-no");
+        expect(res.status).toBe(200);
+        expect(upstreamUrl).toContain("/models/gemini-2.5-flash:streamGenerateContent");
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
   });
 
   describe("openai_responses handler", () => {

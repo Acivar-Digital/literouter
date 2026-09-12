@@ -38,7 +38,10 @@ export class NativeCascadeStrategy implements ProviderExecutionStrategy {
         `No endpoint for completion code "${completionCode}" on provider "${ctx.providerConfig.code}"`
       );
     }
-    const path = endpointTemplate.replace("{model}", model);
+    let path = endpointTemplate.replace("{model}", model);
+    if (completionCode === "gc" && ctx.path?.includes(":streamGenerateContent")) {
+      path = path.replace(":generateContent", ":streamGenerateContent");
+    }
     const normalizedPath = path.startsWith("/") ? path : `/${path}`;
     return `${base}${normalizedPath}`;
   }
@@ -51,7 +54,8 @@ export class NativeCascadeStrategy implements ProviderExecutionStrategy {
     upstreamUrl: string;
     extraHeaders?: Record<string, string>;
   } {
-    const fallbackModel = extractDirectiveModel(ctx.directive);
+    const pathModel = ctx.path?.match(/\/models\/([^:]+)/)?.[1];
+    const fallbackModel = pathModel || extractDirectiveModel(ctx.directive);
     const requestedModel =
       typeof body.model === "string" && body.model.length > 0
         ? body.model

@@ -43,7 +43,10 @@ OpenRouter rate limits originate from:
 **LiteRouter Handling:**
 1. **Ingress Token-Bucket Pacer (`src/network/pacer.ts`)**: Enforces minimum spacing (`minIntervalMs = 500ms`) to avoid triggering burst rate limits.
 2. **Anti-Pinning H2 Aging (`src/network/h2_pool.ts`)**: Re-creates HTTP/2 sessions every 180s ($\pm 15\text{s}$) to avoid L4 load-balancer pinning where all requests hit a single exhausted upstream blade.
-3. **In-Flight Key Rotation**: Up to 3 attempts across available pool keys with exponential backoff.
+3. **In-Flight Key Rotation & Retry-After Backoff (Engine v4)**:
+   - Up to 3 attempts across available pool keys.
+   - **In-flight Retry-After backoff**: When upstream returns 429 (or retryable 5xx) with a `Retry-After` header, Engine v4 (`src/engine/dispatch.ts:591-595`) parses the value and pauses in-flight execution for `Math.min(retryAfterSec * 1000, 15000)` (clamped to a maximum of 15 seconds) via `await Bun.sleep(delayMs)` before executing the next retry attempt. This prevents rate-limit hammering while capping delays so downstream client connections do not time out. If `Retry-After` is missing, it falls back to configured retry delay calculation.
+   - **Elimination of Key #0 in Telemetry**: During in-flight retry rotations where the next key has not yet been selected (`toIndex: -1`), `src/telemetry/session.ts` checks `info.toIndex >= 0` and formats rotation telemetry cleanly without bogus `[Key #0]` entries. Telemetry across `session.ts` and `logger.ts` strictly enforces 1-based indexing (`Key #1` to `Key #N`), and displays `Pool: <Provider> (N keys)` when key indices are unresolved.
 
 4. **Quarantine Duration & Toggle**:
    - Fallback quarantine when no `Retry-After` header is supplied is governed by `COOLDOWN_RATE_LIMIT_TTL_SEC` in `.env` (reads directly into `src/network/cooldown.ts`).

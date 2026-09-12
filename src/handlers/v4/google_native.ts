@@ -28,11 +28,19 @@ export async function handleGoogleNative(
     );
   }
 
+  const url = new URL(req.url);
+  if (!body.model) {
+    const match = url.pathname.match(/\/(?:v1beta|v1)\/models\/([^:]+)/);
+    if (match?.[1]) {
+      body.model = match[1];
+    }
+  }
+
   const outboundPayload = googleNativeTransformer.transformClientToWire(body, directive, req.headers);
   const dispatchReq: DispatchRequest = {
     reqId,
     method: req.method,
-    path: new URL(req.url).pathname,
+    path: url.pathname,
     directive,
     rawInboundBody: body,
     outboundPayload,

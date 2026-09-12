@@ -113,7 +113,7 @@ mechanical reason. No contradictions — details only.
 | `lr-nv-oa-ch-ts` | `src/handlers/openai_compat.ts:959` | NIM reasoning models emit `reasoning_content`-only opening chunks; `ts` keeps them alive. |
 | `lr-or-cl-ms-no` | `src/handlers/anthropic_compat.ts:1410` | Native Claude on OpenRouter for Claude Code. |
 | `lr-an-cl-ms-no` | `src/handlers/anthropic_compat.ts:1410` | Direct Anthropic Messages with key rotation. |
-| `lr-gg-gg-gc-no` | `src/handlers/google_native.ts:781` | Gemini REST forwarder + native fusion chains; `?key=` accepted (`src/directive/validator.ts:37-52`). |
+| `lr-gg-gg-gc-no` | `src/handlers/google_native.ts:781`<br>(v4: `src/handlers/v4/google_native.ts:5`) | Gemini REST forwarder + native fusion chains; in v4 extracts model from path & preserves `:streamGenerateContent`; `?key=` accepted (`src/directive/validator.ts:37-52`). |
 | `lr-nv-oa-ch-no` | `src/handlers/openai_compat.ts:959` | High-throughput binary-multiplexed chat (Pydantic AI / `httpx http2=True`). |
 | `lr-gc-oa-ch-no` | `src/handlers/gcp_compat.ts:614` | Vertex Chat, handler-paced 30 RPM conveyor (edge pacer skips `gc`: `src/index.ts:222-223`). |
 | `lr-or-ao-ch-dp` | `src/handlers/openai_compat.ts:959` | Cross-wire + Dots XML extraction for open-weights tool models. |
@@ -185,20 +185,19 @@ provider), `lr-nv-oa-ch-` (empty nuance, `src/directive/parser.ts:97-99`),
 
 ## 11. Engine selection & v4-only routes
 
-Default engine is `legacy`: `LITEROUTER_ENGINE: "legacy"`
-(`src/config/env.ts:51`), `LiteRouterEngineSchema =
-z.enum(["legacy", "v4"]).default("legacy")` (`src/config/schema.ts:199`).
-Per-request override via `x-literouter-engine: legacy|v4` header applies
-only when `LITEROUTER_ENGINE_OVERRIDE` is true
-(`src/config/env.ts:126-140`); otherwise the env default wins and the
-header is ignored.
+Production engine default is `v4.1`: `LITEROUTER_ENGINE: "v4.1"` (`src/config/env.ts:51`). Legacy engine remains available as an escape hatch (`LITEROUTER_ENGINE=legacy`).
+Per-request override via `x-literouter-engine: legacy|v4.1` (or `v4`, normalized to `v4.1`) header applies only when `LITEROUTER_ENGINE_OVERRIDE` is true (`src/config/env.ts:126-140`); otherwise the env default wins and the header is ignored.
 
-Branch: `resolveEngine(req)` at `src/index.ts:414-417` — `v4` goes to
-`dispatchV4` (`src/handlers/v4/router.ts:201-211`), anything else runs the
-legacy dispatch (§9).
+Branch: `resolveEngine(req)` at `src/index.ts:414-417` — `v4.1` goes to `dispatchV4` (`src/handlers/v4/router.ts:201-211`), while `legacy` runs the legacy dispatch (§9).
 
-`/v1/traces` is v4-only: `isTracePath` (`src/handlers/v4/router.ts:93-95`)
-is reachable solely through `dispatchV4` (`router.ts:209-211`). On the
-default legacy engine the same path falls through legacy routing to `404`
-— a `404` on `/v1/traces` means the gateway is running legacy, not that
-tracing is broken.
+`/v1/traces` is v4-only: `isTracePath` (`src/handlers/v4/router.ts:93-95`) is reachable solely through `dispatchV4` (`router.ts:209-211`). On the legacy engine the same path falls through legacy routing to `404` — a `404` on `/v1/traces` means the gateway is running legacy, not that tracing is broken.
+
+### 11.1. Google Native (gg) v4 Path Extraction & Stream Action Preservation
+Under Engine v4 (`handleV4GoogleNative` in `src/handlers/v4/google_native.ts:5` and `NativeCascadeStrategy` in `src/engine/strategies/native_cascade.ts:31-62`):
+- **Path Model Extraction**: When inbound requests arrive at `/v1beta/models/*` or `/v1/models/*` without a `model` property in the JSON body, the model is extracted automatically via `/\/(?:v1beta|v1)\/models\/([^:]+)/`.
+- **Stream Action Preservation**: If the inbound path requests `:streamGenerateContent` (e.g. `/v1beta/models/gemini-2.5-flash:streamGenerateContent`), `NativeCascadeStrategy.buildGoogleUrl` detects `ctx.path?.includes(":streamGenerateContent")` and replaces `:generateContent` with `:streamGenerateContent` in the upstream URL, preserving streaming RPC fidelity.
+
+### 11.2. In-Flight Retry-After Backoff & Key #0 Elimination
+Under Engine v4 dispatch (`src/engine/dispatch.ts:567-604`):
+- **Retry-After Backoff**: When an upstream provider returns 429 or retryable 5xx with a `Retry-After` header, in-flight retries pause for `Math.min(retryAfterSec * 1000, 15000)` (clamped to a maximum of 15 seconds) via `Bun.sleep(delayMs)` before rotating to the next key. This adheres to upstream pacing without starving client timeouts.
+- **Elimination of Key #0**: Key indexing in `src/telemetry/session.ts` and `src/ui/logger.ts` is strictly 1-based (`Key #1` to `Key #N`). When retrying before a target key index is known (`toIndex: -1`), telemetry guards against `-1 + 1 = 0`, completely eliminating `Key #0` and cleanly displaying `Pool: <Provider> (N keys)` or omitting key indices.

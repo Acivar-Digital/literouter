@@ -17,6 +17,7 @@ export interface DispatchContext {
   readonly selectedKey: SelectedKey;
   readonly attempt: number;
   readonly maxAttempts: number;
+  readonly path?: string;
 }
 
 export interface StrategyResult {

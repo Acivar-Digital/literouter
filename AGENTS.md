@@ -397,11 +397,12 @@ so it's clear how far execution got before failure.
 
 LLMs frequently hallucinate function signatures, options objects, and data structures by copying patterns from external libraries (e.g., assuming `logWarn` takes a Winston/Pino logger metadata object). **You must strictly ground every call in the codebase's actual definitions.**
 
-#### 🟢 POSITIVES (Always Do This):
-1. **Inspect Before Calling:** Always read the definition site of a function or interface (`read` or `grep`) before invoking it.
-2. **Mirror Existing Call Sites:** Check 2-3 existing call sites in the repository to observe established conventions.
-3. **Verify Parameter Types:** In TypeScript, check parameter lists (e.g., `logWarn(emoji: string, msg: string)` requires an emoji string and a string message, not `{ error: ... }`).
-4. **Clean Lifecycle Hooks:** When using asynchronous timers or intervals (`setInterval`), always implement explicit teardown (`cancel()` on `TransformStream`, `stopKeepAlive()` on error).
+#### 🟢 ZERO-TOKEN PARSIMONY & SKILL AUTHORITY (MANDATORY):
+1. **Trust the Skill & Plan:** The `literouter` skill and task instructions are canonical ground truth. DO NOT perform exploratory `read` or `grep` sweeps on definitions already documented in SKILL.md.
+2. **Zero Pre-Flight Reading:** Subagents must make the assigned surgical edit directly without exploratory inspection loops. Only read files if an edit fails validation.
+3. **No Gratuitous Git Probing:** Never run `git status`, `git diff`, or log dumps autonomously unless explicitly requested by the user. Rely on test command exit codes (0 vs 1).
+4. **Verify Parameter Types:** In TypeScript, check parameter lists (e.g., `logWarn(emoji: string, msg: string)` requires an emoji string and a string message, not `{ error: ... }`).
+5. **Clean Lifecycle Hooks:** When using asynchronous timers or intervals (`setInterval`), always implement explicit teardown (`cancel()` on `TransformStream`, `stopKeepAlive()` on error).
 
 #### 🔴 NEGATIVES (Never Do This):
 1. **DO NOT assume external conventions:** Never assume an internal helper behaves like an npm package or external framework (e.g., passing `{ error }` objects to `logWarn`).
@@ -645,14 +646,12 @@ This protocol applies when ending a Beads implementation workflow. It is subordi
 3. **Update issue status** - Close finished work, update in-progress items
 4. **Handle git/sync by active profile**:
    ```bash
-   # Conservative/minimal/default: report status and proposed commands; wait for approval.
-   git status
+   # Conservative/minimal/default: report proposed commands; wait for approval.
 
    # Team-maintainer opt-in only, unless current instructions forbid it:
    git pull --rebase
    bd dolt push
    git push
-   git status
    ```
 5. **Hand off** - Summarize changes, validation, issue status, and any blocked sync/commit/push step
 

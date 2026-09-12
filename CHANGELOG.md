@@ -5,6 +5,7 @@ All notable changes to LiteRouter will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- **Canonical OpenCode Session ID Standardization (`src/engine/session_id.ts`)**: Standardized OpenCode session ID minting (`ses_` + 26 base62 alphanumeric characters) across all upstream providers (Zen, OpenRouter, etc.). Preserves inbound client session IDs (from OpenCode CLI / Antigravity IDE) and automatically synthesizes a valid `ses_...` token when missing (enabling Pydantic evals, curl, and automated test harnesses to pass Zen free-tier gating without `400 MissingSessionID`).
 - Partitioned test suite scripts in `package.json`: `test:gateway` (runs `tests/unit`), `test:eval` (runs `tests/eval`), `test:legacy` (runs `tests/unit/legacy`), and `test:failures` (`--only-failures` to eliminate context bloat and silent truncation).
 - Comprehensive production-grade documentation across all test suites: `tests/README.md` (architecture, runner matrix, and air-gap barrier), `tests/unit/README.md` (v4 core gateway tests), `tests/eval/README.md` (hermetic capability graders and web evaluators), `tests/unit/legacy/README.md` (dual-path fallback handlers and transport), and `tests/integration/README.md` (pytest integration and Downstream Agent Gauntlet).
 - Updated `.opencode2/skills/literouter/SKILL.md` and `test-hygiene-playbook.md` with targeted test runners and anti-context-bloat protocols.
@@ -15,12 +16,19 @@ All notable changes to LiteRouter will be documented in this file.
 - Isolated 179 legacy handler and legacy transport tests into `tests/unit/legacy/`, cleanly separating modern v4 development iteration from legacy fallback tests.
 
 ### Fixed
+- **Dispatch Retry Resilience, Key Rotation Telemetry & Error Surfacing (`src/engine/dispatch.ts`)**:
+  - **Retry Error Visibility**: When upstream calls fail (4xx/5xx), LiteRouter reads the upstream error body, extracts the error message, and logs it loudly via `[LIMIT]` telemetry across every retry attempt instead of failing silently.
+  - **Elimination of Key Quarantine on Retries**: Removed forced `quarantineKey` locking during in-flight retries so transient rate limits and free-tier throttles do not lock keys into cooldown jail; requests cleanly rotate and retry.
+  - **Client Decompression Safety (ZlibError Fix)**: When forwarding upstream error responses, stale `content-encoding` (e.g. gzip) headers are cleanly stripped, preventing client-side `TypeError: ZlibError`.
+  - **Key Rotation Telemetry Sync**: Telemetry now properly tracks rotated key indices on retry attempts instead of remaining frozen on `[Key #1]`.
+- **Google Native (`gg`) Path Model Resolution & Stream Action Preservation**:
+  - Resolved target model from URL pathname (`/(?:v1beta|v1)/models/:model`) in `src/handlers/v4/google_native.ts` when `body.model` is omitted by upstream clients (e.g., `@ai-sdk/google`).
+  - Preserved `:streamGenerateContent` endpoint action in `NativeCascadeStrategy` (`src/engine/strategies/native_cascade.ts`) during fallback cascade routing when the inbound request specifies streaming, preventing erroneous substitution with `:generateContent`.
+- **OpenRouter (`or`) & Engine v4 Retry Backoff & Key Telemetry**:
+  - Honored upstream `Retry-After` backoff headers (capped at 15s) in the dispatch retry loop (`src/engine/dispatch.ts`) during `retry_same_target` error handling to prevent rapid retry thrashing.
+  - Eliminated the Key #0 rotation telemetry bug by accurately recording rotation transitions rather than erroneously attributing rotations to Key #0 (`toIndex: -1`).
 - Fixed SQLite database leak and lingering interval timer in `src/telemetry/trace_writer.ts`: defaults `dbPath` to `:memory:` during testing (`LITEROUTER_TEST_MODE="true"` or `NODE_ENV="test"`), and cleans up active timers upon `drainSync()`.
 - Optimized `tests/unit/engine/dispatch.test.ts`: zeroed out artificial pacer wait delays in test mock and added `afterAll` drain teardown, reducing test file duration from 3.53s to <250ms with zero disk mutation to `logs/traces.db`.
-
-### Retired
-- Permanently retired orphaned `zdist.ts` (RateLimitTracker) and `tests/unit/zdist.test.ts` (6 tests). Client-side preemptive quota counting superseded by `RequestPacer` (conveyor queue pacing) + `CooldownManager` (reactive 429 quarantine with `Retry-After`). Archived in `docs/GRAVEYARD/ZDIST.md`.
-
 - Guarded cutoff-stream close (no more `Controller is already closed` secondary throw).
 - H2 reader-cancel log reduced to single message-only debug line.
 - Restored `legacy` engine default in `src/config/env.ts` + `src/config/schema.ts` (B1, literouter-cry7) — v4 opt-in only.
@@ -28,6 +36,9 @@ All notable changes to LiteRouter will be documented in this file.
 - Half-open breaker probe cap wired into dispatch path: over-cap probes get 503 `breaker_open` (B3, literouter-23by, `src/engine/dispatch.ts` + `src/engine/circuit_breaker.ts`).
 - TTFT timeout (`LITEROUTER_TTFT_TIMEOUT_MS`) enforced around upstream fetch so hung upstreams release slots via retryable path, not client-abort (B4, literouter-23by).
 - Added B1–B4 regression coverage: legacy-default resolution, unknown-strategy-throw, probe-cap 503, TTFT-guard slot release, trace 401-negative (S4, literouter-gmrb; `tests/unit/engine/batch1_regression.test.ts`; 1176 pass / 0 fail).
+
+### Retired
+- Permanently retired orphaned `zdist.ts` (RateLimitTracker) and `tests/unit/zdist.test.ts` (6 tests). Client-side preemptive quota counting superseded by `RequestPacer` (conveyor queue pacing) + `CooldownManager` (reactive 429 quarantine with `Retry-After`). Archived in `docs/GRAVEYARD/ZDIST.md`.
 
 ## [4.1.0] - 2026-09-12
 

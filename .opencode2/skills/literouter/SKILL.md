@@ -58,7 +58,7 @@ description: LiteRouter API Gateway operational guide for Bun/TypeScript proxy o
 | `POST /v1/chat/completions` | `src/handlers/openai_compat.ts` | `handleOpenAICompat` | `lr-*-oa-ch-*`, `lr-*-ao-ch-*`. Full streaming & key rotation. |
 | `POST /v1/messages`<br>`POST /messages` | `src/handlers/anthropic_compat.ts` | `handleAnthropicCompat` | `lr-*-cl-ms-*`. Native Claude Code integration. |
 | `POST /v1/responses` | `src/handlers/openai_original.ts` | `handleOpenAiOriginal` | `lr-*-oo-rs-*`. Native OpenAI Responses API passthrough. |
-| `POST /v1beta/models/*:generateContent` | `src/handlers/google_native.ts` | `handleGoogleNative` | `lr-gg-gg-gc-no`. Direct Gemini REST for `@ai-sdk/google`. |
+| `POST /v1beta/models/*:generateContent`<br>`POST /v1beta/models/*:streamGenerateContent` | `src/handlers/google_native.ts`<br>(v4: `src/handlers/v4/google_native.ts`) | `handleGoogleNative`<br>(v4: `handleV4GoogleNative`) | `lr-gg-gg-gc-no`. Direct Gemini REST for `@ai-sdk/google`. In v4, extracts model from path and preserves `:streamGenerateContent` action. |
 | `POST /v1beta/openai/*` | `src/handlers/gcp_compat.ts` / `google_native.ts` | `handleGcpCompat` / `handleGoogleOpenAIBeta` | `lr-gc-oa-ch-no`. GCP Vertex AI OpenAI-compatible route. |
 | `GET /v1/models`, `/v1beta/models` | `src/handlers/discovery.ts` | `handleModelsDiscovery` | Advertises models from `models.json` (legacy, advertisement-only) & `fusion.json`; serving is dynamic passthrough, never registry-gated. |
 | `GET /health`, `/hello` | `src/index.ts` | `handleHealthCheck` | Auth-free liveness probe (uptime, circuit breakers, H2 pool stats). |
@@ -100,6 +100,14 @@ Fusion presets: `lr-fse-<preset>` where preset is ONLY one of `quad` / `pydn` / 
 - **Native Google Fusion Chains**: `gemini-flash` cascades `3.8 ➔ 3.7 ➔ 3.6 ➔ 3.5`; `gemini-flash-lite` cascades `3.5 ➔ 3.1` ([config-schemas.md §1.2](config-schemas.md#12-native_chains-google-native-cascades), [§1.3](config-schemas.md#13-nativetierindices-sticky-position-for-native-cascades)).
 - **Payload rule**: `oa` scrubs / `oo` preserves — keyed off payload segment, not provider ([error-action-matrix.md §2](error-action-matrix.md#2-retry-quarantine-call-chain-wiring)).
 - **Engine-conditional fusion**: under the `v4` engine the native cascade is decided by `classifyFailure` (`src/engine/strategies/native_cascade.ts:82-102`) — `404` → `advance_target`, `429`/`5xx` → `retry_same_target`, anything else → `fail_fast` ([fusion.md §1.5b](fusion.md#15b-v4-engine-mapping-nativecascadestrategy)); engine selection is [directive-grammar.md §11](directive-grammar.md#11-engine-selection-v4-only-routes).
+- **Google Native (gg) v4 Path Model Extraction & Action Preservation**: In Engine v4 (`src/handlers/v4/google_native.ts`, `src/engine/strategies/native_cascade.ts`), inbound requests to `/v1beta/models/*` or `/v1/models/*` automatically extract the model identifier from the URL pathname (`/\/(?:v1beta|v1)\/models\/([^:]+)/`) when missing from the body. Furthermore, if the request targets `:streamGenerateContent`, `NativeCascadeStrategy.buildGoogleUrl` preserves the `:streamGenerateContent` RPC action instead of falling back to `:generateContent`.
+- **In-Flight Retry-After Backoff (Engine v4)**: When upstream responds with 429 or retryable 5xx with a `Retry-After` header, Engine v4 (`src/engine/dispatch.ts:591-595`) clamps the in-flight pause to `Math.min(retryAfterSec * 1000, 15000)` (up to 15s) before attempting key rotation, avoiding rate-limit hammering without risking client connection timeouts.
+- **Elimination of Key #0 in Telemetry**: All key telemetry across `src/telemetry/session.ts` and `src/ui/logger.ts` enforces 1-based indexing (`Key #1` through `Key #N`). During rotation or retries before a target key index is resolved (`toIndex: -1`), telemetry never evaluates `-1 + 1 = 0` or prints `[Key #0]`, cleanly falling back to pool counts (`Pool: Provider (N keys)`) or omitting key index.
+- **🚨 CRITICAL MANDATE: NEVER DROP OPENCODE SESSION ID INJECTION**:
+  - Outbound requests MUST always carry `session-id` (and `x-session-id`) formatted as `ses_` + 26 alphanumeric characters (`generateOpenCodeSessionId()` in `src/engine/session_id.ts`).
+  - If an inbound client request provides a session ID (`session-id`, `x-session-id`, `x-opencode-session-id`), it MUST be preserved.
+  - If missing (e.g. Pydantic evals, curl, test suites, non-OpenCode runtimes), `ensureSessionHeaders` MUST synthesize and inject a valid `ses_...` token.
+  - Do NOT replace with generic UUIDs (`crypto.randomUUID()`) or drop this helper in future engine refactors.
 
 ---
 

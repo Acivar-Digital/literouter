@@ -236,6 +236,69 @@ describe("RequestTelemetry & Metrics Contract", () => {
       logSpy.mockRestore();
     });
 
+    it("handles toIndex < 0 in rotateKey without printing Key #0 or corrupting key index", () => {
+      const logSpy = spyOn(console, "log").mockImplementation(() => {});
+      const warnSpy = spyOn(console, "warn").mockImplementation(() => {});
+      const tel = new RequestTelemetry({
+        reqId: "REQ-rotate-neg",
+        method: "POST",
+        path: "/v1/chat/completions",
+        clientAgent: "OpenCode/2.0",
+        targetProvider: "or",
+        keyIndex: 1,
+        totalKeys: 2,
+      });
+
+      tel.rotateKey({
+        fromIndex: 1,
+        toIndex: -1,
+        totalKeys: 2,
+        attempt: 2,
+        maxAttempts: 3,
+      });
+
+      const logCalls = logSpy.mock.calls.map((c) => c[0]);
+      expect(logCalls.some((c) => c.includes("Key #0"))).toBe(false);
+      expect(logCalls.some((c) => c.includes("[ROTATE REQ-rotate-neg] Advancing to OpenRouter -> Retrying immediately (Attempt 2/3)"))).toBe(true);
+
+      tel.recordLimit({
+        status: 429,
+        retryAfterSec: 5,
+      });
+
+      const warnCalls = warnSpy.mock.calls.map((c) => c[0]);
+      expect(warnCalls.some((c) => c.includes("Key #0"))).toBe(false);
+      expect(warnCalls.some((c) => c.includes("[LIMIT REQ-rotate-neg] OpenRouter [Key #2/2] returned 429"))).toBe(true);
+
+      logSpy.mockRestore();
+      warnSpy.mockRestore();
+    });
+
+    it("updates keyIndex and totalKeys via setKeyIndex", () => {
+      const warnSpy = spyOn(console, "warn").mockImplementation(() => {});
+      const tel = new RequestTelemetry({
+        reqId: "REQ-setkey-1",
+        method: "POST",
+        path: "/v1/chat/completions",
+        clientAgent: "OpenCode/2.0",
+        targetProvider: "nv",
+        keyIndex: 0,
+        totalKeys: 2,
+      });
+
+      tel.setKeyIndex(2, 4);
+
+      tel.recordLimit({
+        status: 429,
+        retryAfterSec: 10,
+      });
+
+      const calls = warnSpy.mock.calls.map((c) => c[0]);
+      expect(calls.some((c) => c.includes("[LIMIT REQ-setkey-1] NVIDIA NIM [Key #3/4] returned 429"))).toBe(true);
+      expect(calls.some((c) => c.includes("Quarantined Key #3 for 10s"))).toBe(true);
+      warnSpy.mockRestore();
+    });
+
     it("emits limit warning banner with retry-after and raw upstream message", () => {
       const warnSpy = spyOn(console, "warn").mockImplementation(() => {});
       const tel = new RequestTelemetry({
@@ -260,6 +323,32 @@ describe("RequestTelemetry & Metrics Contract", () => {
       expect(calls.some((c) => c.includes("[LIMIT REQ-limit-1] NVIDIA NIM [Key #2/3] returned 429 Too Many Requests"))).toBe(true);
       expect(calls.some((c) => c.includes("Parsed Retry-After: 45s -> Quarantined Key #2 for 45s"))).toBe(true);
       expect(calls.some((c) => c.includes('Upstream Error: "Rate limit reached for requests per minute"'))).toBe(true);
+      warnSpy.mockRestore();
+    });
+
+    it("suppresses Parsed Retry-After when hasUpstreamRetryAfter is false", () => {
+      const warnSpy = spyOn(console, "warn").mockImplementation(() => {});
+      const tel = new RequestTelemetry({
+        reqId: "REQ-limit-suppressed",
+        method: "POST",
+        path: "/v1/chat/completions",
+        clientAgent: "OpenCode/2.0",
+        targetProvider: "nv",
+        keyIndex: 0,
+        totalKeys: 3,
+      });
+
+      tel.recordLimit({
+        status: 429,
+        retryAfterSec: 15,
+        hasUpstreamRetryAfter: false,
+        rawMessage: "Quota exceeded",
+      });
+
+      const calls = warnSpy.mock.calls.map((c) => c[0]);
+      expect(calls.some((c) => c.includes("[LIMIT REQ-limit-suppressed] NVIDIA NIM [Key #1/3] returned 429"))).toBe(true);
+      expect(calls.some((c) => c.includes("Parsed Retry-After"))).toBe(false);
+      expect(calls.some((c) => c.includes('Upstream Error: "Quota exceeded"'))).toBe(true);
       warnSpy.mockRestore();
     });
 

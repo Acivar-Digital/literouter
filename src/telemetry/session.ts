@@ -47,6 +47,7 @@ export interface RecordLimitInfo {
   readonly retryAfterSec?: number;
   readonly totalKeys?: number;
   readonly rawMessage?: string;
+  readonly hasUpstreamRetryAfter?: boolean;
 }
 
 export interface TraceMetrics {
@@ -115,7 +116,7 @@ export class RequestTelemetry {
   private emitInboundModelLine(ts: string): void {
     const provLabel = this.init.targetProvider ? getProviderDisplayName(this.init.targetProvider) : "Provider";
     let keyInfo = "";
-    if (this.currentKeyIndex !== undefined) {
+    if (this.currentKeyIndex !== undefined && this.currentKeyIndex >= 0) {
       const keyIdx = this.currentKeyIndex + 1;
       const keyTotal = this.totalKeys !== undefined ? `/${this.totalKeys}` : "";
       keyInfo = ` | Key: ${provLabel} [Key #${keyIdx}${keyTotal}]`;
@@ -131,9 +132,19 @@ export class RequestTelemetry {
     console.log(`${EMOJI.model} ${ts} [${this.reqId}] Model: ${this.init.model}${keyInfo}${nuanceInfo}${refInfo}`);
   }
 
+  /** Update key index and optionally total keys count. */
+  setKeyIndex(index: number, totalKeys?: number): void {
+    this.currentKeyIndex = index;
+    if (totalKeys !== undefined) {
+      this.totalKeys = totalKeys;
+    }
+  }
+
   /** Called on key rotation. Updates internal key index. */
   rotateKey(info: RotateKeyInfo): void {
-    this.currentKeyIndex = info.toIndex;
+    if (info.toIndex >= 0) {
+      this.currentKeyIndex = info.toIndex;
+    }
     if (info.totalKeys !== undefined) {
       this.totalKeys = info.totalKeys;
     }
@@ -143,7 +154,8 @@ export class RequestTelemetry {
     const total = info.totalKeys ?? this.totalKeys;
     const totalStr = total !== undefined ? `/${total}` : "";
     const attemptStr = info.attempt && info.maxAttempts ? ` (Attempt ${info.attempt}/${info.maxAttempts})` : "";
-    console.log(`${EMOJI.rotate} ${ts} [ROTATE ${this.reqId}] Advancing to ${provName} [Key #${info.toIndex + 1}${totalStr}] -> Retrying immediately${attemptStr}`);
+    const keyStr = info.toIndex >= 0 ? ` [Key #${info.toIndex + 1}${totalStr}] ` : " ";
+    console.log(`${EMOJI.rotate} ${ts} [ROTATE ${this.reqId}] Advancing to ${provName}${keyStr}-> Retrying immediately${attemptStr}`);
 
     this.metrics.onKeyRotation(this.reqId, this.providerCode, info.fromIndex, info.toIndex);
   }
@@ -152,13 +164,13 @@ export class RequestTelemetry {
   recordLimit(info: RecordLimitInfo): void {
     const ts = formatTimestamp();
     const provName = getProviderDisplayName(this.providerCode);
-    const keyIdx = this.currentKeyIndex !== undefined ? this.currentKeyIndex : 0;
+    const keyIdx = this.currentKeyIndex !== undefined && this.currentKeyIndex >= 0 ? this.currentKeyIndex : 0;
     const total = info.totalKeys ?? this.totalKeys;
     const keyTotal = total !== undefined ? `/${total}` : "";
     const statusText = getHttpStatusText(info.status);
 
     console.warn(`${EMOJI.limit} ${ts} [LIMIT ${this.reqId}] ${provName} [Key #${keyIdx + 1}${keyTotal}] returned ${statusText}`);
-    if (info.retryAfterSec) {
+    if (info.retryAfterSec && info.hasUpstreamRetryAfter !== false) {
       console.warn(`${EMOJI.limit} ${ts} [LIMIT ${this.reqId}] Parsed Retry-After: ${info.retryAfterSec}s -> Quarantined Key #${keyIdx + 1} for ${info.retryAfterSec}s`);
     }
     if (info.rawMessage) {
@@ -183,7 +195,7 @@ export class RequestTelemetry {
     this.lastUsage = record;
     const ts = formatTimestamp();
     const provName = getProviderDisplayName(this.providerCode);
-    const keyIdx = this.currentKeyIndex !== undefined ? this.currentKeyIndex + 1 : 1;
+    const keyIdx = this.currentKeyIndex !== undefined && this.currentKeyIndex >= 0 ? this.currentKeyIndex + 1 : 1;
     const totalKeysStr = this.totalKeys !== undefined ? `/${this.totalKeys}` : "";
 
     const durationMs = this.getDurationMs();
