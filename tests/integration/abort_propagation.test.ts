@@ -24,11 +24,20 @@ function safeCloseController(controller: ReadableStreamDefaultController<Uint8Ar
   }
 }
 
+let notifyStreamStarted: () => void = () => {};
+let streamStartedPromise: Promise<void> = Promise.resolve();
+
 function createHangingStream(signal: AbortSignal): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder();
   return new ReadableStream({
     start(controller) {
       controller.enqueue(encoder.encode('data: {"choices":[{"delta":{"content":"First"}}]}\n\n'));
+      notifyStreamStarted();
+      if (signal.aborted) {
+        state.abortedReceived = true;
+        safeCloseController(controller);
+        return;
+      }
       signal.addEventListener("abort", () => {
         state.abortedReceived = true;
         safeCloseController(controller);
@@ -80,6 +89,9 @@ describe("Client Abort Signal Propagation Integration", () => {
     process.env.MOCK_OR_PORT = "19804";
     resetAllState();
     state.abortedReceived = false;
+    streamStartedPromise = new Promise((resolve) => {
+      notifyStreamStarted = resolve;
+    });
     startMockServer();
   });
 
@@ -106,6 +118,7 @@ describe("Client Abort Signal Propagation Integration", () => {
     });
 
     const resPromise = handleAppRequest(req);
+    await streamStartedPromise;
     await delay(30);
 
     controller.abort();

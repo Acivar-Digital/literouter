@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { resetEnvCache } from "../../../../src/config/env";
+import { getProviderConfig } from "../../../../src/config/providers";
 import { ZenSingleFlightStrategy } from "../../../../src/engine/strategies/zen_single_flight";
 import type { DispatchContext } from "../../../../src/engine/strategy";
 
@@ -35,6 +36,8 @@ function createMockContext(): DispatchContext {
 describe("Slice 3.4: ZenSingleFlightStrategy", () => {
   const strategy = new ZenSingleFlightStrategy();
   const originalRetries = process.env.ZEN_ENABLE_RETRIES;
+  const origRetryEnabled = getProviderConfig("zn").request_retry.enabled;
+  const origRetryMaxAttempts = getProviderConfig("zn").request_retry.max_attempts;
 
   beforeEach(() => {
     delete process.env.ZEN_ENABLE_RETRIES;
@@ -47,6 +50,9 @@ describe("Slice 3.4: ZenSingleFlightStrategy", () => {
     } else {
       delete process.env.ZEN_ENABLE_RETRIES;
     }
+    const znConfig = getProviderConfig("zn");
+    znConfig.request_retry.enabled = origRetryEnabled;
+    znConfig.request_retry.max_attempts = origRetryMaxAttempts;
     resetEnvCache();
   });
 
@@ -80,9 +86,10 @@ describe("Slice 3.4: ZenSingleFlightStrategy", () => {
     expect(headers1["x-session-id"]).not.toBe(headers2["x-session-id"]);
   });
 
-  it("classifies 429 and 500-504 as retry_same_target when retries enabled (default true)", () => {
-    process.env.ZEN_ENABLE_RETRIES = "true";
-    resetEnvCache();
+  it("classifies 429 and 500-504 as retry_same_target when retries enabled", () => {
+    const znConfig = getProviderConfig("zn");
+    znConfig.request_retry.max_attempts = 3;
+    znConfig.request_retry.enabled = true;
 
     const ctx = createMockContext();
 
@@ -95,11 +102,13 @@ describe("Slice 3.4: ZenSingleFlightStrategy", () => {
     expect(strategy.classifyFailure(ctx, 400)).toBe("fail_fast");
     expect(strategy.classifyFailure(ctx, 401)).toBe("fail_fast");
     expect(strategy.classifyFailure(ctx, 404)).toBe("fail_fast");
+
+    znConfig.request_retry.max_attempts = 1;
   });
 
   it("classifies all status codes as fail_fast when ZEN_ENABLE_RETRIES is false", () => {
-    process.env.ZEN_ENABLE_RETRIES = "false";
-    resetEnvCache();
+    const znConfig = getProviderConfig("zn");
+    znConfig.request_retry.max_attempts = 1;
 
     const ctx = createMockContext();
 

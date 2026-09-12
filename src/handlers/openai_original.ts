@@ -1,7 +1,7 @@
 import type { ParsedDirective } from "../directive/parser";
 import { validateDirective } from "../directive/validator";
 import { getEnv } from "../config/env";
-import { getProviderConfig } from "../config/providers";
+import { getProviderConfig, isRegisteredProvider } from "../config/providers";
 import { calculateRetryDelay } from "../engine/retry";
 import { classifyUpstreamError } from "../network/classifier";
 import { getCircuitBreakerForProvider } from "../network/circuit_breaker";
@@ -68,17 +68,17 @@ interface ResolvedRoute {
   readonly keyIndex: number;
 }
 
-const UPSTREAM_URLS: Readonly<Record<string, string>> = Object.freeze({
-  zn: "https://opencode.ai/zen/v1/responses",
-  or: "https://openrouter.ai/api/v1/responses",
-  oa: "https://api.openai.com/v1/responses",
-});
-
 export function resolveUpstreamResponsesUrl(provider: string): string | null {
-  const targetUrl = UPSTREAM_URLS[provider];
-  if (!targetUrl) {
+  if (!isRegisteredProvider(provider)) {
     return null;
   }
+  const config = getProviderConfig(provider);
+  const endpoints = config.endpoints as Record<string, string | undefined>;
+  const rawPath = endpoints["rs"];
+  if (!rawPath) {
+    return null;
+  }
+  const targetUrl = `${config.base_url}${rawPath}`;
   return overrideProviderUrl(targetUrl, provider);
 }
 
@@ -547,8 +547,8 @@ export function shouldStreamResponse(
 }
 
 function extractProviderFromString(rawKey: string): string | null {
-  if (rawKey === "zn" || rawKey === "or" || rawKey === "oa") {
-    return rawKey;
+  if (isRegisteredProvider(rawKey)) {
+    return rawKey.toLowerCase();
   }
   const validation = validateDirective(rawKey);
   if (validation.valid && validation.directive.type === "direct") {
@@ -627,12 +627,27 @@ function resolveRequestRoute(
   state?: GatewayState
 ): { route?: ResolvedRoute; errorResponse?: Response } {
   const provider = extractProvider(directiveOrRawKey);
-  if (!provider || !UPSTREAM_URLS[provider]) {
+  if (!provider || !isRegisteredProvider(provider)) {
     return {
       errorResponse: Response.json(
         {
           error: {
-            message: `Unsupported or invalid provider '${String(provider)}' for /v1/responses. Supported: zn, or, oa`,
+            message: `Unsupported or invalid provider '${String(provider)}' for /v1/responses.`,
+            type: "invalid_request_error",
+          },
+        },
+        { status: 400 }
+      ),
+    };
+  }
+
+  const upstreamUrl = resolveUpstreamResponsesUrl(provider);
+  if (!upstreamUrl) {
+    return {
+      errorResponse: Response.json(
+        {
+          error: {
+            message: `No upstream responses endpoint configured for provider '${provider}'`,
             type: "invalid_request_error",
           },
         },
@@ -656,21 +671,6 @@ function resolveRequestRoute(
     };
   }
 
-  const upstreamUrl = resolveUpstreamResponsesUrl(provider);
-  if (!upstreamUrl) {
-    return {
-      errorResponse: Response.json(
-        {
-          error: {
-            message: `No upstream responses endpoint configured for provider '${provider}'`,
-            type: "invalid_request_error",
-          },
-        },
-        { status: 400 }
-      ),
-    };
-  }
-
   return {
     route: {
       provider,
@@ -686,7 +686,8 @@ async function acquireZenRetryPacer(
   reqId: string
 ): Promise<Response | null> {
   const env = getEnv();
-  if (!env.LITEROUTER_PACER_ENABLED || !env.ZEN_ENABLE_PACER) {
+  const provConfig = isRegisteredProvider("zn") ? getProviderConfig("zn") : undefined;
+  if (!env.LITEROUTER_PACER_ENABLED || !(provConfig?.pacer?.enabled ?? false)) {
     return null;
   }
   const dynamicMaxQueueDepth = globalKeyPool.getDynamicMaxQueueDepth("zn");
@@ -740,14 +741,16 @@ async function dispatchUpstreamFetch(
 ): Promise<FetchResult> {
   const env = getEnv();
   const isZen = route.provider === "zn";
-  const zenRetriesEnabled = !isZen || env.ZEN_ENABLE_RETRIES;
   const quarantineEnabled = globalKeyPool.isQuarantineEnabled(route.provider);
   // S5 zn gating mirrors S4 (openai_compat.ts) + gcp_compat.ts. Non-zn providers
   // (or/oa) keep the legacy single-flight path: maxAttempts=1, unconditional
   // failure reporting, no breaker, no load-shed.
   const poolSize = globalKeyPool.getPoolSize(route.provider);
-  const provConfig = getProviderConfig(route.provider);
-  const maxAttempts = provConfig.request_retry.enabled
+  const provConfig = isRegisteredProvider(route.provider) ? getProviderConfig(route.provider) : undefined;
+  const zenRetriesEnabled =
+    !isZen ||
+    Boolean(provConfig?.request_retry?.enabled && provConfig.request_retry.max_attempts > 1);
+  const maxAttempts = provConfig?.request_retry?.enabled
     ? Math.min(provConfig.request_retry.max_attempts, poolSize > 0 ? poolSize : 1)
     : 1;
   const maxWaitMs = env.LITEROUTER_PACER_MAX_QUEUE_WAIT_MS || 300000;
@@ -755,7 +758,7 @@ async function dispatchUpstreamFetch(
 
   // Breaker is zn-scoped only; or/oa never consult a breaker here.
   const breaker =
-    isZen && env.LITEROUTER_CIRCUIT_BREAKER && env.ZEN_ENABLE_CIRCUIT_BREAKER
+    isZen && env.LITEROUTER_CIRCUIT_BREAKER && (provConfig?.circuit_breaker?.enabled ?? true)
       ? getCircuitBreakerForProvider("zn")
       : null;
   if (breaker && !breaker.isAvailable()) {
@@ -805,8 +808,8 @@ async function dispatchUpstreamFetch(
     if (attempt > 1) {
       // NOTE: attempt 1 was already paced at the gateway edge (src/index.ts
       // acquireIngressPacer covers zn). Retries re-acquire the conveyor here,
-      // honoring ZEN_ENABLE_PACER — same split as S4 mid-stream retries.
-      const pacerGate = await acquireZenRetryPacer(signal, reqId);
+      // honoring provider pacer config — same split as S4 mid-stream retries.
+      const pacerGate = isZen ? await acquireZenRetryPacer(signal, reqId) : null;
       if (pacerGate) {
         return { errorResponse: pacerGate };
       }
@@ -849,11 +852,11 @@ async function dispatchUpstreamFetch(
       if (quarantineEnabled) {
         globalKeyPool.reportFailure(route.provider, currentKeyIndex, 502);
       } else if (isZen) {
-        logWarn(EMOJI.zap, `[ZEN ${reqId}] Dumb-forwarder mode (ZEN_ENABLE_QUARANTINE=false): Key ${currentKeyIndex} quarantine bypassed.`);
+        logWarn(EMOJI.zap, `[${route.provider.toUpperCase()} ${reqId}] Dumb-forwarder mode: Key ${currentKeyIndex} quarantine bypassed.`);
       }
       if (isZen && zenRetriesEnabled && attempt < maxAttempts && !signal.aborted) {
-        logWarn(EMOJI.zap, `[ZEN ${reqId}] Transport error on attempt ${attempt}/${maxAttempts}, rotating key...`);
-        const delayMs = calculateRetryDelay(provConfig.request_retry.delay, attempt);
+        logWarn(EMOJI.zap, `[${route.provider.toUpperCase()} ${reqId}] Transport error on attempt ${attempt}/${maxAttempts}, rotating key...`);
+        const delayMs = provConfig ? calculateRetryDelay(provConfig.request_retry.delay, attempt) : 0;
         if (delayMs > 0) {
           await Bun.sleep(delayMs);
         }
@@ -893,25 +896,17 @@ async function dispatchUpstreamFetch(
       }
     }
 
-    if (!isZen) {
-      if (quarantineEnabled) {
-        globalKeyPool.reportFailure(route.provider, currentKeyIndex, res.status);
-      }
-      return { response: res, keyIndex: currentKeyIndex };
-    }
-
-    // zn-scoped error classification with quarantine + retry gating.
     const errBodyText = await res.clone().text().catch(() => "");
     const classification = classifyUpstreamError({
-      provider: "zn",
+      provider: route.provider,
       status: res.status,
       headers: res.headers,
       bodyText: errBodyText,
     });
     if (quarantineEnabled && classification.quarantineTtlSec > 0) {
-      globalKeyPool.reportFailure("zn", currentKeyIndex, res.status, res.headers, errBodyText, Date.now(), classification.quarantineTtlSec);
+      globalKeyPool.reportFailure(route.provider, currentKeyIndex, res.status, res.headers, errBodyText, Date.now(), classification.quarantineTtlSec);
     } else if (classification.quarantineTtlSec > 0) {
-      logWarn(EMOJI.zap, `[ZEN ${reqId}] Dumb-forwarder mode (ZEN_ENABLE_QUARANTINE=false): Key ${currentKeyIndex} quarantine bypassed.`);
+      logWarn(EMOJI.zap, `[${route.provider.toUpperCase()} ${reqId}] Dumb-forwarder mode (${route.provider.toUpperCase()}_ENABLE_QUARANTINE=false): Key ${currentKeyIndex} quarantine bypassed.`);
     }
 
     const canRetry =
@@ -923,24 +918,24 @@ async function dispatchUpstreamFetch(
       const ttlSec = quarantineEnabled && classification.quarantineTtlSec > 0
         ? classification.quarantineTtlSec
         : undefined;
-      logLimit(reqId, "zn", currentKeyIndex, res.status, ttlSec, totalKeys, extractErrorMessage(errBodyText));
-      const delayMs = calculateRetryDelay(provConfig.request_retry.delay, attempt);
+      logLimit(reqId, route.provider, currentKeyIndex, res.status, ttlSec, totalKeys, extractErrorMessage(errBodyText));
+      const delayMs = provConfig ? calculateRetryDelay(provConfig.request_retry.delay, attempt) : 0;
       if (delayMs > 0) {
         await Bun.sleep(delayMs);
       }
       continue;
     }
 
-    if (!env.ZEN_ENABLE_RETRIES && classification.action === "retry_rotate") {
-      logWarn(EMOJI.zap, `[ZEN ${reqId}] Single-flight mode (ZEN_ENABLE_RETRIES=false): Passing HTTP ${res.status} directly downstream.`);
+    if (isZen && !zenRetriesEnabled && classification.action === "retry_rotate") {
+      logWarn(EMOJI.zap, `[ZEN ${reqId}] Single-flight mode: Passing HTTP ${res.status} directly downstream.`);
     }
     return { response: res, keyIndex: currentKeyIndex };
   }
 
-  logError(reqId, "Zen Responses request attempts exhausted", null);
+  logError(reqId, `${route.provider} Responses request attempts exhausted`, null);
   return {
     errorResponse: Response.json(
-      { error: { message: "Zen Responses request attempts exhausted", type: "gateway_error" } },
+      { error: { message: `${route.provider} Responses request attempts exhausted`, type: "gateway_error" } },
       { status: 502 }
     ),
   };

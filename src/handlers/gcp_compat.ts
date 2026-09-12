@@ -108,7 +108,12 @@ async function collectFullBody(
 
 async function acquireGcpPacer(clientSignal: AbortSignal | undefined): Promise<number> {
   const env = getEnv();
-  if (!env.LITEROUTER_PACER_ENABLED || !env.GCP_ENABLE_PACER) {
+  const gcPacer = getProviderConfig("gc").pacer;
+  const enabled = gcPacer?.enabled ?? false;
+  const min_delay_ms = gcPacer?.min_delay_ms ?? 2000;
+  const max_queue_wait_ms = gcPacer?.max_queue_wait_ms ?? 240000;
+
+  if (!env.LITEROUTER_PACER_ENABLED || !enabled) {
     return 0;
   }
   const dynamicMaxQueueDepth = globalKeyPool.getDynamicMaxQueueDepth("gc");
@@ -118,9 +123,9 @@ async function acquireGcpPacer(clientSignal: AbortSignal | undefined): Promise<n
       : dynamicMaxQueueDepth;
 
   const pacer = getPacerForProvider("gc", 0, {
-    minIntervalMs: env.GCP_MIN_DELAY_MS,
+    minIntervalMs: min_delay_ms,
     maxQueueDepth,
-    maxQueueWaitMs: env.GCP_PACER_MAX_QUEUE_WAIT_MS,
+    maxQueueWaitMs: max_queue_wait_ms,
   });
 
   const { queueDwellMs } = await pacer.acquire(clientSignal);
@@ -138,7 +143,8 @@ async function executeGcpDirectCall(
   _clientOptions?: RequestClientOptions
 ): Promise<Response> {
   const env = getEnv();
-  const breaker = (env.LITEROUTER_CIRCUIT_BREAKER && env.GCP_ENABLE_CIRCUIT_BREAKER)
+  const gcConfig = getProviderConfig("gc");
+  const breaker = (env.LITEROUTER_CIRCUIT_BREAKER && gcConfig.circuit_breaker.enabled)
     ? getCircuitBreakerForProvider("gc")
     : null;
 
@@ -189,7 +195,7 @@ async function executeGcpDirectCall(
       bodyText,
     });
 
-    if (env.GCP_ENABLE_QUARANTINE && classification.quarantineTtlSec > 0) {
+    if (gcConfig.key_cooldown.enabled && classification.quarantineTtlSec > 0) {
       globalKeyPool.reportFailure(
         "gc",
         selected.index,
@@ -199,17 +205,17 @@ async function executeGcpDirectCall(
         Date.now(),
         classification.quarantineTtlSec
       );
-    } else if (!env.GCP_ENABLE_QUARANTINE && classification.quarantineTtlSec > 0) {
-      logWarn(EMOJI.zap, `[GCP ${reqId}] Dumb-forwarder mode (GCP_ENABLE_QUARANTINE=false): Key ${selected.index} quarantine bypassed.`);
+    } else if (!gcConfig.key_cooldown.enabled && classification.quarantineTtlSec > 0) {
+      logWarn(EMOJI.zap, `[GCP ${reqId}] Dumb-forwarder mode: Key ${selected.index} quarantine bypassed.`);
     }
 
     const rawErrorMsg = extractErrorMessage(bodyText);
-    const ttlSec = env.GCP_ENABLE_QUARANTINE
+    const ttlSec = gcConfig.key_cooldown.enabled
       ? (classification.quarantineTtlSec > 0 ? classification.quarantineTtlSec : (response.status === 429 ? 60 : undefined))
       : undefined;
     logLimit(reqId, "gc", selected.index, response.status, ttlSec, selected.totalKeys, rawErrorMsg);
 
-    if (env.GCP_ENABLE_RETRIES && isContextLengthError(response.status, bodyText) && !clientSignal?.aborted) {
+    if (gcConfig.request_retry.enabled && isContextLengthError(response.status, bodyText) && !clientSignal?.aborted) {
       const detectedLimit = extractContextLimit(bodyText);
       const targetLimit = detectedLimit ? Math.floor(detectedLimit * 0.75) : DEFAULT_SAFE_CONTEXT_TOKENS;
       const pruned = pruneOpenAIPayload(payload, targetLimit);
@@ -220,7 +226,7 @@ async function executeGcpDirectCall(
     }
 
     const canRetry =
-      env.GCP_ENABLE_RETRIES &&
+      gcConfig.request_retry.enabled &&
       classification.action === "retry_rotate" &&
       attempt < maxAttempts &&
       !clientSignal?.aborted;
@@ -232,8 +238,8 @@ async function executeGcpDirectCall(
       );
     }
 
-    if (!env.GCP_ENABLE_RETRIES && classification.action === "retry_rotate") {
-      logWarn(EMOJI.zap, `[GCP ${reqId}] Single-flight mode (GCP_ENABLE_RETRIES=false): Passing HTTP ${response.status} directly downstream.`);
+    if (!gcConfig.request_retry.enabled && classification.action === "retry_rotate") {
+      logWarn(EMOJI.zap, `[GCP ${reqId}] Single-flight mode: Passing HTTP ${response.status} directly downstream.`);
     }
 
     logServed(reqId, duration, response.status, attempt, maxAttempts);
@@ -313,16 +319,16 @@ async function executeGcpDirectCall(
     },
     retryProvider: async (reason: string, _hasEmittedTokens?: boolean) => {
       const classification = classifyTransportError(reason);
-      if (env.GCP_ENABLE_QUARANTINE && classification.quarantineTtlSec > 0) {
+      if (gcConfig.key_cooldown.enabled && classification.quarantineTtlSec > 0) {
         globalKeyPool.reportFailure("gc", currentKeyIndex, 500, undefined, reason, Date.now(), classification.quarantineTtlSec);
       }
-      const ttlSec = env.GCP_ENABLE_QUARANTINE && classification.quarantineTtlSec > 0
+      const ttlSec = gcConfig.key_cooldown.enabled && classification.quarantineTtlSec > 0
         ? classification.quarantineTtlSec
         : undefined;
       logLimit(reqId, "gc", currentKeyIndex, 500, ttlSec, selected.totalKeys, reason);
 
-      if (!env.GCP_ENABLE_RETRIES) {
-        logWarn(EMOJI.zap, `[GCP ${reqId}] Mid-stream drop occurred. Retries disabled via GCP_ENABLE_RETRIES=false. Closing stream.`);
+      if (!gcConfig.request_retry.enabled) {
+        logWarn(EMOJI.zap, `[GCP ${reqId}] Mid-stream drop occurred. Retries disabled. Closing stream.`);
         return null;
       }
 
@@ -350,14 +356,15 @@ async function executeGcpDirectCall(
           model: activePayload.model,
         };
 
-        if (env.LITEROUTER_PACER_ENABLED && env.GCP_ENABLE_PACER) {
+        const gcPacer = getProviderConfig("gc").pacer;
+        if (env.LITEROUTER_PACER_ENABLED && (gcPacer?.enabled ?? false)) {
           await acquireGcpPacer(clientSignal);
         }
 
         try {
           const nextResult = await fetchWithTtftGuard(nextFetchOpts);
           if (nextResult.response.status >= 400) {
-            if (env.GCP_ENABLE_QUARANTINE) {
+            if (gcConfig.key_cooldown.enabled) {
               globalKeyPool.reportFailure("gc", nextSelected.index, nextResult.response.status);
             }
             continue;
@@ -368,7 +375,7 @@ async function executeGcpDirectCall(
             rawReader: nextResult.rawReader,
           };
         } catch (retryErr: unknown) {
-          if (retryErr instanceof NoResponseError && env.GCP_ENABLE_QUARANTINE) {
+          if (retryErr instanceof NoResponseError && gcConfig.key_cooldown.enabled) {
             globalKeyPool.reportFailure("gc", nextSelected.index, 0, undefined, retryErr.message, Date.now(), 2);
           }
           continue;
@@ -403,6 +410,7 @@ async function tryGcpAttempt(
   clientOptions?: RequestClientOptions
 ): Promise<AttemptExecutionResult> {
   const env = getEnv();
+  const gcConfig = getProviderConfig("gc");
   try {
     const res = await executeGcpDirectCall(directive, transformed, clientSignal, selected, reqId, attempt, maxAttempts, clientOptions);
     return { success: true, response: res, retryable: false };
@@ -442,11 +450,11 @@ async function tryGcpAttempt(
       return { success: false, error: err, retryable: true };
     }
     if (err instanceof NoResponseError) {
-      if (env.GCP_ENABLE_QUARANTINE) {
+      if (gcConfig.key_cooldown.enabled) {
         globalKeyPool.reportFailure("gc", selected.index, 0, undefined, err.message, Date.now(), 2);
       }
-      if (!env.GCP_ENABLE_RETRIES) {
-        logWarn(EMOJI.zap, `[GCP ${reqId}] Single-flight mode (GCP_ENABLE_RETRIES=false): Upstream transport error: ${err.message}`);
+      if (!gcConfig.request_retry.enabled) {
+        logWarn(EMOJI.zap, `[GCP ${reqId}] Single-flight mode: Upstream transport error: ${err.message}`);
         logServed(reqId, Date.now() - startTime, 502, attempt, maxAttempts);
         logSeparator();
         return {
@@ -490,7 +498,7 @@ async function executeGcpAttemptLoop(
   let lastError: unknown = null;
   let prevKeyIndex = -1;
   const startTime = Date.now();
-  const maxWaitMs = env.GCP_PACER_MAX_QUEUE_WAIT_MS || 240000;
+  const maxWaitMs = provConfig.pacer?.max_queue_wait_ms ?? 240000;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     if (clientSignal?.aborted) {
@@ -501,7 +509,7 @@ async function executeGcpAttemptLoop(
     }
 
     const dwellMs = Date.now() - startTime;
-    if (env.GCP_ENABLE_QUARANTINE && globalKeyPool.shouldLoadShed("gc", dwellMs, maxWaitMs)) {
+    if (provConfig.key_cooldown.enabled && globalKeyPool.shouldLoadShed("gc", dwellMs, maxWaitMs)) {
       const minTtl = globalKeyPool.getMinQuarantineTtlMs("gc");
       const retryAfterSec = Math.max(1, Math.ceil(minTtl / 1000));
       return Response.json(

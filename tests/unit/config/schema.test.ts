@@ -13,9 +13,8 @@ import {
 } from "../../../src/config/schema";
 
 describe("RequestRetryDelaySchema", () => {
-  it("applies default min_ms (150) and max_ms (300) when empty object is passed", () => {
-    const parsed = RequestRetryDelaySchema.parse({});
-    expect(parsed).toEqual({ min_ms: 150, max_ms: 300 });
+  it("requires min_ms and max_ms explicitly", () => {
+    expect(RequestRetryDelaySchema.safeParse({}).success).toBe(false);
   });
 
   it("accepts valid explicit bounds where max_ms > min_ms", () => {
@@ -49,13 +48,8 @@ describe("RequestRetryDelaySchema", () => {
 });
 
 describe("RequestRetrySchema", () => {
-  it("applies default values for retry policy", () => {
-    const parsed = RequestRetrySchema.parse({});
-    expect(parsed).toEqual({
-      enabled: true,
-      max_attempts: 3,
-      delay: { min_ms: 150, max_ms: 300 },
-    });
+  it("rejects empty object when required fields are missing", () => {
+    expect(RequestRetrySchema.safeParse({}).success).toBe(false);
   });
 
   it("accepts custom retry configurations", () => {
@@ -78,6 +72,8 @@ describe("RequestRetrySchema", () => {
 
   it("propagates inner delay refinement error when max_ms < min_ms", () => {
     const result = RequestRetrySchema.safeParse({
+      enabled: true,
+      max_attempts: 3,
       delay: { min_ms: 500, max_ms: 100 },
     });
     expect(result.success).toBe(false);
@@ -85,18 +81,8 @@ describe("RequestRetrySchema", () => {
 });
 
 describe("KeyCooldownSchema", () => {
-  it("applies default values when empty object is passed", () => {
-    const parsed = KeyCooldownSchema.parse({});
-    expect(parsed).toEqual({
-      enabled: true,
-      initial_cooldown_ms: 10000,
-      backoff_factor: 1.5,
-      max_cooldown_ms: 60000,
-      max_consecutive_failures: 5,
-      jitter_percent: 20,
-      respect_retry_after: true,
-      reset_after_success: true,
-    });
+  it("rejects empty object when required fields are missing", () => {
+    expect(KeyCooldownSchema.safeParse({}).success).toBe(false);
   });
 
   it("accepts custom key cooldown overrides", () => {
@@ -123,10 +109,15 @@ describe("KeyCooldownSchema", () => {
   });
 
   it("validates jitter_percent bounds [0, 50]", () => {
-    expect(KeyCooldownSchema.safeParse({ jitter_percent: 0 }).success).toBe(true);
-    expect(KeyCooldownSchema.safeParse({ jitter_percent: 50 }).success).toBe(true);
-    expect(KeyCooldownSchema.safeParse({ jitter_percent: -1 }).success).toBe(false);
-    expect(KeyCooldownSchema.safeParse({ jitter_percent: 51 }).success).toBe(false);
+    const base = {
+      enabled: true,
+      initial_cooldown_ms: 10000,
+      max_cooldown_ms: 60000,
+    };
+    expect(KeyCooldownSchema.safeParse({ ...base, jitter_percent: 0 }).success).toBe(true);
+    expect(KeyCooldownSchema.safeParse({ ...base, jitter_percent: 50 }).success).toBe(true);
+    expect(KeyCooldownSchema.safeParse({ ...base, jitter_percent: -1 }).success).toBe(false);
+    expect(KeyCooldownSchema.safeParse({ ...base, jitter_percent: 51 }).success).toBe(false);
   });
 
   it("rejects non-positive cooldown durations and counts", () => {
@@ -138,19 +129,13 @@ describe("KeyCooldownSchema", () => {
 });
 
 describe("ProviderPacerConfigSchema", () => {
-  it("applies default values when empty object is passed", () => {
-    const parsed = ProviderPacerConfigSchema.parse({});
-    expect(parsed).toEqual({
-      enabled: true,
-      min_delay_ms: 200,
-      max_delay_ms: 500,
-      max_queue_depth: 100,
-      max_queue_wait_ms: 15000,
-    });
+  it("rejects empty object when required fields are missing", () => {
+    expect(ProviderPacerConfigSchema.safeParse({}).success).toBe(false);
   });
 
   it("accepts valid explicit bounds where max_delay_ms >= min_delay_ms", () => {
     const parsed = ProviderPacerConfigSchema.parse({
+      enabled: true,
       min_delay_ms: 300,
       max_delay_ms: 300,
       max_queue_depth: 50,
@@ -162,8 +147,11 @@ describe("ProviderPacerConfigSchema", () => {
 
   it("rejects invalid bounds where max_delay_ms < min_delay_ms", () => {
     const result = ProviderPacerConfigSchema.safeParse({
+      enabled: true,
       min_delay_ms: 1000,
       max_delay_ms: 500,
+      max_queue_depth: 100,
+      max_queue_wait_ms: 15000,
     });
     expect(result.success).toBe(false);
     if (!result.success) {
@@ -180,16 +168,8 @@ describe("ProviderPacerConfigSchema", () => {
 });
 
 describe("CircuitBreakerConfigSchema", () => {
-  it("applies default values when empty object is passed", () => {
-    const parsed = CircuitBreakerConfigSchema.parse({});
-    expect(parsed).toEqual({
-      enabled: true,
-      failure_threshold: 5,
-      failure_window_ms: 60000,
-      open_duration_ms: 30000,
-      half_open_max_probes: 2,
-      success_threshold_to_close: 2,
-    });
+  it("rejects empty object when required fields are missing", () => {
+    expect(CircuitBreakerConfigSchema.safeParse({}).success).toBe(false);
   });
 
   it("accepts custom circuit breaker configurations", () => {
@@ -311,29 +291,14 @@ describe("ProviderStrategySchema", () => {
 });
 
 describe("ProviderConfigEntrySchema", () => {
-  it("applies backward-compatible defaults for new fields on minimal entry", () => {
-    const minimal = {
-      code: "or",
-      base_url: "https://openrouter.ai",
-      endpoints: {
-        ch: "/api/v1/chat/completions",
-      },
-    };
-
-    const parsed = ProviderConfigEntrySchema.parse(minimal);
-    expect(parsed.code).toBe("or");
-    expect(parsed.auth_header).toBe("Bearer");
-    expect(parsed.strategy).toBe("standard");
-    expect(parsed.conserve_rules).toEqual([]);
-    expect(parsed.name).toBeUndefined();
-    expect(parsed.env_key).toBeUndefined();
-    expect(parsed.pacer).toBeUndefined();
-    expect(parsed.request_retry).toEqual({
+  const validTestOperationalKnobs = {
+    env_key: "MOCK_API_KEYS",
+    request_retry: {
       enabled: true,
       max_attempts: 3,
       delay: { min_ms: 150, max_ms: 300 },
-    });
-    expect(parsed.key_cooldown).toEqual({
+    },
+    key_cooldown: {
       enabled: true,
       initial_cooldown_ms: 10000,
       backoff_factor: 1.5,
@@ -342,18 +307,25 @@ describe("ProviderConfigEntrySchema", () => {
       jitter_percent: 20,
       respect_retry_after: true,
       reset_after_success: true,
-    });
-    expect(parsed.circuit_breaker).toEqual({
+    },
+    pacer: {
+      enabled: true,
+      min_delay_ms: 100,
+      max_delay_ms: 500,
+      max_queue_depth: 100,
+      max_queue_wait_ms: 15000,
+    },
+    circuit_breaker: {
       enabled: true,
       failure_threshold: 5,
       failure_window_ms: 60000,
       open_duration_ms: 30000,
       half_open_max_probes: 2,
       success_threshold_to_close: 2,
-    });
-  });
+    },
+  };
 
-  it("parses an entry with fully specified new operational knobs", () => {
+  it("parses an entry with fully specified operational knobs", () => {
     const full = {
       code: "nv",
       name: "NVIDIA NIM",
@@ -383,6 +355,8 @@ describe("ProviderConfigEntrySchema", () => {
       },
       key_cooldown: {
         enabled: false,
+        initial_cooldown_ms: 10000,
+        max_cooldown_ms: 60000,
       },
       pacer: {
         enabled: true,
@@ -393,6 +367,9 @@ describe("ProviderConfigEntrySchema", () => {
       },
       circuit_breaker: {
         enabled: false,
+        failure_threshold: 5,
+        failure_window_ms: 60000,
+        open_duration_ms: 30000,
       },
     };
 
@@ -412,6 +389,7 @@ describe("ProviderConfigEntrySchema", () => {
         code,
         base_url: "https://example.com",
         endpoints: { ch: "/chat" },
+        ...validTestOperationalKnobs,
       });
       expect(result.success).toBe(true);
     }
@@ -422,6 +400,7 @@ describe("ProviderConfigEntrySchema", () => {
         code,
         base_url: "https://example.com",
         endpoints: { ch: "/chat" },
+        ...validTestOperationalKnobs,
       });
       expect(result.success).toBe(false);
     }

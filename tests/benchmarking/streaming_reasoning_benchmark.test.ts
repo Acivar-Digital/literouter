@@ -3,7 +3,7 @@ import { sanitizeAndTransformPayload } from "../../src/transformers/payload";
 import { scrubReasoningFromMessages } from "../../src/transformers/opencode_adapter";
 import { hasContentToken } from "../../src/network/fetcher";
 import { getPacerForProvider, clearPacerRegistry } from "../../src/network/pacer";
-import { getEnv } from "../../src/config/env";
+import { getProviderConfig } from "../../src/config/providers";
 import type { OpenAIMessage, OpenAIRequestPayload } from "../../src/transformers/nuances";
 
 describe("GOLD STANDARD: Streaming & Reasoning Benchmark Suite", () => {
@@ -136,7 +136,7 @@ describe("GOLD STANDARD: Streaming & Reasoning Benchmark Suite", () => {
     it("enforces provider pacer intervals for high-velocity agent loops", () => {
       clearPacerRegistry();
       const znPacer = getPacerForProvider("zn", 0);
-      expect(znPacer.getMinInterval()).toBe(getEnv().ZEN_MIN_DELAY_MS);
+      expect(znPacer.getMinInterval()).toBe(getProviderConfig("zn").pacer.min_delay_ms);
 
       const orPacer = getPacerForProvider("or", 0);
       expect(orPacer.getMinInterval()).toBeGreaterThanOrEqual(0);

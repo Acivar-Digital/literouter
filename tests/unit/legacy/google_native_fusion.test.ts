@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { resetAllState } from "../../../src/lib";
+import { getProviderConfig, initProviderRegistry } from "../../../src/config/providers";
 import {
   getCurrentFlashTierIndex,
   getNativeTierIndex,
@@ -84,6 +85,7 @@ describe("Google Native gemini-flash Fusion Unit Tests", () => {
     process.env.GOOGLE_API_KEYS = mockKeys.join(",");
     resetAllState();
     resetNativeFlashTierIndex();
+    initProviderRegistry();
     loadAndCacheNativeChains();
   });
 
@@ -96,6 +98,7 @@ describe("Google Native gemini-flash Fusion Unit Tests", () => {
     }
     resetAllState();
     resetNativeFlashTierIndex();
+    initProviderRegistry();
   });
 
   // 1. Tier 1 returns 404 -> Fast-advances to Tier 2 (only 1 fetch against Tier 1, zero extra keys burned; asserts downstream headers x-literouter-model: gemini-3.7-flash, x-literouter-tier: 2)
@@ -178,6 +181,7 @@ describe("Google Native gemini-flash Fusion Unit Tests", () => {
 
   // 3. All keys return 429 on Tier 1 -> Rotates through all keys before advancing to Tier 2
   it("rotates through all keys on Tier 1 before advancing to Tier 2 on 429 rate limit", async () => {
+    getProviderConfig("gg").key_cooldown.enabled = false;
     const fetchCalls: MockFetchCall[] = [];
 
     globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {

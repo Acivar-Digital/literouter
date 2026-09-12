@@ -41,7 +41,7 @@ import {
   pruneAnthropicPayload,
 } from "../transformers/context_pruner";
 import { getEnv } from "../config/env";
-import { getProviderConfig } from "../config/providers";
+import { getProviderConfig, isRegisteredProvider } from "../config/providers";
 import { getPacerForProvider, PacerQueueOverflowError } from "../network/pacer";
 import { getCircuitBreakerForProvider } from "../network/circuit_breaker";
 import type { DirectDirective } from "../directive/parser";
@@ -1318,9 +1318,10 @@ async function executeAnthropicDirectLoop(
       );
     }
 
-    const shouldPaceIngress =
-      !["or", "nv", "zn", "gg"].includes(directive.provider) || !env.LITEROUTER_PACER_ENABLED;
-    if (shouldPaceIngress) {
+    const shouldPace =
+      isRegisteredProvider(directive.provider) &&
+      Boolean(getProviderConfig(directive.provider).pacer?.enabled);
+    if (shouldPace) {
       try {
         await acquireProviderPacer(directive.provider, clientSignal);
       } catch (err: unknown) {

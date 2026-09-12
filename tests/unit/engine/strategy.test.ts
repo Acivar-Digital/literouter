@@ -19,6 +19,33 @@ import {
   unregisterStrategyFactory,
 } from "../../../src/engine/strategy_registry";
 
+const mockOperationalKnobs = {
+  env_key: "MOCK_API_KEYS",
+  request_retry: {
+    enabled: true,
+    max_attempts: 3,
+    delay: { min_ms: 150, max_ms: 300 },
+  },
+  key_cooldown: {
+    enabled: true,
+    initial_cooldown_ms: 10000,
+    max_cooldown_ms: 60000,
+  },
+  pacer: {
+    enabled: true,
+    min_delay_ms: 100,
+    max_delay_ms: 500,
+    max_queue_depth: 100,
+    max_queue_wait_ms: 15000,
+  },
+  circuit_breaker: {
+    enabled: true,
+    failure_threshold: 5,
+    failure_window_ms: 60000,
+    open_duration_ms: 30000,
+  },
+};
+
 describe("Slice 3.3 & 3.4: Strategy Interface & Strategy Registry", () => {
   beforeEach(() => {
     resetStrategyRegistry();
@@ -115,6 +142,30 @@ describe("Slice 3.3 & 3.4: Strategy Interface & Strategy Registry", () => {
               ch: "/v1/chat/completions",
             },
             strategy: "standard",
+            env_key: "OPENROUTER_API_KEYS",
+            request_retry: {
+              enabled: true,
+              max_attempts: 3,
+              delay: { min_ms: 150, max_ms: 300 },
+            },
+            key_cooldown: {
+              enabled: true,
+              initial_cooldown_ms: 10000,
+              max_cooldown_ms: 60000,
+            },
+            pacer: {
+              enabled: true,
+              min_delay_ms: 100,
+              max_delay_ms: 500,
+              max_queue_depth: 100,
+              max_queue_wait_ms: 15000,
+            },
+            circuit_breaker: {
+              enabled: true,
+              failure_threshold: 5,
+              failure_window_ms: 60000,
+              open_duration_ms: 30000,
+            },
           },
         },
       };
@@ -137,6 +188,30 @@ describe("Slice 3.3 & 3.4: Strategy Interface & Strategy Registry", () => {
               ch: "/v1/chat/completions",
             },
             strategy: "standard",
+            env_key: "MOCK_API_KEYS",
+            request_retry: {
+              enabled: true,
+              max_attempts: 3,
+              delay: { min_ms: 150, max_ms: 300 },
+            },
+            key_cooldown: {
+              enabled: true,
+              initial_cooldown_ms: 10000,
+              max_cooldown_ms: 60000,
+            },
+            pacer: {
+              enabled: true,
+              min_delay_ms: 100,
+              max_delay_ms: 500,
+              max_queue_depth: 100,
+              max_queue_wait_ms: 15000,
+            },
+            circuit_breaker: {
+              enabled: true,
+              failure_threshold: 5,
+              failure_window_ms: 60000,
+              open_duration_ms: 30000,
+            },
           },
         },
       };
@@ -170,6 +245,30 @@ describe("Slice 3.3 & 3.4: Strategy Interface & Strategy Registry", () => {
               ch: "/v1beta/openai/chat/completions",
             },
             strategy: "native_cascade",
+            env_key: "GOOGLE_API_KEYS",
+            request_retry: {
+              enabled: true,
+              max_attempts: 3,
+              delay: { min_ms: 150, max_ms: 300 },
+            },
+            key_cooldown: {
+              enabled: true,
+              initial_cooldown_ms: 10000,
+              max_cooldown_ms: 60000,
+            },
+            pacer: {
+              enabled: true,
+              min_delay_ms: 100,
+              max_delay_ms: 500,
+              max_queue_depth: 100,
+              max_queue_wait_ms: 15000,
+            },
+            circuit_breaker: {
+              enabled: true,
+              failure_threshold: 5,
+              failure_window_ms: 60000,
+              open_duration_ms: 30000,
+            },
           },
         },
       };
@@ -190,24 +289,28 @@ describe("Slice 3.3 & 3.4: Strategy Interface & Strategy Registry", () => {
             base_url: "https://generativelanguage.googleapis.com",
             endpoints: { gc: "/v1beta/models/{model}:generateContent" },
             strategy: "native_cascade",
+            ...mockOperationalKnobs,
           },
           gcp: {
             code: "gc",
             base_url: "https://generativelanguage.googleapis.com",
             endpoints: { ch: "/v1beta/openai/chat/completions" },
             strategy: "gcp_guarded",
+            ...mockOperationalKnobs,
           },
           zen: {
             code: "zn",
             base_url: "https://opencode.ai/zen",
             endpoints: { ch: "/api/v1/chat/completions" },
             strategy: "zen_single_flight",
+            ...mockOperationalKnobs,
           },
           anthropic: {
             code: "an",
             base_url: "https://api.anthropic.com",
             endpoints: { ms: "/v1/messages" },
             strategy: "anthropic_direct",
+            ...mockOperationalKnobs,
           },
         },
       };
@@ -232,6 +335,7 @@ describe("Slice 3.3 & 3.4: Strategy Interface & Strategy Registry", () => {
               ch: "/v1/chat/completions",
             },
             strategy: "zen_single_flight",
+            ...mockOperationalKnobs,
           },
         },
       };
@@ -263,6 +367,7 @@ describe("Slice 3.3 & 3.4: Strategy Interface & Strategy Registry", () => {
               ch: "/v1/chat/completions",
             },
             strategy: "native_cascade",
+            ...mockOperationalKnobs,
           },
         },
       };

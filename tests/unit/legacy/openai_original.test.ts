@@ -598,6 +598,47 @@ describe("OpenAI Original Responses Handler (src/handlers/openai_original.ts)", 
           spy.mockRestore();
         }
       });
+
+      it("reports failure dynamically with route.provider instead of hardcoded 'zn'", async () => {
+        const reportFailureSpy = spyOn(globalKeyPool, "reportFailure");
+        const mockServer = Bun.serve({
+          port: 0,
+          fetch() {
+            return Response.json(
+              {
+                error: {
+                  message: "insufficient_quota: out of balance on OpenRouter",
+                  type: "insufficient_quota",
+                },
+              },
+              { status: 429 }
+            );
+          },
+        });
+        process.env.MOCK_OR_PORT = String(mockServer.port);
+
+        try {
+          const req = new Request("http://localhost:7766/v1/responses", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ model: "or-model", input: "test" }),
+          });
+          const state = {
+            keyPoolManager: { getKey: () => "mock-or-key" },
+          };
+
+          const res = await handleOpenAiOriginal(req, "or", state);
+          expect(res.status).toBe(429);
+          expect(reportFailureSpy).toHaveBeenCalled();
+          const lastCall = reportFailureSpy.mock.calls[reportFailureSpy.mock.calls.length - 1];
+          expect(lastCall?.[0]).toBe("or");
+          expect(lastCall?.[0]).not.toBe("zn");
+        } finally {
+          mockServer.stop(true);
+          delete process.env.MOCK_OR_PORT;
+          reportFailureSpy.mockRestore();
+        }
+      });
     });
   });
 });

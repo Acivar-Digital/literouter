@@ -1,5 +1,6 @@
 import { readFileSync, existsSync } from "node:fs";
 import { resolve } from "node:path";
+import { ZodError } from "zod";
 import { ProvidersConfigSchema, type ProviderConfigEntry } from "./schema";
 
 interface ProviderRegistrySnapshot {
@@ -32,7 +33,20 @@ function loadRawProvidersJson(): unknown {
 
 export function initProviderRegistry(rawConfig?: unknown): void {
   const source = rawConfig ?? loadRawProvidersJson();
-  const parsed = ProvidersConfigSchema.parse(source);
+  let parsed: ReturnType<typeof ProvidersConfigSchema.parse>;
+  try {
+    parsed = ProvidersConfigSchema.parse(source);
+  } catch (err: unknown) {
+    if (err instanceof ZodError) {
+      const formattedErrors = err.issues
+        .map((issue) => `  - ${issue.path.join(".") || "(root)"}: ${issue.message}`)
+        .join("\n");
+      console.error(
+        `[FATAL] [ProviderRegistry] Provider configuration validation failed loudly refusing to start:\n${formattedErrors}`
+      );
+    }
+    throw err;
+  }
   const byCode = new Map<string, ProviderConfigEntry>();
   const byName = new Map<string, ProviderConfigEntry>();
 

@@ -155,6 +155,30 @@ describe("Declarative Provider Headers & Cache Hot-Reload", () => {
             endpoints: {
               ch: "/v1/chat/completions",
             },
+            env_key: "CUSTOM_PROVIDER_KEYS",
+            request_retry: {
+              enabled: true,
+              max_attempts: 3,
+              delay: { min_ms: 150, max_ms: 300 },
+            },
+            key_cooldown: {
+              enabled: true,
+              initial_cooldown_ms: 10000,
+              max_cooldown_ms: 60000,
+            },
+            pacer: {
+              enabled: true,
+              min_delay_ms: 100,
+              max_delay_ms: 500,
+              max_queue_depth: 100,
+              max_queue_wait_ms: 15000,
+            },
+            circuit_breaker: {
+              enabled: true,
+              failure_threshold: 5,
+              failure_window_ms: 60000,
+              open_duration_ms: 30000,
+            },
           },
         },
       });

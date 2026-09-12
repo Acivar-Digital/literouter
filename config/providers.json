@@ -16,7 +16,8 @@
         "ch": "/api/v1/chat/completions",
         "ms": "/api/v1/messages",
         "em": "/api/v1/embeddings",
-        "md": "/api/v1/models"
+        "md": "/api/v1/models",
+        "rs": "/api/v1/responses"
       },
       "limits": {
         "default": {
@@ -102,7 +103,22 @@
         "max_queue_wait_ms": 15000
       },
       "circuit_breaker": {
-        "enabled": true
+        "enabled": true,
+        "failure_threshold": 5,
+        "failure_window_ms": 60000,
+        "open_duration_ms": 30000,
+        "half_open_max_probes": 2,
+        "success_threshold_to_close": 2
+      },
+      "key_cooldown": {
+        "enabled": true,
+        "initial_cooldown_ms": 10000,
+        "backoff_factor": 1.5,
+        "max_cooldown_ms": 60000,
+        "max_consecutive_failures": 5,
+        "jitter_percent": 20,
+        "respect_retry_after": true,
+        "reset_after_success": true
       }
     },
     "google": {
@@ -207,7 +223,22 @@
         "max_queue_wait_ms": 15000
       },
       "circuit_breaker": {
-        "enabled": false
+        "enabled": false,
+        "failure_threshold": 5,
+        "failure_window_ms": 60000,
+        "open_duration_ms": 30000,
+        "half_open_max_probes": 2,
+        "success_threshold_to_close": 2
+      },
+      "key_cooldown": {
+        "enabled": true,
+        "initial_cooldown_ms": 10000,
+        "backoff_factor": 1.5,
+        "max_cooldown_ms": 60000,
+        "max_consecutive_failures": 5,
+        "jitter_percent": 20,
+        "respect_retry_after": true,
+        "reset_after_success": true
       }
     },
     "openai": {
@@ -248,7 +279,22 @@
         "max_queue_wait_ms": 15000
       },
       "circuit_breaker": {
-        "enabled": true
+        "enabled": true,
+        "failure_threshold": 5,
+        "failure_window_ms": 60000,
+        "open_duration_ms": 30000,
+        "half_open_max_probes": 2,
+        "success_threshold_to_close": 2
+      },
+      "key_cooldown": {
+        "enabled": true,
+        "initial_cooldown_ms": 10000,
+        "backoff_factor": 1.5,
+        "max_cooldown_ms": 60000,
+        "max_consecutive_failures": 5,
+        "jitter_percent": 20,
+        "respect_retry_after": true,
+        "reset_after_success": true
       }
     },
     "anthropic": {
@@ -285,7 +331,22 @@
         "max_queue_wait_ms": 15000
       },
       "circuit_breaker": {
-        "enabled": true
+        "enabled": true,
+        "failure_threshold": 5,
+        "failure_window_ms": 60000,
+        "open_duration_ms": 30000,
+        "half_open_max_probes": 2,
+        "success_threshold_to_close": 2
+      },
+      "key_cooldown": {
+        "enabled": true,
+        "initial_cooldown_ms": 10000,
+        "backoff_factor": 1.5,
+        "max_cooldown_ms": 60000,
+        "max_consecutive_failures": 5,
+        "jitter_percent": 20,
+        "respect_retry_after": true,
+        "reset_after_success": true
       }
     },
     "groq": {
@@ -324,7 +385,22 @@
         "max_queue_wait_ms": 15000
       },
       "circuit_breaker": {
-        "enabled": true
+        "enabled": true,
+        "failure_threshold": 5,
+        "failure_window_ms": 60000,
+        "open_duration_ms": 30000,
+        "half_open_max_probes": 2,
+        "success_threshold_to_close": 2
+      },
+      "key_cooldown": {
+        "enabled": true,
+        "initial_cooldown_ms": 10000,
+        "backoff_factor": 1.5,
+        "max_cooldown_ms": 60000,
+        "max_consecutive_failures": 5,
+        "jitter_percent": 20,
+        "respect_retry_after": true,
+        "reset_after_success": true
       }
     },
     "cerebras": {
@@ -361,7 +437,22 @@
         "max_queue_wait_ms": 15000
       },
       "circuit_breaker": {
-        "enabled": true
+        "enabled": true,
+        "failure_threshold": 5,
+        "failure_window_ms": 60000,
+        "open_duration_ms": 30000,
+        "half_open_max_probes": 2,
+        "success_threshold_to_close": 2
+      },
+      "key_cooldown": {
+        "enabled": true,
+        "initial_cooldown_ms": 10000,
+        "backoff_factor": 1.5,
+        "max_cooldown_ms": 60000,
+        "max_consecutive_failures": 5,
+        "jitter_percent": 20,
+        "respect_retry_after": true,
+        "reset_after_success": true
       }
     },
     "deepseek": {
@@ -398,7 +489,22 @@
         "max_queue_wait_ms": 15000
       },
       "circuit_breaker": {
-        "enabled": true
+        "enabled": true,
+        "failure_threshold": 5,
+        "failure_window_ms": 60000,
+        "open_duration_ms": 30000,
+        "half_open_max_probes": 2,
+        "success_threshold_to_close": 2
+      },
+      "key_cooldown": {
+        "enabled": true,
+        "initial_cooldown_ms": 10000,
+        "backoff_factor": 1.5,
+        "max_cooldown_ms": 60000,
+        "max_consecutive_failures": 5,
+        "jitter_percent": 20,
+        "respect_retry_after": true,
+        "reset_after_success": true
       }
     },
     "mistral": {
@@ -436,7 +542,22 @@
         "max_queue_wait_ms": 15000
       },
       "circuit_breaker": {
-        "enabled": true
+        "enabled": true,
+        "failure_threshold": 5,
+        "failure_window_ms": 60000,
+        "open_duration_ms": 30000,
+        "half_open_max_probes": 2,
+        "success_threshold_to_close": 2
+      },
+      "key_cooldown": {
+        "enabled": true,
+        "initial_cooldown_ms": 10000,
+        "backoff_factor": 1.5,
+        "max_cooldown_ms": 60000,
+        "max_consecutive_failures": 5,
+        "jitter_percent": 20,
+        "respect_retry_after": true,
+        "reset_after_success": true
       }
     },
     "together": {
@@ -475,7 +596,22 @@
         "max_queue_wait_ms": 15000
       },
       "circuit_breaker": {
-        "enabled": true
+        "enabled": true,
+        "failure_threshold": 5,
+        "failure_window_ms": 60000,
+        "open_duration_ms": 30000,
+        "half_open_max_probes": 2,
+        "success_threshold_to_close": 2
+      },
+      "key_cooldown": {
+        "enabled": true,
+        "initial_cooldown_ms": 10000,
+        "backoff_factor": 1.5,
+        "max_cooldown_ms": 60000,
+        "max_consecutive_failures": 5,
+        "jitter_percent": 20,
+        "respect_retry_after": true,
+        "reset_after_success": true
       }
     },
     "zen": {
@@ -519,7 +655,22 @@
         "max_queue_wait_ms": 15000
       },
       "circuit_breaker": {
-        "enabled": false
+        "enabled": false,
+        "failure_threshold": 5,
+        "failure_window_ms": 60000,
+        "open_duration_ms": 30000,
+        "half_open_max_probes": 2,
+        "success_threshold_to_close": 2
+      },
+      "key_cooldown": {
+        "enabled": true,
+        "initial_cooldown_ms": 10000,
+        "backoff_factor": 1.5,
+        "max_cooldown_ms": 60000,
+        "max_consecutive_failures": 5,
+        "jitter_percent": 20,
+        "respect_retry_after": true,
+        "reset_after_success": true
       }
     },
     "testprovider": {
@@ -558,7 +709,22 @@
         "max_queue_wait_ms": 15000
       },
       "circuit_breaker": {
-        "enabled": true
+        "enabled": true,
+        "failure_threshold": 5,
+        "failure_window_ms": 60000,
+        "open_duration_ms": 30000,
+        "half_open_max_probes": 2,
+        "success_threshold_to_close": 2
+      },
+      "key_cooldown": {
+        "enabled": true,
+        "initial_cooldown_ms": 10000,
+        "backoff_factor": 1.5,
+        "max_cooldown_ms": 60000,
+        "max_consecutive_failures": 5,
+        "jitter_percent": 20,
+        "respect_retry_after": true,
+        "reset_after_success": true
       }
     },
     "gcp": {
@@ -598,7 +764,22 @@
         "max_queue_wait_ms": 240000
       },
       "circuit_breaker": {
-        "enabled": false
+        "enabled": false,
+        "failure_threshold": 5,
+        "failure_window_ms": 60000,
+        "open_duration_ms": 30000,
+        "half_open_max_probes": 2,
+        "success_threshold_to_close": 2
+      },
+      "key_cooldown": {
+        "enabled": true,
+        "initial_cooldown_ms": 10000,
+        "backoff_factor": 1.5,
+        "max_cooldown_ms": 60000,
+        "max_consecutive_failures": 5,
+        "jitter_percent": 20,
+        "respect_retry_after": true,
+        "reset_after_success": true
       }
     }
   }

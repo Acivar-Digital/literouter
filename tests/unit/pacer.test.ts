@@ -249,6 +249,15 @@ describe("Pure FIFO Conveyor Belt Pacer & Anti-429 Queue", () => {
       const orPacer = getPacerForProvider("or", 0);
       expect(orPacer.getMinInterval()).toBeGreaterThanOrEqual(0);
 
+      const gcPacer = getPacerForProvider("gc", 0);
+      expect(gcPacer.getMinInterval()).toBe(2000);
+
+      const unknownPacer = getPacerForProvider("unknown_prov", 0);
+      expect(unknownPacer.getMinInterval()).toBe(200);
+
+      const overriddenPacer = getPacerForProvider("custom_prov", 0, { minIntervalMs: 50 });
+      expect(overriddenPacer.getMinInterval()).toBe(50);
+
       const sameGg = getPacerForProvider("gg", 1);
       expect(sameGg).toBe(ggPacer); // single pipe per provider
 

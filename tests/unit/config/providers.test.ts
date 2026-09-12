@@ -57,6 +57,40 @@ describe("ProviderRegistry — In-Memory Store", () => {
     expect(getProviderDisplayName("foobar")).toBe("FOOBAR");
   });
 
+  const validOperationalKnobs = {
+    env_key: "MOCK_API_KEYS",
+    request_retry: {
+      enabled: true,
+      max_attempts: 3,
+      delay: { min_ms: 150, max_ms: 300 },
+    },
+    key_cooldown: {
+      enabled: true,
+      initial_cooldown_ms: 10000,
+      backoff_factor: 1.5,
+      max_cooldown_ms: 60000,
+      max_consecutive_failures: 5,
+      jitter_percent: 20,
+      respect_retry_after: true,
+      reset_after_success: true,
+    },
+    pacer: {
+      enabled: true,
+      min_delay_ms: 100,
+      max_delay_ms: 500,
+      max_queue_depth: 100,
+      max_queue_wait_ms: 15000,
+    },
+    circuit_breaker: {
+      enabled: true,
+      failure_threshold: 5,
+      failure_window_ms: 60000,
+      open_duration_ms: 30000,
+      half_open_max_probes: 2,
+      success_threshold_to_close: 2,
+    },
+  };
+
   it("loads custom raw config object with explicit name", () => {
     const customConfig = {
       providers: {
@@ -68,6 +102,7 @@ describe("ProviderRegistry — In-Memory Store", () => {
           endpoints: {
             ch: "/v1/chat/completions",
           },
+          ...validOperationalKnobs,
         },
       },
     };
@@ -97,6 +132,7 @@ describe("ProviderRegistry — In-Memory Store", () => {
           endpoints: {
             ch: "/v1/chat/completions",
           },
+          ...validOperationalKnobs,
         },
       },
     };
@@ -168,6 +204,7 @@ describe("ProviderRegistry — In-Memory Store", () => {
           endpoints: {
             ch: "/v1/chat/completions",
           },
+          ...validOperationalKnobs,
         },
       },
     };
@@ -199,6 +236,7 @@ describe("ProviderRegistry — In-Memory Store", () => {
           endpoints: {
             ch: "/v1/chat/completions",
           },
+          ...validOperationalKnobs,
         },
       },
     };
@@ -216,6 +254,7 @@ describe("ProviderRegistry — In-Memory Store", () => {
           endpoints: {
             ch: "/v1/chat/completions",
           },
+          ...validOperationalKnobs,
         },
       },
     };

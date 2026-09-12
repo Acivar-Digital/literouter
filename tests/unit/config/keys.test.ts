@@ -71,18 +71,8 @@ describe("keys.ts — Dynamic Key Management", () => {
       expect(getProviderEnvVarName("gc")).toBe("GCP_KEYS");
     });
 
-    it("falls back to PROVIDER_ENV_MAP when provider lacks env_key", () => {
-      const customConfig = {
-        providers: {
-          customprov: {
-            code: "oa",
-            base_url: "https://api.custom.ai",
-            endpoints: { ch: "/v1/chat" },
-          },
-        },
-      };
-      initProviderRegistry(customConfig);
-      // 'oa' in customConfig has no env_key, so it falls back to PROVIDER_ENV_MAP['oa']
+    it("falls back to PROVIDER_ENV_MAP when provider is not in custom registry", () => {
+      initProviderRegistry({ providers: {} });
       expect(getProviderEnvVarName("oa")).toBe("OPENAI_API_KEYS");
     });
   });
@@ -124,6 +114,29 @@ describe("keys.ts — Dynamic Key Management", () => {
             env_key: "MY_CUSTOM_OPENAI_KEY",
             base_url: "https://api.openai.com",
             endpoints: { ch: "/v1/chat" },
+            request_retry: {
+              enabled: true,
+              max_attempts: 3,
+              delay: { min_ms: 150, max_ms: 300 },
+            },
+            key_cooldown: {
+              enabled: true,
+              initial_cooldown_ms: 10000,
+              max_cooldown_ms: 60000,
+            },
+            pacer: {
+              enabled: true,
+              min_delay_ms: 100,
+              max_delay_ms: 500,
+              max_queue_depth: 100,
+              max_queue_wait_ms: 15000,
+            },
+            circuit_breaker: {
+              enabled: true,
+              failure_threshold: 5,
+              failure_window_ms: 60000,
+              open_duration_ms: 30000,
+            },
           },
         },
       };

@@ -1,4 +1,4 @@
-import { getEnv } from "../../config/env";
+import { getProviderConfig } from "../../config/providers";
 import { ensureSessionHeaders } from "../session_id";
 import type { DispatchContext, ProviderExecutionStrategy } from "../strategy";
 
@@ -14,8 +14,9 @@ export class ZenSingleFlightStrategy implements ProviderExecutionStrategy {
     status: number,
     _body?: string
   ): "retry_same_target" | "advance_target" | "fail_fast" {
-    const env = getEnv();
-    if (!env.ZEN_ENABLE_RETRIES) {
+    const prov = getProviderConfig("zn");
+    const retriesDisabled = !prov.request_retry.enabled || prov.request_retry.max_attempts <= 1;
+    if (retriesDisabled) {
       return "fail_fast";
     }
 

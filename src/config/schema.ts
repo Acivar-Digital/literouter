@@ -54,8 +54,8 @@ export const ProviderEndpointsSchema = z.record(
 
 export const RequestRetryDelaySchema = z
   .object({
-    min_ms: z.number().int().nonnegative().default(150),
-    max_ms: z.number().int().nonnegative().default(300),
+    min_ms: z.number().int().nonnegative(),
+    max_ms: z.number().int().nonnegative(),
   })
   .refine((data) => data.max_ms >= data.min_ms, {
     message: "max_ms must be >= min_ms",
@@ -63,16 +63,16 @@ export const RequestRetryDelaySchema = z
   });
 
 export const RequestRetrySchema = z.object({
-  enabled: z.boolean().default(true),
-  max_attempts: z.number().int().positive().default(3),
-  delay: RequestRetryDelaySchema.default({}),
+  enabled: z.boolean(),
+  max_attempts: z.number().int().positive(),
+  delay: RequestRetryDelaySchema,
 });
 
 export const KeyCooldownSchema = z.object({
-  enabled: z.boolean().default(true),
-  initial_cooldown_ms: z.number().int().positive().default(10000),
+  enabled: z.boolean(),
+  initial_cooldown_ms: z.number().int().positive(),
   backoff_factor: z.number().positive().default(1.5),
-  max_cooldown_ms: z.number().int().positive().default(60000),
+  max_cooldown_ms: z.number().int().positive(),
   max_consecutive_failures: z.number().int().positive().default(5),
   jitter_percent: z.number().min(0).max(50).default(20),
   respect_retry_after: z.boolean().default(true),
@@ -81,11 +81,11 @@ export const KeyCooldownSchema = z.object({
 
 export const ProviderPacerConfigSchema = z
   .object({
-    enabled: z.boolean().default(true),
-    min_delay_ms: z.number().int().nonnegative().default(200),
-    max_delay_ms: z.number().int().nonnegative().default(500),
-    max_queue_depth: z.number().int().positive().default(100),
-    max_queue_wait_ms: z.number().int().positive().default(15000),
+    enabled: z.boolean(),
+    min_delay_ms: z.number().int().nonnegative(),
+    max_delay_ms: z.number().int().nonnegative(),
+    max_queue_depth: z.number().int().positive(),
+    max_queue_wait_ms: z.number().int().positive(),
   })
   .refine((data) => data.max_delay_ms >= data.min_delay_ms, {
     message: "max_delay_ms must be >= min_delay_ms",
@@ -93,10 +93,10 @@ export const ProviderPacerConfigSchema = z
   });
 
 export const CircuitBreakerConfigSchema = z.object({
-  enabled: z.boolean().default(true),
-  failure_threshold: z.number().int().positive().default(5),
-  failure_window_ms: z.number().int().positive().default(60000),
-  open_duration_ms: z.number().int().positive().default(30000),
+  enabled: z.boolean(),
+  failure_threshold: z.number().int().positive(),
+  failure_window_ms: z.number().int().positive(),
+  open_duration_ms: z.number().int().positive(),
   half_open_max_probes: z.number().int().positive().default(2),
   success_threshold_to_close: z.number().int().positive().default(2),
 });
@@ -129,12 +129,12 @@ export const ProviderConfigEntrySchema = z.object({
   limits: z.record(z.string(), RateLimitSchema).optional(),
   conserve_rules: z.array(ConserveRuleSchema).optional().default([]),
   name: z.string().min(1).optional(),
-  env_key: z.string().min(1).optional(),
+  env_key: z.string().min(1),
   strategy: ProviderStrategySchema.optional().default("standard"),
-  request_retry: RequestRetrySchema.optional().default({}),
-  key_cooldown: KeyCooldownSchema.optional().default({}),
-  pacer: ProviderPacerConfigSchema.optional(),
-  circuit_breaker: CircuitBreakerConfigSchema.optional().default({}),
+  request_retry: RequestRetrySchema,
+  key_cooldown: KeyCooldownSchema,
+  pacer: ProviderPacerConfigSchema,
+  circuit_breaker: CircuitBreakerConfigSchema,
 });
 
 export const ProvidersConfigSchema = z.object({
@@ -215,7 +215,6 @@ export const EnvConfigSchema = z.object({
   LITEROUTER_HTTP_TIMEOUT_MS: z.coerce.number().int().positive().default(300000),
   LITEROUTER_IDLE_TIMEOUT_SEC: z.coerce.number().int().positive().default(60),
   COOLDOWN_RATE_LIMIT_TTL_SEC: z.coerce.number().int().nonnegative().default(65),
-  OPENROUTER_ENABLE_QUARANTINE: BooleanCoerceSchema.default(true),
   COOLDOWN_SERVER_ERROR_TTL_SEC: z.coerce.number().int().positive().default(10),
   COOLDOWN_AUTH_ERROR_TTL_SEC: z.coerce.number().int().positive().default(604800),
   FUSION_STICKY_TTL_MS: z.coerce.number().int().positive().default(300000),
@@ -230,20 +229,8 @@ export const EnvConfigSchema = z.object({
   LITEROUTER_PACER_MAX_RPM: z.coerce.number().int().positive().default(600),
   LITEROUTER_PACER_MAX_QUEUE_DEPTH: z.coerce.number().int().positive().default(100),
   LITEROUTER_PACER_MAX_QUEUE_WAIT_MS: z.coerce.number().int().positive().default(15000),
-  OPENROUTER_MIN_DELAY_MS: z.coerce.number().int().nonnegative().default(200),
   NVIDIA_MIN_DELAY_MS: z.coerce.number().int().nonnegative().default(200),
-  ZEN_MIN_DELAY_MS: z.coerce.number().int().nonnegative().default(200),
   GOOGLE_MIN_DELAY_MS: z.coerce.number().int().nonnegative().default(200),
-  GCP_MIN_DELAY_MS: z.coerce.number().int().nonnegative().default(2000),
-  GCP_PACER_MAX_QUEUE_WAIT_MS: z.coerce.number().int().positive().default(240000),
-  GCP_ENABLE_RETRIES: BooleanCoerceSchema.default(true),
-  GCP_ENABLE_QUARANTINE: BooleanCoerceSchema.default(true),
-  GCP_ENABLE_CIRCUIT_BREAKER: BooleanCoerceSchema.default(false),
-  GCP_ENABLE_PACER: BooleanCoerceSchema.default(true),
-  ZEN_ENABLE_RETRIES: BooleanCoerceSchema.default(true),
-  ZEN_ENABLE_QUARANTINE: BooleanCoerceSchema.default(true),
-  ZEN_ENABLE_CIRCUIT_BREAKER: BooleanCoerceSchema.default(false),
-  ZEN_ENABLE_PACER: BooleanCoerceSchema.default(true),
   TEST_PROVIDER_MIN_DELAY_MS: z.coerce.number().int().nonnegative().default(0),
   MOCK_TP_PORT: z.coerce.number().int().positive().default(8999),
   LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("info"),

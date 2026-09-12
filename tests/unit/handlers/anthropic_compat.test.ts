@@ -5,7 +5,7 @@ import {
   validateAnthropicPayload,
   type AnthropicMessagesRequest,
 } from "../../../src/handlers/anthropic_compat";
-import { getProviderConfig, initProviderRegistry } from "../../../src/config/providers";
+import { getProviderConfig, initProviderRegistry, isRegisteredProvider } from "../../../src/config/providers";
 import { globalKeyPool } from "../../../src/handlers/openai_compat";
 
 describe("Anthropic Compat Handler Unit Tests", () => {
@@ -121,6 +121,22 @@ describe("Anthropic Compat Handler Unit Tests", () => {
         expect(delayMs).toBeGreaterThanOrEqual(min_ms);
         expect(delayMs).toBeLessThanOrEqual(max_ms);
       }
+    });
+
+    it("evaluates dynamic pacer enabled status without hardcoded provider lists", () => {
+      expect(isRegisteredProvider("an")).toBe(true);
+      const anPacer = getProviderConfig("an").pacer;
+      expect(anPacer).toBeDefined();
+      expect(typeof anPacer?.enabled).toBe("boolean");
+
+      expect(isRegisteredProvider("invalid-provider-code")).toBe(false);
+
+      // Verify that handler file does not contain hardcoded pacer array
+      const handlerSource = Bun.file("src/handlers/anthropic_compat.ts");
+      return handlerSource.text().then((source) => {
+        expect(source).not.toContain('["or", "nv", "zn", "gg"]');
+        expect(source).not.toContain("['or', 'nv', 'zn', 'gg']");
+      });
     });
   });
 

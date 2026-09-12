@@ -269,9 +269,14 @@ async function executeDirectCall(
   clientOptions?: RequestClientOptions
 ): Promise<Response> {
   const env = getEnv();
-  const isZen = directive.provider === "zn";
-  const zenBreakerEnabled = !isZen || env.ZEN_ENABLE_CIRCUIT_BREAKER;
-  const breaker = env.LITEROUTER_CIRCUIT_BREAKER && zenBreakerEnabled
+  const provConfig = isRegisteredProvider(directive.provider)
+    ? getProviderConfig(directive.provider)
+    : undefined;
+  const isSingleFlight =
+    provConfig?.strategy === "zen_single_flight" ||
+    !(provConfig?.request_retry?.enabled ?? true);
+  const breakerEnabled = provConfig?.circuit_breaker?.enabled ?? true;
+  const breaker = env.LITEROUTER_CIRCUIT_BREAKER && breakerEnabled
     ? getCircuitBreakerForProvider(directive.provider)
     : null;
 
@@ -381,8 +386,12 @@ async function executeDirectCall(
       }
     }
 
-    const zenRetriesEnabled = !isZen || env.ZEN_ENABLE_RETRIES;
-    const canRetry = (classification.isConserve || zenRetriesEnabled) && classification.action === "retry_rotate" && attempt < maxAttempts && !clientSignal?.aborted;
+    const retriesEnabled = !isSingleFlight;
+    const canRetry =
+      (classification.isConserve || retriesEnabled) &&
+      classification.action === "retry_rotate" &&
+      attempt < maxAttempts &&
+      !clientSignal?.aborted;
     if (canRetry) {
       throw new UpstreamRetryableError(
         `Upstream error ${response.status}: ${classification.reason}`,
@@ -391,8 +400,11 @@ async function executeDirectCall(
       );
     }
 
-    if (isZen && !env.ZEN_ENABLE_RETRIES && classification.action === "retry_rotate") {
-      logWarn(EMOJI.zap, `[ZEN ${reqId}] Single-flight mode (ZEN_ENABLE_RETRIES=false): Passing HTTP ${response.status} directly downstream.`);
+    if (isSingleFlight && classification.action === "retry_rotate") {
+      logWarn(
+        EMOJI.zap,
+        `[${directive.provider.toUpperCase()} ${reqId}] Single-flight mode: Passing HTTP ${response.status} directly downstream.`
+      );
     }
 
     logServed(reqId, duration, response.status, attempt, maxAttempts);
@@ -561,8 +573,11 @@ async function executeDirectCall(
         : classification.quarantineTtlSec;
       logLimit(reqId, directive.provider, currentKeyIndex, 500, midTtlSec, selected.totalKeys, reason);
 
-      if (isZen && !env.ZEN_ENABLE_RETRIES) {
-        logWarn(EMOJI.zap, `[ZEN ${reqId}] Mid-stream drop occurred. Retries disabled via ZEN_ENABLE_RETRIES=false. Closing stream.`);
+      if (isSingleFlight) {
+        logWarn(
+          EMOJI.zap,
+          `[${directive.provider.toUpperCase()} ${reqId}] Mid-stream drop occurred. Retries disabled in single-flight mode. Closing stream.`
+        );
         return null;
       }
 
@@ -590,16 +605,7 @@ async function executeDirectCall(
           model: activePayload.model,
         };
 
-        if (env.LITEROUTER_PACER_ENABLED && (!isZen || env.ZEN_ENABLE_PACER)) {
-          const dynamicMaxQueueDepth = globalKeyPool.getDynamicMaxQueueDepth(directive.provider);
-          const maxQueueDepth = env.LITEROUTER_PACER_MAX_QUEUE_DEPTH > 0
-            ? env.LITEROUTER_PACER_MAX_QUEUE_DEPTH
-            : dynamicMaxQueueDepth;
-          const pacer = getPacerForProvider(directive.provider, 0, {
-            maxQueueDepth,
-          });
-          await pacer.acquire(clientSignal);
-        }
+        await acquireProviderPacer(directive.provider, clientSignal);
 
         try {
           const nextResult = await fetchWithTtftGuard(nextFetchOpts);
@@ -653,13 +659,16 @@ export async function acquireProviderPacer(
   if (!env.LITEROUTER_PACER_ENABLED) {
     return;
   }
-  if (provider === "zn" && !env.ZEN_ENABLE_PACER) {
+  const provConfig = isRegisteredProvider(provider) ? getProviderConfig(provider) : undefined;
+  if (provConfig?.pacer?.enabled === false) {
     return;
   }
   const dynamicMaxQueueDepth = globalKeyPool.getDynamicMaxQueueDepth(provider);
-  const maxQueueDepth = env.LITEROUTER_PACER_MAX_QUEUE_DEPTH > 0
-    ? env.LITEROUTER_PACER_MAX_QUEUE_DEPTH
-    : dynamicMaxQueueDepth;
+  const maxQueueDepth = provConfig?.pacer?.max_queue_depth ?? (
+    env.LITEROUTER_PACER_MAX_QUEUE_DEPTH > 0
+      ? env.LITEROUTER_PACER_MAX_QUEUE_DEPTH
+      : dynamicMaxQueueDepth
+  );
   const pacer = getPacerForProvider(provider, 0, { maxQueueDepth });
   await pacer.acquire(clientSignal);
 }
@@ -728,12 +737,17 @@ async function tryDirectAttempt(
       return { success: false, error: err, retryable: true };
     }
     if (err instanceof NoResponseError) {
-      const isZenNoResp = directive.provider === "zn";
+      const provConfig = isRegisteredProvider(directive.provider)
+        ? getProviderConfig(directive.provider)
+        : undefined;
+      const isSingleFlight =
+        provConfig?.strategy === "zen_single_flight" ||
+        !(provConfig?.request_retry?.enabled ?? true);
       if (globalKeyPool.isQuarantineEnabled(directive.provider)) {
         globalKeyPool.reportFailure(directive.provider, selected.index, 0, undefined, err.message, Date.now(), 2);
       }
-      if (isZenNoResp && !getEnv().ZEN_ENABLE_RETRIES) {
-        logWarn(EMOJI.zap, `[ZEN ${reqId}] Single-flight mode (ZEN_ENABLE_RETRIES=false): Upstream transport error: ${err.message}`);
+      if (isSingleFlight) {
+        logWarn(EMOJI.zap, `[${directive.provider.toUpperCase()} ${reqId}] Single-flight mode: Upstream transport error: ${err.message}`);
         logServed(reqId, Date.now() - (startTime ?? Date.now()), 502, attempt, maxAttempts);
         logSeparator();
         return {
@@ -741,7 +755,7 @@ async function tryDirectAttempt(
           response: Response.json(
             {
               error: {
-                message: `ZEN upstream connection failed: ${err.message}`,
+                message: `${directive.provider.toUpperCase()} upstream connection failed: ${err.message}`,
                 type: "upstream_connection_error",
                 code: 502,
               },
@@ -770,14 +784,16 @@ async function executeSingleAttemptLoop(
 ): Promise<Response> {
   const env = getEnv();
   const poolSize = globalKeyPool.getPoolSize(directive.provider);
-  const provConfig = getProviderConfig(directive.provider);
-  const maxAttempts = provConfig.request_retry.enabled
+  const provConfig = isRegisteredProvider(directive.provider)
+    ? getProviderConfig(directive.provider)
+    : undefined;
+  const maxAttempts = provConfig?.request_retry?.enabled
     ? Math.min(provConfig.request_retry.max_attempts, poolSize > 0 ? poolSize : 1)
     : 1;
   let lastError: unknown = null;
   let prevKeyIndex = -1;
   const startTime = Date.now();
-  const maxWaitMs = env.LITEROUTER_PACER_MAX_QUEUE_WAIT_MS || 300000;
+  const maxWaitMs = provConfig?.pacer?.max_queue_wait_ms ?? (env.LITEROUTER_PACER_MAX_QUEUE_WAIT_MS || 300000);
 
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     const dwellMs = Date.now() - startTime;
@@ -795,8 +811,7 @@ async function executeSingleAttemptLoop(
       );
     }
 
-    const shouldPaceIngress =
-      !["or", "nv", "zn", "gg"].includes(directive.provider) || !env.LITEROUTER_PACER_ENABLED;
+    const shouldPaceIngress = provConfig?.pacer?.enabled ?? false;
     if (shouldPaceIngress) {
       try {
         await acquireProviderPacer(directive.provider, clientSignal);
@@ -865,7 +880,7 @@ async function executeSingleAttemptLoop(
       throw lastError;
     }
 
-    if (attempt + 1 < maxAttempts) {
+    if (attempt + 1 < maxAttempts && provConfig?.request_retry?.delay) {
       const { min_ms, max_ms } = provConfig.request_retry.delay;
       const delayMs = min_ms < max_ms
         ? min_ms + Math.floor(Math.random() * (max_ms - min_ms + 1))

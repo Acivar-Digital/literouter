@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import rawProviders from "../../config/providers.json";
 import { resetEnvCache } from "../../src/config/env";
+import { initProviderRegistry } from "../../src/config/providers";
 import {
   calculateMidnightUtcSec,
   resolveConserveTtlSec,
@@ -194,17 +196,19 @@ describe("Conserve Rules — Comprehensive Unit Test Suite", () => {
     let pool: KeyPool;
 
     beforeEach(() => {
-      process.env.OPENROUTER_ENABLE_QUARANTINE = "false";
-      resetEnvCache();
+      const customProviders = JSON.parse(JSON.stringify(rawProviders));
+      customProviders.providers.openrouter.key_cooldown.enabled = false;
+      initProviderRegistry(customProviders);
       pool = new KeyPool();
       pool.setPool("or", ["sk-or-key-0", "sk-or-key-1"]);
     });
 
     afterEach(() => {
       pool.reset();
+      initProviderRegistry();
     });
 
-    it("verifies isQuarantineEnabled('or') is false when OPENROUTER_ENABLE_QUARANTINE=false", () => {
+    it("verifies isQuarantineEnabled('or') is false when key_cooldown is disabled", () => {
       expect(pool.isQuarantineEnabled("or")).toBe(false);
     });
 
@@ -318,14 +322,16 @@ describe("Conserve Rules — Comprehensive Unit Test Suite", () => {
     let pool: KeyPool;
 
     beforeEach(() => {
-      process.env.OPENROUTER_ENABLE_QUARANTINE = "false";
-      resetEnvCache();
+      const customProviders = JSON.parse(JSON.stringify(rawProviders));
+      customProviders.providers.openrouter.key_cooldown.enabled = false;
+      initProviderRegistry(customProviders);
       pool = new KeyPool();
       pool.setPool("or", ["sk-or-key-0", "sk-or-key-1"]);
     });
 
     afterEach(() => {
       pool.reset();
+      initProviderRegistry();
     });
 
     it("does NOT quarantine key on generic 429 when quarantine is disabled", () => {

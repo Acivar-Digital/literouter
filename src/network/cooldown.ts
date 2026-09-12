@@ -1,5 +1,3 @@
-import { getEnv } from "../config/env";
-
 export interface KeyCooldownState {
   readonly quarantinedUntil: number;
   readonly reason: string;
@@ -19,7 +17,7 @@ export interface ConserveRule {
 }
 
 const DEFAULT_COOLDOWN_SEC = 30;
-const RATE_LIMIT_DEFAULT_SEC = 65;
+export const RATE_LIMIT_DEFAULT_SEC = 65;
 const SERVER_ERROR_DEFAULT_SEC = 10;
 const AUTH_ERROR_DEFAULT_SEC = 604800; // 7 days
 
@@ -96,17 +94,18 @@ function getHeaderString(headers?: Headers | Record<string, string>): string | n
 
 export function parseResetDelay(
   headers?: Headers | Record<string, string>,
-  errorBody?: string
+  errorBody?: string,
+  configuredTtlSec?: number
 ): ParsedResetDelay {
-  if (getEnv().COOLDOWN_RATE_LIMIT_TTL_SEC === 0) {
+  const effectiveTtlSec = configuredTtlSec !== undefined ? configuredTtlSec : RATE_LIMIT_DEFAULT_SEC;
+  if (effectiveTtlSec === 0) {
     return { delayMs: 0, isGraceRetry: false };
   }
   const headerVal = getHeaderString(headers);
   const extractedMs = parseHeaderValue(headerVal) ?? parseBodyRegex(errorBody);
 
   if (extractedMs === null) {
-    const configuredTtlSec = getEnv().COOLDOWN_RATE_LIMIT_TTL_SEC;
-    return { delayMs: configuredTtlSec * 1000, isGraceRetry: false };
+    return { delayMs: effectiveTtlSec * 1000, isGraceRetry: false };
   }
   const isGrace = extractedMs > 0 && extractedMs <= GRACE_RETRY_THRESHOLD_MS;
   const delayMs = isGrace ? extractedMs : clampDuration(extractedMs);
@@ -125,9 +124,9 @@ const STATUS_TTL_MAP: Readonly<Record<number, number>> = {
   504: SERVER_ERROR_DEFAULT_SEC,
 };
 
-export function computeStatusTtlSec(status: number): number {
+export function computeStatusTtlSec(status: number, configuredTtlSec?: number): number {
   if (status === 429) {
-    return getEnv().COOLDOWN_RATE_LIMIT_TTL_SEC;
+    return configuredTtlSec !== undefined ? configuredTtlSec : RATE_LIMIT_DEFAULT_SEC;
   }
   const mapped = STATUS_TTL_MAP[status];
   if (mapped !== undefined) {
@@ -167,6 +166,11 @@ export function resolveConserveTtlSec(ttl: number | "midnight_utc" | undefined, 
 
 export class CooldownManager {
   private readonly states = new Map<string, KeyCooldownState>();
+  private readonly defaultRateLimitTtlSec: number;
+
+  constructor(defaultRateLimitTtlSec: number = RATE_LIMIT_DEFAULT_SEC) {
+    this.defaultRateLimitTtlSec = defaultRateLimitTtlSec;
+  }
 
   public isQuarantined(keyId: string, now: number = Date.now()): boolean {
     const state = this.states.get(keyId);
@@ -217,9 +221,12 @@ export class CooldownManager {
     now: number = Date.now(),
     customTtlSec?: number
   ): KeyCooldownState {
-    let ttlMs = customTtlSec !== undefined ? customTtlSec * 1000 : computeStatusTtlSec(status) * 1000;
+    let ttlMs =
+      customTtlSec !== undefined
+        ? customTtlSec * 1000
+        : computeStatusTtlSec(status, this.defaultRateLimitTtlSec) * 1000;
     if (customTtlSec === undefined && status === 429) {
-      const reset = parseResetDelay(headers, errorBody);
+      const reset = parseResetDelay(headers, errorBody, this.defaultRateLimitTtlSec);
       ttlMs = reset.delayMs;
     }
     const state: KeyCooldownState = {

@@ -3,6 +3,7 @@ import { parseDirective } from "../../../src/directive/parser";
 import { validateDirective } from "../../../src/directive/validator";
 import { loadKeyPools } from "../../../src/config/keys";
 import { getEnv } from "../../../src/config/env";
+import { getProviderConfig, initProviderRegistry } from "../../../src/config/providers";
 import { clearPacerRegistry, getPacerForProvider } from "../../../src/network/pacer";
 import {
   buildGcpAuthHeaders,
@@ -15,12 +16,17 @@ import { handleAppRequest } from "../../../src/index";
 
 describe("GCP Compatibility Architecture (gc)", () => {
   beforeEach(() => {
+    initProviderRegistry();
     globalCooldownManager.clearAll();
     globalKeyPool.reset();
     clearPacerRegistry();
   });
 
   afterEach(() => {
+    initProviderRegistry();
+    delete process.env.GCP_ENABLE_RETRIES;
+    delete process.env.GCP_ENABLE_QUARANTINE;
+    delete process.env.GCP_ENABLE_CIRCUIT_BREAKER;
     globalCooldownManager.clearAll();
     globalKeyPool.reset();
     clearPacerRegistry();
@@ -156,10 +162,202 @@ describe("GCP Compatibility Architecture (gc)", () => {
       expect(pacer.maxQueueWaitMs).toBe(240000);
     });
 
-    it("reads GCP_MIN_DELAY_MS and GCP_PACER_MAX_QUEUE_WAIT_MS from environment schema", () => {
-      const env = getEnv();
-      expect(env.GCP_MIN_DELAY_MS).toBe(2000);
-      expect(env.GCP_PACER_MAX_QUEUE_WAIT_MS).toBe(240000);
+    it("reads GCP pacer config from provider config", () => {
+      const prov = getProviderConfig("gc");
+      expect(prov.pacer?.min_delay_ms).toBe(2000);
+      expect(prov.pacer?.max_queue_wait_ms).toBe(240000);
+    });
+  });
+
+  describe("Provider Config Resilience Controls (request_retry, key_cooldown, circuit_breaker)", () => {
+    it("loads default resilience settings from provider config registry", () => {
+      const prov = getProviderConfig("gc");
+      expect(prov.request_retry.enabled).toBe(true);
+      expect(prov.request_retry.max_attempts).toBe(3);
+      expect(prov.request_retry.delay.min_ms).toBe(200);
+      expect(prov.request_retry.delay.max_ms).toBe(500);
+      expect(prov.key_cooldown.enabled).toBe(true);
+      expect(prov.circuit_breaker.enabled).toBe(false);
+    });
+
+    it("respects disabled request_retry (process.env.GCP_ENABLE_RETRIES=false and provider config)", async () => {
+      process.env.GCP_ENABLE_RETRIES = "false";
+      const prov = getProviderConfig("gc");
+      prov.request_retry.enabled = false;
+      prov.pacer!.enabled = false;
+
+      initializeKeyPools({ GCP_KEYS: "gcp-mock-key-1,gcp-mock-key-2" });
+
+      let fetchCount = 0;
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = (async () => {
+        fetchCount++;
+        return new Response(JSON.stringify({ error: { message: "Rate limit exceeded" } }), {
+          status: 429,
+          headers: { "Content-Type": "application/json" },
+        });
+      }) as unknown as typeof fetch;
+
+      try {
+        const req = new Request("http://localhost:7766/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: "Bearer lr-gc-oa-ch-no",
+          },
+          body: JSON.stringify({
+            model: "gemma-2-27b-it",
+            messages: [{ role: "user", content: "Hi" }],
+          }),
+        });
+
+        const res = await handleGcpCompat(req, "lr-gc-oa-ch-no");
+        expect(res.status).toBe(429);
+        // Single-flight mode: terminates on attempt 1 without retrying key 2
+        expect(fetchCount).toBe(1);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it("retries across keys when request_retry.enabled is true", async () => {
+      const prov = getProviderConfig("gc");
+      prov.request_retry.enabled = true;
+      prov.request_retry.delay.min_ms = 0;
+      prov.request_retry.delay.max_ms = 0;
+      prov.pacer!.enabled = false;
+
+      initializeKeyPools({ GCP_KEYS: "gcp-mock-key-1,gcp-mock-key-2" });
+
+      let fetchCount = 0;
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = (async () => {
+        fetchCount++;
+        if (fetchCount === 1) {
+          return new Response(JSON.stringify({ error: { message: "Rate limit exceeded" } }), {
+            status: 429,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        return new Response(JSON.stringify({ choices: [{ message: { role: "assistant", content: "pong" } }] }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }) as unknown as typeof fetch;
+
+      try {
+        const req = new Request("http://localhost:7766/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: "Bearer lr-gc-oa-ch-no",
+          },
+          body: JSON.stringify({
+            model: "gemma-2-27b-it",
+            messages: [{ role: "user", content: "ping" }],
+          }),
+        });
+
+        const res = await handleGcpCompat(req, "lr-gc-oa-ch-no");
+        expect(res.status).toBe(200);
+        expect(fetchCount).toBe(2);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it("bypasses key quarantine when key_cooldown is disabled (process.env.GCP_ENABLE_QUARANTINE=false and provider config)", async () => {
+      process.env.GCP_ENABLE_QUARANTINE = "false";
+      const prov = getProviderConfig("gc");
+      prov.key_cooldown.enabled = false;
+      prov.request_retry.enabled = false;
+      prov.pacer!.enabled = false;
+
+      initializeKeyPools({ GCP_KEYS: "gcp-mock-key-1,gcp-mock-key-2" });
+
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = (async () => {
+        throw new Error("Network transport dropped");
+      }) as unknown as typeof fetch;
+
+      try {
+        const req = new Request("http://localhost:7766/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: "Bearer lr-gc-oa-ch-no",
+          },
+          body: JSON.stringify({
+            model: "gemma-2-27b-it",
+            messages: [{ role: "user", content: "ping" }],
+          }),
+        });
+
+        const res = await handleGcpCompat(req, "lr-gc-oa-ch-no");
+        expect(res.status).toBe(502);
+
+        // Key should NOT be quarantined because key_cooldown is disabled
+        const status = globalKeyPool.getStatus("gc");
+        expect(status.total).toBe(2);
+        expect(status.quarantined).toBe(0);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it("quarantines key on network transport drop when key_cooldown.enabled is true", async () => {
+      const prov = getProviderConfig("gc");
+      prov.key_cooldown.enabled = true;
+      prov.request_retry.enabled = false;
+      prov.pacer!.enabled = false;
+
+      initializeKeyPools({ GCP_KEYS: "gcp-mock-key-1,gcp-mock-key-2" });
+
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = (async () => {
+        throw new Error("Network transport dropped");
+      }) as unknown as typeof fetch;
+
+      try {
+        const req = new Request("http://localhost:7766/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: "Bearer lr-gc-oa-ch-no",
+          },
+          body: JSON.stringify({
+            model: "gemma-2-27b-it",
+            messages: [{ role: "user", content: "ping" }],
+          }),
+        });
+
+        const res = await handleGcpCompat(req, "lr-gc-oa-ch-no");
+        expect(res.status).toBe(502);
+
+        // Key SHOULD be quarantined because key_cooldown is enabled
+        const status = globalKeyPool.getStatus("gc");
+        expect(status.total).toBe(2);
+        expect(status.quarantined).toBe(1);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it("restores provider config cleanly after mutations via initProviderRegistry", () => {
+      const prov = getProviderConfig("gc");
+      prov.request_retry.enabled = false;
+      prov.key_cooldown.enabled = false;
+      prov.circuit_breaker.enabled = true;
+
+      expect(getProviderConfig("gc").request_retry.enabled).toBe(false);
+      expect(getProviderConfig("gc").key_cooldown.enabled).toBe(false);
+      expect(getProviderConfig("gc").circuit_breaker.enabled).toBe(true);
+
+      initProviderRegistry();
+
+      expect(getProviderConfig("gc").request_retry.enabled).toBe(true);
+      expect(getProviderConfig("gc").key_cooldown.enabled).toBe(true);
+      expect(getProviderConfig("gc").circuit_breaker.enabled).toBe(false);
     });
   });
 

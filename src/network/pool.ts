@@ -1,7 +1,7 @@
 import { EventEmitter } from "node:events";
 import type { ProviderCode } from "../directive/parser";
 import { CooldownManager, type KeyCooldownState } from "./cooldown";
-import { getEnv } from "../config/env";
+import { getProviderConfig, isRegisteredProvider } from "../config/providers";
 
 export interface SelectedKey {
   readonly key: string;
@@ -16,14 +16,9 @@ export interface PoolStatus {
 }
 
 export function isProviderQuarantineEnabled(provider: string): boolean {
-  if (provider === "gc") {
-    return getEnv().GCP_ENABLE_QUARANTINE;
-  }
-  if (provider === "zn") {
-    return getEnv().ZEN_ENABLE_QUARANTINE;
-  }
-  if (provider === "or") {
-    return getEnv().OPENROUTER_ENABLE_QUARANTINE;
+  if (isRegisteredProvider(provider)) {
+    const provConfig = getProviderConfig(provider);
+    return provConfig.key_cooldown?.enabled ?? true;
   }
   return true;
 }

@@ -133,4 +133,32 @@ describe("Provider Circuit Breaker with Strict Canary Lease", () => {
     expect(b1).toBe(b2);
     expect(b1.providerName).toBe("openrouter");
   });
+
+  it("loads circuit breaker configuration from registered provider defaults", () => {
+    const breaker = getCircuitBreakerForProvider("or");
+    expect(breaker.providerName).toBe("or");
+    // "or" in providers.json has failure_threshold: 5, open_duration_ms: 30000
+    for (let i = 0; i < 5; i++) {
+      breaker.recordFailure(true);
+    }
+    expect(breaker.getState()).toBe("OPEN");
+    const stats = breaker.getStats();
+    // Cooldown is 30_000ms from open_duration_ms
+    expect(stats.nextProbeTimeMs).toBeGreaterThan(Date.now() + 25000);
+    expect(stats.nextProbeTimeMs).toBeLessThanOrEqual(Date.now() + 30000);
+  });
+
+  it("prefers explicit config over registered provider defaults", () => {
+    const breaker = getCircuitBreakerForProvider("or_custom", {
+      failureThreshold: 2,
+      cooldownMs: 5000,
+    });
+    breaker.recordFailure(true);
+    expect(breaker.getState()).toBe("CLOSED");
+    breaker.recordFailure(true);
+    expect(breaker.getState()).toBe("OPEN");
+    const stats = breaker.getStats();
+    expect(stats.nextProbeTimeMs).toBeGreaterThan(Date.now() + 4000);
+    expect(stats.nextProbeTimeMs).toBeLessThanOrEqual(Date.now() + 5000);
+  });
 });

@@ -168,7 +168,7 @@ order below applies. Default engine is `legacy` (see §11).
 
 `dispatchRoute` (`src/index.ts:392-409`): admin reset → system
 (`/health /reset /hello`) → models discovery → `validateEndpointMatch` →
-ingress pacer (`or/nv/zn/gg` only; `gc` handler-paced, `src/index.ts:216-230`)
+ingress pacer (dynamically driven by provider config `pacer.enabled`, `src/index.ts:256-276`)
 → `/v1/responses` → `gc` chat/beta → `ROUTE_MAP` (`src/index.ts:148-156`) →
 Google beta (`/v1beta/openai/`, `/v1beta/models/`, interactions/files;
 `src/index.ts:201-212`) → `404`.

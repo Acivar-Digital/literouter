@@ -5,7 +5,12 @@ import type { Server } from "bun";
 import { emitEnvDeprecationWarnings } from "./config/deprecation";
 import { getEnv, resolveEngine } from "./config/env";
 import { loadKeyPools } from "./config/keys";
-import { getAllProviders, initProviderRegistry } from "./config/providers";
+import {
+  getAllProviders,
+  getProviderConfig,
+  initProviderRegistry,
+  isRegisteredProvider,
+} from "./config/providers";
 import { initStrategyRegistry } from "./engine/strategy_registry";
 import { parseDirective, type ParsedDirective } from "./directive/parser";
 import { extractDirectiveToken } from "./directive/validator";
@@ -256,13 +261,15 @@ async function acquireIngressPacer(req: Request, rawKey: string, reqId?: string)
   }
   const parsed = parseDirective(rawKey);
   const provider = parsed?.type === "direct" ? parsed.provider : null;
-  // Skip "gc" here because S1 already paces gc ingress in handler to avoid double-pacing (2000ms x2)
-  // For future unification, gc edge will replace handler ingress — for now keep gc handler-paced
   if (
     provider === null ||
-    (provider !== "or" && provider !== "nv" && provider !== "zn" && provider !== "gg") ||
+    !isRegisteredProvider(provider) ||
     !getEnv().LITEROUTER_PACER_ENABLED
   ) {
+    return null;
+  }
+  const provPacer = getProviderConfig(provider).pacer;
+  if (!provPacer?.enabled) {
     return null;
   }
   try {

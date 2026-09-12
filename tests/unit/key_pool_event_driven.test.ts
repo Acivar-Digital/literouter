@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import rawProviders from "../../config/providers.json";
+import { initProviderRegistry } from "../../src/config/providers";
 import { CooldownManager } from "../../src/network/cooldown";
 import { KeyPool } from "../../src/network/pool";
 
@@ -225,8 +227,9 @@ describe("KeyPool — Event-Driven Key Availability & Lifecycle", () => {
     });
 
     it("parks key via conserveKey even when provider quarantine is disabled", () => {
-      const origEnv = process.env.OPENROUTER_ENABLE_QUARANTINE;
-      process.env.OPENROUTER_ENABLE_QUARANTINE = "false";
+      const customProviders = JSON.parse(JSON.stringify(rawProviders));
+      customProviders.providers.openrouter.key_cooldown.enabled = false;
+      initProviderRegistry(customProviders);
       try {
         pool.setPool("or", ["sk-or-key-1"]);
         const now = 3000000;
@@ -240,7 +243,7 @@ describe("KeyPool — Event-Driven Key Availability & Lifecycle", () => {
         expect(cState.quarantinedUntil).toBe(now + 120000);
         expect(cooldownManager.isQuarantined("or:0", now)).toBe(true);
       } finally {
-        process.env.OPENROUTER_ENABLE_QUARANTINE = origEnv;
+        initProviderRegistry();
       }
     });
   });

@@ -172,13 +172,18 @@ Per-provider model handling on the passthrough path (transforms, not gates):
 
 ## 3. `config/providers.json` — providers + headers registry
 
+`config/providers.json` is the **sole source of truth** for all provider definitions and operational parameters.
 Top-level shape: `{ "providers": { "<name>": { ... } } }`.
 Entry keys (verified): `code`, `name`, `env_key`, `base_url`, `auth_header`,
-`endpoints`, `limits`, `strategy` (enum in `ProviderStrategySchema`,
-`src/config/schema.ts:113-121`), `request_retry`, `pacer`, `circuit_breaker`,
-optional `headers`, `key_cooldown`, `conserve_rules`.
-All active and catalog providers explicitly declare their operational
-parameters (`strategy`, `request_retry`, `pacer`, `circuit_breaker`).
+`endpoints`, `strategy` (enum in `ProviderStrategySchema`,
+`src/config/schema.ts:113-121`), strictly required operational blocks:
+`request_retry`, `key_cooldown`, `pacer`, `circuit_breaker`, plus optional
+`limits`, `headers`, `conserve_rules`.
+
+All 13 active and catalog providers explicitly declare their operational
+parameters (`strategy`, `request_retry`, `key_cooldown`, `pacer`, `circuit_breaker`).
+Missing any of the four operational blocks is a fatal validation error that
+aborts gateway boot immediately.
 
 > Canonical provider table: §3.1 below is the single source of truth for
 > name → code → base_url → strategy. Other skill files link here instead of
@@ -187,7 +192,9 @@ parameters (`strategy`, `request_retry`, `pacer`, `circuit_breaker`).
 Validated by `ProviderConfigEntrySchema` / `ProvidersConfigSchema` in
 `src/config/schema.ts:123-142` (`auth_header` is `"Bearer" | "x-api-key"`,
 default `"Bearer"`; `endpoints` is a record keyed by `CompletionCodeSchema`;
-`limits` is a record of name → `RateLimitSchema`).
+`limits` is an optional record of name → `RateLimitSchema`). Boot-time validation
+in `src/config/providers.ts:initProviderRegistry` enforces strict schema
+compliance; invalid or missing blocks fail loudly and halt startup.
 
 ### 3.1 Providers on disk (name → `code` → `base_url` → `strategy`)
 
@@ -210,8 +217,8 @@ default `"Bearer"`; `endpoints` is a record keyed by `CompletionCodeSchema`;
 Codes must stay in sync with `ProviderCodeSchema`
 (`src/config/schema.ts:3-17`); directive parsing, `globalKeyPool`, and the
 pacer all key off the two-letter code. All 13 providers on disk explicitly
-declare `name`, `env_key`, `strategy`, `request_retry`, `pacer`, and
-`circuit_breaker` configurations.
+declare `name`, `env_key`, `strategy`, `request_retry`, `key_cooldown`, `pacer`,
+and `circuit_breaker` configurations.
 
 ### 3.2 `headers` registry (static per-provider headers)
 
@@ -269,20 +276,46 @@ each provider's factory at boot; an unknown `strategy` string throws
 in `src/index.ts:49-57` catches registry failures and calls
 `process.exit(1)` — a bad strategy is fatal, never fail-open.
 
-### 3.6 Operational Governance: `request_retry`, `pacer`, `circuit_breaker`
+### 3.6 Operational Governance & Zero-Hardcoding: `request_retry`, `key_cooldown`, `pacer`, `circuit_breaker`
 
-Operational parameters in `config/providers.json` directly govern all four gateway handlers (`openai_compat.ts`, `anthropic_compat.ts`, `openai_original.ts`, `gcp_compat.ts`), replacing legacy hardcoded magic numbers (`Math.min(3, Math.max(1, poolSize))` and hardcoded `isZenLoop` conditions):
+`config/providers.json` is the **sole source of truth** for all provider operational configurations. All four operational blocks (`pacer`, `circuit_breaker`, `key_cooldown`, `request_retry`) are **strictly required** by `ProviderConfigEntrySchema` (`src/config/schema.ts:123-138`) on every registered provider.
 
-- **`request_retry`**: Handlers compute maximum attempts dynamically:
-  ```ts
-  const maxAttempts = provConfig.request_retry.enabled
-    ? Math.min(provConfig.request_retry.max_attempts, poolSize > 0 ? poolSize : 1)
-    : 1;
-  ```
-  and calculate bounded jitter delay from `provConfig.request_retry.delay` (`min_ms`, `max_ms`).
-- **Zen Single-Flight Execution**: Zen (`zn`) is explicitly configured in `config/providers.json` with `max_attempts: 1` and `delay: { min_ms: 0, max_ms: 0 }`. This prevents upstream OpenCode session burning and `429 FreeUsageLimitError` without needing hardcoded special-cased loop branches in handler code.
-- **`pacer`**: Provider-level conveyor queue pacing (`min_delay_ms`, `max_delay_ms`, `max_queue_depth`, `max_queue_wait_ms`) smooths bursts and enforces spacing.
-- **`circuit_breaker`**: Controls failure thresholds, failure sliding windows, open duration, and half-open probe caps per provider.
+Missing any of these blocks or supplying invalid values triggers a loud fatal error at startup:
+```
+[FATAL] [ProviderRegistry] Provider configuration validation failed loudly refusing to start:
+...
+```
+and aborts server initialization immediately (`process.exit(1)` in `src/index.ts`).
+
+Operational parameters directly govern runtime behavior across all four gateway handlers (`openai_compat.ts`, `anthropic_compat.ts`, `openai_original.ts`, `gcp_compat.ts`) and networking subsystems, eliminating hardcoded provider whitelists, switch statements, and magic numbers:
+
+1. **`request_retry`** (`enabled`, `max_attempts`, `delay: { min_ms, max_ms }`):
+   - Handlers dynamically compute retry attempts based on configured limits and pool size:
+     ```ts
+     const maxAttempts = provConfig.request_retry.enabled
+       ? Math.min(provConfig.request_retry.max_attempts, poolSize > 0 ? poolSize : 1)
+       : 1;
+     ```
+   - Bounded jitter delays are calculated directly from `provConfig.request_retry.delay` (`min_ms`, `max_ms`).
+   - Replaced legacy hardcoded retry caps (`Math.min(3, Math.max(1, poolSize))`).
+   - **Zen Single-Flight Policy**: Zen (`zn`) is explicitly configured in `config/providers.json` with `max_attempts: 1` and `delay: { min_ms: 0, max_ms: 0 }`. This eliminates upstream OpenCode session burning and `429 FreeUsageLimitError` without hardcoded `isZenLoop` branches in handler code.
+
+2. **`pacer`** (`enabled`, `min_delay_ms`, `max_delay_ms`, `max_queue_depth`, `max_queue_wait_ms`):
+   - **Hardcoded Whitelist Elimination**: Eradicated static `['or', 'nv', 'zn', 'gg']` checks in `src/index.ts` (`acquireIngressPacer`), `src/handlers/openai_compat.ts`, and `src/handlers/anthropic_compat.ts`. Pacing is dynamically activated whenever `isRegisteredProvider(provider)` is true and `provConfig.pacer?.enabled` is active.
+   - **Switch Branch Removal**: `src/network/pacer.ts` (`getPacerForProvider`) now extracts `min_delay_ms`, `max_queue_depth`, and `max_queue_wait_ms` directly from `provConfig.pacer`, eliminating hardcoded `switch (provider)` blocks and environment-variable-specific delays.
+   - **GCP Dynamic Pacing**: `src/handlers/gcp_compat.ts` (`acquireGcpPacer`) dynamically binds to `getProviderConfig("gc").pacer` parameters instead of static GCP env vars.
+
+3. **`circuit_breaker`** (`enabled`, `failure_threshold`, `failure_window_ms`, `open_duration_ms`, `half_open_probes`):
+   - Configures provider circuit breaker failure thresholds, sliding evaluation windows, open duration cooldowns, and half-open probe caps in `src/network/circuit_breaker.ts` (`getCircuitBreakerForProvider`).
+   - Breaker evaluation is dynamically skipped if `provConfig.circuit_breaker?.enabled === false`.
+
+4. **`key_cooldown`** (`enabled`, `cooldown_sec`, `rate_limit_sec`):
+   - **Quarantine Gating**: `src/network/pool.ts` (`isProviderQuarantineEnabled`) checks `provConfig.key_cooldown?.enabled` alongside circuit breaker state, replacing hardcoded switch branches.
+   - **Cooldown Decoupling**: `src/network/cooldown.ts` (`CooldownManager`) is decoupled from the deprecated `COOLDOWN_RATE_LIMIT_TTL_SEC` env var. It now accepts an injected `defaultRateLimitTtlSec` parameter defaulting to `RATE_LIMIT_DEFAULT_SEC = 65`, enabling hermetic and predictable testing.
+
+5. **Dynamic Endpoints & Generic Error Classification in Responses API (`src/handlers/openai_original.ts`)**:
+   - Upstream endpoints are dynamically resolved from `config.endpoints["rs"]` via `resolveUpstreamResponsesUrl()`, replacing the static `UPSTREAM_URLS` dictionary.
+   - Upstream error handling and key quarantine utilize `classifyUpstreamError` generically across all providers, removing previous Zen-only restrictions.
 
 ---
 
@@ -317,7 +350,7 @@ native base override via `MOCK_GG_PORT` / `GOOGLE_NATIVE_BASE_URL`
 | `NuanceCodeSchema` | `:34-42` | `no dp ts gm g3 sb tc` |
 | `RateLimitSchema` | `:44-48` | `{ rpm, rpd, tpm }` non-negative ints |
 | `ProviderEndpointsSchema` | `:50-53` | record `CompletionCode → path` |
-| `ProviderConfigEntrySchema` | `:123-138` | one `config/providers.json` entry |
+| `ProviderConfigEntrySchema` | `:123-138` | one `config/providers.json` entry (strictly requires `pacer`, `circuit_breaker`, `key_cooldown`, `request_retry`) |
 | `ProviderStrategySchema` | `:113-121` | `standard native_cascade gcp_guarded zen_single_flight anthropic_direct` (default `standard`) |
 | `ProvidersConfigSchema` | `:140-142` | `{ providers: {...} }` |
 | `FusionTierSchema` | `:67-71` | `{ priority, apikey, model }` |

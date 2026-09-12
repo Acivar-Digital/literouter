@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { resetEnvCache } from "../../src/config/env";
+import { getProviderConfig, initProviderRegistry } from "../../src/config/providers";
 import { globalKeyPool } from "../../src/handlers/openai_compat";
 import { handleAppRequest, resetAllState } from "../../src/lib";
 
@@ -110,6 +111,7 @@ describe("GCP Retry Toggle & Resilience Handler (GCP_ENABLE_RETRIES & GCP_ENABLE
     process.env.COOLDOWN_RATE_LIMIT_TTL_SEC = "65";
     process.env.GCP_KEYS = "mock-gc-stub-key-01,mock-gc-stub-key-02";
     process.env.NVIDIA_API_KEYS = "mock-nv-stub-key-01,mock-nv-stub-key-02";
+    initProviderRegistry();
     resetEnvCache();
     resetAllState();
   });
@@ -140,6 +142,7 @@ describe("GCP Retry Toggle & Resilience Handler (GCP_ENABLE_RETRIES & GCP_ENABLE
     } else {
       delete process.env.LITEROUTER_PACER_ENABLED;
     }
+    initProviderRegistry();
     resetEnvCache();
     resetAllState();
   });
@@ -184,6 +187,7 @@ describe("GCP Retry Toggle & Resilience Handler (GCP_ENABLE_RETRIES & GCP_ENABLE
     process.env.GCP_KEYS = "mock-gcp-key-1,mock-gcp-key-2";
     resetEnvCache();
     resetAllState();
+    getProviderConfig("gc").request_retry.enabled = false;
 
     const fetchCalls: FetchCallRecord[] = [];
     globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
@@ -218,6 +222,7 @@ describe("GCP Retry Toggle & Resilience Handler (GCP_ENABLE_RETRIES & GCP_ENABLE
     process.env.GCP_KEYS = "mock-gcp-key-1,mock-gcp-key-2";
     resetEnvCache();
     resetAllState();
+    getProviderConfig("gc").request_retry.enabled = false;
 
     const fetchCalls: FetchCallRecord[] = [];
     globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
@@ -262,6 +267,7 @@ describe("GCP Retry Toggle & Resilience Handler (GCP_ENABLE_RETRIES & GCP_ENABLE
     process.env.GCP_KEYS = "mock-gcp-key-1,mock-gcp-key-2";
     resetEnvCache();
     resetAllState();
+    getProviderConfig("gc").request_retry.enabled = false;
 
     globalThis.fetch = (async () => {
       throw new Error("ECONNRESET socket hang up");
@@ -282,6 +288,7 @@ describe("GCP Retry Toggle & Resilience Handler (GCP_ENABLE_RETRIES & GCP_ENABLE
     process.env.GCP_KEYS = "mock-gcp-key-1,mock-gcp-key-2";
     resetEnvCache();
     resetAllState();
+    getProviderConfig("gc").request_retry.enabled = false;
 
     const fetchCalls: FetchCallRecord[] = [];
     globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
@@ -313,6 +320,7 @@ describe("GCP Retry Toggle & Resilience Handler (GCP_ENABLE_RETRIES & GCP_ENABLE
     process.env.NVIDIA_API_KEYS = "nvapi-mock-key-1,nvapi-mock-key-2";
     resetEnvCache();
     resetAllState();
+    getProviderConfig("gc").request_retry.enabled = false;
 
     const fetchCalls: FetchCallRecord[] = [];
     globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
@@ -347,6 +355,7 @@ describe("GCP Retry Toggle & Resilience Handler (GCP_ENABLE_RETRIES & GCP_ENABLE
     process.env.GCP_KEYS = "mock-gcp-key-1,mock-gcp-key-2";
     resetEnvCache();
     resetAllState();
+    getProviderConfig("gc").key_cooldown.enabled = false;
 
     globalThis.fetch = (async () => {
       return createMockErrorResponse(429, "Rate limit reached on key 1");
@@ -369,6 +378,8 @@ describe("GCP Retry Toggle & Resilience Handler (GCP_ENABLE_RETRIES & GCP_ENABLE
     process.env.GCP_KEYS = "mock-single-gcp-key";
     resetEnvCache();
     resetAllState();
+    getProviderConfig("gc").request_retry.enabled = false;
+    getProviderConfig("gc").key_cooldown.enabled = false;
 
     let attempts = 0;
     globalThis.fetch = (async () => {
@@ -403,6 +414,7 @@ describe("GCP Retry Toggle & Resilience Handler (GCP_ENABLE_RETRIES & GCP_ENABLE
     process.env.GCP_ENABLE_QUARANTINE = "false";
     resetEnvCache();
     resetAllState();
+    getProviderConfig("gc").key_cooldown.enabled = false;
 
     globalKeyPool.setPool("gc", ["mock-gc-key"]);
     globalKeyPool.setPool("nv", ["mock-nv-key"]);
@@ -428,6 +440,9 @@ describe("GCP Retry Toggle & Resilience Handler (GCP_ENABLE_RETRIES & GCP_ENABLE
     process.env.GCP_KEYS = "mock-gcp-key";
     resetEnvCache();
     resetAllState();
+    getProviderConfig("gc").request_retry.enabled = false;
+    getProviderConfig("gc").key_cooldown.enabled = false;
+    getProviderConfig("gc").circuit_breaker.enabled = false;
 
     let calls = 0;
     globalThis.fetch = (async () => {

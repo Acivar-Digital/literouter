@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { resetEnvCache } from "../../src/config/env";
 import {
   CooldownManager,
+  RATE_LIMIT_DEFAULT_SEC,
   calculateMidnightUtcSec,
   computeStatusTtlSec,
   getExhaustionBackoffMs,
@@ -29,7 +30,12 @@ afterEach(() => {
 describe("Cooldown Manager — Status Code Reason-Aware Mapping", () => {
   it("assigns 65s default cooldown on HTTP 429 rate limit", () => {
     const ttl = computeStatusTtlSec(429);
-    expect(ttl).toBe(65);
+    expect(ttl).toBe(RATE_LIMIT_DEFAULT_SEC);
+  });
+
+  it("respects explicit configuredTtlSec on HTTP 429 rate limit", () => {
+    expect(computeStatusTtlSec(429, 30)).toBe(30);
+    expect(computeStatusTtlSec(429, 0)).toBe(0);
   });
 
   it("assigns 10s cooldown on transient 5xx server errors", () => {
@@ -106,6 +112,24 @@ describe("Cooldown Manager — Retry-After & Google Delay Parsing", () => {
     expect(parsed.isGraceRetry).toBe(true);
     expect(parsed.delayMs).toBe(1500);
   });
+
+  it("defaults to RATE_LIMIT_DEFAULT_SEC ms when no headers or body delay present", () => {
+    const parsed = parseResetDelay();
+    expect(parsed.delayMs).toBe(RATE_LIMIT_DEFAULT_SEC * 1000);
+    expect(parsed.isGraceRetry).toBe(false);
+  });
+
+  it("respects configuredTtlSec when no headers or body delay present", () => {
+    const parsed = parseResetDelay(undefined, undefined, 45);
+    expect(parsed.delayMs).toBe(45000);
+    expect(parsed.isGraceRetry).toBe(false);
+  });
+
+  it("disables delay when configuredTtlSec is 0", () => {
+    const parsed = parseResetDelay(undefined, undefined, 0);
+    expect(parsed.delayMs).toBe(0);
+    expect(parsed.isGraceRetry).toBe(false);
+  });
 });
 
 describe("Cooldown Manager — Pool Exhaustion Ladder Backoff", () => {
@@ -148,6 +172,14 @@ describe("Cooldown Manager — In-Memory Key State Management", () => {
     manager.clearAll();
     expect(manager.isQuarantined("google:0")).toBe(false);
     expect(manager.isQuarantined("google:1")).toBe(false);
+  });
+
+  it("uses custom defaultRateLimitTtlSec from constructor", () => {
+    const customManager = new CooldownManager(25);
+    customManager.quarantineKey("provider:custom", 429);
+    const remaining = customManager.getRemainingMs("provider:custom");
+    expect(remaining).toBeGreaterThan(20000);
+    expect(remaining).toBeLessThanOrEqual(25000);
   });
 });
 

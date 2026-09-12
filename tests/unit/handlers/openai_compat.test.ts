@@ -92,6 +92,22 @@ describe("openai_compat handler unit tests", () => {
       expect(source.includes("isZenLoop && !env.ZEN_ENABLE_RETRIES")).toBe(false);
       expect(source.includes("getProvidersRegistry")).toBe(false);
       expect(source.includes("cachedRegistry")).toBe(false);
+      expect(source.includes('!["or", "nv", "zn", "gg"].includes')).toBe(false);
+      expect(source.includes("ZEN_ENABLE_")).toBe(false);
+    });
+
+    it("verifies dynamic pacer configuration is loaded via getProviderConfig", () => {
+      const orConfig = getProviderConfig("or");
+      expect(orConfig.pacer).toBeDefined();
+      expect(orConfig.pacer?.enabled).toBe(true);
+
+      const znConfig = getProviderConfig("zn");
+      expect(znConfig.pacer).toBeDefined();
+      expect(znConfig.pacer?.enabled).toBe(true);
+
+      const nvConfig = getProviderConfig("nv");
+      expect(nvConfig.pacer).toBeDefined();
+      expect(nvConfig.pacer?.enabled).toBe(true);
     });
   });
 

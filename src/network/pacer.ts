@@ -1,4 +1,4 @@
-import { getEnv } from "../config/env";
+import { getProviderConfig, isRegisteredProvider } from "../config/providers";
 
 export class PacerQueueOverflowError extends Error {
   public readonly retryAfterSec: number;
@@ -225,26 +225,6 @@ export class RequestPacer {
   }
 }
 
-function getProviderMinDelayFromEnv(provider: string): number {
-  const env = getEnv();
-  switch (provider) {
-    case "or":
-      return env.OPENROUTER_MIN_DELAY_MS;
-    case "nv":
-      return env.NVIDIA_MIN_DELAY_MS;
-    case "zn":
-      return env.ZEN_MIN_DELAY_MS;
-    case "gg":
-      return env.GOOGLE_MIN_DELAY_MS;
-    case "gc":
-      return env.GCP_MIN_DELAY_MS;
-    case "tp":
-      return env.TEST_PROVIDER_MIN_DELAY_MS;
-    default:
-      return 200;
-  }
-}
-
 // Global registry for per-provider pacers (all keys for a provider share the single pipe)
 const pacerRegistry = new Map<string, RequestPacer>();
 
@@ -256,14 +236,16 @@ export function getPacerForProvider(
   const pacerKey = provider;
   let pacer = pacerRegistry.get(pacerKey);
   if (!pacer) {
-    const env = getEnv();
-    const envDelay = getProviderMinDelayFromEnv(provider);
-    const minIntervalMs = config?.minIntervalMs ?? (provider === "gc" ? env.GCP_MIN_DELAY_MS : envDelay);
-    const maxQueueWaitMs = config?.maxQueueWaitMs ?? (provider === "gc" ? env.GCP_PACER_MAX_QUEUE_WAIT_MS : env.LITEROUTER_PACER_MAX_QUEUE_WAIT_MS);
+    const provPacer = isRegisteredProvider(provider)
+      ? getProviderConfig(provider).pacer
+      : undefined;
+    const minIntervalMs = config?.minIntervalMs ?? provPacer?.min_delay_ms ?? 200;
+    const maxQueueDepth = config?.maxQueueDepth ?? provPacer?.max_queue_depth ?? 100;
+    const maxQueueWaitMs = config?.maxQueueWaitMs ?? provPacer?.max_queue_wait_ms ?? 15000;
     pacer = new RequestPacer({
       minIntervalMs,
-      maxQueueDepth: config?.maxQueueDepth ?? env.LITEROUTER_PACER_MAX_QUEUE_DEPTH ?? 100,
-      maxRpm: config?.maxRpm ?? env.LITEROUTER_PACER_MAX_RPM ?? 30,
+      maxQueueDepth,
+      maxRpm: config?.maxRpm,
       maxQueueWaitMs,
     });
     pacerRegistry.set(pacerKey, pacer);
