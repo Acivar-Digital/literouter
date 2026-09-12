@@ -285,7 +285,7 @@ The dedicated evaluation harness in `eval/` certifies models end-to-end across a
 
 ```bash
 bun run eval/code.ts <model_name> [options]
-# Options: --wire <chat|rs>, --directive <key>, --stage <1-5>, --continue
+# Options: --wire <chat|rs>, --directive <key>, --stage <1-5>, --continue, --reasoning-transcript / --no-reasoning-transcript
 ```
 
 **Modular Stage Architecture (`eval/stages/` & `eval/stages_rs/`):**
@@ -313,6 +313,7 @@ bun run eval/code.ts <model_name> [options]
 - `--continue`: Diagnostic mode (runs all 5 stages without aborting on early failures).
 - `--runs <n>`: Number of benchmark runs (default: 2).
 - `--directive <key>`: Directive key (default: `lr-or-oa-ch-no` for Chat, `lr-zn-oo-rs-no` for Responses).
+- `--reasoning-transcript` / `--no-reasoning-transcript`: Capture per-stage `reasoning_content` transcripts (default-ON, `ts`-nuance key) vs scrub thinking.
 
 ### 4.2.1 Web Vision-Language Model Evaluation Harness — `eval/web.ts`
 
@@ -328,8 +329,10 @@ Runs the complete gauntlet (speed, coding/agentic, and web UI) in one pass, clas
 
 ```bash
 bun run eval/eval.ts <model_name> [options]
-# Options: --suites speed,code,web, --reasoning <none|medium|high>, --stage <1-5>
+# Options: --suites speed,code,web, --reasoning <none|medium|high>, --stage <1-5>, --reasoning-transcript / --no-reasoning-transcript
 ```
+
+> Reasoning-transcript appendix (default-ON): code-suite stages run on the `ts`-nuance key to preserve upstream `reasoning_content`, captured per stage and rendered as an unscored collapsible transcript appendix in the markdown report card.
 
 **5 Specialized Frontend Evaluation Stages (`eval/stages_web/`):**
 1. **Stage 1: DOM Structure & Layout Fidelity** (`stage1_structure.ts`):
@@ -360,6 +363,7 @@ bun run eval/eval.ts <model_name> [options]
 - `--stage <n>`: Run ONLY stage n (1 to 5).
 - `--continue`: Diagnostic mode (runs all stages without aborting early).
 - `--directive <key>`: Gateway directive key (default: `lr-or-oa-ch-no`).
+- `--reasoning-transcript` / `--no-reasoning-transcript`: Preserve upstream thinking (`ts`-nuance key) with transcript appendix (default-ON) vs scrub thinking with no appendix.
 
 ### 4.3 Universal Model Capability Probe — `scripts/probe_model.ts`
 

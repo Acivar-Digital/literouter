@@ -8,6 +8,7 @@
  */
 
 import type { StageContext, StageResult } from "./types";
+import { collectReasoningTranscript } from "./types";
 
 export const TARGET_SOURCE_CODE = `
 export class MetricsCollector {
@@ -157,6 +158,7 @@ Rules:
       console.log(`         ❌ Test 4.1 Failed: HTTP ${resp.status}`);
     } else {
       const data = (await resp.json()) as Record<string, unknown>;
+      collectReasoningTranscript(result, data);
       const usage = data.usage as Record<string, unknown> | undefined;
       const completionTokens = typeof usage?.completion_tokens === "number" ? usage.completion_tokens : undefined;
       if (typeof completionTokens === "number") {
@@ -298,6 +300,7 @@ You MUST include enough surrounding context (e.g. 'function handleBeta' or '// S
 
     if (resp42.ok) {
       const data42 = (await resp42.json()) as Record<string, unknown>;
+      collectReasoningTranscript(result, data42);
       const choice42 = (data42.choices as Array<Record<string, unknown>>)?.[0];
       const toolCalls42 = (choice42?.message as Record<string, unknown>)?.tool_calls as Array<Record<string, unknown>>;
 

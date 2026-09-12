@@ -10,6 +10,7 @@ All notable changes to LiteRouter will be documented in this file.
 - Comprehensive production-grade documentation across all test suites: `tests/README.md` (architecture, runner matrix, and air-gap barrier), `tests/unit/README.md` (v4 core gateway tests), `tests/eval/README.md` (hermetic capability graders and web evaluators), `tests/unit/legacy/README.md` (dual-path fallback handlers and transport), and `tests/integration/README.md` (pytest integration and Downstream Agent Gauntlet).
 - Updated `.opencode2/skills/literouter/SKILL.md` and `test-hygiene-playbook.md` with targeted test runners and anti-context-bloat protocols.
 - Updated `AGENTS.md` with the Anti-Context-Bloat & Silent Truncation Mandate and Rate Limiting & Pacing architecture notes.
+- **Reasoning-transcript capture default-ON for the code eval suite (`eval/stages/types.ts`, `eval/code.ts`, `eval/eval.ts`)**: collects per-stage `reasoning_content` deltas under the `ts-nuance` key, renders an unscored collapsible transcript appendix in markdown report cards, opt-out via `--no-reasoning-transcript` (literouter-pqi9).
 
 ### Changed
 - Partitioned 186 model evaluation grader tests from `tests/unit/` and `tests/unit/eval_graders/` into `tests/eval/` (`graders/` and web evaluators), isolating false alarm terminal alarm banners (`🚨 VETO TRIGGERED`) from core gateway unit tests.

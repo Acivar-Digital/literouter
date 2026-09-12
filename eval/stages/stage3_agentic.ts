@@ -9,6 +9,7 @@
  */
 
 import type { StageContext, StageResult } from "./types";
+import { appendReasoningTranscript, collectReasoningTranscript } from "./types";
 
 const TOOL_PALETTE = [
   {
@@ -90,6 +91,7 @@ export async function runStage3Agentic(ctx: StageContext): Promise<StageResult> 
     const decoder = new TextDecoder();
     let lineBuffer = "";
     let selectedTool = "";
+    let turn1Reasoning = "";
 
     while (true) {
       const { done, value } = await reader.read();
@@ -114,6 +116,9 @@ export async function runStage3Agentic(ctx: StageContext): Promise<StageResult> 
               if (tc.function?.arguments) toolArgs += tc.function.arguments;
             }
           }
+          if (typeof delta?.reasoning_content === "string") {
+            turn1Reasoning += delta.reasoning_content;
+          }
           const streamUsage = (json as Record<string, unknown>).usage as { completion_tokens?: number } | undefined;
           if (typeof streamUsage?.completion_tokens === "number") {
             completionTokens += streamUsage.completion_tokens;
@@ -125,6 +130,7 @@ export async function runStage3Agentic(ctx: StageContext): Promise<StageResult> 
     }
 
     result.details["ttft_ms"] = ttftMs;
+    appendReasoningTranscript(result, turn1Reasoning);
     console.log(`         ⚡ Turn 1 TTFT: ${ttftMs}ms | Selected: ${selectedTool}`);
 
     if (selectedTool === "read_file") {
@@ -173,6 +179,7 @@ export async function runStage3Agentic(ctx: StageContext): Promise<StageResult> 
 
     if (resp2.ok) {
       const data2 = (await resp2.json()) as Record<string, unknown>;
+      collectReasoningTranscript(result, data2);
       const usage2 = data2.usage as { completion_tokens?: number } | undefined;
       if (typeof usage2?.completion_tokens === "number") {
         completionTokens += usage2.completion_tokens;
@@ -227,6 +234,7 @@ export async function runStage3Agentic(ctx: StageContext): Promise<StageResult> 
 
     if (resp3.ok) {
       const data3 = (await resp3.json()) as Record<string, unknown>;
+      collectReasoningTranscript(result, data3);
       const usage3 = data3.usage as { completion_tokens?: number } | undefined;
       if (typeof usage3?.completion_tokens === "number") {
         completionTokens += usage3.completion_tokens;

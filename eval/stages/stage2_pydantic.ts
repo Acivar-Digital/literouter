@@ -8,6 +8,7 @@
  */
 
 import type { StageContext, StageResult } from "./types";
+import { collectReasoningTranscript } from "./types";
 
 interface QueryFilter {
   key: string;
@@ -118,6 +119,7 @@ export async function runStage2Pydantic(ctx: StageContext): Promise<StageResult>
 
     if (resp1.ok) {
       const data1 = (await resp1.json()) as Record<string, unknown>;
+      collectReasoningTranscript(result, data1);
       const usage = data1.usage as Record<string, unknown> | undefined;
       const completionTokens = typeof usage?.completion_tokens === "number" ? usage.completion_tokens : undefined;
       if (typeof completionTokens === "number") {
@@ -194,6 +196,7 @@ export async function runStage2Pydantic(ctx: StageContext): Promise<StageResult>
 
     if (resp2.ok) {
       const data2 = (await resp2.json()) as Record<string, unknown>;
+      collectReasoningTranscript(result, data2);
       const choice = (data2.choices as Array<Record<string, unknown>>)?.[0];
       const content = ((choice?.message as Record<string, unknown>)?.content as string) || "";
       const cleaned = cleanJsonText(content);
@@ -275,6 +278,7 @@ FAILED tests/test_engine.py::test_payload_ingestion_pipeline - pydantic_core._py
 
     if (resp3.ok) {
       const data3 = (await resp3.json()) as Record<string, unknown>;
+      collectReasoningTranscript(result, data3);
       const choice = (data3.choices as Array<Record<string, unknown>>)?.[0];
       const content = ((choice?.message as Record<string, unknown>)?.content as string) || "";
       const cleaned = cleanJsonText(content);

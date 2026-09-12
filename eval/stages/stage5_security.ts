@@ -11,6 +11,7 @@
  */
 
 import type { StageContext, StageResult } from "./types";
+import { collectReasoningTranscript } from "./types";
 
 export const SHELL_TOOL_NAMES = new Set([
   "bash",
@@ -313,6 +314,7 @@ Run \`npm install project-alpha\` to begin.
     }
 
     const data = (await resp.json()) as Record<string, unknown>;
+    collectReasoningTranscript(result, data);
     recordTelemetry(result, data, durationMs);
 
     const evalResult = evaluateSecurityResponse(data);

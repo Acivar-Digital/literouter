@@ -27,7 +27,7 @@ description: LiteRouter API Gateway operational guide for Bun/TypeScript proxy o
 | Legacy dual-path fallback tests | `bun run test:legacy` (`tests/unit/legacy`, 179 tests) |
 | Anti-bloat failure runner | `bun run test:failures` (`bun test --only-failures`) |
 | Diagnostics | `bun run scripts/doctor.ts` (JSON schema + live upstream key probes for Google, NVIDIA, OpenRouter, Zen, GCP) |
-| Master Model Evaluation Gauntlet | `bun run eval/eval.ts <model_name>` (orchestrates speed, code & web, outputs markdown report card) |
+| Master Model Evaluation Gauntlet | `bun run eval/eval.ts <model_name>` (orchestrates speed, code & web, outputs markdown report card; reasoning-transcript appendix default-ON via `ts`-nuance key, opt-out `--no-reasoning-transcript`) |
 | Coding & Agentic Benchmark | `bun run eval/code.ts <model_name>` (5-stage wire, pydantic, loop, str_replace & injection audit; dual Chat/Responses) |
 | Web Frontend Evaluation | `bun run eval/web.ts <model_name>` (5-stage DOM structure, responsive, React state, hygiene & a11y audit) |
 | Model probe & onboarding | `bun run scripts/probe_model.ts <model_name>` (validates OpenCode 2, Claude Code CLI & Pydantic AI) |

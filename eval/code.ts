@@ -34,6 +34,7 @@ export interface CodeEvalOptions {
   continueOnFailure?: boolean;
   cooldownMs?: number;
   timeoutMs?: number;
+  reasoningTranscript?: boolean;
 }
 
 export interface CodeEvalSummary {
@@ -58,8 +59,26 @@ Options:
   --runs <n>          Number of benchmark iterations (default: 2)
   --cooldown <ms>     Cooldown delay between stages in milliseconds (default: 2000)
   --timeout <ms>      Stage execution timeout in milliseconds (default: 120000)
+  --reasoning-transcript    Preserve upstream thinking via ts-nuance key and capture
+                            transcripts into the report appendix (default: ON)
+  --no-reasoning-transcript Scrub thinking (default no-nuance key), no transcripts
   -h, --help          Show this help screen
 `);
+}
+
+/**
+ * Derives the thinking-preserving (`ts` nuance) variant of a directive key.
+ * Replaces a trailing `-no` nuance segment with `-ts` (e.g.
+ * `lr-or-oa-ch-no` → `lr-or-oa-ch-ts`). Any other shape passes through
+ * unchanged, so custom or compound-nuance keys are never mangled.
+ */
+export function toThinkingKey(directiveKey: string): string {
+  const parts = directiveKey.split("-");
+  if (parts.length >= 2 && parts[parts.length - 1] === "no") {
+    parts[parts.length - 1] = "ts";
+    return parts.join("-");
+  }
+  return directiveKey;
 }
 
 function detectIsResponses(options: CodeEvalOptions): boolean {
@@ -100,6 +119,7 @@ export function parseCliArgs(argv: string[] = process.argv.slice(2)): CodeEvalOp
     continueOnFailure: false,
     cooldownMs: 2000,
     timeoutMs: 120000,
+    reasoningTranscript: true,
   };
 
   for (let i = 0; i < argv.length; i++) {
@@ -130,6 +150,10 @@ export function parseCliArgs(argv: string[] = process.argv.slice(2)): CodeEvalOp
       if (val) opts.timeoutMs = parseInt(val, 10);
     } else if (arg === "--continue" || arg === "--no-fail-fast") {
       opts.continueOnFailure = true;
+    } else if (arg === "--reasoning-transcript") {
+      opts.reasoningTranscript = true;
+    } else if (arg === "--no-reasoning-transcript") {
+      opts.reasoningTranscript = false;
     } else if (!arg.startsWith("--")) {
       opts.model = arg;
     }
@@ -168,6 +192,7 @@ function printHeader(
   stageFilter?: number,
   continueOnFailure?: boolean,
   cooldownMs?: number,
+  transcriptOn?: boolean,
 ): void {
   const mode = stageFilter
     ? `Isolated Stage ${stageFilter}`
@@ -181,6 +206,7 @@ function printHeader(
   console.log(`🔑 Directive Key   : \x1b[33m${ctx.directiveKey}\x1b[0m`);
   console.log(`🌐 Gateway Origin  : ${ctx.gatewayUrl}`);
   console.log(`⚙️  Execution Mode  : ${mode}`);
+  console.log(`🧠 Reasoning Tr.   : ${transcriptOn === false ? "OFF (thinking scrubbed)" : "ON (ts-nuance key, unscored appendix)"}`);
   console.log(`⏱️  Timeout / Cool : ${ctx.timeoutMs ?? 120000}ms / ${cooldownMs ?? 2000}ms`);
   console.log(`========================================================================`);
 }
@@ -253,9 +279,14 @@ export async function runCodeEvaluation(options: CodeEvalOptions = {}): Promise<
   const resolved = resolveWireAndDefaults(options);
   const timeoutMs = options.timeoutMs ?? 120000;
   const cooldownMs = options.cooldownMs ?? 2000;
+  const transcriptOn = options.reasoningTranscript ?? true;
+  const effectiveKey =
+    transcriptOn && resolved.wire === "chat"
+      ? toThinkingKey(resolved.directiveKey)
+      : resolved.directiveKey;
   const ctx: StageContext = {
     model: resolved.model,
-    directiveKey: resolved.directiveKey,
+    directiveKey: effectiveKey,
     gatewayUrl: resolved.gatewayUrl,
     runs: options.runs ?? 2,
     timeoutMs,
@@ -263,7 +294,7 @@ export async function runCodeEvaluation(options: CodeEvalOptions = {}): Promise<
   const continueOnFailure = options.continueOnFailure ?? false;
   const stageFilter = options.stageFilter;
 
-  printHeader(ctx, resolved.wire, stageFilter, continueOnFailure, cooldownMs);
+  printHeader(ctx, resolved.wire, stageFilter, continueOnFailure, cooldownMs, transcriptOn);
 
   const stages = getStages(resolved.wire);
   const stageResults: StageResult[] = [];
@@ -294,7 +325,7 @@ export async function runCodeEvaluation(options: CodeEvalOptions = {}): Promise<
   return {
     model: resolved.model,
     wire: resolved.wire,
-    directiveKey: resolved.directiveKey,
+    directiveKey: effectiveKey,
     gatewayUrl: resolved.gatewayUrl,
     allPassed,
     results: stageResults,

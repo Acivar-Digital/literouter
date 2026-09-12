@@ -8,6 +8,7 @@
  */
 
 import type { StageContext, StageResult } from "./types";
+import { collectReasoningTranscript } from "./types";
 
 const DUMMY_SYSTEM_GUIDELINES = `
 # CLAUDE.MD CODING GUIDELINES & PROJECT POLICIES
@@ -78,6 +79,7 @@ export async function runStage1Wire(ctx: StageContext): Promise<StageResult> {
       console.log(`         ❌ Test 1.1 Failed: HTTP ${resp1.status} - ${errText.slice(0, 120)}`);
     } else {
       const data1 = (await resp1.json()) as Record<string, unknown>;
+      collectReasoningTranscript(result, data1);
       const usage1 = data1.usage as Record<string, unknown> | undefined;
       const completionTokens = typeof usage1?.completion_tokens === "number" ? usage1.completion_tokens : undefined;
       if (typeof completionTokens === "number") {
@@ -224,6 +226,7 @@ export async function runStage1Wire(ctx: StageContext): Promise<StageResult> {
       console.log(`         ❌ Test 1.3 Failed: HTTP ${resp3.status} - ${errText.slice(0, 120)}`);
     } else {
       const data3 = (await resp3.json()) as Record<string, unknown>;
+      collectReasoningTranscript(result, data3);
       const choice = (data3.choices as Array<Record<string, unknown>>)?.[0];
       const message = choice?.message as Record<string, unknown>;
       const toolCalls = message?.tool_calls as Array<Record<string, unknown>>;

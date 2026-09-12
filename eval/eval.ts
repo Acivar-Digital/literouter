@@ -39,6 +39,7 @@ import {
   type WebEvalResult,
 } from "./web";
 import type { StageResult as CodeStageResult } from "./stages/types";
+import { REASONING_TRANSCRIPT_KEY } from "./stages/types";
 import type { StageResult as WebStageResult } from "./stages_web/types";
 
 export type SuiteType = "speed" | "code" | "web";
@@ -52,6 +53,7 @@ export interface EvalOrchestratorOptions {
   wire?: "chat" | "responses" | "auto";
   stage?: number;
   reasoningEffort?: "high" | "medium" | "none";
+  reasoningTranscript?: boolean;
   skipReport?: boolean;
   continueOnFailure?: boolean;
   runs?: number;
@@ -574,6 +576,46 @@ export function buildPerStageProfileSection(
 }
 
 /**
+ * Renders captured upstream thinking traces as collapsible, unscored evidence.
+ * Never feeds pass/fail or role gating. Stages whose upstream emitted no
+ * reasoning are listed explicitly so "absent" is distinguishable from "lost".
+ */
+export function buildReasoningTranscriptSection(summary: EvalOrchestratorSummary): string[] {
+  const codeResults = (summary.codeSummary?.results ?? []) as CodeStageResult[];
+  if (!summary.suitesRun.includes("code") || codeResults.length === 0) {
+    return [];
+  }
+  const lines: string[] = [];
+  lines.push("## 🧠 Reasoning Transcripts (Unscored Evidence)");
+  lines.push("");
+  lines.push("> Raw upstream thinking captured via the `ts`-nuance directive key. ");
+  lines.push("> Qualitative evidence only — excluded from scores, verdicts, and role gating.");
+  lines.push("");
+  for (const r of codeResults) {
+    const raw = (r as { details?: Record<string, unknown> }).details?.[REASONING_TRANSCRIPT_KEY];
+    const entries = Array.isArray(raw) ? raw.filter((t): t is string => typeof t === "string") : [];
+    if (entries.length === 0) {
+      lines.push(`<details><summary>${r.stageName} — no reasoning emitted by upstream</summary>`);
+      lines.push("");
+      lines.push("*(empty)*");
+      lines.push("");
+      lines.push("</details>");
+      lines.push("");
+      continue;
+    }
+    entries.forEach((entry, i) => {
+      lines.push(`<details><summary>${r.stageName} — transcript ${i + 1} (${entry.length} chars)</summary>`);
+      lines.push("");
+      lines.push(entry);
+      lines.push("");
+      lines.push("</details>");
+      lines.push("");
+    });
+  }
+  return lines;
+}
+
+/**
  * Generates an executive Markdown report card from evaluation results.
  */
 export function generateMarkdownReport(summary: EvalOrchestratorSummary): string {
@@ -747,6 +789,14 @@ export function generateMarkdownReport(summary: EvalOrchestratorSummary): string
     lines.push("");
   }
 
+  // Reasoning Transcripts Section (unscored evidence)
+  const transcriptLines = buildReasoningTranscriptSection(summary);
+  if (transcriptLines.length > 0) {
+    lines.push(...transcriptLines);
+    lines.push("---");
+    lines.push("");
+  }
+
   lines.push("## 📝 Operational LiteRouter Deployment Guidance");
   lines.push("");
   lines.push("```json");
@@ -807,6 +857,9 @@ export function printHelp(): void {
   --wire <chat|rs>      Wire protocol ('chat' or 'rs'/'responses', auto-detected)
   --stage <n>           Run ONLY a specific stage (1-5) for code / web suites
   --reasoning <effort>  Reasoning effort for thinking models: none, medium, high
+  --reasoning-transcript  Preserve upstream thinking (ts-nuance key) and append
+                          transcripts to the report (default: ON, code suite only)
+  --no-reasoning-transcript Scrub thinking, no transcript appendix
   --runs <n>            Number of benchmark iterations per test (default: 2)
   --continue            Continue suite execution on stage failure (Diagnostic Mode)
   --skip-report         Do not write Markdown report card to eval/reports/
@@ -824,6 +877,7 @@ export function parseCliArgs(argv: string[] = process.argv.slice(2)): EvalOrches
     runs: 2,
     continueOnFailure: false,
     skipReport: false,
+    reasoningTranscript: true,
   };
 
   for (let i = 0; i < argv.length; i++) {
@@ -872,6 +926,10 @@ export function parseCliArgs(argv: string[] = process.argv.slice(2)): EvalOrches
       opts.image = argv[++i];
     } else if (arg === "--continue" || arg === "--no-fail-fast") {
       opts.continueOnFailure = true;
+    } else if (arg === "--reasoning-transcript") {
+      opts.reasoningTranscript = true;
+    } else if (arg === "--no-reasoning-transcript") {
+      opts.reasoningTranscript = false;
     } else if (arg === "--skip-report") {
       opts.skipReport = true;
     } else if (!arg.startsWith("-")) {
@@ -949,6 +1007,7 @@ export async function runMasterEvaluation(
         stageFilter: options.stage,
         runs,
         continueOnFailure,
+        reasoningTranscript: options.reasoningTranscript ?? true,
       };
       codeSummary = await runCodeEvaluation(codeOpts);
       if (!codeSummary.allPassed) {
@@ -990,11 +1049,14 @@ export async function runMasterEvaluation(
   const roleRecommendation = determineArchitecturalRole(speedAgg, codeSummary, webResult);
 
   const timestamp = new Date().toISOString();
+  // codeSummary.directiveKey carries the effective key actually used on the
+  // wire (e.g. ts-nuance variant when reasoning transcripts are enabled).
+  const effectiveDirectiveKey = codeSummary?.directiveKey ?? directiveKey;
   const summary: EvalOrchestratorSummary = {
     model,
     sanitizedModelName: sanitized,
     timestamp,
-    directiveKey,
+    directiveKey: effectiveDirectiveKey,
     gatewayUrl,
     wire,
     suitesRun: suitesToRun,
