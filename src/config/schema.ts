@@ -52,12 +52,89 @@ export const ProviderEndpointsSchema = z.record(
   z.string().min(1)
 );
 
+export const RequestRetryDelaySchema = z
+  .object({
+    min_ms: z.number().int().nonnegative().default(150),
+    max_ms: z.number().int().nonnegative().default(300),
+  })
+  .refine((data) => data.max_ms >= data.min_ms, {
+    message: "max_ms must be >= min_ms",
+    path: ["max_ms"],
+  });
+
+export const RequestRetrySchema = z.object({
+  enabled: z.boolean().default(true),
+  max_attempts: z.number().int().positive().default(3),
+  delay: RequestRetryDelaySchema.default({}),
+});
+
+export const KeyCooldownSchema = z.object({
+  enabled: z.boolean().default(true),
+  initial_cooldown_ms: z.number().int().positive().default(10000),
+  backoff_factor: z.number().positive().default(1.5),
+  max_cooldown_ms: z.number().int().positive().default(60000),
+  max_consecutive_failures: z.number().int().positive().default(5),
+  jitter_percent: z.number().min(0).max(50).default(20),
+  respect_retry_after: z.boolean().default(true),
+  reset_after_success: z.boolean().default(true),
+});
+
+export const ProviderPacerConfigSchema = z
+  .object({
+    enabled: z.boolean().default(true),
+    min_delay_ms: z.number().int().nonnegative().default(200),
+    max_delay_ms: z.number().int().nonnegative().default(500),
+    max_queue_depth: z.number().int().positive().default(100),
+    max_queue_wait_ms: z.number().int().positive().default(15000),
+  })
+  .refine((data) => data.max_delay_ms >= data.min_delay_ms, {
+    message: "max_delay_ms must be >= min_delay_ms",
+    path: ["max_delay_ms"],
+  });
+
+export const CircuitBreakerConfigSchema = z.object({
+  enabled: z.boolean().default(true),
+  failure_threshold: z.number().int().positive().default(5),
+  failure_window_ms: z.number().int().positive().default(60000),
+  open_duration_ms: z.number().int().positive().default(30000),
+  half_open_max_probes: z.number().int().positive().default(2),
+  success_threshold_to_close: z.number().int().positive().default(2),
+});
+
+export const ConserveRuleSchema = z.object({
+  status: z.number().int(),
+  contains: z.string().min(1),
+  ttl: z
+    .enum(["midnight_utc", "midnight_pacific", "indefinite", "1h", "24h"])
+    .default("midnight_utc"),
+  reason: z.string().min(1),
+});
+
+export const ProviderStrategySchema = z
+  .enum([
+    "standard",
+    "native_cascade",
+    "gcp_guarded",
+    "zen_single_flight",
+    "anthropic_direct",
+  ])
+  .default("standard");
+
 export const ProviderConfigEntrySchema = z.object({
-  code: ProviderCodeSchema,
+  code: z.string().regex(/^[a-z0-9]{2,6}$/),
   base_url: z.string().url(),
   auth_header: z.enum(["Bearer", "x-api-key"]).default("Bearer"),
+  headers: z.record(z.string(), z.string()).optional(),
   endpoints: ProviderEndpointsSchema,
-  limits: z.record(z.string(), RateLimitSchema),
+  limits: z.record(z.string(), RateLimitSchema).optional(),
+  conserve_rules: z.array(ConserveRuleSchema).optional().default([]),
+  name: z.string().min(1).optional(),
+  env_key: z.string().min(1).optional(),
+  strategy: ProviderStrategySchema.optional().default("standard"),
+  request_retry: RequestRetrySchema.optional().default({}),
+  key_cooldown: KeyCooldownSchema.optional().default({}),
+  pacer: ProviderPacerConfigSchema.optional(),
+  circuit_breaker: CircuitBreakerConfigSchema.optional().default({}),
 });
 
 export const ProvidersConfigSchema = z.object({
@@ -119,6 +196,9 @@ function parseBooleanString(val: unknown): unknown {
 
 export const BooleanCoerceSchema = z.preprocess(parseBooleanString, z.boolean());
 
+export const LiteRouterEngineSchema = z.enum(["legacy", "v4"]).default("legacy");
+export type LiteRouterEngine = z.infer<typeof LiteRouterEngineSchema>;
+
 export const EnvConfigSchema = z.object({
   LITEROUTER_PORT: z.coerce.number().int().positive().default(7766),
   LITEROUTER_HOST: z.string().default("0.0.0.0"),
@@ -167,6 +247,8 @@ export const EnvConfigSchema = z.object({
   TEST_PROVIDER_MIN_DELAY_MS: z.coerce.number().int().nonnegative().default(0),
   MOCK_TP_PORT: z.coerce.number().int().positive().default(8999),
   LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("info"),
+  LITEROUTER_ENGINE: LiteRouterEngineSchema,
+  LITEROUTER_ENGINE_OVERRIDE: BooleanCoerceSchema.default(false),
 });
 
 export type ProviderCode = z.infer<typeof ProviderCodeSchema>;
@@ -174,6 +256,13 @@ export type PayloadCode = z.infer<typeof PayloadCodeSchema>;
 export type CompletionCode = z.infer<typeof CompletionCodeSchema>;
 export type NuanceCode = z.infer<typeof NuanceCodeSchema>;
 export type RateLimit = z.infer<typeof RateLimitSchema>;
+export type RequestRetryDelayConfig = z.infer<typeof RequestRetryDelaySchema>;
+export type RequestRetryConfig = z.infer<typeof RequestRetrySchema>;
+export type KeyCooldownConfig = z.infer<typeof KeyCooldownSchema>;
+export type ProviderPacerConfig = z.infer<typeof ProviderPacerConfigSchema>;
+export type CircuitBreakerConfig = z.infer<typeof CircuitBreakerConfigSchema>;
+export type ConserveRule = z.infer<typeof ConserveRuleSchema>;
+export type ProviderStrategyType = z.infer<typeof ProviderStrategySchema>;
 export type ProviderConfigEntry = z.infer<typeof ProviderConfigEntrySchema>;
 export type ProvidersConfig = z.infer<typeof ProvidersConfigSchema>;
 export type FusionTier = z.infer<typeof FusionTierSchema>;

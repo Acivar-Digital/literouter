@@ -123,6 +123,8 @@ describe("Zod Schema — Environment Variables Auto-Coercion & Defaults", () => 
     expect(parsed.COOLDOWN_RATE_LIMIT_TTL_SEC).toBe(65);
     expect(parsed.LITEROUTER_STRIP_REASONING).toBe(false);
     expect(parsed.LITEROUTER_AO_STRIP_REASONING).toBe(true);
+    expect(parsed.LITEROUTER_ENGINE).toBe("legacy");
+    expect(parsed.LITEROUTER_ENGINE_OVERRIDE).toBe(false);
   });
 
   it("coerces string numbers and booleans properly", () => {
@@ -132,6 +134,8 @@ describe("Zod Schema — Environment Variables Auto-Coercion & Defaults", () => 
       LITEROUTER_NO_RESPONSE_TIMEOUT_MS: "3000",
       LITEROUTER_STRIP_REASONING: "false",
       LITEROUTER_AO_STRIP_REASONING: "false",
+      LITEROUTER_ENGINE: "v4",
+      LITEROUTER_ENGINE_OVERRIDE: "true",
     };
 
     const parsed = EnvConfigSchema.parse(envInput);
@@ -140,5 +144,7 @@ describe("Zod Schema — Environment Variables Auto-Coercion & Defaults", () => 
     expect(parsed.LITEROUTER_NO_RESPONSE_TIMEOUT_MS).toBe(3000);
     expect(parsed.LITEROUTER_STRIP_REASONING).toBe(false);
     expect(parsed.LITEROUTER_AO_STRIP_REASONING).toBe(false);
+    expect(parsed.LITEROUTER_ENGINE).toBe("v4");
+    expect(parsed.LITEROUTER_ENGINE_OVERRIDE).toBe(true);
   });
 });

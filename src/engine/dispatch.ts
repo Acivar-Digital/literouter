@@ -1,3 +1,4 @@
+import { getEnv } from "../config/env";
 import { getProviderConfig } from "../config/providers";
 import type { ProviderConfigEntry } from "../config/schema";
 import type { ParsedDirective } from "../directive/types";
@@ -8,7 +9,7 @@ import { calculateRetryDelay } from "./retry";
 import { defaultClassifyFailure, type FailureAction } from "./status_classify";
 import type { DispatchContext, ProviderExecutionStrategy } from "./strategy";
 import { getStrategy } from "./strategy_registry";
-import { safeClose, safeEnqueue } from "../network/fetcher";
+import { safeClose, safeEnqueue, NoResponseError } from "../network/fetcher";
 import type { OutboundWirePayload, PayloadTransformerContract } from "./transformer";
 import { globalKeyPool, overrideProviderUrl } from "../handlers/openai_compat";
 import { RequestTelemetry, type UsageRecord } from "../telemetry/session";
@@ -150,6 +151,61 @@ function isAbortError(err: unknown): boolean {
   return rec.name === "AbortError" || rec.code === 20;
 }
 
+function resolveTtftTimeoutMs(): number {
+  const env = getEnv();
+  const configured = env.LITEROUTER_TTFT_TIMEOUT_MS || env.LITEROUTER_NO_RESPONSE_TIMEOUT_MS;
+  return configured && configured > 0 ? configured : 120000;
+}
+
+async function fetchWithTtftGuard(
+  fetchFn: FetchFn,
+  url: string,
+  init: RequestInit,
+  timeoutMs: number,
+  clientSignal: AbortSignal
+): Promise<Response> {
+  const linked = new AbortController();
+  const onClientAbort = (): void => {
+    linked.abort(clientSignal.reason);
+  };
+  if (clientSignal.aborted) {
+    linked.abort(clientSignal.reason);
+  } else {
+    clientSignal.addEventListener("abort", onClientAbort, { once: true });
+  }
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      linked.abort(new DOMException(`TTFT exceeded ${timeoutMs}ms`, "TimeoutError"));
+      reject(new NoResponseError(`Upstream TTFT timeout after ${timeoutMs}ms`));
+    }, timeoutMs);
+  });
+  try {
+    return await Promise.race([fetchFn(url, { ...init, signal: linked.signal }), timeoutPromise]);
+  } finally {
+    if (timer !== undefined) {
+      clearTimeout(timer);
+    }
+    clientSignal.removeEventListener("abort", onClientAbort);
+  }
+}
+
+function buildTtftTimeoutResponse(reqId: string, timeoutMs: number): Response {
+  return new Response(
+    JSON.stringify({
+      error: {
+        message: `Upstream TTFT timeout after ${timeoutMs}ms`,
+        type: "timeout_error",
+        code: "ttft_timeout",
+      },
+    }),
+    {
+      status: 504,
+      headers: { "content-type": "application/json", "x-request-id": reqId },
+    }
+  );
+}
+
 function createCutoffResilientStream(
   sourceStream: ReadableStream<Uint8Array>,
   onMidStreamError: (err: unknown) => void,
@@ -278,6 +334,34 @@ export async function executeDispatchPipeline(
     return breaker.rejectResponse(provConfig.name ?? providerCode);
   }
 
+  if (breaker.getState() === "HALF_OPEN" && !breaker.canProbe()) {
+    telemetry.error("Circuit breaker half-open probe limit reached");
+    telemetry.served(503);
+    recordTrace(telemetry, 503, {
+      clientInbound: sanitizeBody(req.rawInboundBody),
+      clientOutbound: JSON.stringify({
+        error: {
+          code: "breaker_open",
+          message: `Provider ${provConfig.name ?? providerCode} circuit breaker half-open probe limit reached.`,
+          type: "service_unavailable",
+        },
+      }),
+    });
+    return new Response(
+      JSON.stringify({
+        error: {
+          code: "breaker_open",
+          message: `Provider ${provConfig.name ?? providerCode} circuit breaker half-open probe limit reached.`,
+          type: "service_unavailable",
+        },
+      }),
+      {
+        status: 503,
+        headers: { "content-type": "application/json", "x-request-id": req.reqId },
+      }
+    );
+  }
+
   const poolSize = globalKeyPool.getPoolSize(providerCode);
   const initialKey = globalKeyPool.selectNextKey(providerCode);
 
@@ -307,6 +391,7 @@ export async function executeDispatchPipeline(
 
   const retryConfig = provConfig.request_retry;
   const maxAttempts = retryConfig.enabled ? retryConfig.max_attempts : 1;
+  const ttftTimeoutMs = resolveTtftTimeoutMs();
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     if (req.clientSignal.aborted) {
@@ -374,12 +459,18 @@ export async function executeDispatchPipeline(
     );
 
     try {
-      const upstreamResponse = await fetchFn(target.upstreamUrl, {
-        method: req.outboundPayload.method,
-        headers: finalHeaders,
-        body: JSON.stringify(req.outboundPayload.body),
-        signal: req.clientSignal,
-      });
+      const upstreamResponse = await fetchWithTtftGuard(
+        fetchFn,
+        target.upstreamUrl,
+        {
+          method: req.outboundPayload.method,
+          headers: finalHeaders,
+          body: JSON.stringify(req.outboundPayload.body),
+          signal: req.clientSignal,
+        },
+        ttftTimeoutMs,
+        req.clientSignal
+      );
 
       if (upstreamResponse.status < 400) {
         breaker.recordSuccess();
@@ -518,6 +609,24 @@ export async function executeDispatchPipeline(
     } catch (err) {
       if (req.clientSignal.aborted) {
         throw err;
+      }
+
+      if (err instanceof NoResponseError) {
+        breaker.recordFailure(504);
+        telemetry.error("Upstream TTFT timeout during dispatch attempt", err);
+
+        if (attempt < maxAttempts) {
+          const delayMs = calculateRetryDelay(retryConfig.delay, attempt);
+          await Bun.sleep(delayMs);
+          continue;
+        }
+
+        telemetry.served(504, attempt, maxAttempts);
+        recordTrace(telemetry, 504, {
+          clientInbound: sanitizeBody(req.rawInboundBody),
+          upstreamOutbound: sanitizeBody(req.outboundPayload.body),
+        });
+        return buildTtftTimeoutResponse(req.reqId, ttftTimeoutMs);
       }
 
       breaker.recordFailure(0);

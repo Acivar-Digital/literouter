@@ -8,6 +8,11 @@ All notable changes to LiteRouter will be documented in this file.
 - Mid-stream client aborts no longer recorded as telemetry 500 / breaker failures (abort discrimination via client signal + AbortError code 20).
 - Guarded cutoff-stream close (no more `Controller is already closed` secondary throw).
 - H2 reader-cancel log reduced to single message-only debug line.
+- Restored `legacy` engine default in `src/config/env.ts` + `src/config/schema.ts` (B1, literouter-cry7) — v4 opt-in only.
+- Unknown provider strategy strings now throw fail-fast at registry load instead of silently falling back to `StandardStrategy` (B2, literouter-qdh7, `src/engine/strategy_registry.ts`).
+- Half-open breaker probe cap wired into dispatch path: over-cap probes get 503 `breaker_open` (B3, literouter-23by, `src/engine/dispatch.ts` + `src/engine/circuit_breaker.ts`).
+- TTFT timeout (`LITEROUTER_TTFT_TIMEOUT_MS`) enforced around upstream fetch so hung upstreams release slots via retryable path, not client-abort (B4, literouter-23by).
+- Added B1–B4 regression coverage: legacy-default resolution, unknown-strategy-throw, probe-cap 503, TTFT-guard slot release, trace 401-negative (S4, literouter-gmrb; `tests/unit/engine/batch1_regression.test.ts`; 1176 pass / 0 fail).
 
 ## [4.1.0] - 2026-09-12
 

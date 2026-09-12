@@ -1,4 +1,4 @@
-import { EnvConfigSchema, type EnvConfig } from "./schema";
+import { EnvConfigSchema, type EnvConfig, type LiteRouterEngine } from "./schema";
 
 const DEFAULT_ENV_RECORD: Record<string, string> = {
   LITEROUTER_PORT: "7766",
@@ -48,6 +48,8 @@ const DEFAULT_ENV_RECORD: Record<string, string> = {
   TEST_PROVIDER_MIN_DELAY_MS: "0",
   MOCK_TP_PORT: "8999",
   LOG_LEVEL: "info",
+  LITEROUTER_ENGINE: "legacy",
+  LITEROUTER_ENGINE_OVERRIDE: "false",
 };
 
 function parseSafeEnv(source: Record<string, string | undefined>): EnvConfig {
@@ -113,4 +115,30 @@ export function resetEnvCache(): void {
 
 export function parseCustomEnv(customRecord: Record<string, string | undefined>): EnvConfig {
   return parseSafeEnv(customRecord);
+}
+
+export type { LiteRouterEngine };
+
+export function getLiteRouterEngine(): LiteRouterEngine {
+  return getEnv().LITEROUTER_ENGINE;
+}
+
+export function isLiteRouterEngineOverrideEnabled(): boolean {
+  return getEnv().LITEROUTER_ENGINE_OVERRIDE;
+}
+
+export function resolveEngine(req?: Request): LiteRouterEngine {
+  const env = getEnv();
+  if (!env.LITEROUTER_ENGINE_OVERRIDE || !req) {
+    return env.LITEROUTER_ENGINE;
+  }
+  const override = req.headers.get("x-literouter-engine")?.toLowerCase().trim();
+  if (override === "legacy" || override === "v4") {
+    return override;
+  }
+  return env.LITEROUTER_ENGINE;
+}
+
+export function isV4Engine(req?: Request): boolean {
+  return resolveEngine(req) === "v4";
 }
