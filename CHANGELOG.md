@@ -6,6 +6,9 @@ All notable changes to LiteRouter will be documented in this file.
 
 ### Added
 - Partitioned test suite scripts in `package.json`: `test:gateway` (runs `tests/unit`), `test:eval` (runs `tests/eval`), `test:legacy` (runs `tests/unit/legacy`), and `test:failures` (`--only-failures` to eliminate context bloat and silent truncation).
+- Comprehensive production-grade documentation across all test suites: `tests/README.md` (architecture, runner matrix, and air-gap barrier), `tests/unit/README.md` (v4 core gateway tests), `tests/eval/README.md` (hermetic capability graders and web evaluators), `tests/unit/legacy/README.md` (dual-path fallback handlers and transport), and `tests/integration/README.md` (pytest integration and Downstream Agent Gauntlet).
+- Updated `.opencode2/skills/literouter/SKILL.md` and `test-hygiene-playbook.md` with targeted test runners and anti-context-bloat protocols.
+- Updated `AGENTS.md` with the Anti-Context-Bloat & Silent Truncation Mandate and Rate Limiting & Pacing architecture notes.
 
 ### Changed
 - Partitioned 186 model evaluation grader tests from `tests/unit/` and `tests/unit/eval_graders/` into `tests/eval/` (`graders/` and web evaluators), isolating false alarm terminal alarm banners (`🚨 VETO TRIGGERED`) from core gateway unit tests.

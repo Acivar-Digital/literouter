@@ -21,7 +21,11 @@ description: LiteRouter API Gateway operational guide for Bun/TypeScript proxy o
 | Restart gateway | `bash scripts/restart.sh` |
 | Health probe (auth-free) | `curl -sk https://localhost:7766/health` |
 | Hard key reset (auth-free) | `curl -sk -X POST https://localhost:7766/reset` |
-| Unit tests | `bun test` |
+| Unit tests (all) | `bun test` |
+| Fast gateway unit tests | `bun run test:gateway` (`tests/unit`, 938 tests, no eval noise) |
+| Benchmark eval grader tests | `bun run test:eval` (`tests/eval`, 182 tests) |
+| Legacy dual-path fallback tests | `bun run test:legacy` (`tests/unit/legacy`, 179 tests) |
+| Anti-bloat failure runner | `bun run test:failures` (`bun test --only-failures`) |
 | Diagnostics | `bun run scripts/doctor.ts` (JSON schema + live upstream key probes for Google, NVIDIA, OpenRouter, Zen, GCP) |
 | Master Model Evaluation Gauntlet | `bun run eval/eval.ts <model_name>` (orchestrates speed, code & web, outputs markdown report card) |
 | Coding & Agentic Benchmark | `bun run eval/code.ts <model_name>` (5-stage wire, pydantic, loop, str_replace & injection audit; dual Chat/Responses) |
@@ -124,6 +128,10 @@ Fusion presets: `lr-fse-<preset>` where preset is ONLY one of `quad` / `pydn` / 
 | **OpenRouter Quarantine** | `OPENROUTER_ENABLE_QUARANTINE=<true\|false>` | `false` bypasses all quarantine for `or` keys (`src/network/pool.ts`). |
 | **Zen Quarantine / Retries / Breaker / Pacer** | `ZEN_ENABLE_QUARANTINE`, `ZEN_ENABLE_RETRIES`, `ZEN_ENABLE_CIRCUIT_BREAKER`, `ZEN_ENABLE_PACER` | Dumb-forwarder mode when retries+quarantine are `false`. |
 | **GCP Quarantine / Retries / Breaker / Pacer** | `GCP_ENABLE_QUARANTINE`, `GCP_ENABLE_RETRIES`, `GCP_ENABLE_CIRCUIT_BREAKER`, `GCP_ENABLE_PACER` | Same semantics for `gc` keys. |
+
+### Rate Limits & Pacing (Zdist Retirement)
+- **Zdist Retired**: Preemptive client-side RPM/RPD tracking (`RateLimitTracker` / `zdist.ts`) was formally retired in v4.1 (see `docs/GRAVEYARD/ZDIST.md`). Upstream LLM rate limits are dynamic leaky buckets with clock drift, rendering local preemptive rotation counterproductive.
+- **Active Architecture**: Replaced by **Pacer Conveyor** (`RequestPacer` in `src/network/pacer.ts` spacing ingress requests by `min_delay_ms`) to prevent burst limits, paired with **CooldownManager** (`src/network/cooldown.ts` reactive 429 quarantine with `Retry-After` header extraction and fallback TTL).
 
 After editing `.env`: `bash scripts/restart.sh`. After editing `config/providers.json`: `POST /reset` hot-reloads without restart ([scripts-ops.md §3.2](scripts-ops.md#32-hot-reload-scope-configprovidersjson-headers-included)).
 
@@ -323,5 +331,5 @@ bun run scripts/probe_model.ts <model_name> [--directive <directive_key>] [--url
 
 - **TUI LaTeX & math rendering**: [tui-latex-math-rendering.md](tui-latex-math-rendering.md) — overview ([§1](tui-latex-math-rendering.md#1-executive-overview-rendering-environments)), raw-math root cause ([§2](tui-latex-math-rendering.md#2-root-cause-of-raw-math-artifacts-in-tui)), upstream tracking ([§3](tui-latex-math-rendering.md#3-upstream-opencode-github-tracking)), mitigations ([§5](tui-latex-math-rendering.md#5-recommended-engineering-practices-mitigations)).
 - **Antigravity IDE setup (LiteRouter wiring only)**: [agy-ide-setup.md](agy-ide-setup.md) — architecture ([§1](agy-ide-setup.md#1-antigravity-ide-architecture)), connecting to LiteRouter ([§2](agy-ide-setup.md#2-connecting-antigravity-ide-to-literouter)), verifying connectivity ([§3](agy-ide-setup.md#3-verifying-connectivity)).
-- **Test suite hygiene & test parking (Zero-LLM hermetic testing)**: [test-hygiene-playbook.md](test-hygiene-playbook.md) — architecture & air-gap ([§2](test-hygiene-playbook.md#2-architecture-the-air-gap-barrier)), parking taxonomy ([§3](test-hygiene-playbook.md#3-parking-taxonomy-where-new-tests-belong)), simulation banners ([§4](test-hygiene-playbook.md#4-test-simulation-transparency-banner-rule)), teardown symmetry ([§5](test-hygiene-playbook.md#5-state-teardown-anti-flake-symmetry)), pytest live gate ([§6](test-hygiene-playbook.md#6-pytest-integration-gate-live)).
+- **Test suite hygiene & test parking (Zero-LLM hermetic testing)**: [test-hygiene-playbook.md](test-hygiene-playbook.md) — architecture & air-gap ([§2](test-hygiene-playbook.md#2-architecture-the-air-gap-barrier)), parking taxonomy ([§3](test-hygiene-playbook.md#3-parking-taxonomy-where-new-tests-belong)), simulation banners ([§4](test-hygiene-playbook.md#4-test-simulation-transparency-banner-rule)), anti-context-bloat ([§5](test-hygiene-playbook.md#5-anti-context-bloat--silent-truncation-prevention)), teardown symmetry ([§6](test-hygiene-playbook.md#6-state-teardown--anti-flake-symmetry)), pytest live gate ([§7](test-hygiene-playbook.md#7-pytest-integration-gate-live)).
 - **Canonical IDE skill (cross-skill)**: `../agy-ide-playbook/SKILL.md` — IDE install/upgrade/config is owned there ([Quick Start & Commands](../agy-ide-playbook/SKILL.md#quick-start-commands), [User-Space Mandate](../agy-ide-playbook/SKILL.md#-critical-architecture-mandate-user-space-first-no-sudo), [Installation & Upgrade Protocol](../agy-ide-playbook/SKILL.md#installation-upgrade-protocol-step-by-step)). LiteRouter-side proxy wiring stays in `agy-ide-setup.md`; do not duplicate IDE procedures here.

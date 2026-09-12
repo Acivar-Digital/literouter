@@ -54,6 +54,9 @@ const DEFAULT_ENV_RECORD: Record<string, string> = {
 
 function parseSafeEnv(source: Record<string, string | undefined>): EnvConfig {
   const normalized: Record<string, string | undefined> = { ...source };
+  if (normalized.LITEROUTER_ENGINE === "v4") {
+    normalized.LITEROUTER_ENGINE = "v4.1";
+  }
   if (!normalized.LITEROUTER_IDLE_TIMEOUT_SEC && normalized.LITEROUTER_IDLE_TIMEOUT) {
     normalized.LITEROUTER_IDLE_TIMEOUT_SEC = normalized.LITEROUTER_IDLE_TIMEOUT;
   }

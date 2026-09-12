@@ -22,7 +22,11 @@ LiteRouter enforces an absolute, non-negotiable test hygiene mandate:
 └──────────────────────────┴─────────────────────────────┴───────────────────────────────┘
 ```
 
-1. **`tests/` is Hermetic and Air-Gapped**: Every unit test, integration test, and handler scenario in `tests/` must run 100% locally with zero external network connectivity. Tests must complete rapidly and predictably without dependency on upstream provider uptime or valid paid credentials.
+1. **`tests/` is Hermetic and Air-Gapped**: Every unit test, integration test, and handler scenario in `tests/` must run 100% locally with zero external network connectivity. Tests must complete rapidly and predictably without dependency on upstream provider uptime or valid paid credentials:
+   - `tests/unit/`: v4.1 core gateway logic (engine, transformers, handlers, telemetry, pacer, cooldown — 938 tests).
+   - `tests/eval/`: Benchmark eval grader unit tests (patch, pydantic, security, web runners — 182 tests).
+   - `tests/unit/legacy/`: Legacy monolithic handlers and HTTP/2 transport tests for dual-path fallback (179 tests).
+   - `tests/integration/`: Gateway end-to-end and mock loopback tests, pytest integration.
 2. **`eval/` is Benchmark-Only**: Files under `eval/` (`eval.ts`, `speed.ts`, `code.ts`, `web.ts`) measure live LLM latency, reasoning quality, agentic code generation, and web DOM fidelity. They are **never** executed by `bun test` or CI pipelines without explicit operator intention.
 3. **Fail-Closed Protection**: If test code inadvertently attempts to connect to an external LLM vendor (`api.openai.com`, `openrouter.ai`, `generativelanguage.googleapis.com`, etc.), the air-gap barrier instantly throws an unhandled exception, failing the test immediately.
 
@@ -126,35 +130,55 @@ When adding tests to LiteRouter, use the following deterministic parking taxonom
 
 ```
 tests/
-├── unit/                       # Pure logic, fast, non-networked (<10ms)
-│   ├── <subsystem>_<feature>.test.ts
-│   └── fusion/
+├── unit/                       # Core gateway logic, fast, non-networked (<10ms)
+│   ├── engine/                 # Dispatcher, routing, circuit breaker, retry loops
+│   ├── transformers/           # Scrubber, thinking tags, XML tools, deltas
+│   ├── handlers/               # v4 pure route orchestration handlers
+│   ├── telemetry/              # Metrics, logging, traces, latency trackers
+│   ├── network/                # Key pool, pacer conveyor, cooldown manager
+│   └── legacy/                 # Monolithic v3.x handlers & legacy HTTP/2 transport
+├── eval/                       # Unit tests for benchmark graders (eval framework)
+│   ├── patch.test.ts           # Patch extraction and application unit tests
+│   ├── pydantic.test.ts        # Pydantic schema validation tests
+│   ├── security.test.ts        # Injection & safety guard tests
+│   └── web.test.ts             # Web runner & DOM hygiene unit tests
 ├── integration/                # Full gateway pipeline, mock HTTP loopbacks
 │   ├── <handler>_<feature>.test.ts
 │   └── test_<feature>_e2e.py   # Pytest mock integration
 ├── fixtures/                   # Static golden recordings (.json, .sse, .txt)
 │   ├── <provider>/
 │   └── mock_openai_stream.txt
-└── handlers/                   # Targeted handler unit/retry suites
 eval/                           # Live model evaluations (NOT run by bun test)
-├── eval.ts
-├── speed.ts
-├── code.ts
-└── web.ts
+├── eval.ts                     # Master evaluation gauntlet (orchestrator)
+├── speed.ts                    # Latency, TTFT, and throughput benchmarks
+├── code.ts                     # Agentic code generation benchmark
+└── web.ts                      # Frontend DOM generation benchmark
 ```
 
-### 3.1 `tests/unit/<subsystem>_<feature>.test.ts`
-- **Scope**: Pure logic tests, AST parsers, directive token validation, cooldown math, header builders, scrubber transforms.
-- **Performance**: Ultra-fast execution (<10ms per test).
-- **Environment**: In-memory data structures only; no active TCP listener sockets.
-- **Examples**: `tests/unit/directive_parser.test.ts`, `tests/unit/cooldown.test.ts`, `tests/unit/thinking_transformer.test.ts`.
+### 3.1 `tests/unit/` (v4.1 Core Gateway & Subsystems)
+- **Scope**: Pure logic tests, dispatcher, route execution, AST parsers, directive token validation, cooldown math, header builders, scrubber transforms, pacer conveyor, and telemetry.
+- **Performance**: Ultra-fast execution (<10ms per test). Executed via `bun run test:gateway` (938 tests).
+- **Environment**: In-memory data structures only; loopback test doubles for mock provider responses.
+- **Examples**: `tests/unit/engine/dispatch.test.ts`, `tests/unit/network/cooldown.test.ts`, `tests/unit/transformers/scrubber.test.ts`.
 
-### 3.2 `tests/integration/<handler>_<feature>.test.ts`
-- **Scope**: In-process or loopback integration tests checking the full LiteRouter pipeline (`handleAppRequest`, route dispatching, SSE streaming, keep-alive frames, HTTP/2 pooling, abort propagation).
+### 3.2 `tests/eval/` (Benchmark Grader Unit Tests)
+- **Scope**: Hermetic unit tests verifying the offline grading algorithms, patch appliers, Pydantic schema validators, security checks, and web DOM grading logic used by the `eval/` benchmark gauntlet.
+- **Performance**: Fast offline execution. Executed via `bun run test:eval` (182 tests).
+- **Environment**: 100% hermetic and local; zero LLM token consumption.
+- **Examples**: `tests/eval/patch.test.ts`, `tests/eval/pydantic.test.ts`, `tests/eval/security.test.ts`.
+
+### 3.3 `tests/unit/legacy/` (Dual-Path Fallback Suites)
+- **Scope**: Legacy monolithic handlers and legacy HTTP/2 transport tests maintained for dual-path fallback safety (`x-literouter-engine: legacy`).
+- **Performance**: Executed via `bun run test:legacy` (179 tests).
+- **Environment**: Hermetic mock tests ensuring regression safety for legacy code paths.
+- **Examples**: `tests/unit/legacy/openai_compat_legacy.test.ts`, `tests/unit/legacy/h2_pool_legacy.test.ts`.
+
+### 3.4 `tests/integration/` (Gateway End-to-End & Loopbacks)
+- **Scope**: In-process or loopback integration tests checking the full LiteRouter pipeline (`handleAppRequest`, route dispatching, SSE streaming, keep-alive frames, HTTP/2 pooling, abort propagation), plus Pytest integration suites (`test_*_e2e.py`).
 - **Environment**: Uses `Bun.serve` on ephemeral loopback ports (`127.0.0.1:0` or `127.0.0.1:8999`) to simulate upstream provider responses.
 - **Examples**: `tests/integration/openai_compat.test.ts`, `tests/integration/ghost_response_guard.test.ts`, `tests/integration/abort_propagation.test.ts`.
 
-### 3.3 `tests/fixtures/<provider>/`
+### 3.5 `tests/fixtures/<provider>/`
 - **Scope**: Static recorded golden payloads, wire SSE text, chunk boundaries, and JSON schemas.
 - **Rules**:
   - Store as `.json`, `.txt`, or `.sse`.
@@ -162,7 +186,7 @@ eval/                           # Live model evaluations (NOT run by bun test)
   - Read via `Bun.file()` or `fs.readFileSync()`.
 - **Examples**: `tests/fixtures/mock_anthropic_stream.txt`, `tests/fixtures/mock_openai_stream.txt`.
 
-### 3.4 `eval/` (Capability Benchmarks & Evals)
+### 3.6 `eval/` (Capability Benchmarks & Evals)
 - **Scope**: Live benchmark gauntlets (`eval/eval.ts`, `eval/code.ts`, `eval/web.ts`, `eval/speed.ts`).
 - **Rules**:
   - Excluded from standard `bun test` passes.
@@ -207,7 +231,45 @@ test("falls over to next key on upstream 503", async () => {
 
 ---
 
-## §5. State Teardown & Anti-Flake Symmetry
+## §5. Anti-Context-Bloat & Silent Truncation Prevention
+
+### 5.1 The Danger of Full-Suite LLM Context Flooding
+The complete test suite contains **1,180 tests** across 97 files. Running an unqualified `bun test` produces tens of thousands of characters of terminal output:
+1. **Silent Output Truncation**: When agents or subagents execute `bun test`, output limits (e.g. 30KB or 2000 lines) trigger harness truncation. The actual stack trace of a failed test is frequently buried and discarded in the truncated segment, leading to false negatives where an agent believes all tests passed when failures actually occurred.
+2. **Context Exhaustion & Hallucination**: Massive test outputs flood the context window, degrading the model's reasoning capabilities, overwriting critical instructions, and causing hallucinated root causes.
+3. **Simulation Log Pollution**: Resilience tests intentionally simulate network crashes and 5xx/429 responses, printing alarming error logs (`💥 [ERROR] Upstream socket closed abruptly`) that look like genuine failures even when the assertions passed.
+
+### 5.2 Targeted Test Runners (The Primary Prescriptions)
+Never run blanket `bun test` during iterative development. LiteRouter provides fine-grained, partitioned runners to keep context clean:
+
+| Command | Target Scope | Test Count | When to Use |
+|---|---|---|---|
+| `bun run test:gateway` | `tests/unit` (Core engine, transformers, handlers) | ~938 tests | **Primary runner** for gateway edits, routing, pacer, cooldown, and scrubber work. No eval noise. |
+| `bun run test:eval` | `tests/eval` (Benchmark grader logic) | ~182 tests | When modifying eval graders, patch tools, or benchmark validation rules. |
+| `bun run test:legacy` | `tests/unit/legacy` (Dual-path legacy fallback) | ~179 tests | When verifying compatibility of legacy handlers or monolithic fallbacks. |
+| `bun run test:failures` | `bun test --only-failures` | Only failed tests | When running across the suite to surface **only** regressions without passing spam. |
+| `bun test <file>` | Single test file | Targeted | **Gold standard** during active file editing (e.g. `bun test tests/unit/pacer.test.ts`). |
+
+### 5.3 Silent Log Redirection (`/tmp/test.log`)
+When a full suite run is required (e.g. for GoLive or definition-of-done gates), agents MUST pipe standard output to `/tmp/test.log` and verify the exit code:
+
+```bash
+# Execute full suite cleanly without dumping 1,180 test lines into context:
+bun test > /tmp/test.log 2>&1
+echo "Exit code: $?"
+
+# If exit code is non-zero, inspect only the tail or grep for failures:
+tail -n 30 /tmp/test.log
+```
+
+If `Exit code: 0`, the suite passed with 100% certainty. If `Exit code != 0`, grep specifically for `fail`:
+```bash
+grep -E "(fail|FAIL|error|ERROR)" /tmp/test.log | head -n 30
+```
+
+---
+
+## §6. State Teardown & Anti-Flake Symmetry
 
 Global singletons in LiteRouter maintain state across requests (key rotation pointers, cooldown timestamps, circuit breaker failure counters, pacer conveyor queues, HTTP/2 connection pools). Failing to reset state creates order-dependent test flakes.
 
@@ -259,7 +321,7 @@ afterEach(() => {
 
 ---
 
-## §6. Pytest Integration Gate (`--live`)
+## §7. Pytest Integration Gate (`--live`)
 
 For Python integration tests under `tests/integration/`:
 
@@ -302,7 +364,7 @@ For Python integration tests under `tests/integration/`:
 
 ---
 
-## §7. Verification Checklist for New Tests
+## §8. Verification Checklist for New Tests
 
 Before committing any new test or test modification, complete every gate in this checklist:
 
@@ -316,8 +378,10 @@ uv run python admin/code_hygiene/agent_guardrail.py validate <test_file>
 # Gate 3: Targeted test execution
 bun test <test_file>
 
-# Gate 4: Full suite hermetic verification (Zero regressions, all pass)
-bun test
+# Gate 4: Fast gateway verification or anti-bloat failure check
+bun run test:gateway
+# or for failure-only verification across entire suite:
+bun run test:failures
 
 # Gate 5: Python integration check
 uv run pytest tests/integration/

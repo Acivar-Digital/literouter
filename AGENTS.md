@@ -37,6 +37,10 @@ For all system design, folder maps, design decisions, and architectural constrai
 - **TUI LaTeX & Math Rendering (lazy-load)**: `.opencode2/skills/literouter/tui-latex-math-rendering.md`
 - **Test Suite Hygiene Playbook (lazy-load)**: `.opencode2/skills/literouter/test-hygiene-playbook.md`
 
+### Rate Limiting & Pacing Architecture (Zdist Retirement)
+- **Zdist Retired**: Preemptive client-side RPM/RPD sliding-window rate tracking (`RateLimitTracker` / `zdist.ts`) was formally retired in v4.1 (see `docs/GRAVEYARD/ZDIST.md`). Upstream LLM rate limits are dynamic leaky buckets with clock drift, making local preemptive tracking counterproductive and brittle.
+- **Active Architecture**: Replaced by deterministic **RequestPacer** (`src/network/pacer.ts` spacing ingress requests by `min_delay_ms`) to smooth bursts and prevent concurrency limit triggers, paired with **CooldownManager** (`src/network/cooldown.ts` reactive 429 quarantine with `Retry-After` header extraction and fallback TTL).
+
 ### OpenCode vs OpenCode2 Config Format
 This repo maintains both OpenCode v1 and OpenCode2 v2 configurations. Key differences when editing JSON configs:
 
@@ -313,16 +317,29 @@ Before marking a task as complete, you MUST act as a Critic:
 1. Run TypeScript typecheck: `bun run typecheck` (`tsc --noEmit`)
 2. Validate TypeScript code quality: `node node_modules/clean_ts/dist/cli.js validate <file>` or `uv run python admin/code_hygiene/agent_guardrail.py validate <file>`
 3. Run linters: `uv run ruff check .` (Python test files)
-4. Run tests: `bun test` (unit) + `uv run pytest tests/integration/` (smoke)
+4. Run tests: Use `bun run test:gateway` or `bun run test:failures` during active code edits to verify changes without context bloat, plus `uv run pytest tests/integration/` (smoke). For full verification, pipe to `/tmp/test.log` (e.g. `bun test > /tmp/test.log 2>&1`).
 5. Verify the implementation matches the original request exactly (no gold-plating).
 6. If any check fails, fix it before proceeding.
 
-> **Test Authoring Mandate**: When creating or modifying tests, agents MUST consult the lazy-loaded test hygiene playbook (`.opencode2/skills/literouter/test-hygiene-playbook.md`) for zero-LLM air-gap enforcement, test parking taxonomy, simulation banners, and teardown symmetry.
+> **Anti-Context-Bloat & Silent Truncation Mandate**:
+> Blanket `bun test` runs 1,180 tests and dumps massive logs into your LLM context window, triggering tool output truncation and masking failure stack traces.
+> Agents **MUST** use targeted test runners when verifying code edits:
+> - `bun run test:gateway` (938 fast gateway tests in `tests/unit`, zero eval noise)
+> - `bun run test:eval` (182 benchmark eval grader tests in `tests/eval`)
+> - `bun run test:legacy` (179 legacy dual-path fallback tests in `tests/unit/legacy`)
+> - `bun run test:failures` (`bun test --only-failures` — runs the suite but outputs **only** failing tests)
+> If a full test run is necessary, pipe output to `/tmp/test.log` and verify the exit code (`bun test > /tmp/test.log 2>&1 && echo "Exit code: $?"`).
+
+> **Test Authoring Mandate**: When creating or modifying tests, agents MUST consult the lazy-loaded test hygiene playbook (`.opencode2/skills/literouter/test-hygiene-playbook.md`) for zero-LLM air-gap enforcement, test parking taxonomy, anti-context-bloat guidelines, simulation banners, and teardown symmetry.
 
 ## Build/Lint/Test Commands
 - Run TypeScript static typecheck: `bun run typecheck` (`tsc --noEmit`)
 - Run TypeScript AST quality validator: `node node_modules/clean_ts/dist/cli.js validate <path>`
-- Run unit tests (TS logic): `bun test`
+- Run full unit tests (all 1,180 tests): `bun test`
+- Run fast gateway unit tests (938 tests, no eval noise): `bun run test:gateway`
+- Run benchmark eval grader unit tests (182 tests): `bun run test:eval`
+- Run legacy dual-path fallback tests (179 tests): `bun run test:legacy`
+- Run anti-bloat failure-only runner: `bun run test:failures` (`bun test --only-failures`)
 - Run integration/smoke tests (live gateway): `uv run pytest tests/integration/`
 - Run linters: `uv run ruff check .` (Python test files)
 - Install dependencies: `bun install` (gateway) + `uv sync` (pytest smoke deps)
