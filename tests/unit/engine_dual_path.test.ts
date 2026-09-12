@@ -28,19 +28,19 @@ describe("LiteRouter Engine Dual-Path & Header Override (literouter-exqh.2 / exq
   });
 
   describe("Configuration & Environment Defaults", () => {
-    it("evaluates LITEROUTER_ENGINE to 'legacy' by default", () => {
+    it("evaluates LITEROUTER_ENGINE to 'v4.1' by default", () => {
       delete process.env.LITEROUTER_ENGINE;
       resetEnvCache();
-      expect(getEnv().LITEROUTER_ENGINE).toBe("legacy");
-      expect(getLiteRouterEngine()).toBe("legacy");
-      expect(isV4Engine()).toBe(false);
+      expect(getEnv().LITEROUTER_ENGINE).toBe("v4.1");
+      expect(getLiteRouterEngine()).toBe("v4.1");
+      expect(isV4Engine()).toBe(true);
     });
 
-    it("evaluates LITEROUTER_ENGINE to 'v4' when explicitly set", () => {
-      process.env.LITEROUTER_ENGINE = "v4";
+    it("evaluates LITEROUTER_ENGINE to 'v4.1' when explicitly set", () => {
+      process.env.LITEROUTER_ENGINE = "v4.1";
       resetEnvCache();
-      expect(getEnv().LITEROUTER_ENGINE).toBe("v4");
-      expect(getLiteRouterEngine()).toBe("v4");
+      expect(getEnv().LITEROUTER_ENGINE).toBe("v4.1");
+      expect(getLiteRouterEngine()).toBe("v4.1");
       expect(isV4Engine()).toBe(true);
     });
 
@@ -59,22 +59,22 @@ describe("LiteRouter Engine Dual-Path & Header Override (literouter-exqh.2 / exq
       expect(isLiteRouterEngineOverrideEnabled()).toBe(false);
     });
 
-    it("accepts custom env parsing for v4 engine", () => {
+    it("accepts custom env parsing for v4.1 engine", () => {
       const parsed = parseCustomEnv({
-        LITEROUTER_ENGINE: "v4",
+        LITEROUTER_ENGINE: "v4.1",
         LITEROUTER_ENGINE_OVERRIDE: "true",
       });
-      expect(parsed.LITEROUTER_ENGINE).toBe("v4");
+      expect(parsed.LITEROUTER_ENGINE).toBe("v4.1");
       expect(parsed.LITEROUTER_ENGINE_OVERRIDE).toBe(true);
     });
   });
 
   describe("resolveEngine & X-LiteRouter-Engine Header Override", () => {
-    it("returns 'legacy' by default without request", () => {
+    it("returns 'v4.1' by default without request", () => {
       delete process.env.LITEROUTER_ENGINE;
       resetEnvCache();
-      expect(resolveEngine()).toBe("legacy");
-      expect(isV4Engine()).toBe(false);
+      expect(resolveEngine()).toBe("v4.1");
+      expect(isV4Engine()).toBe(true);
     });
 
     it("ignores X-LiteRouter-Engine header when LITEROUTER_ENGINE_OVERRIDE is false", () => {
@@ -84,7 +84,7 @@ describe("LiteRouter Engine Dual-Path & Header Override (literouter-exqh.2 / exq
 
       const req = new Request("http://localhost:7766/v1/chat/completions", {
         headers: {
-          "X-LiteRouter-Engine": "v4",
+          "X-LiteRouter-Engine": "v4.1",
         },
       });
 
@@ -99,10 +99,10 @@ describe("LiteRouter Engine Dual-Path & Header Override (literouter-exqh.2 / exq
 
       const reqV4 = new Request("http://localhost:7766/v1/chat/completions", {
         headers: {
-          "X-LiteRouter-Engine": "v4",
+          "X-LiteRouter-Engine": "v4.1",
         },
       });
-      expect(resolveEngine(reqV4)).toBe("v4");
+      expect(resolveEngine(reqV4)).toBe("v4.1");
       expect(isV4Engine(reqV4)).toBe(true);
 
       const reqLegacy = new Request("http://localhost:7766/v1/chat/completions", {
@@ -146,8 +146,8 @@ describe("LiteRouter Engine Dual-Path & Header Override (literouter-exqh.2 / exq
       expect(jsonApp.status).toBe("healthy");
     });
 
-    it("handles /health with 200 in v4 engine mode", async () => {
-      process.env.LITEROUTER_ENGINE = "v4";
+    it("handles /health with 200 in v4.1 engine mode", async () => {
+      process.env.LITEROUTER_ENGINE = "v4.1";
       resetEnvCache();
 
       const req = new Request("http://localhost:7766/health");
@@ -162,14 +162,14 @@ describe("LiteRouter Engine Dual-Path & Header Override (literouter-exqh.2 / exq
       expect(jsonApp.status).toBe("healthy");
     });
 
-    it("handles /health with 200 when X-LiteRouter-Engine: v4 header is passed", async () => {
+    it("handles /health with 200 when X-LiteRouter-Engine: v4.1 header is passed", async () => {
       process.env.LITEROUTER_ENGINE = "legacy";
       process.env.LITEROUTER_ENGINE_OVERRIDE = "true";
       resetEnvCache();
 
       const req = new Request("http://localhost:7766/health", {
         headers: {
-          "X-LiteRouter-Engine": "v4",
+          "X-LiteRouter-Engine": "v4.1",
         },
       });
 
@@ -210,11 +210,11 @@ describe("LiteRouter Engine Dual-Path & Header Override (literouter-exqh.2 / exq
       expect(mismatchRes.status).toBe(400);
     });
 
-    it("routes to v4 dispatcher when LITEROUTER_ENGINE=v4", async () => {
-      process.env.LITEROUTER_ENGINE = "v4";
+    it("routes to v4.1 dispatcher when LITEROUTER_ENGINE=v4.1", async () => {
+      process.env.LITEROUTER_ENGINE = "v4.1";
       resetEnvCache();
 
-      // In v4 mode, /v1/traces is a valid v4 route
+      // In v4.1 mode, /v1/traces is a valid v4.1 route
       const traceReq = new Request("http://localhost:7766/v1/traces", {
         headers: {
           Authorization: "Bearer lr-zn-oa-ch-no",
@@ -225,7 +225,7 @@ describe("LiteRouter Engine Dual-Path & Header Override (literouter-exqh.2 / exq
       const traceJson = (await traceRes.json()) as { traces: unknown[] };
       expect(Array.isArray(traceJson.traces)).toBe(true);
 
-      // In v4 mode, unknown route returns v4 404 format
+      // In v4.1 mode, unknown route returns v4.1 404 format
       const unknownReq = new Request("http://localhost:7766/v1/unknown_test_route", {
         method: "POST",
         headers: {
@@ -239,7 +239,7 @@ describe("LiteRouter Engine Dual-Path & Header Override (literouter-exqh.2 / exq
       expect(unknownJson.error.type).toBe("invalid_request_error");
     });
 
-    it("routes to v4 dispatcher via X-LiteRouter-Engine: v4 when override is enabled", async () => {
+    it("routes to v4.1 dispatcher via X-LiteRouter-Engine: v4.1 when override is enabled", async () => {
       process.env.LITEROUTER_ENGINE = "legacy";
       process.env.LITEROUTER_ENGINE_OVERRIDE = "true";
       resetEnvCache();
@@ -247,7 +247,7 @@ describe("LiteRouter Engine Dual-Path & Header Override (literouter-exqh.2 / exq
       const traceReq = new Request("http://localhost:7766/v1/traces", {
         headers: {
           Authorization: "Bearer lr-zn-oa-ch-no",
-          "X-LiteRouter-Engine": "v4",
+          "X-LiteRouter-Engine": "v4.1",
         },
       });
       const traceRes = await handleAppRequest(traceReq);

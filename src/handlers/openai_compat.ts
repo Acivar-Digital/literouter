@@ -1074,3 +1074,8 @@ export async function handleOpenAICompat(
 
   return executeDirectRequest(directive, effectiveBody, req.signal, reqId, clientOptions);
 }
+
+export {
+  OpenAIChatTransformer,
+  openAiChatTransformer,
+} from "../transformers/openai_chat";

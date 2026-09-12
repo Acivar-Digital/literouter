@@ -1,3 +1,5 @@
+import { getProviderDisplayName as getRegistryProviderDisplayName } from "../config/providers";
+
 function pad2(n: number): string {
   return n.toString().padStart(2, "0");
 }
@@ -70,6 +72,11 @@ export const EMOJI = Object.freeze({
 export function getProviderDisplayName(code: string): string {
   const normalized = code.toLowerCase();
   return PROVIDER_NAMES[normalized] || code.toUpperCase();
+}
+
+export function getProviderDisplayNameCompat(code: string): string {
+  const normalized = code.toLowerCase();
+  return PROVIDER_NAMES[code] ?? PROVIDER_NAMES[normalized] ?? getRegistryProviderDisplayName(code) ?? code.toUpperCase();
 }
 
 export function getWireDisplayName(code: string): string {

@@ -49,6 +49,7 @@ export * from "./ui/telemetry";
 export {
   createServer,
   handleAppRequest,
+  handleHardReset,
   resetAllState,
   getCooldownState,
 } from "./index";

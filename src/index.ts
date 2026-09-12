@@ -412,7 +412,7 @@ export async function dispatchRoute(
   }
 
   const engine = resolveEngine(req);
-  if (engine === "v4") {
+  if (engine === "v4.1") {
     return dispatchV4(req, rawKey, reqId);
   }
 

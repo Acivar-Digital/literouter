@@ -70,6 +70,20 @@ LiteRouter v4.0 completely eliminates external Redis/Valkey infrastructure in fa
 - **FastFifoQueue**: Doubly-linked node list (`QueueNode<T>`) providing $O(1)$ enqueue, dequeue, and arbitrary removal (e.g. when an inbound request aborts while queued).
 - **EMA Dwell Telemetry**: Maintains exponential moving average (EMA) of queue wait times, logged transparently in gateway telemetry.
 
+### 2.4 Architectural Decision: In-Memory Engine vs. Redis/Valkey ("We Choose Not To")
+
+A frequent architectural inquiry is why LiteRouter v4.0 avoids Redis, Valkey, or Bun's native C++/Zig `Bun.redis` (`Bun.RedisClient`) for gateway state.
+
+> **"It is not that we don't know: We are fully aware of Valkey, Redis, and Bun's native C++/Zig `Bun.redis` (`Bun.RedisClient`)."**  
+> **"We deliberately CHOOSE NOT TO use Redis/Valkey for the gateway's core state."**
+
+This deliberate design choice is founded on five technical pillars:
+1. **Event-Loop Non-Preemptive Atomicity**: Synchronous execution on Bun's single-threaded event loop makes `KeyPool` pointer updates and quarantine checks 100% race-condition free without needing locks or Lua scripts.
+2. **Deterministic FIFO Pacing**: `RequestPacer` with `FastFifoQueue` serializes bursts per-provider, preventing upstream 429 thundering herd collisions without Redis rate limit counters.
+3. **Sub-Millisecond Speed**: Direct RAM lookup takes <0.05ms, compared to 1–3ms for a TCP loopback Redis roundtrip + serialization.
+4. **Zero External Failure Domains**: Eliminates daemon dependencies, connection pool exhaustion, socket timeouts, and boot gating on external services.
+5. **Proper Scope vs. Clustering**: If multi-node horizontal clustering across multiple physical machines is needed in the future, a pluggable adapter can be introduced. But for a high-performance, single-instance gateway, forcing an external Valkey daemon is unnecessary operational baggage.
+
 ---
 
 ## 3. Decoupled Key Conserve Engine (Midnight UTC Rollover)

@@ -196,7 +196,7 @@ function parseBooleanString(val: unknown): unknown {
 
 export const BooleanCoerceSchema = z.preprocess(parseBooleanString, z.boolean());
 
-export const LiteRouterEngineSchema = z.enum(["legacy", "v4"]).default("legacy");
+export const LiteRouterEngineSchema = z.enum(["legacy", "v4.1"]).default("v4.1");
 export type LiteRouterEngine = z.infer<typeof LiteRouterEngineSchema>;
 
 export const EnvConfigSchema = z.object({

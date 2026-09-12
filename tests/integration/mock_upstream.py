@@ -18,6 +18,8 @@ class MockCallRecord(BaseModel):
     path: str = ""
     is_stream: bool = False
     timestamp: float = 0.0
+    headers: Dict[str, str] = Field(default_factory=dict)
+    body: Dict[str, Any] = Field(default_factory=dict)
 
 
 class MockServerState(BaseModel):
@@ -26,6 +28,8 @@ class MockServerState(BaseModel):
     keys_to_fail_429_once: Set[str] = Field(default_factory=set)
     fail_first_n_requests: int = 0
     fail_all_429: bool = False
+    fail_first_n_500: int = 0
+    fail_all_500: bool = False
 
 
 class MockUpstreamContext:
@@ -35,9 +39,23 @@ class MockUpstreamContext:
     def reset(self) -> None:
         self.state = MockServerState()
 
-    def record_call(self, key: str, path: str, is_stream: bool) -> None:
+    def record_call(
+        self,
+        key: str,
+        path: str,
+        is_stream: bool,
+        headers: Dict[str, str] | None = None,
+        body: Dict[str, Any] | None = None,
+    ) -> None:
         loop_time = asyncio.get_event_loop().time()
-        record = MockCallRecord(key=key, path=path, is_stream=is_stream, timestamp=loop_time)
+        record = MockCallRecord(
+            key=key,
+            path=path,
+            is_stream=is_stream,
+            timestamp=loop_time,
+            headers=headers or {},
+            body=body or {},
+        )
         self.state.calls.append(record)
         self.state.keys_seen[key] = self.state.keys_seen.get(key, 0) + 1
 
@@ -48,6 +66,14 @@ class MockUpstreamContext:
             self.state.fail_first_n_requests -= 1
             return True
         if key in self.state.keys_to_fail_429_once and self.state.keys_seen.get(key, 0) <= 1:
+            return True
+        return False
+
+    def should_fail_500(self) -> bool:
+        if self.state.fail_all_500:
+            return True
+        if self.state.fail_first_n_500 > 0:
+            self.state.fail_first_n_500 -= 1
             return True
         return False
 
@@ -101,6 +127,49 @@ async def sse_event_generator() -> AsyncIterator[bytes]:
     yield b"data: [DONE]\n\n"
 
 
+def make_500_payload() -> Dict[str, Any]:
+    return {
+        "error": {
+            "message": "Mock upstream: Internal server error (500)",
+            "type": "server_error",
+            "code": 500,
+        }
+    }
+
+
+def make_tool_call_payload(
+    name: str = "get_current_weather",
+    arguments: str = '{"location": "Tokyo, Japan"}',
+) -> Dict[str, Any]:
+    return {
+        "id": "chatcmpl-mock-tool-1",
+        "object": "chat.completion",
+        "created": 1723380000,
+        "model": "mock-model",
+        "choices": [
+            {
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": "call_mock_12345",
+                            "type": "function",
+                            "function": {
+                                "name": name,
+                                "arguments": arguments,
+                            },
+                        }
+                    ],
+                },
+                "finish_reason": "tool_calls",
+            }
+        ],
+        "usage": {"prompt_tokens": 15, "completion_tokens": 12, "total_tokens": 27},
+    }
+
+
 def create_mock_upstream_app(ctx: MockUpstreamContext) -> FastAPI:
     app = FastAPI(title="LiteRouter Mock Upstream")
 
@@ -121,10 +190,22 @@ def create_mock_upstream_app(ctx: MockUpstreamContext) -> FastAPI:
         body = await request.json()
         is_stream = bool(body.get("stream", False))
 
-        ctx.record_call(key=key, path="/chat/completions", is_stream=is_stream)
+        ctx.record_call(
+            key=key,
+            path="/chat/completions",
+            is_stream=is_stream,
+            headers=dict(request.headers),
+            body=body,
+        )
+
+        if ctx.should_fail_500():
+            return JSONResponse(status_code=500, content=make_500_payload())
 
         if ctx.should_fail_429(key):
             return JSONResponse(status_code=429, content=make_429_payload())
+
+        if body.get("tools"):
+            return JSONResponse(status_code=200, content=make_tool_call_payload())
 
         if is_stream:
             return StreamingResponse(

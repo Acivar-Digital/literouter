@@ -35,6 +35,10 @@ import {
   logUsage,
   logWarn,
 } from "../ui/logger";
+export {
+  OpenAIResponsesTransformer,
+  openAiResponsesTransformer,
+} from "../transformers/openai_responses";
 
 export type Directive =
   | ParsedDirective

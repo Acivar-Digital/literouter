@@ -1579,3 +1579,9 @@ export async function handleAnthropicCountTokens(
 }
 
 export const handleAnthropicOpenAICompat = handleAnthropicCompat;
+
+export {
+  AnthropicMessagesTransformer,
+  anthropicMessagesTransformer,
+} from "../transformers/anthropic_messages";
+

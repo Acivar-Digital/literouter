@@ -58,7 +58,7 @@ data/
 
 # agent_guardrail checkpoints
 .checkpoints/
-logs/traces/
+logs/
 
 # Beads / Dolt files (added by bd init)
 .beads/proxieddb/

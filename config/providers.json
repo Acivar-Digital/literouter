@@ -2,6 +2,9 @@
   "providers": {
     "openrouter": {
       "code": "or",
+      "name": "OpenRouter",
+      "env_key": "OPENROUTER_API_KEYS",
+      "strategy": "standard",
       "base_url": "https://openrouter.ai",
       "auth_header": "Bearer",
       "headers": {
@@ -29,10 +32,46 @@
           "ttl": "midnight_utc",
           "reason": "openrouter_daily_free_quota_exhausted"
         }
-      ]
+      ],
+      "request_retry": {
+        "enabled": true,
+        "max_attempts": 3,
+        "delay": {
+          "min_ms": 150,
+          "max_ms": 300
+        }
+      },
+      "key_cooldown": {
+        "enabled": true,
+        "initial_cooldown_ms": 10000,
+        "backoff_factor": 1.5,
+        "max_cooldown_ms": 60000,
+        "max_consecutive_failures": 5,
+        "jitter_percent": 20,
+        "respect_retry_after": true,
+        "reset_after_success": true
+      },
+      "pacer": {
+        "enabled": true,
+        "min_delay_ms": 200,
+        "max_delay_ms": 500,
+        "max_queue_depth": 100,
+        "max_queue_wait_ms": 15000
+      },
+      "circuit_breaker": {
+        "enabled": true,
+        "failure_threshold": 5,
+        "failure_window_ms": 60000,
+        "open_duration_ms": 30000,
+        "half_open_max_probes": 2,
+        "success_threshold_to_close": 2
+      }
     },
     "nvidia": {
       "code": "nv",
+      "name": "NVIDIA NIM",
+      "env_key": "NVIDIA_API_KEYS",
+      "strategy": "standard",
       "base_url": "https://integrate.api.nvidia.com",
       "auth_header": "Bearer",
       "endpoints": {
@@ -46,10 +85,31 @@
           "rpd": 10000,
           "tpm": 1000000
         }
+      },
+      "request_retry": {
+        "enabled": true,
+        "max_attempts": 3,
+        "delay": {
+          "min_ms": 150,
+          "max_ms": 300
+        }
+      },
+      "pacer": {
+        "enabled": true,
+        "min_delay_ms": 200,
+        "max_delay_ms": 500,
+        "max_queue_depth": 100,
+        "max_queue_wait_ms": 15000
+      },
+      "circuit_breaker": {
+        "enabled": true
       }
     },
     "google": {
       "code": "gg",
+      "name": "Google AI Studio",
+      "env_key": "GOOGLE_API_KEYS",
+      "strategy": "native_cascade",
       "base_url": "https://generativelanguage.googleapis.com",
       "auth_header": "Bearer",
       "endpoints": {
@@ -130,6 +190,24 @@
           "rpd": 1500,
           "tpm": 1000000
         }
+      },
+      "request_retry": {
+        "enabled": true,
+        "max_attempts": 3,
+        "delay": {
+          "min_ms": 200,
+          "max_ms": 500
+        }
+      },
+      "pacer": {
+        "enabled": true,
+        "min_delay_ms": 200,
+        "max_delay_ms": 500,
+        "max_queue_depth": 100,
+        "max_queue_wait_ms": 15000
+      },
+      "circuit_breaker": {
+        "enabled": false
       }
     },
     "openai": {
@@ -255,6 +333,9 @@
     },
     "zen": {
       "code": "zn",
+      "name": "Zen",
+      "env_key": "ZEN_API_KEYS",
+      "strategy": "zen_single_flight",
       "base_url": "https://opencode.ai/zen",
       "auth_header": "Bearer",
       "headers": {
@@ -274,6 +355,24 @@
           "rpd": 5000,
           "tpm": 1000000
         }
+      },
+      "request_retry": {
+        "enabled": true,
+        "max_attempts": 1,
+        "delay": {
+          "min_ms": 0,
+          "max_ms": 0
+        }
+      },
+      "pacer": {
+        "enabled": true,
+        "min_delay_ms": 200,
+        "max_delay_ms": 500,
+        "max_queue_depth": 100,
+        "max_queue_wait_ms": 15000
+      },
+      "circuit_breaker": {
+        "enabled": false
       }
     },
     "testprovider": {
@@ -296,6 +395,9 @@
     },
     "gcp": {
       "code": "gc",
+      "name": "Google Cloud (GCP)",
+      "env_key": "GCP_KEYS",
+      "strategy": "gcp_guarded",
       "base_url": "https://generativelanguage.googleapis.com",
       "auth_header": "Bearer",
       "endpoints": {
@@ -311,6 +413,24 @@
           "rpd": 14400,
           "tpm": 16000
         }
+      },
+      "request_retry": {
+        "enabled": true,
+        "max_attempts": 3,
+        "delay": {
+          "min_ms": 200,
+          "max_ms": 500
+        }
+      },
+      "pacer": {
+        "enabled": true,
+        "min_delay_ms": 2000,
+        "max_delay_ms": 3000,
+        "max_queue_depth": 100,
+        "max_queue_wait_ms": 240000
+      },
+      "circuit_breaker": {
+        "enabled": false
       }
     }
   }

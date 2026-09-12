@@ -48,7 +48,7 @@ const DEFAULT_ENV_RECORD: Record<string, string> = {
   TEST_PROVIDER_MIN_DELAY_MS: "0",
   MOCK_TP_PORT: "8999",
   LOG_LEVEL: "info",
-  LITEROUTER_ENGINE: "legacy",
+  LITEROUTER_ENGINE: "v4.1",
   LITEROUTER_ENGINE_OVERRIDE: "false",
 };
 
@@ -133,12 +133,12 @@ export function resolveEngine(req?: Request): LiteRouterEngine {
     return env.LITEROUTER_ENGINE;
   }
   const override = req.headers.get("x-literouter-engine")?.toLowerCase().trim();
-  if (override === "legacy" || override === "v4") {
+  if (override === "legacy" || override === "v4.1") {
     return override;
   }
   return env.LITEROUTER_ENGINE;
 }
 
 export function isV4Engine(req?: Request): boolean {
-  return resolveEngine(req) === "v4";
+  return resolveEngine(req) === "v4.1";
 }

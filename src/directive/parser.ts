@@ -203,3 +203,6 @@ export function parseDirective(rawKey: string): ParsedDirective | null {
   }
   return null;
 }
+
+export const parseDirectiveKey = parseDirective;
+

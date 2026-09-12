@@ -140,6 +140,7 @@ def dots_e2e_stack() -> Generator[Dict[str, Any], None, None]:
     env["LITEROUTER_PORT"] = str(gw_port)
     env["MOCK_OR_PORT"] = str(mock_port)
     env["OPENROUTER_API_KEYS"] = KEY_1
+    env["LITEROUTER_ENGINE"] = "legacy"
 
     gw_proc = subprocess.Popen(
         ["bun", "run", "src/index.ts"],

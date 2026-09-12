@@ -21,6 +21,9 @@ export class UnmockedOutboundCallError extends Error {
 // 1. In-memory environment sanitization
 process.env.NODE_ENV = "test";
 process.env.LITEROUTER_TEST_MODE = "true";
+if (!process.env.LITEROUTER_ENGINE) {
+  process.env.LITEROUTER_ENGINE = "legacy";
+}
 
 const MOCK_PROVIDER_KEYS: Readonly<Record<string, string>> = {
   GOOGLE_API_KEYS: "mock-gg-stub-key-01,mock-gg-stub-key-02",

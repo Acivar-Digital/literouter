@@ -43,7 +43,7 @@ mkdir -p logs
 # Prune gateway log to last 30 days (safe no-op when fresh)
 if [ -f logs/gateway.log ]; then bash scripts/prune-logs.sh || true; fi
 
-echo "🚀 Starting LiteRouter v3.1 (Bun) on ${HOST}:${PORT} (${PROTOCOL})..."
+echo "🚀 Starting LiteRouter v4.0 (Bun) on ${HOST}:${PORT} (${PROTOCOL})..."
 
 # Launch Bun process in detached tmux session
 tmux new-session -d -s "$TMUX_SESSION"
@@ -70,17 +70,32 @@ fi
 
 if [ "$READY" -eq 1 ]; then
     LAN_IP=$(hostname -I 2>/dev/null | awk '{print $1}' || echo "127.0.0.1")
+
+    format_box_line() {
+        local label="$1"
+        local value="$2"
+        local line
+        line=$(printf "  %-18s %s" "$label" "$value")
+        local len=${#line}
+        local pad=$(( 70 - len ))
+        printf "║%s%*s║\n" "$line" "$pad" ""
+    }
+
     echo ""
     echo "╔══════════════════════════════════════════════════════════════════════╗"
-    echo "║  🟢 LiteRouter Gateway Active (v3.1 Bun Runtime)                     ║"
-    echo "║                                                                      ║"
-    echo "║  Local Endpoint:   ${PROTOCOL}://localhost:${PORT}                            ║"
+    title="  🟢 LiteRouter Gateway Active (v4.0 Bun Runtime)"
+    t_len=${#title}
+    # 🟢 is 1 char in bash string length but takes 2 terminal display columns
+    t_pad=$(( 70 - 1 - t_len ))
+    printf "║%s%*s║\n" "$title" "$t_pad" ""
+    printf "║%*s║\n" 70 ""
+    format_box_line "Local Endpoint:" "${PROTOCOL}://localhost:${PORT}"
     if [ -n "$LAN_IP" ]; then
-        printf "║  LAN Endpoint:     ${PROTOCOL}://%-43s ║\n" "${LAN_IP}:${PORT}"
+        format_box_line "LAN Endpoint:" "${PROTOCOL}://${LAN_IP}:${PORT}"
     fi
-    printf "║  Health Probe:     ${PROTOCOL}://localhost:%-38s ║\n" "${PORT}/health"
-    printf "║  Process PID:      %-49s ║\n" "${BUN_PID:-tmux-managed}"
-    printf "║  Tmux Session:     %-49s ║\n" "$TMUX_SESSION"
+    format_box_line "Health Probe:" "${PROTOCOL}://localhost:${PORT}/health"
+    format_box_line "Process PID:" "${BUN_PID:-tmux-managed}"
+    format_box_line "Tmux Session:" "$TMUX_SESSION"
     echo "╚══════════════════════════════════════════════════════════════════════╝"
     echo "Attach to live logs: tmux attach -t $TMUX_SESSION"
 else

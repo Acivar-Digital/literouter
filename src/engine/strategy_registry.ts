@@ -68,7 +68,11 @@ export function initStrategyRegistry(): void {
 
 export function getStrategy(providerCode: string): ProviderExecutionStrategy {
   const norm = providerCode.toLowerCase();
-  return strategyMap.get(norm) ?? new StandardStrategy();
+  const strategy = strategyMap.get(norm);
+  if (!strategy) {
+    throw new Error(`[StrategyRegistry] No strategy registered for provider "${providerCode}". Check config/providers.json strategy field.`);
+  }
+  return strategy;
 }
 
 export function resetStrategyRegistry(): void {
