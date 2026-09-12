@@ -86,6 +86,7 @@ export const ProviderPacerConfigSchema = z
     max_delay_ms: z.number().int().nonnegative(),
     max_queue_depth: z.number().int().positive(),
     max_queue_wait_ms: z.number().int().positive(),
+    max_concurrency: z.number().int().nonnegative().optional().default(0),
   })
   .refine((data) => data.max_delay_ms >= data.min_delay_ms, {
     message: "max_delay_ms must be >= min_delay_ms",
@@ -115,7 +116,6 @@ export const ProviderStrategySchema = z
     "standard",
     "native_cascade",
     "gcp_guarded",
-    "zen_single_flight",
     "anthropic_direct",
   ])
   .default("standard");

@@ -190,7 +190,7 @@ describe("ProviderRegistry — In-Memory Store", () => {
     expect(getProviderConfig("or").strategy).toBe("standard");
     expect(getProviderConfig("gg").strategy).toBe("native_cascade");
     expect(getProviderConfig("gc").strategy).toBe("gcp_guarded");
-    expect(getProviderConfig("zn").strategy).toBe("zen_single_flight");
+    expect(getProviderConfig("zn").strategy).toBe("standard");
     // Entries without an explicit strategy fall back to the schema default
     expect(getProviderConfig("oa").strategy).toBe("standard");
   });

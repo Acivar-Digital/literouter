@@ -33,7 +33,7 @@ import {
   getAllProviders,
 } from "../config/providers";
 import { getEnv } from "../config/env";
-import { getPacerForProvider, PacerQueueOverflowError } from "../network/pacer";
+import { getPacerForProvider, PacerQueueOverflowError, type PacerAcquireResult } from "../network/pacer";
 import { getCircuitBreakerForProvider } from "../network/circuit_breaker";
 import {
   EMOJI,
@@ -272,9 +272,7 @@ async function executeDirectCall(
   const provConfig = isRegisteredProvider(directive.provider)
     ? getProviderConfig(directive.provider)
     : undefined;
-  const isSingleFlight =
-    provConfig?.strategy === "zen_single_flight" ||
-    !(provConfig?.request_retry?.enabled ?? true);
+  const isSingleFlight = !(provConfig?.request_retry?.enabled ?? true);
   const breakerEnabled = provConfig?.circuit_breaker?.enabled ?? true;
   const breaker = env.LITEROUTER_CIRCUIT_BREAKER && breakerEnabled
     ? getCircuitBreakerForProvider(directive.provider)
@@ -651,18 +649,70 @@ async function executeDirectCall(
   });
 }
 
+export function wrapStreamWithPacerLease(
+  body: ReadableStream<Uint8Array>,
+  lease: PacerAcquireResult
+): ReadableStream<Uint8Array> {
+  let released = false;
+  const releaseOnce = () => {
+    if (!released) {
+      released = true;
+      lease.release();
+    }
+  };
+
+  const reader = body.getReader();
+  return new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      try {
+        const { value, done } = await reader.read();
+        if (done) {
+          releaseOnce();
+          controller.close();
+          return;
+        }
+        controller.enqueue(value);
+      } catch (err: unknown) {
+        releaseOnce();
+        controller.error(err);
+      }
+    },
+    cancel(reason) {
+      releaseOnce();
+      return reader.cancel(reason);
+    },
+  });
+}
+
+function finalizeAttemptResponse(
+  response: Response,
+  pacerLease: PacerAcquireResult | undefined
+): Response {
+  if (!pacerLease) {
+    return response;
+  }
+  const isStreaming =
+    response.headers.get("content-type")?.includes("text/event-stream") &&
+    response.body !== null;
+  if (isStreaming && response.body) {
+    return new Response(wrapStreamWithPacerLease(response.body, pacerLease), {
+      status: response.status,
+      statusText: response.statusText,
+      headers: response.headers,
+    });
+  }
+  pacerLease.release();
+  return response;
+}
+
 export async function acquireProviderPacer(
   provider: string,
   clientSignal?: AbortSignal
-): Promise<void> {
+): Promise<PacerAcquireResult | undefined> {
   const env = getEnv();
-  if (!env.LITEROUTER_PACER_ENABLED) {
-    return;
-  }
+  if (!env.LITEROUTER_PACER_ENABLED) return undefined;
   const provConfig = isRegisteredProvider(provider) ? getProviderConfig(provider) : undefined;
-  if (provConfig?.pacer?.enabled === false) {
-    return;
-  }
+  if (provConfig?.pacer?.enabled === false) return undefined;
   const dynamicMaxQueueDepth = globalKeyPool.getDynamicMaxQueueDepth(provider);
   const maxQueueDepth = provConfig?.pacer?.max_queue_depth ?? (
     env.LITEROUTER_PACER_MAX_QUEUE_DEPTH > 0
@@ -670,7 +720,7 @@ export async function acquireProviderPacer(
       : dynamicMaxQueueDepth
   );
   const pacer = getPacerForProvider(provider, 0, { maxQueueDepth });
-  await pacer.acquire(clientSignal);
+  return await pacer.acquire(clientSignal);
 }
 
 export async function waitAndSelectKey(
@@ -740,9 +790,7 @@ async function tryDirectAttempt(
       const provConfig = isRegisteredProvider(directive.provider)
         ? getProviderConfig(directive.provider)
         : undefined;
-      const isSingleFlight =
-        provConfig?.strategy === "zen_single_flight" ||
-        !(provConfig?.request_retry?.enabled ?? true);
+      const isSingleFlight = !(provConfig?.request_retry?.enabled ?? true);
       if (globalKeyPool.isQuarantineEnabled(directive.provider)) {
         globalKeyPool.reportFailure(directive.provider, selected.index, 0, undefined, err.message, Date.now(), 2);
       }
@@ -812,9 +860,10 @@ async function executeSingleAttemptLoop(
     }
 
     const shouldPaceIngress = provConfig?.pacer?.enabled ?? false;
+    let pacerLease: PacerAcquireResult | undefined;
     if (shouldPaceIngress) {
       try {
-        await acquireProviderPacer(directive.provider, clientSignal);
+        pacerLease = await acquireProviderPacer(directive.provider, clientSignal);
       } catch (err: unknown) {
         if (clientSignal?.aborted || (err instanceof Error && err.message.includes("aborted"))) {
           return Response.json(
@@ -846,6 +895,7 @@ async function executeSingleAttemptLoop(
 
     const selected = await waitAndSelectKey(directive.provider, startTime, maxWaitMs, clientSignal);
     if (!selected) {
+      pacerLease?.release();
       if (clientSignal?.aborted) {
         return Response.json(
           { error: { message: "Request aborted by client", type: "client_closed_request" } },
@@ -866,9 +916,11 @@ async function executeSingleAttemptLoop(
     prevKeyIndex = selected.index;
 
     const outcome = await tryDirectAttempt(directive, transformed, clientSignal, selected, reqId, attempt + 1, maxAttempts, clientOptions, startTime);
-    if (outcome.response) {
-      return outcome.response;
+    if (outcome.response && (!outcome.retryable || outcome.response.status === 200)) {
+      return finalizeAttemptResponse(outcome.response, pacerLease);
     }
+
+    pacerLease?.release();
     lastError = outcome.error;
     if (clientSignal?.aborted || (lastError instanceof Error && lastError.message.includes("aborted"))) {
       return Response.json(
@@ -877,6 +929,9 @@ async function executeSingleAttemptLoop(
       );
     }
     if (!outcome.retryable) {
+      if (outcome.response) {
+        return outcome.response;
+      }
       throw lastError;
     }
 

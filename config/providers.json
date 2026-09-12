@@ -618,7 +618,7 @@
       "code": "zn",
       "name": "Zen",
       "env_key": "ZEN_API_KEYS",
-      "strategy": "zen_single_flight",
+      "strategy": "standard",
       "base_url": "https://opencode.ai/zen",
       "auth_header": "Bearer",
       "headers": {
@@ -641,10 +641,10 @@
       },
       "request_retry": {
         "enabled": true,
-        "max_attempts": 1,
+        "max_attempts": 3,
         "delay": {
-          "min_ms": 0,
-          "max_ms": 0
+          "min_ms": 1000,
+          "max_ms": 2000
         }
       },
       "pacer": {
@@ -652,7 +652,8 @@
         "min_delay_ms": 200,
         "max_delay_ms": 500,
         "max_queue_depth": 100,
-        "max_queue_wait_ms": 15000
+        "max_queue_wait_ms": 15000,
+        "max_concurrency": 1
       },
       "circuit_breaker": {
         "enabled": false,

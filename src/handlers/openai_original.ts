@@ -464,7 +464,8 @@ async function pumpStream(
   abortController?: AbortController,
   telemetry?: ResponsesTelemetry,
   bytesRef?: { value: number },
-  textRef?: { value: string }
+  textRef?: { value: string },
+  onComplete?: () => void
 ): Promise<void> {
   const cleanup = setupAbortHandler(reader, controller, clientSignal, abortController);
   try {
@@ -477,6 +478,7 @@ async function pumpStream(
   } finally {
     cleanup();
     releaseReaderLock(reader);
+    onComplete?.();
   }
 }
 
@@ -484,10 +486,20 @@ export function createStreamingResponse(
   upstreamResponse: Response,
   clientSignal?: AbortSignal,
   abortController?: AbortController,
-  telemetry?: ResponsesTelemetry
+  telemetry?: ResponsesTelemetry,
+  pacerRelease?: () => void
 ): Response {
+  let released = false;
+  const safeRelease = () => {
+    if (!released) {
+      released = true;
+      pacerRelease?.();
+    }
+  };
+
   const upstreamBody = upstreamResponse.body;
   if (!upstreamBody) {
+    safeRelease();
     return new Response(null, {
       status: upstreamResponse.status,
       headers: buildSseHeaders(),
@@ -499,9 +511,10 @@ export function createStreamingResponse(
   const textRef = { value: "" };
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
-      void pumpStream(reader, controller, clientSignal, abortController, telemetry, bytesRef, textRef);
+      void pumpStream(reader, controller, clientSignal, abortController, telemetry, bytesRef, textRef, safeRelease);
     },
     cancel(reason) {
+      safeRelease();
       abortController?.abort();
       return reader.cancel(reason);
     },
@@ -681,43 +694,54 @@ function resolveRequestRoute(
   };
 }
 
-async function acquireZenRetryPacer(
-  clientSignal: AbortSignal,
-  reqId: string
-): Promise<Response | null> {
+interface PacerLeaseResult {
+  readonly errorResponse?: Response;
+  readonly release?: () => void;
+}
+
+async function acquireProviderRetryPacer(
+  provider: string,
+  signal?: AbortSignal,
+  reqId?: string
+): Promise<PacerLeaseResult> {
   const env = getEnv();
-  const provConfig = isRegisteredProvider("zn") ? getProviderConfig("zn") : undefined;
+  const provConfig = isRegisteredProvider(provider) ? getProviderConfig(provider) : undefined;
   if (!env.LITEROUTER_PACER_ENABLED || !(provConfig?.pacer?.enabled ?? false)) {
-    return null;
+    return {};
   }
-  const dynamicMaxQueueDepth = globalKeyPool.getDynamicMaxQueueDepth("zn");
+  const dynamicMaxQueueDepth = globalKeyPool.getDynamicMaxQueueDepth(provider);
   const maxQueueDepth =
     env.LITEROUTER_PACER_MAX_QUEUE_DEPTH > 0
       ? env.LITEROUTER_PACER_MAX_QUEUE_DEPTH
-      : dynamicMaxQueueDepth;
+      : (provConfig?.pacer?.max_queue_depth ?? dynamicMaxQueueDepth);
   try {
-    const pacer = getPacerForProvider("zn", 0, { maxQueueDepth });
-    await pacer.acquire(clientSignal);
-    return null;
+    const pacer = getPacerForProvider(provider, 0, { maxQueueDepth });
+    const acquireResult = await pacer.acquire(signal);
+    return { release: acquireResult.release };
   } catch (err: unknown) {
     if (err instanceof PacerQueueOverflowError) {
-      logWarn(EMOJI.hourglass, `[PACER ${reqId}] Zen pacer queue overflow: ${err.message} (Retry-After: ${err.retryAfterSec}s)`);
-      return Response.json(
-        {
-          error: {
-            message: err.message,
-            type: "rate_limit_exceeded",
-            code: "rate_limit_exceeded",
-          },
-        },
-        {
-          status: 429,
-          headers: {
-            "Retry-After": String(err.retryAfterSec),
-            "Content-Type": "application/json",
-          },
-        }
+      logWarn(
+        EMOJI.hourglass,
+        `[PACER ${reqId ?? "unknown"}] ${provider.toUpperCase()} pacer queue overflow: ${err.message} (Retry-After: ${err.retryAfterSec}s)`
       );
+      return {
+        errorResponse: Response.json(
+          {
+            error: {
+              message: err.message,
+              type: "rate_limit_exceeded",
+              code: "rate_limit_exceeded",
+            },
+          },
+          {
+            status: 429,
+            headers: {
+              "Retry-After": String(err.retryAfterSec),
+              "Content-Type": "application/json",
+            },
+          }
+        ),
+      };
     }
     throw err;
   }
@@ -729,6 +753,7 @@ interface FetchResult {
   readonly keyIndex?: number;
   readonly upstreamProtocol?: OutboundProtocol;
   readonly measuredTtftMs?: number;
+  readonly pacerRelease?: () => void;
 }
 
 async function dispatchUpstreamFetch(
@@ -740,34 +765,27 @@ async function dispatchUpstreamFetch(
   model?: string
 ): Promise<FetchResult> {
   const env = getEnv();
-  const isZen = route.provider === "zn";
   const quarantineEnabled = globalKeyPool.isQuarantineEnabled(route.provider);
-  // S5 zn gating mirrors S4 (openai_compat.ts) + gcp_compat.ts. Non-zn providers
-  // (or/oa) keep the legacy single-flight path: maxAttempts=1, unconditional
-  // failure reporting, no breaker, no load-shed.
   const poolSize = globalKeyPool.getPoolSize(route.provider);
   const provConfig = isRegisteredProvider(route.provider) ? getProviderConfig(route.provider) : undefined;
-  const zenRetriesEnabled =
-    !isZen ||
-    Boolean(provConfig?.request_retry?.enabled && provConfig.request_retry.max_attempts > 1);
+  const retriesEnabled = Boolean(provConfig?.request_retry?.enabled && provConfig.request_retry.max_attempts > 1);
   const maxAttempts = provConfig?.request_retry?.enabled
     ? Math.min(provConfig.request_retry.max_attempts, poolSize > 0 ? poolSize : 1)
     : 1;
-  const maxWaitMs = env.LITEROUTER_PACER_MAX_QUEUE_WAIT_MS || 300000;
+  const maxWaitMs = provConfig?.pacer?.max_queue_wait_ms ?? (env.LITEROUTER_PACER_MAX_QUEUE_WAIT_MS || 300000);
   const totalKeys = poolSize > 0 ? poolSize : 1;
 
-  // Breaker is zn-scoped only; or/oa never consult a breaker here.
   const breaker =
-    isZen && env.LITEROUTER_CIRCUIT_BREAKER && (provConfig?.circuit_breaker?.enabled ?? true)
-      ? getCircuitBreakerForProvider("zn")
+    env.LITEROUTER_CIRCUIT_BREAKER && (provConfig?.circuit_breaker?.enabled ?? true)
+      ? getCircuitBreakerForProvider(route.provider)
       : null;
   if (breaker && !breaker.isAvailable()) {
-    logWarn(EMOJI.error, `[BREAKER ${reqId}] Provider 'zn' circuit breaker is OPEN. Fast-failing Responses request.`);
+    logWarn(EMOJI.error, `[BREAKER ${reqId}] Provider '${route.provider}' circuit breaker is OPEN. Fast-failing Responses request.`);
     return {
       errorResponse: Response.json(
         {
           error: {
-            message: "Provider 'zn' circuit breaker is OPEN",
+            message: `Provider '${route.provider}' circuit breaker is OPEN`,
             type: "service_unavailable",
           },
         },
@@ -790,31 +808,29 @@ async function dispatchUpstreamFetch(
       };
     }
 
-    // Load-shed is zn-scoped and skipped when quarantine is off.
-    if (isZen && quarantineEnabled) {
+    if (quarantineEnabled) {
       const dwellMs = Date.now() - loopStart;
-      if (globalKeyPool.shouldLoadShed("zn", dwellMs, maxWaitMs)) {
-        const minTtl = globalKeyPool.getMinQuarantineTtlMs("zn");
+      if (globalKeyPool.shouldLoadShed(route.provider, dwellMs, maxWaitMs)) {
+        const minTtl = globalKeyPool.getMinQuarantineTtlMs(route.provider);
         const retryAfterSec = Math.max(1, Math.ceil(minTtl / 1000));
         return {
           errorResponse: Response.json(
-            { error: { message: "Provider 'zn' unavailable: all keys in cooldown exceed wait budget.", type: "service_unavailable" } },
+            { error: { message: `Provider '${route.provider}' unavailable: all keys in cooldown exceed wait budget.`, type: "service_unavailable" } },
             { status: 503, headers: { "Retry-After": String(retryAfterSec) } }
           ),
         };
       }
     }
 
+    const pacerResult = await acquireProviderRetryPacer(route.provider, signal, reqId);
+    if (pacerResult.errorResponse) {
+      return { errorResponse: pacerResult.errorResponse };
+    }
+
     if (attempt > 1) {
-      // NOTE: attempt 1 was already paced at the gateway edge (src/index.ts
-      // acquireIngressPacer covers zn). Retries re-acquire the conveyor here,
-      // honoring provider pacer config — same split as S4 mid-stream retries.
-      const pacerGate = isZen ? await acquireZenRetryPacer(signal, reqId) : null;
-      if (pacerGate) {
-        return { errorResponse: pacerGate };
-      }
       const next = globalKeyPool.selectNextKey(route.provider);
       if (!next) {
+        pacerResult.release?.();
         const minTtl = globalKeyPool.getMinQuarantineTtlMs(route.provider);
         logExhausted(reqId, route.provider, minTtl);
         return {
@@ -851,10 +867,11 @@ async function dispatchUpstreamFetch(
     } catch (err: unknown) {
       if (quarantineEnabled) {
         globalKeyPool.reportFailure(route.provider, currentKeyIndex, 502);
-      } else if (isZen) {
+      } else {
         logWarn(EMOJI.zap, `[${route.provider.toUpperCase()} ${reqId}] Dumb-forwarder mode: Key ${currentKeyIndex} quarantine bypassed.`);
       }
-      if (isZen && zenRetriesEnabled && attempt < maxAttempts && !signal.aborted) {
+      if (retriesEnabled && attempt < maxAttempts && !signal.aborted) {
+        pacerResult.release?.();
         logWarn(EMOJI.zap, `[${route.provider.toUpperCase()} ${reqId}] Transport error on attempt ${attempt}/${maxAttempts}, rotating key...`);
         const delayMs = provConfig ? calculateRetryDelay(provConfig.request_retry.delay, attempt) : 0;
         if (delayMs > 0) {
@@ -862,6 +879,7 @@ async function dispatchUpstreamFetch(
         }
         continue;
       }
+      pacerResult.release?.();
       logError(reqId, `Upstream request to ${route.upstreamUrl} failed`, err);
       return {
         errorResponse: Response.json(
@@ -885,6 +903,7 @@ async function dispatchUpstreamFetch(
         keyIndex: currentKeyIndex,
         upstreamProtocol: execResult.upstreamProtocol,
         measuredTtftMs: execResult.measuredTtftMs,
+        pacerRelease: pacerResult.release,
       };
     }
 
@@ -910,11 +929,12 @@ async function dispatchUpstreamFetch(
     }
 
     const canRetry =
-      zenRetriesEnabled &&
+      retriesEnabled &&
       classification.action === "retry_rotate" &&
       attempt < maxAttempts &&
       !signal.aborted;
     if (canRetry) {
+      pacerResult.release?.();
       const ttlSec = quarantineEnabled && classification.quarantineTtlSec > 0
         ? classification.quarantineTtlSec
         : undefined;
@@ -926,9 +946,10 @@ async function dispatchUpstreamFetch(
       continue;
     }
 
-    if (isZen && !zenRetriesEnabled && classification.action === "retry_rotate") {
-      logWarn(EMOJI.zap, `[ZEN ${reqId}] Single-flight mode: Passing HTTP ${res.status} directly downstream.`);
+    if (!retriesEnabled && classification.action === "retry_rotate") {
+      logWarn(EMOJI.zap, `[${route.provider.toUpperCase()} ${reqId}] Single-flight mode: Passing HTTP ${res.status} directly downstream.`);
     }
+    pacerResult.release?.();
     return { response: res, keyIndex: currentKeyIndex };
   }
 
@@ -1084,9 +1105,16 @@ export async function handleOpenAiOriginal(
   };
 
   if (isStream) {
-    return createStreamingResponse(upstreamRes, req.signal, abortController, telemetry);
+    return createStreamingResponse(
+      upstreamRes,
+      req.signal,
+      abortController,
+      telemetry,
+      fetchResult.pacerRelease
+    );
   }
 
   cleanup();
+  fetchResult.pacerRelease?.();
   return createNonStreamingResponse(upstreamRes, telemetry);
 }

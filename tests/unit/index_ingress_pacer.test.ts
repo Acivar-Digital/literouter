@@ -16,7 +16,7 @@ describe("Index Ingress Pacer Dynamic Configuration (literouter-xkuv)", () => {
 
   it("dynamically acquires pacer for registered providers with pacer enabled", async () => {
     const acquireSpy = spyOn(pacerModule.RequestPacer.prototype, "acquire").mockImplementation(
-      async () => ({ queueDwellMs: 0 })
+      async () => ({ queueDwellMs: 0, release: () => {} })
     );
 
     const req = new Request("http://localhost:7766/v1/chat/completions", {
@@ -80,7 +80,7 @@ describe("Index Ingress Pacer Dynamic Configuration (literouter-xkuv)", () => {
     });
 
     const acquireSpy = spyOn(pacerModule.RequestPacer.prototype, "acquire").mockImplementation(
-      async () => ({ queueDwellMs: 0 })
+      async () => ({ queueDwellMs: 0, release: () => {} })
     );
 
     const req = new Request("http://localhost:7766/v1/chat/completions", {
@@ -106,7 +106,7 @@ describe("Index Ingress Pacer Dynamic Configuration (literouter-xkuv)", () => {
 
   it("bypasses ingress pacer for unregistered provider codes", async () => {
     const acquireSpy = spyOn(pacerModule.RequestPacer.prototype, "acquire").mockImplementation(
-      async () => ({ queueDwellMs: 0 })
+      async () => ({ queueDwellMs: 0, release: () => {} })
     );
 
     const req = new Request("http://localhost:7766/v1/chat/completions", {

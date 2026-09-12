@@ -7,9 +7,7 @@ import { getEnv, resolveEngine } from "./config/env";
 import { loadKeyPools } from "./config/keys";
 import {
   getAllProviders,
-  getProviderConfig,
   initProviderRegistry,
-  isRegisteredProvider,
 } from "./config/providers";
 import { initStrategyRegistry } from "./engine/strategy_registry";
 import { parseDirective, type ParsedDirective } from "./directive/parser";
@@ -44,11 +42,9 @@ import { traceBuffer } from "./telemetry/ring_buffer";
 import { traceWriter } from "./telemetry/trace_writer";
 import {
   clearPacerRegistry,
-  getPacerForProvider,
-  PacerQueueOverflowError,
 } from "./network/pacer";
 import { type BannerOptions, printBanner } from "./ui/banner";
-import { logAmber, logError, logInfo, logPacer } from "./ui/logger";
+import { logAmber, logError, logInfo } from "./ui/logger";
 
 // Boot initialization: Load provider registry and emit deprecation warnings
 try {
@@ -253,67 +249,6 @@ function dispatchGoogleBeta(path: string, req: Request, rawKey: string, reqId: s
   return null;
 }
 
-const ingressPacedRequests = new WeakSet<Request>();
-
-async function acquireIngressPacer(req: Request, rawKey: string, reqId?: string): Promise<Response | null> {
-  if (ingressPacedRequests.has(req)) {
-    return null;
-  }
-  const parsed = parseDirective(rawKey);
-  const provider = parsed?.type === "direct" ? parsed.provider : null;
-  if (
-    provider === null ||
-    !isRegisteredProvider(provider) ||
-    !getEnv().LITEROUTER_PACER_ENABLED
-  ) {
-    return null;
-  }
-  const provPacer = getProviderConfig(provider).pacer;
-  if (!provPacer?.enabled) {
-    return null;
-  }
-  try {
-    const pacer = getPacerForProvider(provider, 0);
-    const { queueDwellMs } = await pacer.acquire(req.signal);
-    ingressPacedRequests.add(req);
-    if (reqId) {
-      const stats = pacer.getStats();
-      logPacer(reqId, provider, queueDwellMs, {
-        queueDepth: stats.queueDepth,
-        avgDwellMs: stats.avgDwellTimeMs,
-        minIntervalMs: pacer.getMinInterval(),
-      });
-    }
-    return null;
-  } catch (err: unknown) {
-    if (req.signal?.aborted || (err instanceof Error && err.message.includes("aborted"))) {
-      return Response.json(
-        { error: { message: "Request aborted by client", type: "client_closed_request" } },
-        { status: 499 }
-      );
-    }
-    if (err instanceof PacerQueueOverflowError) {
-      return Response.json(
-        {
-          error: {
-            message: err.message,
-            type: "rate_limit_exceeded",
-            code: "rate_limit_exceeded",
-          },
-        },
-        {
-          status: 429,
-          headers: {
-            "Retry-After": String(err.retryAfterSec),
-            "Content-Type": "application/json",
-          },
-        }
-      );
-    }
-    throw err;
-  }
-}
-
 function parseDirectiveWithEndpoint(
   rawKey: string
 ): (ParsedDirective & { readonly endpoint?: string }) | null {
@@ -427,11 +362,6 @@ export async function dispatchRoute(
   const mismatchRes = validateEndpointMatch(path, directive);
   if (mismatchRes !== null) {
     return mismatchRes;
-  }
-
-  const pacerGate = await acquireIngressPacer(req, rawKey, reqId);
-  if (pacerGate !== null) {
-    return pacerGate;
   }
 
   const directiveObj = directive ?? { provider: "", raw: rawKey };

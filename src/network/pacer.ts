@@ -11,9 +11,14 @@ export class PacerQueueOverflowError extends Error {
 
 interface QueueEntry {
   readonly signal?: AbortSignal;
-  readonly resolve: (dwellMs: number) => void;
+  readonly resolve: (result: PacerAcquireResult) => void;
   readonly reject: (err: Error) => void;
   readonly enqueuedAt: number;
+}
+
+export interface PacerAcquireResult {
+  queueDwellMs: number;
+  release: () => void;
 }
 
 export interface QueueNode<T> {
@@ -77,6 +82,7 @@ export interface PacerConfig {
   readonly maxRpm?: number; // Optional backwards compatibility / fallback calculation
   readonly maxQueueDepth?: number; // Optional queue depth limit
   readonly maxQueueWaitMs?: number; // Maximum queue dwell before timeout
+  readonly maxConcurrency?: number; // Maximum concurrent in-flight requests (0 or undefined = unconstrained)
 }
 
 export class RequestPacer {
@@ -84,8 +90,12 @@ export class RequestPacer {
   private readonly queue = new FastFifoQueue<QueueEntry>();
   private drainTimer: ReturnType<typeof setTimeout> | null = null;
   private emaDwellTimeMs = 0;
+  private activeInFlight = 0;
+  private readonly maxConcurrency: number;
 
-  constructor(private readonly config: PacerConfig = {}) {}
+  constructor(private readonly config: PacerConfig = {}) {
+    this.maxConcurrency = config.maxConcurrency ?? 0;
+  }
 
   public getMinInterval(): number {
     if (this.config.minIntervalMs !== undefined) {
@@ -105,7 +115,7 @@ export class RequestPacer {
     return this.config.maxQueueWaitMs ?? 15000;
   }
 
-  public async acquire(signal?: AbortSignal): Promise<{ queueDwellMs: number }> {
+  public async acquire(signal?: AbortSignal): Promise<PacerAcquireResult> {
     if (signal?.aborted) {
       throw new Error("Request aborted while queued in LiteRouter pacer");
     }
@@ -113,12 +123,17 @@ export class RequestPacer {
     const minInterval = this.getMinInterval();
     const now = Date.now();
     const timeSinceLastDispatch = now - this.lastDispatchTimeMs;
+    const canBypass =
+      this.queue.size === 0 &&
+      timeSinceLastDispatch >= minInterval &&
+      (this.maxConcurrency <= 0 || this.activeInFlight < this.maxConcurrency);
 
-    // If queue is empty AND minInterval has elapsed since last dispatch: dispatch immediately!
-    if (this.queue.size === 0 && timeSinceLastDispatch >= minInterval) {
+    // If queue is empty AND minInterval has elapsed AND within concurrency limit: dispatch immediately!
+    if (canBypass) {
       this.lastDispatchTimeMs = now;
+      this.activeInFlight++;
       this.updateEma(0);
-      return { queueDwellMs: 0 };
+      return { queueDwellMs: 0, release: this.createRelease() };
     }
 
     // Capacity check
@@ -132,9 +147,13 @@ export class RequestPacer {
       );
     }
 
+    return this.enqueueRequest(signal);
+  }
+
+  private enqueueRequest(signal?: AbortSignal): Promise<PacerAcquireResult> {
     const enqueuedAt = Date.now();
 
-    return new Promise<{ queueDwellMs: number }>((resolve, reject) => {
+    return new Promise<PacerAcquireResult>((resolve, reject) => {
       let node: QueueNode<QueueEntry> | null = null;
       let finished = false;
 
@@ -151,12 +170,12 @@ export class RequestPacer {
 
       const entry: QueueEntry = {
         signal,
-        resolve: (dwellMs: number) => {
+        resolve: (result: PacerAcquireResult) => {
           if (finished) return;
           finished = true;
           node = null;
           signal?.removeEventListener("abort", abortHandler);
-          resolve({ queueDwellMs: dwellMs });
+          resolve(result);
         },
         reject: (err: Error) => {
           if (finished) return;
@@ -181,12 +200,31 @@ export class RequestPacer {
     });
   }
 
+  private createRelease(): () => void {
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      this.activeInFlight = Math.max(0, this.activeInFlight - 1);
+      this.scheduleDrain();
+    };
+  }
+
   public getStats(): { currentTokens: number; queueDepth: number; avgDwellTimeMs: number } {
     return {
-      currentTokens: 0,
+      currentTokens: this.activeInFlight,
       queueDepth: this.queue.size,
       avgDwellTimeMs: Math.round(this.emaDwellTimeMs),
     };
+  }
+
+  public clear(): void {
+    if (this.drainTimer !== null) {
+      clearTimeout(this.drainTimer);
+      this.drainTimer = null;
+    }
+    this.queue.clear();
+    this.activeInFlight = 0;
   }
 
   private updateEma(dwellMs: number): void {
@@ -200,28 +238,39 @@ export class RequestPacer {
 
   private scheduleDrain(): void {
     if (this.drainTimer !== null || this.queue.size === 0) return;
+    if (this.maxConcurrency > 0 && this.activeInFlight >= this.maxConcurrency) {
+      return;
+    }
     const minInterval = this.getMinInterval();
     const elapsed = Date.now() - this.lastDispatchTimeMs;
     const waitMs = Math.max(0, minInterval - elapsed);
 
     this.drainTimer = setTimeout(() => {
       this.drainTimer = null;
-      while (this.queue.size > 0) {
-        const entry = this.queue.dequeue();
-        if (!entry) break;
-        if (entry.signal?.aborted) {
-          continue;
-        }
-        this.lastDispatchTimeMs = Date.now();
-        const dwellMs = Math.max(0, this.lastDispatchTimeMs - entry.enqueuedAt);
-        this.updateEma(dwellMs);
-        entry.resolve(dwellMs);
-        break; // only 1 item dispatched per tick
-      }
-      if (this.queue.size > 0) {
+      this.dispatchNext();
+      if (this.queue.size > 0 && (this.maxConcurrency <= 0 || this.activeInFlight < this.maxConcurrency)) {
         this.scheduleDrain();
       }
     }, waitMs);
+  }
+
+  private dispatchNext(): void {
+    if (this.maxConcurrency > 0 && this.activeInFlight >= this.maxConcurrency) {
+      return;
+    }
+    while (this.queue.size > 0) {
+      const entry = this.queue.dequeue();
+      if (!entry) break;
+      if (entry.signal?.aborted) {
+        continue;
+      }
+      this.lastDispatchTimeMs = Date.now();
+      this.activeInFlight++;
+      const dwellMs = Math.max(0, this.lastDispatchTimeMs - entry.enqueuedAt);
+      this.updateEma(dwellMs);
+      entry.resolve({ queueDwellMs: dwellMs, release: this.createRelease() });
+      break; // only 1 item dispatched per tick
+    }
   }
 }
 
@@ -242,11 +291,13 @@ export function getPacerForProvider(
     const minIntervalMs = config?.minIntervalMs ?? provPacer?.min_delay_ms ?? 200;
     const maxQueueDepth = config?.maxQueueDepth ?? provPacer?.max_queue_depth ?? 100;
     const maxQueueWaitMs = config?.maxQueueWaitMs ?? provPacer?.max_queue_wait_ms ?? 15000;
+    const maxConcurrency = config?.maxConcurrency ?? provPacer?.max_concurrency ?? 0;
     pacer = new RequestPacer({
       minIntervalMs,
       maxQueueDepth,
       maxRpm: config?.maxRpm,
       maxQueueWaitMs,
+      maxConcurrency,
     });
     pacerRegistry.set(pacerKey, pacer);
   }

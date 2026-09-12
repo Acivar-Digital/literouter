@@ -1,5 +1,5 @@
 import type { ProviderPacerConfig } from "../config/schema";
-import { getPacerForProvider } from "../network/pacer";
+import { getPacerForProvider, type PacerAcquireResult } from "../network/pacer";
 
 /**
  * Calculates a paced interval with jitter between min_delay_ms and max_delay_ms.
@@ -26,8 +26,8 @@ export async function acquirePacer(
   provider: string,
   pacerConfig: ProviderPacerConfig | undefined,
   signal?: AbortSignal
-): Promise<void> {
-  if (!pacerConfig?.enabled) return;
+): Promise<PacerAcquireResult | undefined> {
+  if (!pacerConfig?.enabled) return undefined;
 
   const intervalMs = calculatePacerIntervalMs(pacerConfig);
 
@@ -35,7 +35,8 @@ export async function acquirePacer(
     minIntervalMs: intervalMs,
     maxQueueDepth: pacerConfig.max_queue_depth,
     maxQueueWaitMs: pacerConfig.max_queue_wait_ms,
+    maxConcurrency: pacerConfig.max_concurrency,
   });
 
-  await pacer.acquire(signal);
+  return await pacer.acquire(signal);
 }

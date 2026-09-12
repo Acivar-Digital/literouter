@@ -58,6 +58,7 @@ describe("Slice 3.6: Pacer Adapter", () => {
         max_delay_ms: 1000,
         max_queue_depth: 10,
         max_queue_wait_ms: 5000,
+        max_concurrency: 10,
       };
 
       const start = Date.now();
@@ -72,6 +73,7 @@ describe("Slice 3.6: Pacer Adapter", () => {
         max_delay_ms: 40,
         max_queue_depth: 10,
         max_queue_wait_ms: 5000,
+        max_concurrency: 10,
       };
 
       const start = Date.now();
@@ -90,6 +92,7 @@ describe("Slice 3.6: Pacer Adapter", () => {
         max_delay_ms: 100,
         max_queue_depth: 10,
         max_queue_wait_ms: 5000,
+        max_concurrency: 10,
       };
 
       const controller = new AbortController();
@@ -107,6 +110,7 @@ describe("Slice 3.6: Pacer Adapter", () => {
         max_delay_ms: 200,
         max_queue_depth: 10,
         max_queue_wait_ms: 5000,
+        max_concurrency: 10,
       };
 
       // Occupy pacer slot with initial call
@@ -132,6 +136,7 @@ describe("Slice 3.6: Pacer Adapter", () => {
         max_delay_ms: 200,
         max_queue_depth: 1,
         max_queue_wait_ms: 5000,
+        max_concurrency: 10,
       };
 
       // 1st request occupies immediate dispatch slot

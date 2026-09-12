@@ -263,5 +263,200 @@ describe("Pure FIFO Conveyor Belt Pacer & Anti-429 Queue", () => {
 
       clearPacerRegistry();
     });
+
+    it("ensures getPacerForProvider('zn') and getPacerForProvider('or') operate completely independently", async () => {
+      clearPacerRegistry();
+      try {
+        const znPacer = getPacerForProvider("zn", 0, { minIntervalMs: 50, maxConcurrency: 1 });
+        const orPacer = getPacerForProvider("or", 0, { minIntervalMs: 0, maxConcurrency: 1 });
+
+        expect(znPacer).not.toBe(orPacer);
+
+        // zn acquires request 1 (in flight)
+        const znLease1 = await znPacer.acquire();
+        expect(znPacer.getStats().currentTokens).toBe(1);
+
+        // zn enqueues request 2 (queued because maxConcurrency = 1)
+        let zn2Resolved = false;
+        const znReq2 = znPacer.acquire().then((lease) => {
+          zn2Resolved = true;
+          return lease;
+        });
+
+        // Small delay to verify zn2 is indeed blocked in queue
+        await new Promise((res) => setTimeout(res, 10));
+        expect(zn2Resolved).toBe(false);
+        expect(znPacer.getStats().queueDepth).toBe(1);
+
+        // or request should dispatch IMMEDIATELY without delay or blocking from zn
+        const orStart = Date.now();
+        const orLease1 = await orPacer.acquire();
+        const orElapsed = Date.now() - orStart;
+
+        expect(orLease1.queueDwellMs).toBe(0);
+        expect(orElapsed).toBeLessThan(25);
+        expect(orPacer.getStats().currentTokens).toBe(1);
+        expect(orPacer.getStats().queueDepth).toBe(0);
+
+        // zn2 is STILL queued and not dispatched
+        expect(zn2Resolved).toBe(false);
+        expect(znPacer.getStats().queueDepth).toBe(1);
+
+        // Releasing zn1 immediately dispatches zn2
+        znLease1.release();
+        const znLease2 = await znReq2;
+        expect(zn2Resolved).toBe(true);
+
+        // Clean up
+        znLease2.release();
+        orLease1.release();
+      } finally {
+        clearPacerRegistry();
+      }
+    });
+
+    it("enforces maxConcurrency: 1 and tracks activeInFlight via currentTokens", async () => {
+      const pacer = new RequestPacer({
+        minIntervalMs: 0,
+        maxConcurrency: 1,
+        maxQueueDepth: 10,
+      });
+
+      expect(pacer.getStats().currentTokens).toBe(0);
+
+      // Request 1 is dispatched immediately
+      const lease1 = await pacer.acquire();
+      expect(lease1.queueDwellMs).toBe(0);
+      expect(pacer.getStats().currentTokens).toBe(1); // activeInFlight = 1
+      expect(pacer.getStats().queueDepth).toBe(0);
+
+      // Request 2 is enqueued and does not dispatch while Request 1 is in-flight
+      let req2Dispatched = false;
+      const p2 = pacer.acquire().then((lease) => {
+        req2Dispatched = true;
+        return lease;
+      });
+
+      await new Promise((res) => setTimeout(res, 20));
+      expect(req2Dispatched).toBe(false);
+      expect(pacer.getStats().queueDepth).toBe(1);
+      expect(pacer.getStats().currentTokens).toBe(1);
+
+      // Invoking release() on Request 1's lease immediately dispatches Request 2
+      lease1.release();
+
+      const lease2 = await p2;
+      expect(req2Dispatched).toBe(true);
+      expect(pacer.getStats().queueDepth).toBe(0);
+      expect(pacer.getStats().currentTokens).toBe(1); // tracks Request 2 active
+
+      // Invoking release() on Request 2 returns activeInFlight to 0
+      lease2.release();
+      expect(pacer.getStats().currentTokens).toBe(0);
+      expect(pacer.getStats().queueDepth).toBe(0);
+    });
+
+    it("dispatches multiple queued requests in strict FIFO order as leases are released", async () => {
+      const pacer = new RequestPacer({
+        minIntervalMs: 0,
+        maxConcurrency: 1,
+        maxQueueDepth: 10,
+      });
+
+      // Lease 0 acquires immediately and blocks queue
+      const lease0 = await pacer.acquire();
+      expect(pacer.getStats().currentTokens).toBe(1);
+
+      const dispatchOrder: number[] = [];
+      const leases: Array<() => void> = [];
+
+      // Queue requests 1, 2, 3, 4
+      const p1 = pacer.acquire().then((res) => {
+        dispatchOrder.push(1);
+        leases.push(res.release);
+      });
+      const p2 = pacer.acquire().then((res) => {
+        dispatchOrder.push(2);
+        leases.push(res.release);
+      });
+      const p3 = pacer.acquire().then((res) => {
+        dispatchOrder.push(3);
+        leases.push(res.release);
+      });
+      const p4 = pacer.acquire().then((res) => {
+        dispatchOrder.push(4);
+        leases.push(res.release);
+      });
+
+      expect(pacer.getStats().queueDepth).toBe(4);
+      expect(dispatchOrder).toEqual([]);
+
+      // Releasing lease0 allows request 1 to dispatch
+      lease0.release();
+      await new Promise((res) => setTimeout(res, 10));
+      expect(dispatchOrder).toEqual([1]);
+      expect(pacer.getStats().queueDepth).toBe(3);
+
+      // Releasing request 1 allows request 2 to dispatch
+      leases[0]!();
+      await new Promise((res) => setTimeout(res, 10));
+      expect(dispatchOrder).toEqual([1, 2]);
+      expect(pacer.getStats().queueDepth).toBe(2);
+
+      // Releasing request 2 allows request 3 to dispatch
+      leases[1]!();
+      await new Promise((res) => setTimeout(res, 10));
+      expect(dispatchOrder).toEqual([1, 2, 3]);
+      expect(pacer.getStats().queueDepth).toBe(1);
+
+      // Releasing request 3 allows request 4 to dispatch
+      leases[2]!();
+      await p4;
+      expect(dispatchOrder).toEqual([1, 2, 3, 4]);
+      expect(pacer.getStats().queueDepth).toBe(0);
+
+      // Final release
+      leases[3]!();
+      expect(pacer.getStats().currentTokens).toBe(0);
+    });
+
+    it("ensures calling release() multiple times is idempotent and does not decrement below 0 or double-trigger drains", async () => {
+      const pacer = new RequestPacer({
+        minIntervalMs: 0,
+        maxConcurrency: 1,
+        maxQueueDepth: 10,
+      });
+
+      const r1 = await pacer.acquire();
+      expect(pacer.getStats().currentTokens).toBe(1);
+
+      // Queue request 2
+      let r2DispatchedCount = 0;
+      const p2 = pacer.acquire().then((res) => {
+        r2DispatchedCount++;
+        return res;
+      });
+
+      // Call r1.release() 5 times consecutively
+      r1.release();
+      r1.release();
+      r1.release();
+      r1.release();
+      r1.release();
+
+      const r2 = await p2;
+      expect(r2DispatchedCount).toBe(1);
+      // currentTokens should be exactly 1 for r2, not corrupted into negative or zero
+      expect(pacer.getStats().currentTokens).toBe(1);
+
+      // Call r2.release() multiple times
+      r2.release();
+      r2.release();
+      r2.release();
+
+      expect(pacer.getStats().currentTokens).toBe(0);
+      expect(pacer.getStats().queueDepth).toBe(0);
+    });
+
   });
 });

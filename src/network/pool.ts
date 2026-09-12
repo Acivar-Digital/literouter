@@ -1,7 +1,7 @@
 import { EventEmitter } from "node:events";
 import type { ProviderCode } from "../directive/parser";
 import { CooldownManager, type KeyCooldownState } from "./cooldown";
-import { getProviderConfig, isRegisteredProvider } from "../config/providers";
+import { getProviderConfig } from "../config/providers";
 
 export interface SelectedKey {
   readonly key: string;
@@ -16,11 +16,12 @@ export interface PoolStatus {
 }
 
 export function isProviderQuarantineEnabled(provider: string): boolean {
-  if (isRegisteredProvider(provider)) {
+  try {
     const provConfig = getProviderConfig(provider);
     return provConfig.key_cooldown?.enabled ?? true;
+  } catch {
+    return true;
   }
-  return true;
 }
 
 export class KeyPool extends EventEmitter {

@@ -4,7 +4,6 @@ import { AnthropicDirectStrategy } from "../../../src/engine/strategies/anthropi
 import { GcpGuardedStrategy } from "../../../src/engine/strategies/gcp_guarded";
 import { NativeCascadeStrategy } from "../../../src/engine/strategies/native_cascade";
 import { StandardStrategy } from "../../../src/engine/strategies/standard";
-import { ZenSingleFlightStrategy } from "../../../src/engine/strategies/zen_single_flight";
 import type {
   DispatchContext,
   ProviderExecutionStrategy,
@@ -302,7 +301,7 @@ describe("Slice 3.3 & 3.4: Strategy Interface & Strategy Registry", () => {
             code: "zn",
             base_url: "https://opencode.ai/zen",
             endpoints: { ch: "/api/v1/chat/completions" },
-            strategy: "zen_single_flight",
+            strategy: "standard",
             ...mockOperationalKnobs,
           },
           anthropic: {
@@ -320,11 +319,11 @@ describe("Slice 3.3 & 3.4: Strategy Interface & Strategy Registry", () => {
 
       expect(getStrategy("gg")).toBeInstanceOf(NativeCascadeStrategy);
       expect(getStrategy("gc")).toBeInstanceOf(GcpGuardedStrategy);
-      expect(getStrategy("zn")).toBeInstanceOf(ZenSingleFlightStrategy);
+      expect(getStrategy("zn")).toBeInstanceOf(StandardStrategy);
       expect(getStrategy("an")).toBeInstanceOf(AnthropicDirectStrategy);
     });
 
-    it("gracefully falls back to StandardStrategy when provider strategy factory is missing", () => {
+    it("re-populates default factories during initStrategyRegistry when factory was unregistered", () => {
       const mockRawProviders = {
         providers: {
           unregistered_strat_prov: {
@@ -334,18 +333,18 @@ describe("Slice 3.3 & 3.4: Strategy Interface & Strategy Registry", () => {
             endpoints: {
               ch: "/v1/chat/completions",
             },
-            strategy: "zen_single_flight",
+            strategy: "standard",
             ...mockOperationalKnobs,
           },
         },
       };
 
       initProviderRegistry(mockRawProviders);
-      unregisterStrategyFactory("zen_single_flight");
+      unregisterStrategyFactory("standard");
       // initStrategyRegistry re-populates missing default factories,
-      // so "up" resolves to the default ZenSingleFlightStrategy.
+      // so "up" resolves to the default StandardStrategy.
       initStrategyRegistry();
-      expect(getStrategy("up")).toBeInstanceOf(ZenSingleFlightStrategy);
+      expect(getStrategy("up")).toBeInstanceOf(StandardStrategy);
 
       // Unknown provider codes throw instead of falling back to StandardStrategy
       expect(() => getStrategy("unknown_code")).toThrow(

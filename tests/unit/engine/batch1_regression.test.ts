@@ -25,7 +25,6 @@ import {
 import { GcpGuardedStrategy } from "../../../src/engine/strategies/gcp_guarded";
 import { NativeCascadeStrategy } from "../../../src/engine/strategies/native_cascade";
 import { StandardStrategy } from "../../../src/engine/strategies/standard";
-import { ZenSingleFlightStrategy } from "../../../src/engine/strategies/zen_single_flight";
 import { globalKeyPool } from "../../../src/handlers/openai_compat";
 import { handleAppRequest, resetAllState } from "../../../src/index";
 
@@ -138,7 +137,7 @@ describe("Batch1 Regression — strategy / probe-cap / TTFT / auth-negative", ()
     expect(getStrategy("or")).toBeInstanceOf(StandardStrategy);
     expect(getStrategy("gg")).toBeInstanceOf(NativeCascadeStrategy);
     expect(getStrategy("gc")).toBeInstanceOf(GcpGuardedStrategy);
-    expect(getStrategy("zn")).toBeInstanceOf(ZenSingleFlightStrategy);
+    expect(getStrategy("zn")).toBeInstanceOf(StandardStrategy);
   });
 
   it("B3: over-cap half-open probes get 503 without consuming fetch", async () => {

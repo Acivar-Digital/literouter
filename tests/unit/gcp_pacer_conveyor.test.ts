@@ -71,7 +71,7 @@ describe("GCP Pacer Conveyor Regression (S5)", () => {
         _signal?: AbortSignal
       ) {
         order.push("pacer-acquire");
-        return { queueDwellMs: 0 };
+        return { queueDwellMs: 0, release: () => {} };
       });
 
       // Mock key selection to record order and return a valid key

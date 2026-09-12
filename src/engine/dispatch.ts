@@ -9,6 +9,7 @@ import { defaultClassifyFailure, type FailureAction } from "./status_classify";
 import type { DispatchContext, ProviderExecutionStrategy } from "./strategy";
 import { getStrategy } from "./strategy_registry";
 import { safeClose, safeEnqueue, NoResponseError } from "../network/fetcher";
+import { isProviderQuarantineEnabled } from "../network/pool";
 import type { OutboundWirePayload, PayloadTransformerContract } from "./transformer";
 import { globalKeyPool, overrideProviderUrl } from "../handlers/openai_compat";
 import { RequestTelemetry, type UsageRecord } from "../telemetry/session";
@@ -250,21 +251,41 @@ function createCleanErrorResponse(
 function createCutoffResilientStream(
   sourceStream: ReadableStream<Uint8Array>,
   onMidStreamError: (err: unknown) => void,
-  clientSignal?: AbortSignal
+  clientSignal?: AbortSignal,
+  onStreamComplete?: () => void
 ): ReadableStream<Uint8Array> {
   const reader = sourceStream.getReader();
   let emittedDone = false;
+  let cleanedUp = false;
+
+  const doCleanup = () => {
+    if (!cleanedUp) {
+      cleanedUp = true;
+      if (clientSignal) {
+        clientSignal.removeEventListener("abort", doCleanup);
+      }
+      onStreamComplete?.();
+    }
+  };
+
+  if (clientSignal?.aborted) {
+    doCleanup();
+  } else if (clientSignal) {
+    clientSignal.addEventListener("abort", doCleanup, { once: true });
+  }
 
   return new ReadableStream<Uint8Array>({
     async pull(controller): Promise<void> {
       try {
         const { done, value } = await reader.read();
         if (done) {
+          doCleanup();
           safeClose(controller);
           return;
         }
         controller.enqueue(value);
       } catch (streamErr) {
+        doCleanup();
         if (clientSignal?.aborted || isAbortError(streamErr)) {
           safeClose(controller);
           return;
@@ -278,6 +299,7 @@ function createCutoffResilientStream(
       }
     },
     async cancel(reason): Promise<void> {
+      doCleanup();
       await reader.cancel(reason);
     },
   });
@@ -440,13 +462,14 @@ export async function executeDispatchPipeline(
       throw new DOMException("The operation was aborted.", "AbortError");
     }
 
-    await acquirePacer(providerCode, provConfig.pacer, req.clientSignal);
+    const pacerLease = await acquirePacer(providerCode, provConfig.pacer, req.clientSignal);
 
     const key = attempt === 1 && initialKey
       ? initialKey
       : globalKeyPool.selectNextKey(providerCode);
 
     if (!key) {
+      pacerLease?.release();
       telemetry.error("All keys exhausted or in cooldown");
       telemetry.served(429, attempt, maxAttempts);
       recordTrace(telemetry, 429, {
@@ -538,7 +561,8 @@ export async function executeDispatchPipeline(
               breaker.recordFailure(500);
               telemetry.error("Mid-stream upstream failure encountered", streamErr);
             },
-            req.clientSignal
+            req.clientSignal,
+            () => pacerLease?.release()
           );
 
           telemetry.served(upstreamResponse.status, attempt, maxAttempts);
@@ -571,6 +595,7 @@ export async function executeDispatchPipeline(
           clientOutbound: sanitizeBody(clientJson),
         });
 
+        pacerLease?.release();
         return new Response(JSON.stringify(clientJson), {
           status: upstreamResponse.status,
           statusText: upstreamResponse.statusText,
@@ -584,7 +609,9 @@ export async function executeDispatchPipeline(
       // Upstream failure classification
       const errText = await upstreamResponse.text();
       const rawErrorMsg = extractErrorMessage(errText);
-      const retryAfterSec = parseRetryAfterSec(upstreamResponse.headers.get("retry-after"));
+      const quarantineEnabled = isProviderQuarantineEnabled(providerCode);
+      const rawRetryAfterSec = parseRetryAfterSec(upstreamResponse.headers.get("retry-after"));
+      const retryAfterSec = quarantineEnabled ? rawRetryAfterSec : undefined;
 
       telemetry.recordLimit({
         status: upstreamResponse.status,
@@ -598,6 +625,7 @@ export async function executeDispatchPipeline(
         ?? defaultClassifyFailure(upstreamResponse.status);
 
       if (failureAction === "fail_fast") {
+        pacerLease?.release();
         breaker.recordFailure(upstreamResponse.status);
         telemetry.served(upstreamResponse.status, attempt, maxAttempts);
         recordTrace(telemetry, upstreamResponse.status, {
@@ -608,6 +636,7 @@ export async function executeDispatchPipeline(
       }
 
       if (failureAction === "advance_target") {
+        pacerLease?.release();
         telemetry.rotateKey({
           fromIndex: key.index,
           toIndex: -1,
@@ -619,6 +648,7 @@ export async function executeDispatchPipeline(
       }
 
       // failureAction === "retry_same_target"
+      pacerLease?.release();
       breaker.recordFailure(upstreamResponse.status);
 
       if (attempt < maxAttempts) {
@@ -643,6 +673,7 @@ export async function executeDispatchPipeline(
       });
       return createCleanErrorResponse(upstreamResponse, errText);
     } catch (err) {
+      pacerLease?.release();
       if (req.clientSignal.aborted) {
         throw err;
       }

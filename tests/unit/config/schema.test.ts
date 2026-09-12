@@ -275,7 +275,6 @@ describe("ProviderStrategySchema", () => {
       "standard",
       "native_cascade",
       "gcp_guarded",
-      "zen_single_flight",
       "anthropic_direct",
     ] as const;
 
@@ -287,6 +286,7 @@ describe("ProviderStrategySchema", () => {
   it("rejects invalid strategy identifiers", () => {
     expect(ProviderStrategySchema.safeParse("unknown_strategy").success).toBe(false);
     expect(ProviderStrategySchema.safeParse("smart").success).toBe(false);
+    expect(ProviderStrategySchema.safeParse("zen_single_flight").success).toBe(false);
   });
 });
 
@@ -431,8 +431,8 @@ describe("ProviderConfigEntrySchema", () => {
       expect(providers.google?.strategy).toBe("native_cascade");
       expect(providers.google?.circuit_breaker.enabled).toBe(false);
       expect(providers.zen?.name).toBe("Zen");
-      expect(providers.zen?.strategy).toBe("zen_single_flight");
-      expect(providers.zen?.request_retry.max_attempts).toBe(1);
+      expect(providers.zen?.strategy).toBe("standard");
+      expect(providers.zen?.request_retry.max_attempts).toBe(3);
       expect(providers.zen?.circuit_breaker.enabled).toBe(false);
       expect(providers.gcp?.name).toBe("Google Cloud (GCP)");
       expect(providers.gcp?.strategy).toBe("gcp_guarded");

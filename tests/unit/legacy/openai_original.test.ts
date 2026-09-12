@@ -1,4 +1,6 @@
 import { describe, expect, it, spyOn } from "bun:test";
+import { readFileSync } from "fs";
+import { resolve } from "path";
 import {
   buildUpstreamHeaders,
   createNonStreamingResponse,
@@ -10,6 +12,7 @@ import {
   shouldStreamResponse,
 } from "../../../src/handlers/openai_original";
 import { globalKeyPool } from "../../../src/handlers/openai_compat";
+import { getProviderConfig } from "../../../src/config/providers";
 
 async function readSseStream(response: Response): Promise<string> {
   const reader = response.body?.getReader();
@@ -194,6 +197,147 @@ describe("OpenAI Original Responses Handler (src/handlers/openai_original.ts)", 
 
       expect(received).toContain("Hello");
       expect(received).toContain("response.completed");
+    });
+
+    describe("createStreamingResponse pacer lease release", () => {
+      it("invokes pacerRelease() when response stream completes normally", async () => {
+        let releasedCount = 0;
+        const pacerRelease = () => {
+          releasedCount++;
+        };
+
+        const stream = new ReadableStream<Uint8Array>({
+          start(controller) {
+            const encoder = new TextEncoder();
+            controller.enqueue(encoder.encode("data: {\"test\":1}\n\n"));
+            controller.close();
+          },
+        });
+
+        const upstream = new Response(stream, {
+          status: 200,
+          headers: { "Content-Type": "text/event-stream" },
+        });
+
+        const downstream = createStreamingResponse(
+          upstream,
+          undefined,
+          undefined,
+          undefined,
+          pacerRelease
+        );
+
+        expect(releasedCount).toBe(0);
+
+        const reader = downstream.body?.getReader();
+        expect(reader).toBeDefined();
+
+        let done = false;
+        while (!done) {
+          const chunk = await reader!.read();
+          done = chunk.done;
+        }
+
+        // Allow microtask cycle to finish stream pump finally block
+        await Bun.sleep(10);
+        expect(releasedCount).toBe(1);
+      });
+
+      it("invokes pacerRelease() when response stream is cancelled by consumer", async () => {
+        let releasedCount = 0;
+        const pacerRelease = () => {
+          releasedCount++;
+        };
+
+        const stream = new ReadableStream<Uint8Array>({
+          start(controller) {
+            const encoder = new TextEncoder();
+            controller.enqueue(encoder.encode("data: {\"test\":1}\n\n"));
+          },
+        });
+
+        const upstream = new Response(stream, {
+          status: 200,
+          headers: { "Content-Type": "text/event-stream" },
+        });
+
+        const downstream = createStreamingResponse(
+          upstream,
+          undefined,
+          undefined,
+          undefined,
+          pacerRelease
+        );
+
+        expect(releasedCount).toBe(0);
+
+        const reader = downstream.body?.getReader();
+        expect(reader).toBeDefined();
+
+        const firstChunk = await reader!.read();
+        expect(firstChunk.done).toBe(false);
+
+        await reader!.cancel("Consumer cancelled stream");
+
+        await Bun.sleep(10);
+        expect(releasedCount).toBe(1);
+      });
+
+      it("invokes pacerRelease() immediately when upstream response body is null", () => {
+        let releasedCount = 0;
+        const pacerRelease = () => {
+          releasedCount++;
+        };
+
+        const upstream = new Response(null, {
+          status: 204,
+          headers: { "Content-Type": "text/event-stream" },
+        });
+
+        const downstream = createStreamingResponse(
+          upstream,
+          undefined,
+          undefined,
+          undefined,
+          pacerRelease
+        );
+
+        expect(downstream.status).toBe(204);
+        expect(releasedCount).toBe(1);
+      });
+
+      it("safely releases lease only once even if pump finishes and cancel is called", async () => {
+        let releasedCount = 0;
+        const pacerRelease = () => {
+          releasedCount++;
+        };
+
+        const stream = new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.close();
+          },
+        });
+
+        const upstream = new Response(stream, {
+          status: 200,
+          headers: { "Content-Type": "text/event-stream" },
+        });
+
+        const downstream = createStreamingResponse(
+          upstream,
+          undefined,
+          undefined,
+          undefined,
+          pacerRelease
+        );
+
+        const reader = downstream.body?.getReader();
+        await reader?.read();
+        await reader?.cancel("redundant cancel");
+
+        await Bun.sleep(10);
+        expect(releasedCount).toBe(1);
+      });
     });
   });
 
@@ -639,6 +783,148 @@ describe("OpenAI Original Responses Handler (src/handlers/openai_original.ts)", 
           reportFailureSpy.mockRestore();
         }
       });
+    });
+  });
+
+  describe("zero-hardcoding and provider-neutral retry pacing", () => {
+    it("verifies source code AST / text check: openai_original.ts does not contain isZen, acquireZenRetryPacer, or hardcoded 'zn'", () => {
+      const sourcePath = resolve(import.meta.dir, "../../../src/handlers/openai_original.ts");
+      const source = readFileSync(sourcePath, "utf-8");
+
+      expect(source.includes("isZen")).toBe(false);
+      expect(source.includes("acquireZenRetryPacer")).toBe(false);
+      expect(source.includes('getCircuitBreakerForProvider("zn")')).toBe(false);
+      expect(source.includes('getPacerForProvider("zn"')).toBe(false);
+      expect(source.includes('shouldLoadShed("zn"')).toBe(false);
+      expect(source.includes('isQuarantineEnabled("zn"')).toBe(false);
+      expect(source.includes('getPoolSize("zn"')).toBe(false);
+      expect(source.includes('"zn"')).toBe(false);
+    });
+
+    it("verifies provider configurations for non-Zen providers (or, oa) have request_retry enabled", () => {
+      const orConfig = getProviderConfig("or");
+      expect(orConfig.request_retry.enabled).toBe(true);
+      expect(orConfig.request_retry.max_attempts).toBeGreaterThanOrEqual(2);
+
+      const oaConfig = getProviderConfig("oa");
+      expect(oaConfig.request_retry.enabled).toBe(true);
+      expect(oaConfig.request_retry.max_attempts).toBeGreaterThanOrEqual(2);
+    });
+
+    it("enables retries for OpenRouter ('or') according to request_retry config instead of forcing single-flight", async () => {
+      globalKeyPool.reset("or");
+      let callCount = 0;
+      const orServer = Bun.serve({
+        port: 0,
+        fetch() {
+          callCount++;
+          if (callCount === 1) {
+            return Response.json(
+              {
+                error: {
+                  message: "Rate limit reached on key 1, rotating",
+                  type: "requests_rate_limit",
+                },
+              },
+              { status: 429 }
+            );
+          }
+          return Response.json({
+            id: "resp_or_retry_ok",
+            model: "openrouter-model",
+            output: [{ type: "message", content: [{ type: "text", text: "Recovered on attempt 2" }] }],
+          });
+        },
+      });
+      process.env.MOCK_OR_PORT = String(orServer.port);
+
+      const poolSizeSpy = spyOn(globalKeyPool, "getPoolSize").mockReturnValue(2);
+      const selectNextKeySpy = spyOn(globalKeyPool, "selectNextKey").mockReturnValue({
+        key: "mock-or-key-2",
+        index: 1,
+        totalKeys: 2,
+      });
+
+      try {
+        const req = new Request("http://localhost:7766/v1/responses", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ model: "openrouter-model", input: "retry test" }),
+        });
+        const state = {
+          keyPoolManager: { getKey: () => "mock-or-key-1" },
+        };
+
+        const res = await handleOpenAiOriginal(req, "or", state);
+        expect(res.status).toBe(200);
+        expect(callCount).toBe(2);
+        const data = (await res.json()) as { id: string };
+        expect(data.id).toBe("resp_or_retry_ok");
+      } finally {
+        orServer.stop(true);
+        delete process.env.MOCK_OR_PORT;
+        poolSizeSpy.mockRestore();
+        selectNextKeySpy.mockRestore();
+        globalKeyPool.reset("or");
+      }
+    });
+
+    it("enables retries for OpenAI ('oa') according to request_retry config instead of forcing single-flight", async () => {
+      globalKeyPool.reset("oa");
+      let callCount = 0;
+      const oaServer = Bun.serve({
+        port: 0,
+        fetch() {
+          callCount++;
+          if (callCount === 1) {
+            return Response.json(
+              {
+                error: {
+                  message: "Rate limit reached on key 1, rotating",
+                  type: "requests_rate_limit",
+                },
+              },
+              { status: 429 }
+            );
+          }
+          return Response.json({
+            id: "resp_oa_retry_ok",
+            model: "openai-model",
+            output: [{ type: "message", content: [{ type: "text", text: "Recovered on attempt 2" }] }],
+          });
+        },
+      });
+      process.env.MOCK_OA_PORT = String(oaServer.port);
+
+      const poolSizeSpy = spyOn(globalKeyPool, "getPoolSize").mockReturnValue(2);
+      const selectNextKeySpy = spyOn(globalKeyPool, "selectNextKey").mockReturnValue({
+        key: "mock-oa-key-2",
+        index: 1,
+        totalKeys: 2,
+      });
+
+      try {
+        const req = new Request("http://localhost:7766/v1/responses", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ model: "openai-model", input: "retry test" }),
+        });
+        const state = {
+          keyPoolManager: { getKey: () => "mock-oa-key-1" },
+        };
+
+        const res = await handleOpenAiOriginal(req, "oa", state);
+        expect(res.status).toBe(200);
+        expect(callCount).toBe(2);
+        const data = (await res.json()) as { id: string };
+        expect(data.id).toBe("resp_oa_retry_ok");
+      } finally {
+        oaServer.stop(true);
+        delete process.env.MOCK_OA_PORT;
+        poolSizeSpy.mockRestore();
+        selectNextKeySpy.mockRestore();
+        globalKeyPool.reset("oa");
+      }
     });
   });
 });
