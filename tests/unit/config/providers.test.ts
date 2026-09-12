@@ -15,13 +15,13 @@ describe("ProviderRegistry — In-Memory Store", () => {
 
   it("initializes successfully from config/providers.json", () => {
     const all = getAllProviders();
-    expect(all.length).toBeGreaterThanOrEqual(13);
+    expect(all.length).toBe(5);
 
     expect(isRegisteredProvider("or")).toBe(true);
     expect(isRegisteredProvider("nv")).toBe(true);
     expect(isRegisteredProvider("gg")).toBe(true);
     expect(isRegisteredProvider("zn")).toBe(true);
-    expect(isRegisteredProvider("tp")).toBe(true);
+    expect(isRegisteredProvider("gc")).toBe(true);
     expect(isRegisteredProvider("unknown_provider")).toBe(false);
   });
 
@@ -170,7 +170,7 @@ describe("ProviderRegistry — In-Memory Store", () => {
 
   it("getAllProviders() returns every registered provider with required fields", () => {
     const all = getAllProviders();
-    expect(all.length).toBeGreaterThanOrEqual(13);
+    expect(all.length).toBe(5);
 
     const codes = all.map((p) => p.code);
     expect(codes).toContain("or");
@@ -191,8 +191,6 @@ describe("ProviderRegistry — In-Memory Store", () => {
     expect(getProviderConfig("gg").strategy).toBe("native_cascade");
     expect(getProviderConfig("gc").strategy).toBe("gcp_guarded");
     expect(getProviderConfig("zn").strategy).toBe("standard");
-    // Entries without an explicit strategy fall back to the schema default
-    expect(getProviderConfig("oa").strategy).toBe("standard");
   });
 
   it("getProviderDisplayName() falls back to the raw key when name is absent", () => {
@@ -214,15 +212,15 @@ describe("ProviderRegistry — In-Memory Store", () => {
     expect(getProviderDisplayName("UP")).toBe("unnamedprov");
   });
 
-  it("resolves explicit name and env_key for configured providers such as OpenAI and Anthropic", () => {
-    expect(getProviderConfig("oa").name).toBe("OpenAI");
-    expect(getProviderConfig("oa").env_key).toBe("OPENAI_API_KEYS");
-    expect(getProviderDisplayName("oa")).toBe("OpenAI");
-    expect(getProviderDisplayName("OA")).toBe("OpenAI");
+  it("resolves explicit name and env_key for configured providers such as OpenRouter and Google", () => {
+    expect(getProviderConfig("or").name).toBe("OpenRouter");
+    expect(getProviderConfig("or").env_key).toBe("OPENROUTER_API_KEYS");
+    expect(getProviderDisplayName("or")).toBe("OpenRouter");
+    expect(getProviderDisplayName("OR")).toBe("OpenRouter");
 
-    expect(getProviderConfig("an").name).toBe("Anthropic");
-    expect(getProviderConfig("an").env_key).toBe("ANTHROPIC_API_KEYS");
-    expect(getProviderConfig("an").strategy).toBe("anthropic_direct");
+    expect(getProviderConfig("gg").name).toBe("Google AI Studio");
+    expect(getProviderConfig("gg").env_key).toBe("GOOGLE_API_KEYS");
+    expect(getProviderConfig("gg").strategy).toBe("native_cascade");
   });
 
   it("hot reload swaps the registry and queries return the new values", () => {

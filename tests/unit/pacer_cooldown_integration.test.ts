@@ -12,14 +12,14 @@ import {
 
 describe("Pacer Cooldown Integration, Load-Shedding & Transport Error Classification", () => {
   const originalFetch = globalThis.fetch;
-  const originalEnvOpenAi = process.env.OPENAI_API_KEYS;
+  const originalEnvOpenRouter = process.env.OPENROUTER_API_KEYS;
   const originalTtl = process.env.COOLDOWN_RATE_LIMIT_TTL_SEC;
 
   const mockSuccessPayload = {
     id: "chatcmpl-pacer-int-test",
     object: "chat.completion",
     created: Date.now(),
-    model: "gpt-4o",
+    model: "anthropic/claude-3-haiku",
     choices: [
       {
         index: 0,
@@ -31,7 +31,7 @@ describe("Pacer Cooldown Integration, Load-Shedding & Transport Error Classifica
   };
 
   beforeEach(() => {
-    process.env.OPENAI_API_KEYS = "sk-test-key-pacer-1,sk-test-key-pacer-2";
+    process.env.OPENROUTER_API_KEYS = "sk-test-key-pacer-1,sk-test-key-pacer-2";
     process.env.COOLDOWN_RATE_LIMIT_TTL_SEC = "65";
     resetEnvCache();
     resetAllState();
@@ -39,10 +39,10 @@ describe("Pacer Cooldown Integration, Load-Shedding & Transport Error Classifica
 
   afterEach(() => {
     globalThis.fetch = originalFetch;
-    if (originalEnvOpenAi !== undefined) {
-      process.env.OPENAI_API_KEYS = originalEnvOpenAi;
+    if (originalEnvOpenRouter !== undefined) {
+      process.env.OPENROUTER_API_KEYS = originalEnvOpenRouter;
     } else {
-      delete process.env.OPENAI_API_KEYS;
+      delete process.env.OPENROUTER_API_KEYS;
     }
     if (originalTtl !== undefined) {
       process.env.COOLDOWN_RATE_LIMIT_TTL_SEC = originalTtl;
@@ -58,11 +58,11 @@ describe("Pacer Cooldown Integration, Load-Shedding & Transport Error Classifica
       method: "POST",
       signal,
       headers: {
-        Authorization: "Bearer lr-oa-oa-ch-no",
+        Authorization: "Bearer lr-or-oa-ch-no",
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "gpt-4o",
+        model: "anthropic/claude-3-haiku",
         messages: [{ role: "user", content: "Integration probe" }],
         stream: false,
       }),
@@ -71,14 +71,14 @@ describe("Pacer Cooldown Integration, Load-Shedding & Transport Error Classifica
 
   describe("1. Pacer FIFO Queue & Cooldown Dwell Integration", () => {
     it("dwells during 1-second cooldown and successfully selects key once expired", async () => {
-      process.env.OPENAI_API_KEYS = "sk-test-key-single";
+      process.env.OPENROUTER_API_KEYS = "sk-test-key-single";
       resetAllState();
 
-      globalKeyPool.quarantineKey("oa", 0, 1, "Temporary 1s cooldown", 429);
-      expect(globalKeyPool.selectNextKey("oa")).toBeNull();
+      globalKeyPool.quarantineKey("or", 0, 1, "Temporary 1s cooldown", 429);
+      expect(globalKeyPool.selectNextKey("or")).toBeNull();
 
       const startTime = Date.now();
-      const selected = await waitAndSelectKey("oa", startTime, 5000);
+      const selected = await waitAndSelectKey("or", startTime, 5000);
 
       const elapsed = Date.now() - startTime;
       expect(selected).not.toBeNull();
@@ -88,7 +88,7 @@ describe("Pacer Cooldown Integration, Load-Shedding & Transport Error Classifica
     });
 
     it("handles inbound HTTP request dwelling during 1s cooldown and succeeds with 200 OK", async () => {
-      process.env.OPENAI_API_KEYS = "sk-test-key-single";
+      process.env.OPENROUTER_API_KEYS = "sk-test-key-single";
       resetAllState();
 
       globalThis.fetch = (async () => {
@@ -98,7 +98,7 @@ describe("Pacer Cooldown Integration, Load-Shedding & Transport Error Classifica
         });
       }) as unknown as typeof fetch;
 
-      globalKeyPool.quarantineKey("oa", 0, 1, "Short 1s burst penalty", 429);
+      globalKeyPool.quarantineKey("or", 0, 1, "Short 1s burst penalty", 429);
 
       const startTime = Date.now();
       const req = createTestRequest();
@@ -113,16 +113,16 @@ describe("Pacer Cooldown Integration, Load-Shedding & Transport Error Classifica
     });
 
     it("returns null if client aborts while waitAndSelectKey is dwelling", async () => {
-      process.env.OPENAI_API_KEYS = "sk-test-key-single";
+      process.env.OPENROUTER_API_KEYS = "sk-test-key-single";
       resetAllState();
 
-      globalKeyPool.quarantineKey("oa", 0, 2, "2s cooldown", 429);
+      globalKeyPool.quarantineKey("or", 0, 2, "2s cooldown", 429);
 
       const controller = new AbortController();
       setTimeout(() => controller.abort(), 100);
 
       const startTime = Date.now();
-      const selected = await waitAndSelectKey("oa", startTime, 5000, controller.signal);
+      const selected = await waitAndSelectKey("or", startTime, 5000, controller.signal);
 
       expect(selected).toBeNull();
     });
@@ -130,25 +130,25 @@ describe("Pacer Cooldown Integration, Load-Shedding & Transport Error Classifica
 
   describe("2. Load-Shedding on Long Cooldown Budget Overrun", () => {
     it("shouldLoadShed returns true immediately when cooldown exceeds wait budget", () => {
-      process.env.OPENAI_API_KEYS = "sk-test-key-long-cd";
+      process.env.OPENROUTER_API_KEYS = "sk-test-key-long-cd";
       resetAllState();
 
-      globalKeyPool.quarantineKey("oa", 0, 60, "Heavy rate limit", 429);
+      globalKeyPool.quarantineKey("or", 0, 60, "Heavy rate limit", 429);
 
-      const shedResult = globalKeyPool.shouldLoadShed("oa", 0, 20000);
+      const shedResult = globalKeyPool.shouldLoadShed("or", 0, 20000);
       expect(shedResult).toBe(true);
     });
 
     it("shouldLoadShed returns false when active keys are available", () => {
-      const shedResult = globalKeyPool.shouldLoadShed("oa", 0, 20000);
+      const shedResult = globalKeyPool.shouldLoadShed("or", 0, 20000);
       expect(shedResult).toBe(false);
     });
 
     it("triggers 503 load-shedding response immediately on 60s cooldown without hanging", async () => {
-      process.env.OPENAI_API_KEYS = "sk-test-key-long-cd";
+      process.env.OPENROUTER_API_KEYS = "sk-test-key-long-cd";
       resetAllState();
 
-      globalKeyPool.quarantineKey("oa", 0, 60, "Extended 60s rate limit", 429);
+      globalKeyPool.quarantineKey("or", 0, 60, "Extended 60s rate limit", 429);
 
       const startTime = Date.now();
       const req = createTestRequest();
@@ -194,18 +194,18 @@ describe("Pacer Cooldown Integration, Load-Shedding & Transport Error Classifica
       const rateLimitCooldown = computeStatusTtlSec(429);
       expect(rateLimitCooldown).toBe(65);
 
-      const key0Remaining = globalCooldownManager.getRemainingMs("oa:0");
+      const key0Remaining = globalCooldownManager.getRemainingMs("or:0");
       expect(key0Remaining).toBeLessThanOrEqual(2000);
     });
 
     it("quarantines key for exactly 2 seconds when reportFailure is invoked with customTtlSec 2", () => {
       const now = Date.now();
-      const state = globalKeyPool.reportFailure("oa", 0, 0, undefined, "Transport timeout", now, 2);
+      const state = globalKeyPool.reportFailure("or", 0, 0, undefined, "Transport timeout", now, 2);
 
       expect(state.quarantinedUntil - now).toBe(2000);
       expect(state.reason).toBe("HTTP 0");
 
-      const remaining = globalCooldownManager.getRemainingMs("oa:0", now);
+      const remaining = globalCooldownManager.getRemainingMs("or:0", now);
       expect(remaining).toBe(2000);
     });
 
@@ -213,11 +213,11 @@ describe("Pacer Cooldown Integration, Load-Shedding & Transport Error Classifica
       const now = Date.now();
 
       // Standard HTTP 429 rate limit failure -> 65s
-      const rateLimitState = globalKeyPool.reportFailure("oa", 0, 429, undefined, "Rate limit", now);
+      const rateLimitState = globalKeyPool.reportFailure("or", 0, 429, undefined, "Rate limit", now);
       expect(rateLimitState.quarantinedUntil - now).toBe(65000);
 
       // Transport / NoResponseError failure -> 2s
-      const transportState = globalKeyPool.reportFailure("oa", 1, 0, undefined, "TTFT timeout", now, 2);
+      const transportState = globalKeyPool.reportFailure("or", 1, 0, undefined, "TTFT timeout", now, 2);
       expect(transportState.quarantinedUntil - now).toBe(2000);
     });
   });

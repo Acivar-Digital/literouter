@@ -46,11 +46,6 @@ describe("OpenAI Original Responses Handler (src/handlers/openai_original.ts)", 
       expect(url).toBe("https://openrouter.ai/api/v1/responses");
     });
 
-    it("resolves OpenAI responses endpoint", () => {
-      const url = resolveUpstreamResponsesUrl("oa");
-      expect(url).toBe("https://api.openai.com/v1/responses");
-    });
-
     it("returns null for unsupported providers", () => {
       expect(resolveUpstreamResponsesUrl("unknown")).toBeNull();
       expect(resolveUpstreamResponsesUrl("gg")).toBeNull();
@@ -61,13 +56,11 @@ describe("OpenAI Original Responses Handler (src/handlers/openai_original.ts)", 
     it("extracts provider from raw string code", () => {
       expect(extractProvider("zn")).toBe("zn");
       expect(extractProvider("or")).toBe("or");
-      expect(extractProvider("oa")).toBe("oa");
     });
 
     it("extracts provider from directive string", () => {
       expect(extractProvider("lr-zn-oa-rs-no")).toBe("zn");
       expect(extractProvider("lr-or-oa-rs-no")).toBe("or");
-      expect(extractProvider("lr-oa-oa-rs-no")).toBe("oa");
     });
 
     it("extracts provider from directive object", () => {
@@ -801,14 +794,14 @@ describe("OpenAI Original Responses Handler (src/handlers/openai_original.ts)", 
       expect(source.includes('"zn"')).toBe(false);
     });
 
-    it("verifies provider configurations for non-Zen providers (or, oa) have request_retry enabled", () => {
+    it("verifies provider configurations for non-Zen providers (or, nv) have request_retry enabled", () => {
       const orConfig = getProviderConfig("or");
       expect(orConfig.request_retry.enabled).toBe(true);
       expect(orConfig.request_retry.max_attempts).toBeGreaterThanOrEqual(2);
 
-      const oaConfig = getProviderConfig("oa");
-      expect(oaConfig.request_retry.enabled).toBe(true);
-      expect(oaConfig.request_retry.max_attempts).toBeGreaterThanOrEqual(2);
+      const nvConfig = getProviderConfig("nv");
+      expect(nvConfig.request_retry.enabled).toBe(true);
+      expect(nvConfig.request_retry.max_attempts).toBeGreaterThanOrEqual(2);
     });
 
     it("enables retries for OpenRouter ('or') according to request_retry config instead of forcing single-flight", async () => {
@@ -869,62 +862,6 @@ describe("OpenAI Original Responses Handler (src/handlers/openai_original.ts)", 
       }
     });
 
-    it("enables retries for OpenAI ('oa') according to request_retry config instead of forcing single-flight", async () => {
-      globalKeyPool.reset("oa");
-      let callCount = 0;
-      const oaServer = Bun.serve({
-        port: 0,
-        fetch() {
-          callCount++;
-          if (callCount === 1) {
-            return Response.json(
-              {
-                error: {
-                  message: "Rate limit reached on key 1, rotating",
-                  type: "requests_rate_limit",
-                },
-              },
-              { status: 429 }
-            );
-          }
-          return Response.json({
-            id: "resp_oa_retry_ok",
-            model: "openai-model",
-            output: [{ type: "message", content: [{ type: "text", text: "Recovered on attempt 2" }] }],
-          });
-        },
-      });
-      process.env.MOCK_OA_PORT = String(oaServer.port);
 
-      const poolSizeSpy = spyOn(globalKeyPool, "getPoolSize").mockReturnValue(2);
-      const selectNextKeySpy = spyOn(globalKeyPool, "selectNextKey").mockReturnValue({
-        key: "mock-oa-key-2",
-        index: 1,
-        totalKeys: 2,
-      });
-
-      try {
-        const req = new Request("http://localhost:7766/v1/responses", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ model: "openai-model", input: "retry test" }),
-        });
-        const state = {
-          keyPoolManager: { getKey: () => "mock-oa-key-1" },
-        };
-
-        const res = await handleOpenAiOriginal(req, "oa", state);
-        expect(res.status).toBe(200);
-        expect(callCount).toBe(2);
-        const data = (await res.json()) as { id: string };
-        expect(data.id).toBe("resp_oa_retry_ok");
-      } finally {
-        oaServer.stop(true);
-        delete process.env.MOCK_OA_PORT;
-        poolSizeSpy.mockRestore();
-        selectNextKeySpy.mockRestore();
-        globalKeyPool.reset("oa");
-      }
-    });
   });
 });

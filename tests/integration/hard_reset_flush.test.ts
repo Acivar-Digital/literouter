@@ -40,7 +40,7 @@ describe("Operational Hard Reset & Flush Integration", () => {
 
     // Verify registry is loaded and healthy
     const allProviders = providersModule.getAllProviders();
-    expect(allProviders.length).toBeGreaterThanOrEqual(13);
+    expect(allProviders.length).toBe(5);
     expect(providersModule.isRegisteredProvider("or")).toBe(true);
   });
 

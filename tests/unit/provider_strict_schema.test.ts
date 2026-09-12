@@ -103,7 +103,7 @@ describe("Strict Provider Schema Tamper & Fail-Loud Tests", () => {
 
   it("Test 7: Deleting min_delay_ms inside pacer causes validation to FAIL LOUDLY with ZodError", () => {
     const tampered = JSON.parse(JSON.stringify(rawProviders));
-    delete tampered.providers.anthropic.pacer.min_delay_ms;
+    delete tampered.providers.openrouter.pacer.min_delay_ms;
 
     const result = ProvidersConfigSchema.safeParse(tampered);
     expect(result.success).toBe(false);
@@ -111,7 +111,7 @@ describe("Strict Provider Schema Tamper & Fail-Loud Tests", () => {
       expect(result.error).toBeInstanceOf(ZodError);
       const hasMissingMinDelay = result.error.issues.some(
         (issue) =>
-          issue.path.join(".") === "providers.anthropic.pacer.min_delay_ms" &&
+          issue.path.join(".") === "providers.openrouter.pacer.min_delay_ms" &&
           issue.message === "Required"
       );
       expect(hasMissingMinDelay).toBe(true);
@@ -121,7 +121,7 @@ describe("Strict Provider Schema Tamper & Fail-Loud Tests", () => {
 
   it("Test 8: Deleting max_attempts inside request_retry causes validation to FAIL LOUDLY with ZodError", () => {
     const tampered = JSON.parse(JSON.stringify(rawProviders));
-    delete tampered.providers.openai.request_retry.max_attempts;
+    delete tampered.providers.nvidia.request_retry.max_attempts;
 
     const result = ProvidersConfigSchema.safeParse(tampered);
     expect(result.success).toBe(false);
@@ -129,7 +129,7 @@ describe("Strict Provider Schema Tamper & Fail-Loud Tests", () => {
       expect(result.error).toBeInstanceOf(ZodError);
       const hasMissingAttempts = result.error.issues.some(
         (issue) =>
-          issue.path.join(".") === "providers.openai.request_retry.max_attempts" &&
+          issue.path.join(".") === "providers.nvidia.request_retry.max_attempts" &&
           issue.message === "Required"
       );
       expect(hasMissingAttempts).toBe(true);

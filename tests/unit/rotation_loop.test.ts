@@ -7,7 +7,7 @@ import {
 
 describe("In-Flight Retry & Rotation Loop", () => {
   const originalFetch = globalThis.fetch;
-  const originalEnvOpenAi = process.env.OPENAI_API_KEYS;
+  const originalEnvOpenRouter = process.env.OPENROUTER_API_KEYS;
 
   const mockSuccessJson = {
     id: "chatcmpl-test-123",
@@ -25,16 +25,16 @@ describe("In-Flight Retry & Rotation Loop", () => {
   };
 
   beforeEach(() => {
-    process.env.OPENAI_API_KEYS = "sk-mock-key-1,sk-mock-key-2";
+    process.env.OPENROUTER_API_KEYS = "sk-mock-key-1,sk-mock-key-2";
     resetAllState();
   });
 
   afterEach(() => {
     globalThis.fetch = originalFetch;
-    if (originalEnvOpenAi !== undefined) {
-      process.env.OPENAI_API_KEYS = originalEnvOpenAi;
+    if (originalEnvOpenRouter !== undefined) {
+      process.env.OPENROUTER_API_KEYS = originalEnvOpenRouter;
     } else {
-      delete process.env.OPENAI_API_KEYS;
+      delete process.env.OPENROUTER_API_KEYS;
     }
     resetAllState();
   });
@@ -44,7 +44,7 @@ describe("In-Flight Retry & Rotation Loop", () => {
       method: "POST",
       signal,
       headers: {
-        Authorization: "Bearer lr-oa-oa-ch-no",
+        Authorization: "Bearer lr-or-oa-ch-no",
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
@@ -207,9 +207,9 @@ describe("In-Flight Retry & Rotation Loop", () => {
     expect(fetchCalls[0]?.authHeader).toContain("sk-mock-key-1");
     expect(fetchCalls[1]?.authHeader).toContain("sk-mock-key-2");
 
-    // Key 1 (index 0 of "oa") should be quarantined for 300s (300,000ms) on 1st auth failure
-    expect(globalCooldownManager.isQuarantined("oa:0")).toBe(true);
-    const remainingMs = globalCooldownManager.getRemainingMs("oa:0");
+    // Key 1 (index 0 of "or") should be quarantined for 300s (300,000ms) on 1st auth failure
+    expect(globalCooldownManager.isQuarantined("or:0")).toBe(true);
+    const remainingMs = globalCooldownManager.getRemainingMs("or:0");
     expect(remainingMs).toBeGreaterThan(290 * 1000);
     expect(remainingMs).toBeLessThanOrEqual(300 * 1000);
   });

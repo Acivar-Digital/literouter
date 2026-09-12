@@ -99,11 +99,6 @@ describe("Path Resolver — providers.json Completion URL Mapping", () => {
     );
   });
 
-  it("resolves Anthropic direct messages endpoint (an, ms)", () => {
-    const url = resolveCompletionUrl("an", "ms");
-    expect(url).toBe("https://api.anthropic.com/v1/messages");
-  });
-
   it("resolves Zen chat endpoint (zn, ch)", () => {
     const url = resolveCompletionUrl("zn", "ch");
     expect(url).toBe("https://opencode.ai/zen/v1/chat/completions");

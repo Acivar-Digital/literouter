@@ -58,7 +58,7 @@ describe("openai_compat handler unit tests", () => {
     it("provides deterministic retry counts from providers.json without hardcoding", () => {
       const znConfig = getProviderConfig("zn");
       expect(znConfig.request_retry.enabled).toBe(true);
-      expect(znConfig.request_retry.max_attempts).toBe(3);
+      expect(znConfig.request_retry.max_attempts).toBe(5);
 
       const orConfig = getProviderConfig("or");
       expect(orConfig.request_retry.enabled).toBe(true);

@@ -411,7 +411,7 @@ describe("ProviderConfigEntrySchema", () => {
     expect(parsed.success).toBe(true);
     if (parsed.success) {
       const providers = parsed.data.providers;
-      expect(Object.keys(providers).length).toBeGreaterThanOrEqual(13);
+      expect(Object.keys(providers).length).toBe(5);
 
       // Verify openrouter specific headers & conserve_rules
       const or = providers.openrouter;
@@ -432,7 +432,7 @@ describe("ProviderConfigEntrySchema", () => {
       expect(providers.google?.circuit_breaker.enabled).toBe(false);
       expect(providers.zen?.name).toBe("Zen");
       expect(providers.zen?.strategy).toBe("standard");
-      expect(providers.zen?.request_retry.max_attempts).toBe(3);
+      expect(providers.zen?.request_retry.max_attempts).toBe(5);
       expect(providers.zen?.circuit_breaker.enabled).toBe(false);
       expect(providers.gcp?.name).toBe("Google Cloud (GCP)");
       expect(providers.gcp?.strategy).toBe("gcp_guarded");

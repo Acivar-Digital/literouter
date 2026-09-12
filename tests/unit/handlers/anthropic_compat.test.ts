@@ -71,9 +71,9 @@ describe("Anthropic Compat Handler Unit Tests", () => {
 
   describe("Dynamic Provider Config & Retry Unification", () => {
     it("retrieves provider configuration dynamically from registry", () => {
-      const provConfig = getProviderConfig("an");
+      const provConfig = getProviderConfig("or");
       expect(provConfig).toBeDefined();
-      expect(provConfig.code).toBe("an");
+      expect(provConfig.code).toBe("or");
       expect(provConfig.request_retry).toBeDefined();
       expect(typeof provConfig.request_retry.enabled).toBe("boolean");
       expect(typeof provConfig.request_retry.max_attempts).toBe("number");
@@ -86,8 +86,8 @@ describe("Anthropic Compat Handler Unit Tests", () => {
     });
 
     it("bounds retry attempts by provider config and pool size", () => {
-      const provConfig = getProviderConfig("an");
-      const poolSize = globalKeyPool.getPoolSize("an");
+      const provConfig = getProviderConfig("or");
+      const poolSize = globalKeyPool.getPoolSize("or");
       const maxAttempts = provConfig.request_retry.enabled
         ? Math.min(provConfig.request_retry.max_attempts, poolSize > 0 ? poolSize : 1)
         : 1;
@@ -113,7 +113,7 @@ describe("Anthropic Compat Handler Unit Tests", () => {
     });
 
     it("calculates jittered retry delay within min_ms and max_ms bounds", () => {
-      const { min_ms, max_ms } = getProviderConfig("an").request_retry.delay;
+      const { min_ms, max_ms } = getProviderConfig("or").request_retry.delay;
       for (let i = 0; i < 20; i++) {
         const delayMs = min_ms < max_ms
           ? min_ms + Math.floor(Math.random() * (max_ms - min_ms + 1))
@@ -124,10 +124,10 @@ describe("Anthropic Compat Handler Unit Tests", () => {
     });
 
     it("evaluates dynamic pacer enabled status without hardcoded provider lists", () => {
-      expect(isRegisteredProvider("an")).toBe(true);
-      const anPacer = getProviderConfig("an").pacer;
-      expect(anPacer).toBeDefined();
-      expect(typeof anPacer?.enabled).toBe("boolean");
+      expect(isRegisteredProvider("or")).toBe(true);
+      const orPacer = getProviderConfig("or").pacer;
+      expect(orPacer).toBeDefined();
+      expect(typeof orPacer?.enabled).toBe("boolean");
 
       expect(isRegisteredProvider("invalid-provider-code")).toBe(false);
 
