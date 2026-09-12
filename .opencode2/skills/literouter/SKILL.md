@@ -51,6 +51,11 @@ description: LiteRouter API Gateway operational guide for Bun/TypeScript proxy o
 
 *Validation*: Discards tokens `< 4` chars or matching `changeme`, `todo`, `undefined`, `null`. Non-destructive mock keys injected during unit tests.
 
+### Provider Operational Knobs & Governance (`config/providers.json`)
+- **Provider Operational Knobs in `config/providers.json`**: `config/providers.json` is the sole source of truth for all operational settings (`pacer`, `circuit_breaker`, `key_cooldown`, `request_retry`) across all 13 providers (`or`, `nv`, `gg`, `zn`, `gc`, `oa`, `an`, `gq`, `cb`, `ds`, `ms`, `tg`, `tp`).
+- **Strict Boot-Time Validation & Fail-Loud Failure**: Missing or invalid operational blocks in `config/providers.json` are rejected on boot by `validateProviderConfigsFailLoud()` (`src/config/providers.ts` / `src/index.ts`) with `[FATAL] [ProviderRegistry] Provider configuration validation failed loudly refusing to start` and `process.exit(1)`.
+- **Purge of Deprecated Provider Env Vars**: All 17 legacy provider-specific operational env vars (`GCP_*`, `ZEN_*`, `OPENROUTER_*`) have been purged from `src/config/env.ts` and `src/config/schema.ts` and cannot shadow `config/providers.json`. Operational parameters must be edited directly in `config/providers.json` and hot-reloaded via `POST /reset`.
+
 ## §3. Core Inbound Endpoints & Handlers
 
 | Inbound Method & Path | Handler Source File | Handler Function | Directives / Notes |
@@ -121,22 +126,22 @@ Fusion presets: `lr-fse-<preset>` where preset is ONLY one of `quad` / `pydn` / 
 > 📖 **Full schemas**: [`config-schemas.md` §5](config-schemas.md#5-zod-validators-srcconfigschemats) (Zod validators), [`error-action-matrix.md` §4](error-action-matrix.md#4-env-knob-quick-reference) (env knob reference).
 
 - **`.env.local`** (git-ignored secrets): live upstream API key pools (`OPENROUTER_API_KEYS`, `NVIDIA_API_KEYS`, `ZEN_API_KEYS`, `GOOGLE_API_KEYS`, `GCP_KEYS` / `GCP_API_KEYS`).
-- **`.env`** (tracked): operational parameters (port, timeouts, TTFT guards, reasoning defaults, GCP/Zen/OpenRouter retry/quarantine/breaker/pacer toggles, `COOLDOWN_RATE_LIMIT_TTL_SEC`, `LITEROUTER_ENGINE` + `LITEROUTER_ENGINE_OVERRIDE`).
+- **`.env`** (tracked): operational parameters (port, timeouts, TTFT guards, reasoning defaults, `LITEROUTER_ENGINE` + `LITEROUTER_ENGINE_OVERRIDE`).
+- **Purge of Deprecated Provider Env Vars**: All 17 legacy provider-specific operational env vars (`GCP_*`, `ZEN_*`, `OPENROUTER_*`) have been purged from `src/config/env.ts` and `src/config/schema.ts` and cannot shadow `config/providers.json`. Operational settings (`pacer`, `circuit_breaker`, `key_cooldown`, `request_retry`) reside solely in `config/providers.json`.
 - **`LITEROUTER_ENGINE` (default `"legacy"`) + `LITEROUTER_ENGINE_OVERRIDE` (default `"false"`)**: `resolveEngine(req)` (`src/config/env.ts:130-140`) returns the env default unless override is enabled **and** a request carries `x-literouter-engine: legacy|v4` — any other value falls back to the env default ([config-schemas.md §7](config-schemas.md#7-literouter_engine-legacy-default-per-request-override-gate)).
 - ⚠️ `FUSION_UPSTREAM_URL` / `FUSION_UPSTREAM_URL_NATIVE` are **legacy Python fusion-sidecar env vars** (`docs/swap_env.md`, `docs/Longrunning_Mode.md`) — there is **no `FUSION_UPSTREAM_URL` constant in `src/`**. The TS gateway resolves upstreams from `config/providers.json` via `resolveUpstreamEndpoint()` — see [config-schemas.md §4](config-schemas.md#4-fusion_upstream_url-what-it-is-and-is-not).
 
 ## §8. Cooldown & Quarantine Knobs (summary)
 
-> 📖 **Edit → reload workflow**: [`config-schemas.md` §6](config-schemas.md#6-edit-post-reset-hot-reload-workflow). **Retry/quarantine wiring**: [`error-action-matrix.md` §2](error-action-matrix.md#2-retry-quarantine-call-chain-wiring).
+> 📖 **Edit → reload workflow**: [`config-schemas.md` §6](config-schemas.md#6-edit-post-reset-hot-reload-workflow). **Retry/quarantine wiring**: [`error-action-matrix.md` §2](error-action-matrix.md#2-retry-quarantine-call-chain-wiring). **Operational governance**: [`config-schemas.md` §3.6](config-schemas.md#36-operational-governance--zero-hardcoding-request_retry-key_cooldown-pacer-circuit_breaker).
 
-| Parameter | Location in `.env` | Purpose |
+| Parameter | Location / Source of Truth | Purpose |
 |---|---|---|
-| **Rate Limit Cooldown (TTL)** | `COOLDOWN_RATE_LIMIT_TTL_SEC=<sec>` | 429 quarantine duration without `Retry-After`. `0` disables. Consumer: `src/network/cooldown.ts`. |
-| **Server Error Cooldown (5xx)** | `COOLDOWN_SERVER_ERROR_TTL_SEC=<sec>` | Quarantine on 500/502/503/504 (default 10s). |
-| **Auth Error Cooldown (401/403)** | `COOLDOWN_AUTH_ERROR_TTL_SEC=<sec>` | Tiered 300s/1800s/86400s (`src/network/classifier.ts`). |
-| **OpenRouter Quarantine** | `OPENROUTER_ENABLE_QUARANTINE=<true\|false>` | `false` bypasses all quarantine for `or` keys (`src/network/pool.ts`). |
-| **Zen Quarantine / Retries / Breaker / Pacer** | `ZEN_ENABLE_QUARANTINE`, `ZEN_ENABLE_RETRIES`, `ZEN_ENABLE_CIRCUIT_BREAKER`, `ZEN_ENABLE_PACER` | Dumb-forwarder mode when retries+quarantine are `false`. |
-| **GCP Quarantine / Retries / Breaker / Pacer** | `GCP_ENABLE_QUARANTINE`, `GCP_ENABLE_RETRIES`, `GCP_ENABLE_CIRCUIT_BREAKER`, `GCP_ENABLE_PACER` | Same semantics for `gc` keys. |
+| **Rate Limit Cooldown (TTL)** | `config/providers.json` -> `key_cooldown.rate_limit_sec` (fallback default 65s) | 429 quarantine duration without `Retry-After`. Consumer: `src/network/cooldown.ts`. |
+| **Server Error Cooldown (5xx)** | `config/providers.json` -> `key_cooldown.cooldown_sec` | Quarantine on 500/502/503/504 (default 10s). |
+| **Auth Error Cooldown (401/403)** | `src/network/classifier.ts` (tiered constants) | Tiered 300s/1800s/86400s (`src/network/classifier.ts`). |
+| **Provider Operational Knobs** | `config/providers.json` (`pacer`, `circuit_breaker`, `key_cooldown`, `request_retry`) | Sole source of truth across all 13 providers. All 17 legacy provider env vars (`GCP_*`, `ZEN_*`, `OPENROUTER_*`) purged. |
+| **Strict Boot Validation** | `src/config/providers.ts` / `src/index.ts` | `validateProviderConfigsFailLoud()` aborts on missing/invalid blocks with `process.exit(1)`. |
 
 ### Rate Limits & Pacing (Zdist Retirement)
 - **Zdist Retired**: Preemptive client-side RPM/RPD tracking (`RateLimitTracker` / `zdist.ts`) was formally retired in v4.1 (see `docs/GRAVEYARD/ZDIST.md`). Upstream LLM rate limits are dynamic leaky buckets with clock drift, rendering local preemptive rotation counterproductive.
@@ -164,13 +169,13 @@ After editing `.env`: `bash scripts/restart.sh`. After editing `config/providers
 | 16 | Two-leg streaming (`docs/Fix_Streaming_01.md`) | Zero-cutoff ingress conveyor + resilient replay on upstream drops | `opencode2-streaming-troubleshooting.md` |
 | 17 | XML tool calling + trapped thinking (`dots.ts`) | Live `<think>` streaming, pre-thinking tool extraction (GLM/Qwen/DeepSeek/JSON-in-XML), tool-history compaction | `architecture.md` |
 | 18 | Tool-reasoning retention + outbound scrubbing | Scrub conversational turns; **preserve reasoning on tool-call turns** (else upstream 500) | `opencode2-reasoning-scrubber.md` |
-| 19-21 | GCP toggles (`GCP_ENABLE_RETRIES/QUARANTINE/CIRCUIT_BREAKER/PACER`) | `false`+`false` = transparent dumb forwarder for `gc` | [config-schemas.md §5](config-schemas.md#5-zod-validators-srcconfigschemats) |
+| 19-21 | GCP operational knobs (`config/providers.json`) | Governed via `gc` operational blocks (`pacer`, `circuit_breaker`, `key_cooldown`, `request_retry`); legacy env toggles purged | [config-schemas.md §3.6](config-schemas.md#36-operational-governance--zero-hardcoding-request_retry-key_cooldown-pacer-circuit_breaker) |
 | 22 | OpenRouter harness headers | `HTTP-Referer`/`X-Title`/`User-Agent` from `providers.json`, hot-reloaded via `/reset` | `openrouter-handling-spec.md` |
 | 23 | Zen identity gating + bare models | OpenCode identity headers + client session forwarding (`MissingSessionID` fix); never `zen/` prefix | `zen-provider.md` |
 | 24 | NVIDIA NIM EOL catalog | Strict `410 Gone` sunsets; flagship `nemotron-3-super-120b-a12b`; `ts` nuance for `reasoning_content`-only streams | [error-action-matrix.md §1](error-action-matrix.md#1-status-action-matrix) |
 | 25-26 | Responses translation + `oo` native handler | `lr-*-oa-rs-*` bidirectional translation; `lr-*-oo-rs-*` verbatim passthrough (`openai_original.ts`) | `payload.md` |
 | 27 | Client `chunkTimeout: 30000` | Matches `LITEROUTER_STREAM_IDLE_TIMEOUT=30` | `opencode2-streaming-troubleshooting.md` |
-| 28-30 | Zen toggles (mirror 19-21) | Same dumb-forwarder semantics for `zn` | [config-schemas.md §5](config-schemas.md#5-zod-validators-srcconfigschemats) |
+| 28-30 | Zen operational knobs (`config/providers.json`) | Governed via `zn` operational blocks (`strategy: zen_single_flight`, `max_attempts: 1`); legacy env toggles purged | [config-schemas.md §3.6](config-schemas.md#36-operational-governance--zero-hardcoding-request_retry-key_cooldown-pacer-circuit_breaker) |
 | 31 | v4 boundary: pure handlers + transport reassembly | Handlers orchestrate; `fetcher.ts` owns H2/TTFT/reassembly; `[Upstream: HTTP/2]` tagging | `http2-lifecycle-stream-isolation.md` |
 | 32 | Payload wire matrix (`oa` scrubs / `oo` preserves) | Keyed off payload segment; `ts` keeps / `sb` forces | `payload.md` |
 
@@ -221,6 +226,7 @@ Canonical config companion — every `config/` file and its validator:
 | Endpoints (completion-code → path) | [config-schemas.md §3.3](config-schemas.md#33-endpoints-completion-code-path) |
 | Limits (`rpm` / `rpd` / `tpm`) | [config-schemas.md §3.4](config-schemas.md#34-limits-rpm-rpd-tpm) |
 | `strategy` registry (fail-fast throw on unknown) | [config-schemas.md §3.5](config-schemas.md#35-strategy-registry-fail-fast-on-unknown-strategy) |
+| Provider operational knobs (`request_retry`, `key_cooldown`, `pacer`, `circuit_breaker`) & boot validation (`validateProviderConfigsFailLoud()`) | [config-schemas.md §3.6](config-schemas.md#36-operational-governance--zero-hardcoding-request_retry-key_cooldown-pacer-circuit_breaker) |
 | `FUSION_UPSTREAM_URL` legacy-Python note (not a TS constant) | [config-schemas.md §4](config-schemas.md#4-fusion_upstream_url-what-it-is-and-is-not) |
 | Zod validators (`src/config/schema.ts`) | [config-schemas.md §5](config-schemas.md#5-zod-validators-srcconfigschemats) |
 | Edit → `POST /reset` hot-reload workflow | [config-schemas.md §6](config-schemas.md#6-edit-post-reset-hot-reload-workflow) |
@@ -335,6 +341,7 @@ bun run scripts/probe_model.ts <model_name> [--directive <directive_key>] [--url
 7. **`FUSION_UPSTREAM_URL` is a legacy Python sidecar env var, not a TS constant** (zero hits in `src/`) — see [config-schemas.md §4](config-schemas.md#4-fusion_upstream_url-what-it-is-and-is-not).
 8. **`POST /reset` hot-reloads `config/providers.json` headers but cannot rebind port** — port/host/cert changes need `bash scripts/restart.sh`. `GET /health` + `POST /reset` are **auth-free** ([scripts-ops.md §3](scripts-ops.md#3-post-reset-hard-reset-no-auth-any-method-hot-reload-scope), [§3.2](scripts-ops.md#32-hot-reload-scope-configprovidersjson-headers-included)).
 9. **Pure In-Memory Architecture (Zero Redis/Valkey Dependency)**: LiteRouter deliberately chooses NOT to use Redis, Valkey, or `Bun.redis` for core state. Single-threaded non-preemptive event-loop atomicity, `RequestPacer` FIFO burst smoothing, <0.05ms RAM lookups, and zero external failure domains eliminate external daemon baggage for single-instance gateways (see `architecture.md` §1 & `docs/ARCHITECTURE.md` §2.4).
+10. **`config/providers.json` is the sole source of truth for provider operational knobs across all 13 providers.** Operational settings (`pacer`, `circuit_breaker`, `key_cooldown`, `request_retry`) must be defined explicitly for each provider. Missing or invalid operational blocks are rejected on boot by `validateProviderConfigsFailLoud()` with `[FATAL] [ProviderRegistry] Provider configuration validation failed loudly refusing to start` and `process.exit(1)`. All 17 legacy provider-specific operational env vars (`GCP_*`, `ZEN_*`, `OPENROUTER_*`) have been purged from `src/config/env.ts` and `src/config/schema.ts` and cannot shadow `config/providers.json` ([config-schemas.md §3.6](config-schemas.md#36-operational-governance--zero-hardcoding-request_retry-key_cooldown-pacer-circuit_breaker)).
 
 ## §16. Appendix — Lazy Pointers (load only on topic match)
 
