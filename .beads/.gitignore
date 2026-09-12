@@ -22,6 +22,9 @@ push-state.json
 # Credential key (encryption key for federation peer auth — never commit)
 .beads-credential-key
 
+# Interactions log (runtime event log, tracked in Dolt)
+interactions.jsonl
+
 # Local version tracking (prevents upgrade notification spam after git ops)
 .local_version
 
@@ -50,6 +53,7 @@ dolt-server.log
 dolt-server.lock
 dolt-server.port
 dolt-server.activity
+dolt-config.log
 
 # Debug-mode pprof artifacts (written when dolt.debug: true in config.yaml)
 dolt-pprof/
