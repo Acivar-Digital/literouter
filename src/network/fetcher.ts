@@ -135,19 +135,27 @@ export function safeClose(
   controller: ReadableStreamDefaultController<Uint8Array>,
   isClosedRef?: { isClosed: boolean }
 ): void {
-  if (isClosedRef?.isClosed || controller.desiredSize === null) {
-    if (isClosedRef) {
-      isClosedRef.isClosed = true;
-    }
+  if (isClosedRef?.isClosed) {
     return;
   }
   if (isClosedRef) {
     isClosedRef.isClosed = true;
   }
   try {
+    if (controller.desiredSize === null) {
+      return;
+    }
     controller.close();
   } catch (err: unknown) {
-    console.debug(`[Stream] Suppressed controller close error: ${err instanceof Error ? err.message : String(err)}`);
+    const isDebug = Boolean(
+      process.env.DEBUG ||
+      process.env.LITEROUTER_LOG_LEVEL === "debug" ||
+      (getEnv() as Record<string, unknown>).LITEROUTER_LOG_LEVEL === "debug" ||
+      getEnv().LOG_LEVEL === "debug"
+    );
+    if (isDebug) {
+      console.debug(`[Stream] Suppressed controller close error: ${err instanceof Error ? err.message : String(err)}`);
+    }
   }
 }
 
@@ -485,7 +493,7 @@ export async function executeH2Fetch(
           stream.on("data", (chunk: Buffer | Uint8Array) => {
             safeEnqueue(controller, new Uint8Array(chunk), isClosedRef);
           });
-          stream.on("end", () => {
+          stream.once("end", () => {
             safeClose(controller, isClosedRef);
           });
           stream.on("error", (err) => {

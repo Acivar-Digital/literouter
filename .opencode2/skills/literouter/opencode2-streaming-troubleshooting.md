@@ -40,8 +40,8 @@ When running deep-reasoning models (such as `stealth/ox-alpha` or DeepSeek-R1) v
 
 ### Vector 4: Midstream Drops & Controller Race Conditions
 - **Mechanism:** When network hiccups, upstream timeouts, or client aborts occur mid-stream, standard stream pipelines often invoke `controller.close()` or `controller.enqueue()` on an already terminated or canceled stream controller.
-- **Result:** Bun runtime crashes with `ERR_INVALID_STATE: Controller is already closed`, polluting error logs and tearing down active socket pools.
-- **LiteRouter Fix:** Idempotent stream teardown via `safeEnqueue`, `safeClose`, and `safeError` with shared `isClosedRef` guards in `src/network/fetcher.ts`.
+- **Result:** Without guarded teardown, Bun throws `Invalid state: Controller is already closed`. Any `[Stream] Suppressed controller close error: Invalid state: Controller is already closed` messages represent a benign caught suppression during post-stream client socket disconnects, not an unhandled crash or socket pool teardown.
+- **LiteRouter Fix:** Idempotent stream teardown via `safeEnqueue`, `safeClose`, and `safeError` with shared `isClosedRef` guards and debug-gated suppression in `src/network/fetcher.ts`.
 
 ---
 
@@ -93,7 +93,8 @@ Once Time-To-First-Token (TTFT) has elapsed and content tokens have started stre
    - Midstream network drops or client disconnects must **not** penalize the upstream API key with a 60-second rate-limit quarantine.
    - LiteRouter assigns transient transport drops and midstream socket errors a 2-second transient retry quarantine (`quarantineTtlSec: 2`) or leaves active keys unaffected when the disconnect originates downstream.
 3. **Idempotent Stream Controller Protection:**
-   - `safeEnqueue`, `safeClose`, and `safeError` inspect `isClosedRef.isClosed` and `controller.desiredSize === null` before performing operations.
+   - Under the WHATWG Streams standard and Bun, `desiredSize` is `0` when closed or canceled (and `null` only when errored).
+   - `safeClose` safely absorbs teardown races with `isClosedRef` and debug-gated suppression, ensuring post-stream client disconnects and double-closes do not throw unhandled crashes.
    - Client disconnects silently mark `isClosedRef.isClosed = true` and tear down background keepalive timers without throwing unhandled runtime exceptions.
 
 ---
