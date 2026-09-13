@@ -185,7 +185,6 @@ Before adding, modifying, or removing providers or models, you MUST:
 > - **Model Addition**: Requires OpenAI-compat endpoint configuration in `fusion.json`
 > - **Provider Removal**: Requires gateway configuration cleanup in `src/index.ts`
 > - **Model Removal**: Requires upstream reference cleanup in `fusion.json`
-> - **Key Rotation**: Requires Valkey quota/cooldown state updates
 
 ### 5. Integration Testing
 > After any provider/model change:
@@ -211,9 +210,9 @@ When halted at an Approval Gate (major change >50 lines, new deps, schema change
 2. State clearly in chat: `APPROVAL REQUIRED: [specific decision needed in one sentence]`
 3. Flag for human: `bd human <id>`
 4. **STOP** - do not loop, do not ask again, do not proceed.
-5. **Pick up next unblocked work**: run `bd ready` and claim the next issue while waiting.
+5. **Interactive vs Headless Swapping**: In interactive user chat, await the user's explicit response (do not swap tasks or hijack the conversation). In headless or autonomous batch execution, run `bd ready` and claim the next unblocked issue while waiting.
 
-> **WHY THIS EXISTS**: Agents that halt and wait indefinitely block all progress. Flag it, park it, move on. You are not a single-threaded process.
+> **WHY THIS EXISTS**: Agents that halt and wait indefinitely block all progress in batch mode. In interactive mode, respecting the user's focus prevents context fragmentation.
 
 ---
 
@@ -306,11 +305,11 @@ graph TD
 ```
 
 ### Fast Path for Trivial Tasks
-If a task is trivial (e.g., typo fix, single-line change), you may:
-1. Create the bead: `bd create "..." -t task -p 4`
+Even for trivial tasks (e.g., typo fix, single-line change), the Pre-Response Ritual MUST still be output (marking `APPROVAL?: [x] NO - Proceeding autonomously. Stating: "Self-approving - YOLO active."`).
+To maintain beads tracking without violating validation:
+1. Create the bead with acceptance criteria: `bd create "..." -t task -p 4 --acceptance="1. Verified"`
 2. Implement the change immediately.
-3. Close the bead: `bd close <id>`
-This avoids unnecessary planning overhead while maintaining tracking.
+3. Close the bead: `bd close <id> --reason "Completed"`
 
 ### Self-Review (Critic Role)
 Before marking a task as complete, you MUST act as a Critic:
@@ -399,50 +398,6 @@ so it's clear how far execution got before failure.
 - **Parallel Multi-Tool Execution**: Never serialize independent tool calls turn-by-turn. When multiple files, checks, or tasks are known, dispatch all tool calls simultaneously in parallel (multi-tool calls all at once).
 - **Compiler & Test Grounding**: Rely on TypeScript static typecheck (`bun run typecheck`), AST validation (`clean_ts`), and test suites (`bun test`) to catch contract mismatches rather than manual reading loops.
 
-## MCP Tools (for AI agents)
-
-Primary tools for codebase manipulation with AST support emphasized:
-
-### AST Functions (Core superpowers)
-- `ast_replace_function` - Safe function/method replacement with class scoping support
-- `ast_add_constant` - Add or update top-level Python constants/variables
-- `ast_add_import` - Safely manage imports (prevents duplicates)
-- `ast_clean_imports` - Remove unused imports (ruff F401)
-
-### File Operations
-- `read_file` - Read file with line range selection
-- `write_file` - Atomic file write with content sanitization (\xa0, CRLF normalized)
-- `replace_in_file` - String/regex replacement with atomic write
-- `delete_file` - Delete files or directories
-- `rename_file` - Rename/move files atomically
-- `list_files` - List directory contents
-
-### Search & Discovery
-- `search_codebase` - Semantic search via Qdrant/BGEM3 embeddings
-- `grep_codebase` - Regex pattern search across files
-- `get_file_symbols` - Extract Python symbols (functions, classes) using libcst
-- `get_repo_structure` - Tree view of repository
-- `build_repo_graph` - Import dependency graph via networkx
-
-### Codebase Management
-- `move_symbol` - Move function/class between files with Two-Phase Commit (atomic)
-- `index_repository` - Index repository into Qdrant vector store
-- `delete_collection` - Delete vector collection
-- `get_collection_stats_tool` - Get collection statistics
-
-### Knowledge & Persistence
-- `remember_fact` - Persist non-code knowledge (decisions, technical debt, status)
-- `recall_fact` - Retrieve stored facts
-- `list_facts` - List all stored facts
-
-### Execution & Analysis
-- `create_execution_plan` - Save structured execution plan
-- `explain_failure` - Analyze error messages with log context
-- `count_lines` - Count lines in files
-- `impact_snapshot` - Take package + module graph snapshot for impact analysis
-- `impact_diff` - Diff against baseline, compute downstream module impact
-- `impact_report` - Generate human-readable impact report from diff
-
 # YOU MUST FOLLOW THIS
 
 1. Pre-Implementation Intent Alignment
@@ -485,13 +440,13 @@ Goal: Close the loop between plan and proof.
 
     State-Driven Loops: If a verification step fails, perform a root-cause analysis and update the plan before retrying. "Trying again" without a plan change is prohibited.
 
-5. Environment & Tooling (UV Always)
+5. Environment & Tooling (TypeScript & Bun First)
 
 Goal: Enforce execution consistency and tool awareness.
 
-    UV Protocol: You MUST use `uv` for all command executions, script runs, and dependency management (e.g., `uv run python ...`, `uv sync`). Never use naked `python` or `pip` commands.
+    Bun Protocol: LiteRouter is a Bun / TypeScript gateway. You MUST use `bun` for all gateway runtime executions, typechecking (`bun run typecheck`), benchmarks, and unit tests (`bun test`).
 
-    MCP Source of Truth: Refer to `codebase/mcp_codebase.py` for the definitive implementation and allowlist of codebase-level MCP tools. All project-specific terminal commands must adhere to the `ALLOWED_COMMANDS` defined therein.
+    Python & UV Protocol: When executing Python tools, Python integration smoke tests (`uv run pytest tests/integration/`), or Python linters (`uv run ruff check .`), you MUST use `uv` (e.g., `uv run python ...`, `uv sync`). Never use naked `python` or `pip` commands.
 
 <!-- BEGIN BEADS INTEGRATION v:1 profile:full hash:19cc25d9 -->
 ## Issue Tracking with bd (beads)
@@ -614,57 +569,30 @@ For more details, see README.md and docs/QUICKSTART.md.
 
 ## Agent Context Profiles
 
-The managed Beads block is task-tracking guidance, not permission to override repository, user, or orchestrator instructions.
+The managed Beads block is task-tracking guidance, configured for mandatory auto-push in this repository.
 
-- **Conservative (default)**: Use `bd` for task tracking. Do not run git commits, git pushes, or Dolt remote sync unless explicitly asked. At handoff, report changed files, validation, and suggested next commands.
-- **Minimal**: Keep tool instruction files as pointers to `bd prime`; use the same conservative git policy unless active instructions say otherwise.
-- **Team-maintainer**: Only when the repository explicitly opts in, agents may close beads, run quality gates, commit, and push as part of session close. A current "do not commit" or "do not push" instruction still wins.
+- **Team-maintainer (Active / Mandatory Push)**: All finished work must pass quality gates, commit changes, push beads state, and push git commits to remote (`git pull --rebase && bd dolt push && git push`). Work is NOT complete until `git push` succeeds.
+- **Conservative / Minimal**: Overridden by active repository policy. Agents must push upon task completion.
 
 ## Session Completion
 
-This protocol applies when ending a Beads implementation workflow. It is subordinate to explicit user, repository, and orchestrator instructions.
+When ending a work session, you MUST complete ALL steps below. Work is NOT complete until `git push` succeeds.
 
-1. **File issues for remaining work** - Create beads for anything that needs follow-up
-2. **Run quality gates** (if code changed) - Tests, linters, builds
-3. **Update issue status** - Close finished work, update in-progress items
-4. **Handle git/sync by active profile**:
+1. **File issues for remaining work** - Create beads for anything that needs follow-up (always with `--acceptance="..."`)
+2. **Run quality gates** (if code changed) - `bun run typecheck`, `bun test`, `uv run pytest tests/integration/`
+3. **Update issue status** - Close finished work (`bd close <id> --reason "..."`), update in-progress items
+4. **PUSH TO REMOTE (MANDATORY)**:
    ```bash
-   # Conservative/minimal/default: report proposed commands; wait for approval.
-
-   # Team-maintainer opt-in only, unless current instructions forbid it:
    git pull --rebase
    bd dolt push
    git push
    ```
-5. **Hand off** - Summarize changes, validation, issue status, and any blocked sync/commit/push step
+5. **Hand off** - Summarize changes, validation, issue status, and confirm successful push.
 
-**Critical rules:**
-- Explicit user or orchestrator instructions override this Beads block.
-- Do not commit or push without clear authority from the active profile or the current user request.
-- If a required sync or push is blocked, stop and report the exact command and error.
+**CRITICAL RULES:**
+- Work is NOT complete until `git push` succeeds.
+- NEVER stop before pushing - that leaves work stranded locally.
+- NEVER say "ready to push when you are" - YOU must push.
+- If push fails, resolve and retry until it succeeds.
 
 <!-- END BEADS INTEGRATION -->
-
-<!-- BEGIN BEADS CODEX SETUP: generated by bd setup codex -->
-## Beads Issue Tracker
-
-Use Beads (`bd`) for durable task tracking in repositories that include it. Use the `beads` skill at `.agents/skills/beads/SKILL.md` (project install) or `~/.agents/skills/beads/SKILL.md` (global install) for Beads workflow guidance, then use the `bd` CLI for issue operations.
-
-### Quick Reference
-
-```bash
-bd ready                # Find available work
-bd show <id>            # View issue details
-bd update <id> --claim  # Claim work
-bd close <id>           # Complete work
-bd prime                # Refresh Beads context
-```
-
-### Rules
-
-- Use `bd` for all task tracking; do not create markdown TODO lists.
-- Run `bd prime` when Beads context is missing or stale. Codex 0.129.0+ can load Beads context automatically through native hooks; use `/hooks` to inspect or toggle them.
-- Keep persistent project memory in Beads via `bd remember`; do not create ad hoc memory files.
-
-**Architecture in one line:** issues live in a local Dolt DB; sync uses `refs/dolt/data` on your git remote; `.beads/issues.jsonl` is a passive export. See https://github.com/gastownhall/beads/blob/main/docs/SYNC_CONCEPTS.md for details and anti-patterns.
-<!-- END BEADS CODEX SETUP -->
