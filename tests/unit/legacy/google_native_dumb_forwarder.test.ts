@@ -295,4 +295,48 @@ describe("Google Native Dumb Forwarder Unit Tests", () => {
     expect(res.status).toBe(502);
     expect(callCount).toBe(3);
   });
+
+  it("fails fast and loud on HTTP 401 with zero retries", async () => {
+    let callCount = 0;
+
+    globalThis.fetch = (async () => {
+      callCount++;
+      return new Response(JSON.stringify({ error: { code: 401, message: "API key not valid" } }), {
+        status: 401,
+        headers: { "Content-Type": "application/json" },
+      });
+    }) as unknown as typeof fetch;
+
+    const req = new Request("http://localhost:7766/v1beta/models/gemini-2.5-flash:generateContent", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ contents: [] }),
+    });
+
+    const res = await handleGoogleNative(req, "lr-gg-gg-gc-no", "req-test-401-failfast");
+    expect(res.status).toBe(401);
+    expect(callCount).toBe(1); // ZERO retries!
+  });
+
+  it("fails fast and loud on HTTP 403 with zero retries", async () => {
+    let callCount = 0;
+
+    globalThis.fetch = (async () => {
+      callCount++;
+      return new Response(JSON.stringify({ error: { code: 403, message: "Permission denied" } }), {
+        status: 403,
+        headers: { "Content-Type": "application/json" },
+      });
+    }) as unknown as typeof fetch;
+
+    const req = new Request("http://localhost:7766/v1beta/models/gemini-2.5-flash:generateContent", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ contents: [] }),
+    });
+
+    const res = await handleGoogleNative(req, "lr-gg-gg-gc-no", "req-test-403-failfast");
+    expect(res.status).toBe(403);
+    expect(callCount).toBe(1); // ZERO retries!
+  });
 });

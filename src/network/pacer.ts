@@ -108,7 +108,7 @@ export class RequestPacer {
   }
 
   public get maxQueueDepth(): number {
-    return this.config.maxQueueDepth ?? 1000;
+    return this.config.maxQueueDepth ?? 500;
   }
 
   public get maxQueueWaitMs(): number {
@@ -288,8 +288,11 @@ export function getPacerForProvider(
     const provPacer = isRegisteredProvider(provider)
       ? getProviderConfig(provider).pacer
       : undefined;
-    const minIntervalMs = config?.minIntervalMs ?? provPacer?.min_delay_ms ?? 200;
-    const maxQueueDepth = config?.maxQueueDepth ?? provPacer?.max_queue_depth ?? 100;
+    const minIntervalMs = config?.minIntervalMs ?? provPacer?.min_delay_ms;
+    if (minIntervalMs === undefined) {
+      throw new Error(`[RequestPacer] Missing or invalid minIntervalMs for provider "${provider}"`);
+    }
+    const maxQueueDepth = config?.maxQueueDepth ?? provPacer?.max_queue_depth ?? 500;
     const maxQueueWaitMs = config?.maxQueueWaitMs ?? provPacer?.max_queue_wait_ms ?? 15000;
     const maxConcurrency = config?.maxConcurrency ?? provPacer?.max_concurrency ?? 0;
     pacer = new RequestPacer({

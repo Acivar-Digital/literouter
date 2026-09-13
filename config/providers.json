@@ -56,7 +56,7 @@
         "enabled": true,
         "min_delay_ms": 200,
         "max_delay_ms": 500,
-        "max_queue_depth": 100,
+        "max_queue_depth": 500,
         "max_queue_wait_ms": 15000
       },
       "circuit_breaker": {
@@ -99,7 +99,7 @@
         "enabled": true,
         "min_delay_ms": 200,
         "max_delay_ms": 500,
-        "max_queue_depth": 100,
+        "max_queue_depth": 500,
         "max_queue_wait_ms": 15000
       },
       "circuit_breaker": {
@@ -219,7 +219,7 @@
         "enabled": true,
         "min_delay_ms": 200,
         "max_delay_ms": 500,
-        "max_queue_depth": 100,
+        "max_queue_depth": 500,
         "max_queue_wait_ms": 15000
       },
       "circuit_breaker": {
@@ -279,7 +279,7 @@
         "enabled": true,
         "min_delay_ms": 1000,
         "max_delay_ms": 2000,
-        "max_queue_depth": 100,
+        "max_queue_depth": 500,
         "max_queue_wait_ms": 15000,
         "max_concurrency": 7
       },
@@ -335,7 +335,7 @@
         "enabled": true,
         "min_delay_ms": 2000,
         "max_delay_ms": 3000,
-        "max_queue_depth": 100,
+        "max_queue_depth": 500,
         "max_queue_wait_ms": 240000
       },
       "circuit_breaker": {

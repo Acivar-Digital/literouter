@@ -190,9 +190,9 @@ describe("Pacer Cooldown Integration, Load-Shedding & Transport Error Classifica
       expect(fetchCalls.length).toBe(2);
 
       // Verify that after 2 seconds elapsed during pacer retry, Key 0 is already cleared
-      // whereas a 60s/65s rate limit would have ~58s remaining.
+      // and generic 429 rate limit has 0s cooldown.
       const rateLimitCooldown = computeStatusTtlSec(429);
-      expect(rateLimitCooldown).toBe(65);
+      expect(rateLimitCooldown).toBe(0);
 
       const key0Remaining = globalCooldownManager.getRemainingMs("or:0");
       expect(key0Remaining).toBeLessThanOrEqual(2000);
@@ -209,12 +209,12 @@ describe("Pacer Cooldown Integration, Load-Shedding & Transport Error Classifica
       expect(remaining).toBe(2000);
     });
 
-    it("verifies 429 status defaults to 65s rate limit quarantine while transport timeout is 2s", () => {
+    it("verifies 429 status defaults to 0s rate limit quarantine while transport timeout is 2s", () => {
       const now = Date.now();
 
-      // Standard HTTP 429 rate limit failure -> 65s
+      // Standard HTTP 429 rate limit failure -> 0s (purged 65s quarantine lockout)
       const rateLimitState = globalKeyPool.reportFailure("or", 0, 429, undefined, "Rate limit", now);
-      expect(rateLimitState.quarantinedUntil - now).toBe(65000);
+      expect(rateLimitState.quarantinedUntil - now).toBe(0);
 
       // Transport / NoResponseError failure -> 2s
       const transportState = globalKeyPool.reportFailure("or", 1, 0, undefined, "TTFT timeout", now, 2);

@@ -15,9 +15,30 @@ export interface PoolStatus {
   readonly quarantined: number;
 }
 
+export class FatalAuthError extends Error {
+  public readonly status: number;
+  public readonly provider: string;
+  public readonly keyIndex: number;
+  public readonly isFatal = true;
+
+  constructor(provider: string, keyIndex: number, status: number, body?: string) {
+    super(
+      `Fatal authentication failure (HTTP ${status}) for provider "${provider}" key index ${keyIndex}: rejecting immediately with zero retry.`
+    );
+    this.name = "FatalAuthError";
+    this.status = status;
+    this.provider = provider;
+    this.keyIndex = keyIndex;
+  }
+}
+
+export function isFatalAuthError(err: unknown): err is FatalAuthError {
+  return err instanceof FatalAuthError || (err instanceof Error && err.name === "FatalAuthError");
+}
+
 export function isProviderQuarantineEnabled(provider: string): boolean {
   try {
-    const provConfig = getProviderConfig(provider);
+    const provConfig = getProviderConfig(provider) as { key_cooldown?: { enabled?: boolean } };
     return provConfig.key_cooldown?.enabled ?? true;
   } catch {
     return true;
@@ -27,7 +48,6 @@ export function isProviderQuarantineEnabled(provider: string): boolean {
 export class KeyPool extends EventEmitter {
   private readonly pools = new Map<string, readonly string[]>();
   private readonly pointers = new Map<string, number>();
-  private readonly consecutiveAuthFailures = new Map<string, number>();
   private readonly activeTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly cooldownManager: CooldownManager;
 
@@ -118,7 +138,6 @@ export class KeyPool extends EventEmitter {
   public reportSuccess(provider: string, index: number): void {
     const keyId = this.makeKeyId(provider, index);
     this.cooldownManager.clearCooldown(keyId);
-    this.consecutiveAuthFailures.delete(keyId);
     const existing = this.activeTimers.get(keyId);
     if (existing) {
       clearTimeout(existing);
@@ -126,18 +145,6 @@ export class KeyPool extends EventEmitter {
     }
     this.emit(`available:${provider}`, provider);
     this.emit("available", provider);
-  }
-
-  private computeTieredAuthTtl(keyId: string): number {
-    const count = (this.consecutiveAuthFailures.get(keyId) ?? 0) + 1;
-    this.consecutiveAuthFailures.set(keyId, count);
-    if (count === 1) {
-      return 300;
-    }
-    if (count === 2) {
-      return 1800;
-    }
-    return 86400;
   }
 
   public reportFailure(
@@ -149,6 +156,9 @@ export class KeyPool extends EventEmitter {
     now: number = Date.now(),
     customTtlSec?: number
   ): KeyCooldownState {
+    if (status === 401 || status === 403) {
+      throw new FatalAuthError(provider, index, status, body);
+    }
     if (!this.isQuarantineEnabled(provider)) {
       return {
         quarantinedUntil: 0,
@@ -157,11 +167,7 @@ export class KeyPool extends EventEmitter {
       };
     }
     const keyId = this.makeKeyId(provider, index);
-    let effectiveTtlSec = customTtlSec;
-    if ((status === 401 || status === 403) && customTtlSec === undefined) {
-      effectiveTtlSec = this.computeTieredAuthTtl(keyId);
-    }
-    const state = this.cooldownManager.quarantineKey(keyId, status, headers, body, now, effectiveTtlSec);
+    const state = this.cooldownManager.quarantineKey(keyId, status, headers, body, now, customTtlSec);
     this.scheduleAvailabilityTimer(keyId, provider, state.quarantinedUntil - now);
     return state;
   }
@@ -201,9 +207,8 @@ export class KeyPool extends EventEmitter {
     return state;
   }
 
-  public getConsecutiveAuthFailures(provider: string, index: number): number {
-    const keyId = this.makeKeyId(provider, index);
-    return this.consecutiveAuthFailures.get(keyId) ?? 0;
+  public getConsecutiveAuthFailures(_provider: string, _index: number): number {
+    return 0;
   }
 
   public async waitForKeyAvailable(
@@ -314,11 +319,6 @@ export class KeyPool extends EventEmitter {
         this.activeTimers.delete(keyId);
       }
     }
-    for (const keyId of this.consecutiveAuthFailures.keys()) {
-      if (keyId === provider || keyId.startsWith(prefix)) {
-        this.consecutiveAuthFailures.delete(keyId);
-      }
-    }
     const keys = this.getKeys(provider);
     for (let i = 0; i < keys.length; i += 1) {
       this.cooldownManager.clearCooldown(this.makeKeyId(provider, i));
@@ -337,7 +337,6 @@ export class KeyPool extends EventEmitter {
       clearTimeout(timer);
     }
     this.activeTimers.clear();
-    this.consecutiveAuthFailures.clear();
     this.cooldownManager.clearAll();
     this.emit("available");
   }

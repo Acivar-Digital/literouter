@@ -191,4 +191,88 @@ describe("Anthropic Compat Handler Unit Tests", () => {
       expect(json.error.type).toBe("invalid_request_error");
     });
   });
+
+  describe("401/403 Fail-Fast & Zero Pacer Overrides", () => {
+    it("fails fast and loud on 401 with zero retries", async () => {
+      let callCount = 0;
+      const mockServer = Bun.serve({
+        port: 0,
+        fetch() {
+          callCount++;
+          return Response.json(
+            {
+              type: "error",
+              error: { type: "authentication_error", message: "Invalid API Key" },
+            },
+            { status: 401 }
+          );
+        },
+      });
+      process.env.MOCK_OR_PORT = String(mockServer.port);
+      globalKeyPool.setPool("or", ["mock-key-1", "mock-key-2", "mock-key-3"]);
+
+      try {
+        const req = new Request("http://localhost:7766/v1/messages", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            model: "anthropic/claude-3.7-sonnet",
+            messages: [{ role: "user", content: "test auth" }],
+            max_tokens: 100,
+          }),
+        });
+
+        const res = await handleAnthropicCompat(req, "lr-or-cl-ms-no", "req-test-auth-401");
+        expect(res.status).toBe(401);
+        expect(callCount).toBe(1);
+      } finally {
+        mockServer.stop(true);
+        delete process.env.MOCK_OR_PORT;
+      }
+    });
+
+    it("fails fast and loud on 403 with zero retries", async () => {
+      let callCount = 0;
+      const mockServer = Bun.serve({
+        port: 0,
+        fetch() {
+          callCount++;
+          return Response.json(
+            {
+              type: "error",
+              error: { type: "permission_error", message: "Forbidden key" },
+            },
+            { status: 403 }
+          );
+        },
+      });
+      process.env.MOCK_OR_PORT = String(mockServer.port);
+      globalKeyPool.setPool("or", ["mock-key-1", "mock-key-2", "mock-key-3"]);
+
+      try {
+        const req = new Request("http://localhost:7766/v1/messages", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            model: "anthropic/claude-3.7-sonnet",
+            messages: [{ role: "user", content: "test auth 403" }],
+            max_tokens: 100,
+          }),
+        });
+
+        const res = await handleAnthropicCompat(req, "lr-or-cl-ms-no", "req-test-auth-403");
+        expect(res.status).toBe(403);
+        expect(callCount).toBe(1);
+      } finally {
+        mockServer.stop(true);
+        delete process.env.MOCK_OR_PORT;
+      }
+    });
+
+    it("verifies anthropic_compat.ts does not pass maxQueueDepth to getPacerForProvider", async () => {
+      const source = await Bun.file("src/handlers/anthropic_compat.ts").text();
+      expect(source).not.toContain("getPacerForProvider(directive.provider, nextSelected.index");
+      expect(source).not.toContain("maxQueueDepth");
+    });
+  });
 });

@@ -45,7 +45,7 @@ import { getProviderConfig, isRegisteredProvider } from "../config/providers";
 import { getPacerForProvider, PacerQueueOverflowError } from "../network/pacer";
 import { getCircuitBreakerForProvider } from "../network/circuit_breaker";
 import type { DirectDirective } from "../directive/parser";
-import type { SelectedKey } from "../network/pool";
+import { isFatalAuthError, type SelectedKey } from "../network/pool";
 
 export interface AnthropicImageSource {
   readonly type: "base64" | "url";
@@ -1020,6 +1020,32 @@ async function executeAnthropicDirectCall(
 
     const fullBody = await collectFullBody(firstChunk, rawReader);
     const bodyText = new TextDecoder().decode(fullBody);
+
+    if (response.status === 401 || response.status === 403) {
+      logWarn(
+        EMOJI.zap,
+        `[${directive.provider.toUpperCase()} ${reqId}] Fatal auth error ${response.status}: failing fast and loud without retry.`
+      );
+      try {
+        if (quarantineEnabled) {
+          globalKeyPool.reportFailure(directive.provider, selected.index, response.status, response.headers, bodyText);
+        }
+      } catch (err: unknown) {
+        if (isFatalAuthError(err)) {
+          logWarn(EMOJI.zap, `[${directive.provider.toUpperCase()} ${reqId}] Auth failure confirmed fatal: ${err.message}`);
+        } else {
+          throw err;
+        }
+      }
+      logServed(reqId, duration, response.status, attempt, maxAttempts);
+      logSeparator();
+
+      return new Response(fullBody.buffer as ArrayBuffer, {
+        status: response.status,
+        headers: sanitizeDownstreamHeaders(response.headers, fullBody.byteLength),
+      });
+    }
+
     const classification = classifyUpstreamError({
       provider: directive.provider,
       status: response.status,
@@ -1027,18 +1053,29 @@ async function executeAnthropicDirectCall(
       bodyText,
     });
 
-    if (quarantineEnabled && classification.quarantineTtlSec > 0) {
-      globalKeyPool.reportFailure(
-        directive.provider,
-        selected.index,
-        response.status,
-        response.headers,
-        bodyText,
-        Date.now(),
-        classification.quarantineTtlSec
-      );
-    } else if (!quarantineEnabled && classification.quarantineTtlSec > 0) {
-      logWarn(EMOJI.zap, `[${directive.provider.toUpperCase()} ${reqId}] Dumb-forwarder mode (${directive.provider.toUpperCase()}_ENABLE_QUARANTINE=false): Key ${selected.index} quarantine bypassed.`);
+    try {
+      if (quarantineEnabled && classification.quarantineTtlSec > 0) {
+        globalKeyPool.reportFailure(
+          directive.provider,
+          selected.index,
+          response.status,
+          response.headers,
+          bodyText,
+          Date.now(),
+          classification.quarantineTtlSec
+        );
+      } else if (!quarantineEnabled && classification.quarantineTtlSec > 0) {
+        logWarn(EMOJI.zap, `[${directive.provider.toUpperCase()} ${reqId}] Dumb-forwarder mode (${directive.provider.toUpperCase()}_ENABLE_QUARANTINE=false): Key ${selected.index} quarantine bypassed.`);
+      }
+    } catch (err: unknown) {
+      if (isFatalAuthError(err)) {
+        logWarn(EMOJI.zap, `[${directive.provider.toUpperCase()} ${reqId}] Auth failure confirmed fatal: ${err.message}`);
+        return new Response(fullBody.buffer as ArrayBuffer, {
+          status: response.status,
+          headers: sanitizeDownstreamHeaders(response.headers, fullBody.byteLength),
+        });
+      }
+      throw err;
     }
 
     const rawErrorMsg = extractErrorMessage(bodyText);
@@ -1232,13 +1269,7 @@ async function executeAnthropicDirectCall(
         const nextHeaders = buildAuthHeaders(endpoint.authHeader, nextSelected.key, directive.provider, clientHeaders);
 
         if (env.LITEROUTER_PACER_ENABLED) {
-          const dynamicMaxQueueDepth = globalKeyPool.getDynamicMaxQueueDepth(directive.provider);
-          const maxQueueDepth = env.LITEROUTER_PACER_MAX_QUEUE_DEPTH > 0
-            ? env.LITEROUTER_PACER_MAX_QUEUE_DEPTH
-            : dynamicMaxQueueDepth;
-          const pacer = getPacerForProvider(directive.provider, nextSelected.index, {
-            maxQueueDepth,
-          });
+          const pacer = getPacerForProvider(directive.provider);
           await pacer.acquire(clientSignal);
         }
 
@@ -1254,6 +1285,24 @@ async function executeAnthropicDirectCall(
             model: payload.model,
           });
           if (nextResult.response.status >= 400) {
+            if (nextResult.response.status === 401 || nextResult.response.status === 403) {
+              logWarn(
+                EMOJI.zap,
+                `[${directive.provider.toUpperCase()} ${reqId}] Fatal auth error ${nextResult.response.status}: rejecting immediately with zero retry.`
+              );
+              try {
+                if (quarantineEnabled) {
+                  globalKeyPool.reportFailure(directive.provider, nextSelected.index, nextResult.response.status);
+                }
+              } catch (err: unknown) {
+                if (isFatalAuthError(err)) {
+                  logWarn(EMOJI.zap, `[${directive.provider.toUpperCase()} ${reqId}] Auth failure confirmed fatal: ${err.message}`);
+                } else {
+                  throw err;
+                }
+              }
+              return null;
+            }
             if (quarantineEnabled) {
               globalKeyPool.reportFailure(directive.provider, nextSelected.index, nextResult.response.status);
             }
@@ -1266,7 +1315,13 @@ async function executeAnthropicDirectCall(
             reader: nextResult.rawReader,
           };
         } catch (fetchErr: unknown) {
-          void fetchErr;
+          if (isFatalAuthError(fetchErr)) {
+            logWarn(
+              EMOJI.zap,
+              `[${directive.provider.toUpperCase()} ${reqId}] Fatal auth error in resilient stream: rejecting immediately with zero retry.`
+            );
+            return null;
+          }
           if (quarantineEnabled) {
             globalKeyPool.reportFailure(directive.provider, nextSelected.index, 500);
           }
@@ -1373,6 +1428,17 @@ async function executeAnthropicDirectLoop(
       return await executeAnthropicDirectCall(directive, payload, clientSignal, selected, reqId, attempt, maxAttempts, clientHeaders);
     } catch (err: unknown) {
       lastError = err;
+      if (isFatalAuthError(err)) {
+        logWarn(
+          EMOJI.zap,
+          `[${directive.provider.toUpperCase()} ${reqId}] Fatal auth error ${err.status}: failing fast and loud without retry.`
+        );
+        return createAnthropicErrorResponse(
+          err.status,
+          err.message,
+          "authentication_error"
+        );
+      }
       if (clientSignal?.aborted || (err instanceof Error && err.message.includes("aborted"))) {
         return createAnthropicErrorResponse(499, "Request aborted by client", "invalid_request_error");
       }

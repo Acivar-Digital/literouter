@@ -5,7 +5,6 @@ import {
   RATE_LIMIT_DEFAULT_SEC,
   calculateMidnightUtcSec,
   computeStatusTtlSec,
-  getExhaustionBackoffMs,
   parseResetDelay,
   resolveConserveTtlSec,
 } from "../../src/network/cooldown";
@@ -14,7 +13,6 @@ let originalTtl: string | undefined;
 
 beforeEach(() => {
   originalTtl = process.env.COOLDOWN_RATE_LIMIT_TTL_SEC;
-  process.env.COOLDOWN_RATE_LIMIT_TTL_SEC = "65";
   resetEnvCache();
 });
 
@@ -28,9 +26,10 @@ afterEach(() => {
 });
 
 describe("Cooldown Manager — Status Code Reason-Aware Mapping", () => {
-  it("assigns 65s default cooldown on HTTP 429 rate limit", () => {
+  it("assigns 0s default cooldown on HTTP 429 rate limit (purged 65s reactive lockout)", () => {
     const ttl = computeStatusTtlSec(429);
-    expect(ttl).toBe(RATE_LIMIT_DEFAULT_SEC);
+    expect(ttl).toBe(0);
+    expect(RATE_LIMIT_DEFAULT_SEC).toBe(0);
   });
 
   it("respects explicit configuredTtlSec on HTTP 429 rate limit", () => {
@@ -45,9 +44,9 @@ describe("Cooldown Manager — Status Code Reason-Aware Mapping", () => {
     expect(computeStatusTtlSec(504)).toBe(10);
   });
 
-  it("assigns 7 days cooldown on 401/403 auth errors", () => {
-    expect(computeStatusTtlSec(401)).toBe(604800);
-    expect(computeStatusTtlSec(403)).toBe(604800);
+  it("assigns 0s cooldown on 401/403 auth errors (fatal fail fast, no quarantine)", () => {
+    expect(computeStatusTtlSec(401)).toBe(0);
+    expect(computeStatusTtlSec(403)).toBe(0);
   });
 
   it("assigns 0s cooldown on 400/404 client errors (no penalty on key)", () => {
@@ -74,10 +73,10 @@ describe("Cooldown Manager — Retry-After & Google Delay Parsing", () => {
     expect(parsed.delayMs).toBe(5000);
   });
 
-  it("clamps excessive delay to 7200s max threshold", () => {
+  it("does not clamp excessive delay to 7200s (2-hour clamp purged)", () => {
     const headers = new Headers({ "retry-after": "999999" });
     const parsed = parseResetDelay(headers);
-    expect(parsed.delayMs).toBe(7200000);
+    expect(parsed.delayMs).toBe(999999000);
   });
 
   it("parses Google JSON error quotaResetDelay string", () => {
@@ -113,9 +112,9 @@ describe("Cooldown Manager — Retry-After & Google Delay Parsing", () => {
     expect(parsed.delayMs).toBe(1500);
   });
 
-  it("defaults to RATE_LIMIT_DEFAULT_SEC ms when no headers or body delay present", () => {
+  it("defaults to 0ms when no headers or body delay present (generic 429)", () => {
     const parsed = parseResetDelay();
-    expect(parsed.delayMs).toBe(RATE_LIMIT_DEFAULT_SEC * 1000);
+    expect(parsed.delayMs).toBe(0);
     expect(parsed.isGraceRetry).toBe(false);
   });
 
@@ -132,15 +131,6 @@ describe("Cooldown Manager — Retry-After & Google Delay Parsing", () => {
   });
 });
 
-describe("Cooldown Manager — Pool Exhaustion Ladder Backoff", () => {
-  it("calculates 3-step ladder backoff delays", () => {
-    expect(getExhaustionBackoffMs(0)).toBe(65000);
-    expect(getExhaustionBackoffMs(1)).toBe(90000);
-    expect(getExhaustionBackoffMs(2)).toBe(120000);
-    expect(getExhaustionBackoffMs(3)).toBe(120000);
-  });
-});
-
 describe("Cooldown Manager — In-Memory Key State Management", () => {
   let manager: CooldownManager;
 
@@ -148,10 +138,18 @@ describe("Cooldown Manager — In-Memory Key State Management", () => {
     manager = new CooldownManager();
   });
 
-  it("quarantines key and tracks remaining cooldown ms", () => {
+  it("does not quarantine key on generic 429 without Retry-After or custom TTL", () => {
     expect(manager.isQuarantined("openrouter:0")).toBe(false);
 
     manager.quarantineKey("openrouter:0", 429);
+    expect(manager.isQuarantined("openrouter:0")).toBe(false);
+    expect(manager.getRemainingMs("openrouter:0")).toBe(0);
+  });
+
+  it("quarantines key on 429 when explicit customTtlSec is passed", () => {
+    expect(manager.isQuarantined("openrouter:0")).toBe(false);
+
+    manager.quarantineKey("openrouter:0", 429, undefined, undefined, Date.now(), 65);
     expect(manager.isQuarantined("openrouter:0")).toBe(true);
 
     const remaining = manager.getRemainingMs("openrouter:0");
@@ -165,8 +163,8 @@ describe("Cooldown Manager — In-Memory Key State Management", () => {
   });
 
   it("flushes all quarantined keys on clearAll", () => {
-    manager.quarantineKey("google:0", 429);
-    manager.quarantineKey("google:1", 429);
+    manager.quarantineKey("google:0", 500);
+    manager.quarantineKey("google:1", 500);
     expect(manager.isQuarantined("google:0")).toBe(true);
 
     manager.clearAll();

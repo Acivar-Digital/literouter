@@ -862,6 +862,80 @@ describe("OpenAI Original Responses Handler (src/handlers/openai_original.ts)", 
       }
     });
 
+    it("fails fast and loud on 401 with zero retries", async () => {
+      let callCount = 0;
+      const mockServer = Bun.serve({
+        port: 0,
+        fetch() {
+          callCount++;
+          return Response.json(
+            { error: { message: "Unauthorized", type: "authentication_error" } },
+            { status: 401 }
+          );
+        },
+      });
+      process.env.MOCK_OR_PORT = String(mockServer.port);
+      const poolSizeSpy = spyOn(globalKeyPool, "getPoolSize").mockReturnValue(3);
 
+      try {
+        const req = new Request("http://localhost:7766/v1/responses", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ model: "openrouter-model", input: "test 401" }),
+        });
+        const state = {
+          keyPoolManager: { getKey: () => "mock-or-key-1" },
+        };
+
+        const res = await handleOpenAiOriginal(req, "or", state);
+        expect(res.status).toBe(401);
+        expect(callCount).toBe(1);
+      } finally {
+        mockServer.stop(true);
+        delete process.env.MOCK_OR_PORT;
+        poolSizeSpy.mockRestore();
+      }
+    });
+
+    it("fails fast and loud on 403 with zero retries", async () => {
+      let callCount = 0;
+      const mockServer = Bun.serve({
+        port: 0,
+        fetch() {
+          callCount++;
+          return Response.json(
+            { error: { message: "Forbidden key", type: "permission_error" } },
+            { status: 403 }
+          );
+        },
+      });
+      process.env.MOCK_OR_PORT = String(mockServer.port);
+      const poolSizeSpy = spyOn(globalKeyPool, "getPoolSize").mockReturnValue(3);
+
+      try {
+        const req = new Request("http://localhost:7766/v1/responses", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ model: "openrouter-model", input: "test 403" }),
+        });
+        const state = {
+          keyPoolManager: { getKey: () => "mock-or-key-1" },
+        };
+
+        const res = await handleOpenAiOriginal(req, "or", state);
+        expect(res.status).toBe(403);
+        expect(callCount).toBe(1);
+      } finally {
+        mockServer.stop(true);
+        delete process.env.MOCK_OR_PORT;
+        poolSizeSpy.mockRestore();
+      }
+    });
+
+    it("verifies openai_original.ts does not pass maxQueueDepth to getPacerForProvider", () => {
+      const sourcePath = resolve(import.meta.dir, "../../../src/handlers/openai_original.ts");
+      const source = readFileSync(sourcePath, "utf-8");
+      expect(source.includes("maxQueueDepth")).toBe(false);
+    });
   });
 });

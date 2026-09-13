@@ -197,7 +197,7 @@ describe("Error Classifier — classifyUpstreamError & classifyTransportError", 
   });
 
   describe("HTTP 429 - Rate limit vs Quota exhaustion", () => {
-    it("classifies 429 standard rate limit as retry_rotate with 65s default quarantine", () => {
+    it("classifies 429 standard rate limit as retry_rotate with 0s default quarantine (purged 65s default)", () => {
       const result = classifyUpstreamError({
         provider: "oa",
         status: 429,
@@ -205,7 +205,7 @@ describe("Error Classifier — classifyUpstreamError & classifyTransportError", 
         bodyText: JSON.stringify({ error: { message: "Rate limit reached for requests" } }),
       });
       expect(result.action).toBe("retry_rotate");
-      expect(result.quarantineTtlSec).toBe(65);
+      expect(result.quarantineTtlSec).toBe(0);
       expect(result.isRetryable).toBe(true);
     });
 

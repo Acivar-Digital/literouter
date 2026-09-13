@@ -17,22 +17,16 @@ export interface ConserveRule {
 }
 
 const DEFAULT_COOLDOWN_SEC = 30;
-export const RATE_LIMIT_DEFAULT_SEC = 65;
+export const RATE_LIMIT_DEFAULT_SEC = 0;
 const SERVER_ERROR_DEFAULT_SEC = 10;
-const AUTH_ERROR_DEFAULT_SEC = 604800; // 7 days
+const AUTH_ERROR_DEFAULT_SEC = 0;
 
 const MIN_CLAMP_MS = 5000;
-const MAX_CLAMP_MS = 7200000; // 2 hours
 const GRACE_RETRY_THRESHOLD_MS = 2000;
-
-const EXHAUSTION_LADDER_MS = Object.freeze([65000, 90000, 120000]);
 
 function clampDuration(delayMs: number): number {
   if (delayMs < MIN_CLAMP_MS) {
     return MIN_CLAMP_MS;
-  }
-  if (delayMs > MAX_CLAMP_MS) {
-    return MAX_CLAMP_MS;
   }
   return delayMs;
 }
@@ -97,19 +91,17 @@ export function parseResetDelay(
   errorBody?: string,
   configuredTtlSec?: number
 ): ParsedResetDelay {
-  const effectiveTtlSec = configuredTtlSec !== undefined ? configuredTtlSec : RATE_LIMIT_DEFAULT_SEC;
-  if (effectiveTtlSec === 0) {
-    return { delayMs: 0, isGraceRetry: false };
-  }
   const headerVal = getHeaderString(headers);
   const extractedMs = parseHeaderValue(headerVal) ?? parseBodyRegex(errorBody);
 
-  if (extractedMs === null) {
-    return { delayMs: effectiveTtlSec * 1000, isGraceRetry: false };
+  if (extractedMs !== null) {
+    const isGrace = extractedMs > 0 && extractedMs <= GRACE_RETRY_THRESHOLD_MS;
+    const delayMs = isGrace ? extractedMs : clampDuration(extractedMs);
+    return { delayMs, isGraceRetry: isGrace };
   }
-  const isGrace = extractedMs > 0 && extractedMs <= GRACE_RETRY_THRESHOLD_MS;
-  const delayMs = isGrace ? extractedMs : clampDuration(extractedMs);
-  return { delayMs, isGraceRetry: isGrace };
+
+  const effectiveTtlSec = configuredTtlSec !== undefined ? configuredTtlSec : RATE_LIMIT_DEFAULT_SEC;
+  return { delayMs: effectiveTtlSec * 1000, isGraceRetry: false };
 }
 
 const STATUS_TTL_MAP: Readonly<Record<number, number>> = {
@@ -133,12 +125,6 @@ export function computeStatusTtlSec(status: number, configuredTtlSec?: number): 
     return mapped;
   }
   return DEFAULT_COOLDOWN_SEC;
-}
-
-export function getExhaustionBackoffMs(attemptCount: number): number {
-  const safeIndex = Math.min(Math.max(0, attemptCount), EXHAUSTION_LADDER_MS.length - 1);
-  const fallback = EXHAUSTION_LADDER_MS[0] ?? 65000;
-  return EXHAUSTION_LADDER_MS[safeIndex] ?? fallback;
 }
 
 export function calculateMidnightUtcSec(nowMs: number = Date.now()): number {

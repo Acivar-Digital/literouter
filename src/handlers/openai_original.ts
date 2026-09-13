@@ -13,6 +13,7 @@ import {
   type OutboundProtocol,
 } from "../network/fetcher";
 import { getPacerForProvider, PacerQueueOverflowError } from "../network/pacer";
+import { isFatalAuthError } from "../network/pool";
 import {
   buildAuthHeaders,
   globalKeyPool,
@@ -714,13 +715,8 @@ async function acquireProviderRetryPacer(
   if (!env.LITEROUTER_PACER_ENABLED || !(provConfig?.pacer?.enabled ?? false)) {
     return {};
   }
-  const dynamicMaxQueueDepth = globalKeyPool.getDynamicMaxQueueDepth(provider);
-  const maxQueueDepth =
-    env.LITEROUTER_PACER_MAX_QUEUE_DEPTH > 0
-      ? env.LITEROUTER_PACER_MAX_QUEUE_DEPTH
-      : (provConfig?.pacer?.max_queue_depth ?? dynamicMaxQueueDepth);
   try {
-    const pacer = getPacerForProvider(provider, 0, { maxQueueDepth });
+    const pacer = getPacerForProvider(provider);
     const acquireResult = await pacer.acquire(signal);
     return { release: acquireResult.release };
   } catch (err: unknown) {
@@ -870,6 +866,19 @@ async function dispatchUpstreamFetch(
       };
       execResult = await executeUpstreamFetch(fetchOpts);
     } catch (err: unknown) {
+      if (isFatalAuthError(err)) {
+        pacerResult.release?.();
+        logWarn(
+          EMOJI.zap,
+          `[${route.provider.toUpperCase()} ${reqId}] Fatal auth error ${err.status}: failing fast and loud without retry.`
+        );
+        return {
+          errorResponse: Response.json(
+            { error: { message: err.message, type: "authentication_error" } },
+            { status: err.status }
+          ),
+        };
+      }
       if (quarantineEnabled) {
         globalKeyPool.reportFailure(route.provider, currentKeyIndex, 502);
       } else {
@@ -921,16 +930,48 @@ async function dispatchUpstreamFetch(
     }
 
     const errBodyText = await res.clone().text().catch(() => "");
+    if (res.status === 401 || res.status === 403) {
+      pacerResult.release?.();
+      logWarn(
+        EMOJI.zap,
+        `[${route.provider.toUpperCase()} ${reqId}] Fatal auth error ${res.status}: failing fast and loud without retry.`
+      );
+      try {
+        if (quarantineEnabled) {
+          globalKeyPool.reportFailure(route.provider, currentKeyIndex, res.status, res.headers, errBodyText);
+        }
+      } catch (err: unknown) {
+        if (isFatalAuthError(err)) {
+          logWarn(EMOJI.zap, `[${route.provider.toUpperCase()} ${reqId}] Auth failure confirmed fatal: ${err.message}`);
+        } else {
+          throw err;
+        }
+      }
+      return { response: res, keyIndex: currentKeyIndex };
+    }
+
     const classification = classifyUpstreamError({
       provider: route.provider,
       status: res.status,
       headers: res.headers,
       bodyText: errBodyText,
     });
-    if (quarantineEnabled && classification.quarantineTtlSec > 0) {
-      globalKeyPool.reportFailure(route.provider, currentKeyIndex, res.status, res.headers, errBodyText, Date.now(), classification.quarantineTtlSec);
-    } else if (classification.quarantineTtlSec > 0) {
-      logWarn(EMOJI.zap, `[${route.provider.toUpperCase()} ${reqId}] Dumb-forwarder mode (${route.provider.toUpperCase()}_ENABLE_QUARANTINE=false): Key ${currentKeyIndex} quarantine bypassed.`);
+    try {
+      if (quarantineEnabled && classification.quarantineTtlSec > 0) {
+        globalKeyPool.reportFailure(route.provider, currentKeyIndex, res.status, res.headers, errBodyText, Date.now(), classification.quarantineTtlSec);
+      } else if (classification.quarantineTtlSec > 0) {
+        logWarn(EMOJI.zap, `[${route.provider.toUpperCase()} ${reqId}] Dumb-forwarder mode (${route.provider.toUpperCase()}_ENABLE_QUARANTINE=false): Key ${currentKeyIndex} quarantine bypassed.`);
+      }
+    } catch (err: unknown) {
+      if (isFatalAuthError(err)) {
+        pacerResult.release?.();
+        logWarn(
+          EMOJI.zap,
+          `[${route.provider.toUpperCase()} ${reqId}] Fatal auth error ${err.status}: failing fast and loud without retry.`
+        );
+        return { response: res, keyIndex: currentKeyIndex };
+      }
+      throw err;
     }
 
     const canRetry =

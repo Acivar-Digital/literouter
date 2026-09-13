@@ -5,6 +5,14 @@ All notable changes to LiteRouter will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- **Ground-Truth Provider Architecture & Single Conveyor Pipe Refactor**:
+  - **Purged Dead Ballast**: Eradicated `limits` (`rpm`, `rpd`, `tpm`) across all providers and 12 Google models (Zdist relic); purged `circuit_breaker` across all providers into safe pass-through (zero artificial 503 outage tripping); purged fine-grained `key_cooldown` knobs and `max_delay_ms`.
+  - **Single FIFO Conveyor Pipe**: Standardized `RequestPacer` default `max_queue_depth: 500` with strict FIFO ordering, zero shadow fallbacks (`?? 200`), and clean downstream `AbortSignal` dequeuing to eliminate queuing leaks on client disconnects.
+  - **Fatal Auth Fail-Fast (401/403)**: Purged the 24-hour auth lockout table; HTTP 401 (Unauthorized) and HTTP 403 (Forbidden) responses now fail fast and loud with zero retries, rejecting outright to downstream clients (`opencode2`, Claude Code CLI, etc.).
+  - **Conservation-Only Benching**: Purged 65-second reactive rate limit quarantine; only explicit `conserve_rules` bench keys until `midnight_utc`.
+  - **Handler Ground Truth**: Reconnected `google_native.ts` and `gcp_compat.ts` to `getProviderConfig`, purging all hardcoded magic constants (`MAX_NATIVE_ATTEMPTS = 3`, `?? 2000`, `?? 240000`, `Retry-After: 5`).
+  - **Skill & Operational Documentation**: Updated `.opencode2/skills/literouter/SKILL.md` with full ground-truth operational guidelines and architectural constraints.
+
 - **Canonical OpenCode Session ID Standardization (`src/engine/session_id.ts`)**: Standardized OpenCode session ID minting (`ses_` + 26 base62 alphanumeric characters) across all upstream providers (Zen, OpenRouter, etc.). Preserves inbound client session IDs (from OpenCode CLI / Antigravity IDE) and automatically synthesizes a valid `ses_...` token when missing (enabling Pydantic evals, curl, and automated test harnesses to pass Zen free-tier gating without `400 MissingSessionID`).
 - Partitioned test suite scripts in `package.json`: `test:gateway` (runs `tests/unit`), `test:eval` (runs `tests/eval`), `test:legacy` (runs `tests/unit/legacy`), and `test:failures` (`--only-failures` to eliminate context bloat and silent truncation).
 - Comprehensive production-grade documentation across all test suites: `tests/README.md` (architecture, runner matrix, and air-gap barrier), `tests/unit/README.md` (v4 core gateway tests), `tests/eval/README.md` (hermetic capability graders and web evaluators), `tests/unit/legacy/README.md` (dual-path fallback handlers and transport), and `tests/integration/README.md` (pytest integration and Downstream Agent Gauntlet).

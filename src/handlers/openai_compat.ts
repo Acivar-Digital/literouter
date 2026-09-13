@@ -14,7 +14,7 @@ import {
   NoResponseError,
   sanitizeDownstreamHeaders,
 } from "../network/fetcher";
-import { KeyPool, type SelectedKey } from "../network/pool";
+import { FatalAuthError, isFatalAuthError, KeyPool, type SelectedKey } from "../network/pool";
 import { sanitizeAndTransformPayload } from "../transformers/payload";
 import type { OpenAIRequestPayload } from "../transformers/nuances";
 import { createDotsStreamTransformer, parseDotsXml, stripLeakedTemplateTags } from "../transformers/dots";
@@ -340,6 +340,49 @@ async function executeDirectCall(
       conserveRules: providerConfig?.conserve_rules,
     });
 
+    if (response.status === 401 || response.status === 403) {
+      try {
+        globalKeyPool.reportFailure(
+          directive.provider,
+          selected.index,
+          response.status,
+          response.headers,
+          bodyText,
+          Date.now(),
+          classification.quarantineTtlSec
+        );
+      } catch (authErr: unknown) {
+        if (!isFatalAuthError(authErr)) {
+          throw authErr;
+        }
+      }
+
+      logLimit(reqId, directive.provider, selected.index, response.status, undefined, selected.totalKeys, extractErrorMessage(bodyText));
+      logServed(reqId, duration, response.status, attempt, maxAttempts);
+      logSeparator();
+
+      if (fullBody.byteLength > 0) {
+        return new Response(fullBody.buffer as ArrayBuffer, {
+          status: response.status,
+          headers: sanitizeDownstreamHeaders(response.headers, fullBody.byteLength),
+        });
+      }
+
+      return Response.json(
+        {
+          error: {
+            message: `Fatal authentication failure (HTTP ${response.status}) for provider "${directive.provider}" key index ${selected.index}`,
+            type: "authentication_error",
+            code: response.status,
+          },
+        },
+        {
+          status: response.status,
+          headers: { "Content-Type": "application/json" },
+        }
+      );
+    }
+
     const quarantineEnabled = globalKeyPool.isQuarantineEnabled(directive.provider);
     if (classification.isConserve && classification.quarantineTtlSec > 0) {
       globalKeyPool.conserveKey(
@@ -608,8 +651,21 @@ async function executeDirectCall(
         try {
           const nextResult = await fetchWithTtftGuard(nextFetchOpts);
           if (nextResult.response.status >= 400) {
+            if (nextResult.response.status === 401 || nextResult.response.status === 403) {
+              try {
+                globalKeyPool.reportFailure(directive.provider, nextSelected.index, nextResult.response.status);
+              } catch (authErr: unknown) {
+                if (!isFatalAuthError(authErr)) throw authErr;
+              }
+              return null;
+            }
             if (globalKeyPool.isQuarantineEnabled(directive.provider)) {
-              globalKeyPool.reportFailure(directive.provider, nextSelected.index, nextResult.response.status);
+              try {
+                globalKeyPool.reportFailure(directive.provider, nextSelected.index, nextResult.response.status);
+              } catch (authErr: unknown) {
+                if (isFatalAuthError(authErr)) return null;
+                throw authErr;
+              }
             }
             continue;
           }
@@ -713,13 +769,7 @@ export async function acquireProviderPacer(
   if (!env.LITEROUTER_PACER_ENABLED) return undefined;
   const provConfig = isRegisteredProvider(provider) ? getProviderConfig(provider) : undefined;
   if (provConfig?.pacer?.enabled === false) return undefined;
-  const dynamicMaxQueueDepth = globalKeyPool.getDynamicMaxQueueDepth(provider);
-  const maxQueueDepth = provConfig?.pacer?.max_queue_depth ?? (
-    env.LITEROUTER_PACER_MAX_QUEUE_DEPTH > 0
-      ? env.LITEROUTER_PACER_MAX_QUEUE_DEPTH
-      : dynamicMaxQueueDepth
-  );
-  const pacer = getPacerForProvider(provider, 0, { maxQueueDepth });
+  const pacer = getPacerForProvider(provider);
   return await pacer.acquire(clientSignal);
 }
 
@@ -760,6 +810,25 @@ async function tryDirectAttempt(
     }
     if (err instanceof Error && err.message.includes("aborted")) {
       return { success: false, error: err, retryable: false };
+    }
+    if (isFatalAuthError(err)) {
+      return {
+        success: true,
+        response: Response.json(
+          {
+            error: {
+              message: err.message,
+              type: "authentication_error",
+              code: err.status,
+            },
+          },
+          {
+            status: err.status,
+            headers: { "Content-Type": "application/json" },
+          }
+        ),
+        retryable: false,
+      };
     }
     if (err instanceof PacerQueueOverflowError) {
       return {
@@ -841,7 +910,7 @@ async function executeSingleAttemptLoop(
   let lastError: unknown = null;
   let prevKeyIndex = -1;
   const startTime = Date.now();
-  const maxWaitMs = provConfig?.pacer?.max_queue_wait_ms ?? (env.LITEROUTER_PACER_MAX_QUEUE_WAIT_MS || 300000);
+  const maxWaitMs = provConfig?.pacer?.max_queue_wait_ms ?? env.LITEROUTER_PACER_MAX_QUEUE_WAIT_MS;
 
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     const dwellMs = Date.now() - startTime;
@@ -931,6 +1000,21 @@ async function executeSingleAttemptLoop(
     if (!outcome.retryable) {
       if (outcome.response) {
         return outcome.response;
+      }
+      if (isFatalAuthError(lastError)) {
+        return Response.json(
+          {
+            error: {
+              message: lastError.message,
+              type: "authentication_error",
+              code: lastError.status,
+            },
+          },
+          {
+            status: lastError.status,
+            headers: { "Content-Type": "application/json" },
+          }
+        );
       }
       throw lastError;
     }

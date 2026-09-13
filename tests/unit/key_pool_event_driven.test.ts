@@ -147,44 +147,34 @@ describe("KeyPool — Event-Driven Key Availability & Lifecycle", () => {
   });
 
   describe("Test 4: Consecutive 401/403 auth failure quarantine escalation", () => {
-    it("escalates quarantine through 300s -> 1800s -> 86400s on consecutive auth failures", () => {
+    it("throws FatalAuthError and does not quarantine on 401/403 auth failures", () => {
       const provider = "deepseek";
       pool.setPool(provider, ["sk-ds-key-1"]);
       const now = 1000000;
 
-      const state1 = pool.reportFailure(provider, 0, 401, undefined, undefined, now);
-      expect(state1.quarantinedUntil).toBe(now + 300 * 1000);
-      expect(pool.getConsecutiveAuthFailures(provider, 0)).toBe(1);
+      expect(() => {
+        pool.reportFailure(provider, 0, 401, undefined, undefined, now);
+      }).toThrow();
+      expect(cooldownManager.isQuarantined("deepseek:0", now)).toBe(false);
 
-      const state2 = pool.reportFailure(provider, 0, 403, undefined, undefined, now);
-      expect(state2.quarantinedUntil).toBe(now + 1800 * 1000);
-      expect(pool.getConsecutiveAuthFailures(provider, 0)).toBe(2);
-
-      const state3 = pool.reportFailure(provider, 0, 401, undefined, undefined, now);
-      expect(state3.quarantinedUntil).toBe(now + 86400 * 1000);
-      expect(pool.getConsecutiveAuthFailures(provider, 0)).toBe(3);
-
-      const state4 = pool.reportFailure(provider, 0, 401, undefined, undefined, now);
-      expect(state4.quarantinedUntil).toBe(now + 86400 * 1000);
-      expect(pool.getConsecutiveAuthFailures(provider, 0)).toBe(4);
+      expect(() => {
+        pool.reportFailure(provider, 0, 403, undefined, undefined, now);
+      }).toThrow();
+      expect(cooldownManager.isQuarantined("deepseek:0", now)).toBe(false);
+      expect(pool.getConsecutiveAuthFailures(provider, 0)).toBe(0);
     });
 
-    it("resets consecutive auth failures to 0 upon reportSuccess", () => {
+    it("resets key availability upon reportSuccess", () => {
       const provider = "deepseek";
       pool.setPool(provider, ["sk-ds-key-1"]);
       const now = 1000000;
 
-      pool.reportFailure(provider, 0, 401, undefined, undefined, now);
-      pool.reportFailure(provider, 0, 401, undefined, undefined, now);
-      expect(pool.getConsecutiveAuthFailures(provider, 0)).toBe(2);
+      pool.quarantineKey(provider, 0, 60, "test", 500, now);
+      expect(cooldownManager.isQuarantined("deepseek:0", now)).toBe(true);
 
       pool.reportSuccess(provider, 0);
       expect(pool.getConsecutiveAuthFailures(provider, 0)).toBe(0);
       expect(cooldownManager.isQuarantined("deepseek:0", now)).toBe(false);
-
-      const nextFailureState = pool.reportFailure(provider, 0, 401, undefined, undefined, now);
-      expect(nextFailureState.quarantinedUntil).toBe(now + 300 * 1000);
-      expect(pool.getConsecutiveAuthFailures(provider, 0)).toBe(1);
     });
   });
 
@@ -194,15 +184,13 @@ describe("KeyPool — Event-Driven Key Availability & Lifecycle", () => {
       pool.setPool("anthropic", ["sk-ant-key-1"]);
       const now = 2000000;
 
-      pool.reportFailure("oa", 0, 401, undefined, undefined, now);
+      pool.quarantineKey("oa", 0, 60, "test", 500, now);
       pool.quarantineKey("oa", 1, 60, "rate_limit", 429, now);
-      pool.reportFailure("anthropic", 0, 401, undefined, undefined, now);
+      pool.quarantineKey("anthropic", 0, 60, "test", 500, now);
 
       expect(cooldownManager.isQuarantined("oa:0", now)).toBe(true);
       expect(cooldownManager.isQuarantined("oa:1", now)).toBe(true);
       expect(cooldownManager.isQuarantined("anthropic:0", now)).toBe(true);
-      expect(pool.getConsecutiveAuthFailures("oa", 0)).toBe(1);
-      expect(pool.getConsecutiveAuthFailures("anthropic", 0)).toBe(1);
 
       let oaEventFired = false;
       let anthropicEventFired = false;
@@ -220,15 +208,17 @@ describe("KeyPool — Event-Driven Key Availability & Lifecycle", () => {
 
       expect(cooldownManager.isQuarantined("oa:0", now)).toBe(false);
       expect(cooldownManager.isQuarantined("oa:1", now)).toBe(false);
-      expect(pool.getConsecutiveAuthFailures("oa", 0)).toBe(0);
 
       expect(cooldownManager.isQuarantined("anthropic:0", now)).toBe(true);
-      expect(pool.getConsecutiveAuthFailures("anthropic", 0)).toBe(1);
     });
 
     it("parks key via conserveKey even when provider quarantine is disabled", () => {
       const customProviders = JSON.parse(JSON.stringify(rawProviders));
-      customProviders.providers.openrouter.key_cooldown.enabled = false;
+      customProviders.providers.openrouter.key_cooldown = {
+        enabled: false,
+        initial_cooldown_ms: 10000,
+        max_cooldown_ms: 60000,
+      };
       initProviderRegistry(customProviders);
       try {
         pool.setPool("or", ["sk-or-key-1"]);

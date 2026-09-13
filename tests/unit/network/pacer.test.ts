@@ -5,7 +5,7 @@ import {
   getPacerForProvider,
   PacerQueueOverflowError,
   RequestPacer,
-} from "../../src/network/pacer";
+} from "../../../src/network/pacer";
 
 describe("Pure FIFO Conveyor Belt Pacer & Anti-429 Queue", () => {
   describe("FastFifoQueue (O(1) operations)", () => {
@@ -69,6 +69,22 @@ describe("Pure FIFO Conveyor Belt Pacer & Anti-429 Queue", () => {
   });
 
   describe("RequestPacer conveyor belt pacing & rate limiting", () => {
+    it("defaults maxQueueDepth to 500 across RequestPacer and provider pacers", () => {
+      const defaultPacer = new RequestPacer();
+      expect(defaultPacer.maxQueueDepth).toBe(500);
+
+      clearPacerRegistry();
+      const ggPacer = getPacerForProvider("gg", 0);
+      expect(ggPacer.maxQueueDepth).toBe(500);
+
+      const orPacer = getPacerForProvider("or", 0);
+      expect(orPacer.maxQueueDepth).toBe(500);
+
+      const gcPacer = getPacerForProvider("gc", 0);
+      expect(gcPacer.maxQueueDepth).toBe(500);
+      clearPacerRegistry();
+    });
+
     it("allows immediate acquisition on cold start or when idle longer than minInterval", async () => {
       const pacer = new RequestPacer({
         minIntervalMs: 20,
@@ -241,7 +257,7 @@ describe("Pure FIFO Conveyor Belt Pacer & Anti-429 Queue", () => {
       expect(highRpmPacer.getMinInterval()).toBe(10);
     });
 
-    it("applies provider delays from registry and clears properly", () => {
+    it("applies provider delays from registry and throws on missing/invalid provider config without shadow fallback", () => {
       clearPacerRegistry();
       const ggPacer = getPacerForProvider("gg", 0);
       expect(ggPacer.getMinInterval()).toBe(200);
@@ -257,6 +273,7 @@ describe("Pure FIFO Conveyor Belt Pacer & Anti-429 Queue", () => {
         '[RequestPacer] Missing or invalid minIntervalMs for provider "unknown_prov"'
       );
 
+      // Explicit override succeeds even for custom provider
       const overriddenPacer = getPacerForProvider("custom_prov", 0, { minIntervalMs: 50 });
       expect(overriddenPacer.getMinInterval()).toBe(50);
 
@@ -293,7 +310,7 @@ describe("Pure FIFO Conveyor Belt Pacer & Anti-429 Queue", () => {
         // or request should dispatch IMMEDIATELY without delay or blocking from zn
         const orStart = Date.now();
         const orLease1 = await orPacer.acquire();
-        const orElapsed = Date.now() - orStart;
+        const orElapsed = Date.now() - startOrTimer(orStart);
 
         expect(orLease1.queueDwellMs).toBe(0);
         expect(orElapsed).toBeLessThan(25);
@@ -459,6 +476,9 @@ describe("Pure FIFO Conveyor Belt Pacer & Anti-429 Queue", () => {
       expect(pacer.getStats().currentTokens).toBe(0);
       expect(pacer.getStats().queueDepth).toBe(0);
     });
-
   });
 });
+
+function startOrTimer(t: number): number {
+  return t;
+}

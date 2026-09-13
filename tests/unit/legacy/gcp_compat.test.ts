@@ -343,6 +343,84 @@ describe("GCP Compatibility Architecture (gc)", () => {
       }
     });
 
+    it("fails fast and loud on upstream 401 with zero retries", async () => {
+      const prov = getProviderConfig("gc");
+      prov.request_retry.enabled = true;
+      prov.request_retry.max_attempts = 3;
+      prov.pacer!.enabled = false;
+
+      initializeKeyPools({ GCP_KEYS: "gcp-mock-key-1,gcp-mock-key-2,gcp-mock-key-3" });
+
+      let fetchCount = 0;
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = (async () => {
+        fetchCount++;
+        return new Response(JSON.stringify({ error: { message: "API key invalid", code: 401 } }), {
+          status: 401,
+          headers: { "Content-Type": "application/json" },
+        });
+      }) as unknown as typeof fetch;
+
+      try {
+        const req = new Request("http://localhost:7766/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: "Bearer lr-gc-oa-ch-no",
+          },
+          body: JSON.stringify({
+            model: "gemma-2-27b-it",
+            messages: [{ role: "user", content: "test auth" }],
+          }),
+        });
+
+        const res = await handleGcpCompat(req, "lr-gc-oa-ch-no");
+        expect(res.status).toBe(401);
+        expect(fetchCount).toBe(1); // ZERO retries!
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it("fails fast and loud on upstream 403 with zero retries", async () => {
+      const prov = getProviderConfig("gc");
+      prov.request_retry.enabled = true;
+      prov.request_retry.max_attempts = 3;
+      prov.pacer!.enabled = false;
+
+      initializeKeyPools({ GCP_KEYS: "gcp-mock-key-1,gcp-mock-key-2,gcp-mock-key-3" });
+
+      let fetchCount = 0;
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = (async () => {
+        fetchCount++;
+        return new Response(JSON.stringify({ error: { message: "Permission denied", code: 403 } }), {
+          status: 403,
+          headers: { "Content-Type": "application/json" },
+        });
+      }) as unknown as typeof fetch;
+
+      try {
+        const req = new Request("http://localhost:7766/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: "Bearer lr-gc-oa-ch-no",
+          },
+          body: JSON.stringify({
+            model: "gemma-2-27b-it",
+            messages: [{ role: "user", content: "test auth" }],
+          }),
+        });
+
+        const res = await handleGcpCompat(req, "lr-gc-oa-ch-no");
+        expect(res.status).toBe(403);
+        expect(fetchCount).toBe(1); // ZERO retries!
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
     it("restores provider config cleanly after mutations via initProviderRegistry", () => {
       const prov = getProviderConfig("gc");
       prov.request_retry.enabled = false;

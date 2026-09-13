@@ -167,7 +167,7 @@ describe("In-Flight Retry & Rotation Loop", () => {
     expect(fetchCalls[1]?.authHeader).toContain("sk-mock-key-2");
   });
 
-  it("quarantines Key 1 on 401 (tiered quarantine: 300s for 1st failure) and succeeds with Key 2", async () => {
+  it("fails fast and loud on 401 with zero retries without rotating to Key 2", async () => {
     const fetchCalls: { url: string; authHeader: string | null }[] = [];
 
     globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
@@ -199,19 +199,11 @@ describe("In-Flight Retry & Rotation Loop", () => {
     }) as typeof fetch;
 
     const response = await handleAppRequest(createTestRequest());
-    expect(response.status).toBe(200);
+    expect(response.status).toBe(401);
 
-    const body = (await response.json()) as typeof mockSuccessJson;
-    expect(body.choices[0]?.message.content).toBe("Hello from rotated key!");
-    expect(fetchCalls.length).toBe(2);
+    // Fatal auth fail-fast: zero retries on Key 2
+    expect(fetchCalls.length).toBe(1);
     expect(fetchCalls[0]?.authHeader).toContain("sk-mock-key-1");
-    expect(fetchCalls[1]?.authHeader).toContain("sk-mock-key-2");
-
-    // Key 1 (index 0 of "or") should be quarantined for 300s (300,000ms) on 1st auth failure
-    expect(globalCooldownManager.isQuarantined("or:0")).toBe(true);
-    const remainingMs = globalCooldownManager.getRemainingMs("or:0");
-    expect(remainingMs).toBeGreaterThan(290 * 1000);
-    expect(remainingMs).toBeLessThanOrEqual(300 * 1000);
   });
 
   it("retries on Key 2 when Key 1 encounters a raw socket transport error (e.g. 'The connection was closed') and succeeds with 200", async () => {

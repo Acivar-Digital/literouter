@@ -1,9 +1,11 @@
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { getEnv } from "../config/env";
+import { getProviderConfig } from "../config/providers";
 import { createUnauthorizedResponse, validateDirective } from "../directive/validator";
 import { fetchWithTtftGuard } from "../network/fetcher";
 import { getPacerForProvider, PacerQueueOverflowError } from "../network/pacer";
+import { isFatalAuthError } from "../network/pool";
 import {
   EMOJI,
   logError,
@@ -19,7 +21,11 @@ import {
 } from "../ui/logger";
 import { globalKeyPool, handleOpenAICompat, resolveUpstreamEndpoint } from "./openai_compat";
 
-const MAX_NATIVE_ATTEMPTS = 3;
+function getGoogleMaxAttempts(): number {
+  const ggConfig = getProviderConfig("gg");
+  return ggConfig.request_retry.enabled ? ggConfig.request_retry.max_attempts : 1;
+}
+
 const RETRYABLE_STATUSES = new Set([429, 500, 502, 503, 504]);
 const STRIPPED_UPSTREAM_HEADERS = new Set([
   "authorization",
@@ -139,6 +145,7 @@ interface TelemetryScannerState {
   readonly totalKeys: number;
   readonly status: number;
   readonly attempt: number;
+  readonly maxAttempts: number;
 }
 
 interface NativeForwardContext {
@@ -242,17 +249,12 @@ function handlePacerError(err: unknown, signal?: AbortSignal): Response {
 }
 
 async function acquireNativePacer(signal?: AbortSignal): Promise<Response | null> {
-  if (!getEnv().LITEROUTER_PACER_ENABLED) {
+  const ggPacer = getProviderConfig("gg").pacer;
+  if (!getEnv().LITEROUTER_PACER_ENABLED || !ggPacer?.enabled) {
     return null;
   }
   try {
-    const env = getEnv();
-    const dynamicMaxQueueDepth = globalKeyPool.getDynamicMaxQueueDepth("gg");
-    const maxQueueDepth =
-      env.LITEROUTER_PACER_MAX_QUEUE_DEPTH > 0
-        ? env.LITEROUTER_PACER_MAX_QUEUE_DEPTH
-        : dynamicMaxQueueDepth;
-    const pacer = getPacerForProvider("gg", 0, { maxQueueDepth });
+    const pacer = getPacerForProvider("gg");
     await pacer.acquire(signal);
     return null;
   } catch (err: unknown) {
@@ -407,7 +409,7 @@ function emitStreamEndTelemetry(state: TelemetryScannerState): void {
   }
   state.buffer = "";
   const durationMs = Date.now() - state.startTime;
-  logServed(state.reqId, durationMs, state.status, state.attempt, MAX_NATIVE_ATTEMPTS);
+  logServed(state.reqId, durationMs, state.status, state.attempt, state.maxAttempts);
   logSeparator();
 }
 
@@ -545,16 +547,54 @@ async function handleNativeResponse(
   context: NativeForwardContext,
   selected: SelectedKey,
   attempt: number,
-  startTime: number
+  startTime: number,
+  maxAttempts: number
 ): Promise<{ retry: boolean; response: Response }> {
   const { response: res, ttftMs, firstChunk, rawReader, protocol } = guardResult;
+
+  if (res.status === 401 || res.status === 403) {
+    logError(
+      context.reqId,
+      `Google native upstream auth failure (${res.status}): Key #${selected.index + 1} rejected. Failing fast.`
+    );
+    try {
+      globalKeyPool.reportFailure("gg", selected.index, res.status);
+    } catch (_err) {
+      void _err;
+    }
+    const scannerState: TelemetryScannerState = {
+      finishLogged: false,
+      usageLogged: false,
+      servedLogged: false,
+      buffer: "",
+      decoder: new TextDecoder(),
+      startTime,
+      reqId: context.reqId,
+      keyIndex: selected.index,
+      totalKeys: selected.totalKeys,
+      status: res.status,
+      attempt,
+      maxAttempts,
+    };
+    const monitoredStream = createMonitoredStream(firstChunk, rawReader, scannerState);
+    const downstreamHeaders = prepareDownstreamHeaders(res.headers);
+    return {
+      retry: false,
+      response: new Response(monitoredStream, {
+        status: res.status,
+        statusText: res.statusText,
+        headers: downstreamHeaders,
+      }),
+    };
+  }
+
   const isRetryable = RETRYABLE_STATUSES.has(res.status);
 
   if (isRetryable) {
     logLimit(context.reqId, "gg", selected.index, res.status, undefined, selected.totalKeys);
     globalKeyPool.reportFailure("gg", selected.index, res.status);
     await cancelRawReader(rawReader, "retry");
-    if (attempt < MAX_NATIVE_ATTEMPTS) {
+    if (attempt < maxAttempts) {
       return { retry: true, response: res };
     }
   } else {
@@ -575,6 +615,7 @@ async function handleNativeResponse(
     totalKeys: selected.totalKeys,
     status: res.status,
     attempt,
+    maxAttempts,
   };
 
   const monitoredStream = createMonitoredStream(firstChunk, rawReader, scannerState);
@@ -611,7 +652,8 @@ function handleFetchNetworkError(
 
 async function attemptNativeForward(
   context: NativeForwardContext,
-  attempt: number
+  attempt: number,
+  maxAttempts: number = getGoogleMaxAttempts()
 ): Promise<{ retry: boolean; response: Response }> {
   const pacerError = await acquireNativePacer(context.req.signal);
   if (pacerError) {
@@ -628,9 +670,19 @@ async function attemptNativeForward(
   const startTime = Date.now();
   try {
     const guardResult = await executeNativeFetch(context, selected);
-    return await handleNativeResponse(guardResult, context, selected, attempt, startTime);
+    return await handleNativeResponse(guardResult, context, selected, attempt, startTime, maxAttempts);
   } catch (err: unknown) {
-    const isLast = attempt >= MAX_NATIVE_ATTEMPTS;
+    if (isFatalAuthError(err)) {
+      logError(context.reqId, `Google native fatal auth error: ${err.message}`);
+      return {
+        retry: false,
+        response: Response.json(
+          { error: { message: err.message, type: "authentication_error", code: err.status } },
+          { status: err.status }
+        ),
+      };
+    }
+    const isLast = attempt >= maxAttempts;
     return handleFetchNetworkError(err, context.reqId, selected.index, isLast);
   }
 }
@@ -657,6 +709,7 @@ function buildFusionServedResponse(
 type TierOutcome =
   | { readonly kind: "success"; readonly response: Response }
   | { readonly kind: "fast_advance"; readonly response: Response }
+  | { readonly kind: "fast_fail"; readonly response: Response }
   | { readonly kind: "exhausted"; readonly response?: Response };
 
 async function executeTierKeyLoop(
@@ -671,13 +724,21 @@ async function executeTierKeyLoop(
   let lastResponse: Response | undefined;
 
   for (let attempt = 1; attempt <= totalActiveKeys; attempt++) {
-    const outcome = await attemptNativeForward(context, attempt);
+    const outcome = await attemptNativeForward(context, attempt, totalActiveKeys);
     lastResponse = outcome.response;
     if (outcome.retry) {
       continue;
     }
 
     const status = outcome.response.status;
+    if (status === 401 || status === 403) {
+      logError(
+        context.reqId,
+        `[FUSION ${context.reqId}] Tier ${tierIdx + 1} (${tierModel}) -> ${status} Fatal Auth Failure. Halting cascade.`
+      );
+      return { kind: "fast_fail", response: outcome.response };
+    }
+
     if (status === 404) {
       const nextModel = chain[(tierIdx + 1) % totalTiers];
       logWarn(
@@ -745,7 +806,7 @@ async function executeNativeFusionCascade(
     };
 
     const outcome = await executeTierKeyLoop(context, chainKey, tierModel, tierIdx, totalTiers, chain);
-    if (outcome.kind === "success") {
+    if (outcome.kind === "success" || outcome.kind === "fast_fail") {
       return outcome.response;
     }
     lastResponse = outcome.response;
@@ -760,9 +821,10 @@ async function executeNativeFusionCascade(
 }
 
 async function executeSingleModelForward(context: NativeForwardContext): Promise<Response> {
+  const maxAttempts = getGoogleMaxAttempts();
   let lastResponse: Response | undefined;
-  for (let attempt = 1; attempt <= MAX_NATIVE_ATTEMPTS; attempt++) {
-    const outcome = await attemptNativeForward(context, attempt);
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const outcome = await attemptNativeForward(context, attempt, maxAttempts);
     if (!outcome.retry) {
       return outcome.response;
     }
@@ -903,7 +965,21 @@ export async function handleGoogleInteractionsPassthrough(
       signal: req.signal,
     });
     const res = await fetch(upstreamReq);
-    globalKeyPool.reportSuccess("gg", selected.index);
+    if (res.status === 401 || res.status === 403) {
+      logError(
+        reqId,
+        `Google interactions passthrough upstream auth failure (${res.status}): Key #${selected.index + 1} rejected. Failing fast.`
+      );
+      try {
+        globalKeyPool.reportFailure("gg", selected.index, res.status);
+      } catch (_err) {
+        void _err;
+      }
+    } else if (res.status >= 400) {
+      globalKeyPool.reportFailure("gg", selected.index, res.status);
+    } else {
+      globalKeyPool.reportSuccess("gg", selected.index);
+    }
     const outHeaders = prepareDownstreamHeaders(res.headers);
     return new Response(res.body, { status: res.status, headers: outHeaders });
   } catch (err: unknown) {

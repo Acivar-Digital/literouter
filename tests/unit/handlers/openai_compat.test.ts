@@ -99,6 +99,9 @@ describe("openai_compat handler unit tests", () => {
       expect(source.includes("cachedRegistry")).toBe(false);
       expect(source.includes('!["or", "nv", "zn", "gg"].includes')).toBe(false);
       expect(source.includes("ZEN_ENABLE_")).toBe(false);
+      expect(source.includes("300000")).toBe(false);
+      expect(source.includes("{ maxQueueDepth }")).toBe(false);
+      expect(source.includes("dynamicMaxQueueDepth")).toBe(false);
     });
 
     it("verifies dynamic pacer configuration is loaded via getProviderConfig", () => {
@@ -338,6 +341,80 @@ describe("openai_compat handler unit tests", () => {
           pacer.acquire = origAcquire;
         }
       });
+    });
+  });
+
+  describe("401/403 fail-fast behavior with zero retries", () => {
+    it("immediately returns HTTP 401 response and aborts retry loop on 401", async () => {
+      initializeKeyPools({ OPENROUTER_API_KEYS: "sk-or-v1-key1,sk-or-v1-key2,sk-or-v1-key3" });
+      let callCount = 0;
+      const origFetch = globalThis.fetch;
+      globalThis.fetch = (async () => {
+        callCount++;
+        return new Response(
+          JSON.stringify({
+            error: {
+              message: "User key is invalid or expired",
+              type: "invalid_api_key",
+              code: 401,
+            },
+          }),
+          { status: 401, headers: { "Content-Type": "application/json" } }
+        );
+      }) as unknown as typeof globalThis.fetch;
+
+      try {
+        const res = await executeDirectRequest(
+          { type: "direct", raw: "lr-or-oa-ch-no", provider: "or", payload: "oa", completion: "ch", nuances: ["no"] },
+          { model: "deepseek/deepseek-r1", messages: [{ role: "user", content: "ping" }] },
+          undefined,
+          "req-401-fail-fast"
+        );
+
+        expect(res.status).toBe(401);
+        // Fail fast: zero retries on key2 or key3!
+        expect(callCount).toBe(1);
+        const data = await res.json() as Record<string, unknown>;
+        expect(data.error).toBeDefined();
+      } finally {
+        globalThis.fetch = origFetch;
+      }
+    });
+
+    it("immediately returns HTTP 403 response and aborts retry loop on 403", async () => {
+      initializeKeyPools({ OPENROUTER_API_KEYS: "sk-or-v1-key1,sk-or-v1-key2,sk-or-v1-key3" });
+      let callCount = 0;
+      const origFetch = globalThis.fetch;
+      globalThis.fetch = (async () => {
+        callCount++;
+        return new Response(
+          JSON.stringify({
+            error: {
+              message: "Forbidden access to model",
+              type: "permission_denied",
+              code: 403,
+            },
+          }),
+          { status: 403, headers: { "Content-Type": "application/json" } }
+        );
+      }) as unknown as typeof globalThis.fetch;
+
+      try {
+        const res = await executeDirectRequest(
+          { type: "direct", raw: "lr-or-oa-ch-no", provider: "or", payload: "oa", completion: "ch", nuances: ["no"] },
+          { model: "deepseek/deepseek-r1", messages: [{ role: "user", content: "ping" }] },
+          undefined,
+          "req-403-fail-fast"
+        );
+
+        expect(res.status).toBe(403);
+        // Fail fast: zero retries on key2 or key3!
+        expect(callCount).toBe(1);
+        const data = await res.json() as Record<string, unknown>;
+        expect(data.error).toBeDefined();
+      } finally {
+        globalThis.fetch = origFetch;
+      }
     });
   });
 });

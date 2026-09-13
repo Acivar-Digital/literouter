@@ -92,7 +92,7 @@ describe("Admin Pool Reset Endpoint (/admin/pool/reset)", () => {
   });
 
   it("resets a specific provider via query parameter", async () => {
-    globalCooldownManager.quarantineKey("or:0", 429);
+    globalCooldownManager.quarantineKey("or:0", 500);
     expect(globalCooldownManager.isQuarantined("or:0")).toBe(true);
 
     const req = new Request("http://localhost:7766/admin/pool/reset?provider=or", {
