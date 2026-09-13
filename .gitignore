@@ -36,6 +36,8 @@ tmp/
 
 # Node (if any)
 node_modules/
+.nvm/
+.nvm*
 
 # Data
 data/
