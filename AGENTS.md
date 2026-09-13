@@ -1,122 +1,48 @@
 # AGENTS.md
 
-This file provides mandatory operational guidance to agents when working with code in this repository.
+Mandatory operational guidance for AI agents working in this repository.
 
 ## ⛔ ABSOLUTE MANDATE: NEVER TOUCH API KEYS OR `.env.local`
-- **NEVER** modify, edit, sanitize, replace, or overwrite API keys or `.env.local` / `.env` files under any circumstances.
-- **NEVER** run automated sanitization or guardrail scripts against `.env.local` or `.env`.
-- **NEVER** hardcode real API keys into code, unit tests, scratch scripts, docs, or commit messages. All temporary test scripts must be placed in `/tmp` or `scratch/` (gitignored).
-- Replacing real API keys with `<REDACTED>` or placeholder values destroys gateway operation by causing `staticValidateKeys` to discard all provider keys on boot.
-- `.env.local` is write-protected via `protect.sh` (owned by `root`, read-only `644` for runtime processes). Do not attempt to bypass this.
-
-### 🟢 POSITIVE RECIPE: How to Test & Probe Safely
-1. **Unit tests:** Always use mock stub tokens (e.g. `const mockKey = "sk-test-stub-0001-padded-to-look-like-real"`, `const nvidiaKey = "nvapi-key1"`).
-2. **Integration testing:** Send test requests to the local LiteRouter proxy at `http://localhost:7766/v1/chat/completions` using client authorization (`Bearer sk-lr-your-auth-key`) instead of calling vendor APIs directly. LiteRouter will rotate the real keys from `.env.local` automatically.
-3. **Diagnostic scripts:** If a script must probe upstream APIs directly (e.g. `scripts/doctor.ts`), dynamically read keys from `Bun.env.NVIDIA_API_KEYS` or `os.environ.get("NVIDIA_API_KEYS")` — never hardcode key literals.
-4. **Temporary exploration:** Put ad-hoc test scripts in `/tmp/` (outside the repo) or `scratch/` (gitignored).
-
-
+- **NEVER** edit, sanitize, replace, or overwrite API keys or `.env.local` / `.env` files. Automated sanitization against `.env*` is forbidden.
+- **NEVER** hardcode keys into code, tests, docs, or commits. Use `/tmp` or gitignored `scratch/` for ad-hoc scripts.
+- Replacing keys with `<REDACTED>` destroys gateway boot (`staticValidateKeys` drops all keys).
+- `.env.local` is write-protected via `protect.sh` (owned by root, `644`). Do not bypass.
+- **Safe Testing Recipe**: (1) Unit tests: use mock stubs (`sk-test-stub-...`, `nvapi-key1`). (2) Integration: call local proxy at `http://localhost:7766/v1/chat/completions` with client auth (`Bearer sk-lr-your-auth-key`). (3) Diagnostic scripts: dynamically read `Bun.env.NVIDIA_API_KEYS` / `os.environ.get("NVIDIA_API_KEYS")`.
 
 ---
 
-## Technical Knowledge Base
-For all system design, folder maps, design decisions, and architectural constraints, refer to:
-👉 `docs/ARCHITECTURE.md`
-👉 `docs/Longrunning_Mode.md` (Fusion Sticky Fallback details)
-👉 `CHANGELOG.md` (Release & change log - fixed path: `/home/yapilwsl/arthityap/literouter/CHANGELOG.md`)
-👉 `literouter` Skill (Fixed path: `/home/yapilwsl/arthityap/literouter/.opencode2/skills/literouter/SKILL.md`)
-
-### ⚡ FIXED CORE PATHS (DO NOT SEARCH DISK)
-- **LiteRouter Skill (Absolute)**: `/home/yapilwsl/arthityap/literouter/.opencode2/skills/literouter/SKILL.md`
-- **LiteRouter Skill Directory**: `/home/yapilwsl/arthityap/literouter/.opencode2/skills/literouter/`
-- **Changelog**: `/home/yapilwsl/arthityap/literouter/CHANGELOG.md`
-- **Architecture**: `/home/yapilwsl/arthityap/literouter/docs/ARCHITECTURE.md`
-- **Routing & Streaming Spec**: `/home/yapilwsl/arthityap/literouter/docs/Fix_Streaming_01.md`
+## Technical Knowledge Base & Fixed Core Paths
+- **LiteRouter Skill (Absolute)**: `/home/yapilwsl/arthityap/literouter/.opencode2/skills/literouter/SKILL.md` (dir: `.opencode2/skills/literouter/`)
+- **Key Docs**: `CHANGELOG.md`, `docs/ARCHITECTURE.md`, `docs/Fix_Streaming_01.md` (streaming spec), `docs/Longrunning_Mode.md`
 - **Main Handlers**: `src/handlers/openai_compat.ts`, `src/network/fetcher.ts`, `src/network/pacer.ts`
-- **Antigravity IDE Setup (lazy-load)**: `.opencode2/skills/literouter/agy-ide-setup.md` (LiteRouter wiring only; canonical IDE skill: `.opencode2/skills/agy-ide-playbook/SKILL.md`)
-- **TUI LaTeX & Math Rendering (lazy-load)**: `.opencode2/skills/literouter/tui-latex-math-rendering.md`
-- **Test Suite Hygiene Playbook (lazy-load)**: `.opencode2/skills/literouter/test-hygiene-playbook.md`
-
-### Rate Limiting & Pacing Architecture (Zdist Retirement)
-- **Zdist Retired**: Preemptive client-side RPM/RPD sliding-window rate tracking (`RateLimitTracker` / `zdist.ts`) was formally retired in v4.1 (see `docs/GRAVEYARD/ZDIST.md`). Upstream LLM rate limits are dynamic leaky buckets with clock drift, making local preemptive tracking counterproductive and brittle.
-- **Active Architecture**: Replaced by deterministic **RequestPacer** (`src/network/pacer.ts` spacing ingress requests by `min_delay_ms`) to smooth bursts and prevent concurrency limit triggers, paired with **CooldownManager** (`src/network/cooldown.ts` reactive 429 quarantine with `Retry-After` header extraction and fallback TTL).
-
-### OpenCode vs OpenCode2 Config Format
-This repo maintains both OpenCode v1 and OpenCode2 v2 configurations. Key differences when editing JSON configs:
-
-| Config Key | OpenCode v1 | OpenCode v2 |
-|---|---|---|
-| Plugin array key | `"plugin"` (singular) | `"plugins"` (plural) |
-| Config file location | `.opencode/opencode.json` | `.opencode2/opencode.json` |
-| Plugin format | String IDs only | String IDs **or** `{ "package", "options" }` objects |
-
-When editing configs, verify which variant you are targeting. Using the wrong key name will silently drop the plugin list.
+- **Lazy-Load Guides**: Antigravity IDE: `.opencode2/skills/literouter/agy-ide-setup.md` | TUI Math: `.opencode2/skills/literouter/tui-latex-math-rendering.md` | Test Hygiene: `.opencode2/skills/literouter/test-hygiene-playbook.md`
+- **Rate Limiting (Zdist Retired)**: Client-side sliding-window tracking is retired (see `docs/GRAVEYARD/ZDIST.md`). Active stack: deterministic **RequestPacer** (`src/network/pacer.ts`) + reactive **CooldownManager** (`src/network/cooldown.ts` 429 quarantine with `Retry-After`).
+- **OpenCode Config Format**: v1 (`.opencode/opencode.json`, key: `"plugin"` [strings]) vs v2 (`.opencode2/opencode.json`, key: `"plugins"` [strings or `{ package, options }`]).
 
 ---
 
-## MANDATORY WORKFLOW ENFORCEMENT
-
-**Before writing any code or answering any request, you MUST initialize the beads workflow AND load the LiteRouter skill.**
-
-### Session Start Protocol
-1. **Run**: `bd prime` (or `bd ready` if prime is unavailable) immediately upon session start.
-2. **Load Skill (MANDATORY)**: You **MUST** load the `literouter` skill at the beginning of every conversation:
-   ```bash
-   skill load "literouter"
-   ```
-3. **Verify**: Ensure you have the latest issue context.
-4. **Ticket (MANDATORY DEFINITION OF DONE)**: If the user's request is not already an issue, create it with `--acceptance`:
-   ```bash
-   bd create "..." -t task -p 2 \
-     -d "Detailed context of what needs to be done" \
-     --acceptance="1. Deterministic verification passes (e.g. bun test exit code 0)
-2. Specific files or report cards produced
-3. No regressions or unhandled errors"
-   ```
-   *(Note: `validation.on-create: error` is strictly enforced. Any creation command without `--acceptance` will fail with exit code 1).*
-5. **Claim**: `bd update <id> --claim`.
-
-> **DO NOT PROCEED** without tracking the task in beads and loading the `literouter` skill.
+## Session Start & Skill Protocol
+1. **Initialize Beads**: Run `bd prime` (or `bd ready`) immediately on session start.
+2. **Load Skill (MANDATORY)**: Run `skill load "literouter"` at conversation start. Fallback: load immediately if touching gateway routing, keys, streaming, models, or errors.
+3. **Ticket (Definition of Done)**: Create issue if not already tracked: `bd create "..." -t task -p 2 -d "..." --acceptance="1. Deterministic verification passes\n2. Output artifact exists"` (`validation.on-create: error` is enforced; omitting `--acceptance` fails).
+4. **Claim**: Run `bd update <id> --claim`.
+5. **Resume Protocol**: If context is lost or session restarts, run `bd list --status in_progress --json` to find your claimed task and continue. Never ask the user "what should I work on?" if tasks are in progress. [Rationale: Persistent brain in beads].
 
 ---
 
-## 🧭 LITEROUTER SKILL INVOCATION & KEYWORD TRIGGERS
+## Mandatory Pre-Response Ritual
 
-The `literouter` skill (`.opencode2/skills/literouter/SKILL.md`) is the canonical operational manual for this repository.
+Output this block before executing code or commands. No exceptions.
 
-### Mandatory Conversation Rule
-- **Every conversation** in this workspace MUST load the `literouter` skill (`skill load "literouter"`) during the Session Start Protocol.
-
-### Fallback Keyword Triggers
-If for any reason the skill was not loaded at session start, you **MUST immediately load `skill load "literouter"`** whenever any of the following topics or keywords appear in the user prompt or task context:
-
-| Category | Trigger Keywords |
-|---|---|
-| **Core & Gateway** | `literouter`, `gateway`, `proxy`, `port 7766`, `bun run src/index.ts`, `scripts/start.sh`, `scripts/doctor.ts`, `scripts/doctor_zn.ts`, `zen-provider.md` |
-| **Routing & Keys** | `directive key`, `lr-`, `routing`, `provider`, `model`, `fusion`, `gemini-flash`, `native chains`, `fusion.json`, `globalKeyPool`, `key rotation`, `cooldown`, `quarantine` |
-| **Client Integrations** | `claude code`, `opencode2`, `antigravity`, `agy-gemini`, `agy-claude`, `OpenRouter`, `NVIDIA NIM`, `Zen`, `Google Vertex` |
-| **Streaming & Protocol** | `streaming`, `TTFT`, `SSE`, `keep-alive`, `h2_pool`, `HTTP/2`, `ALPN`, `pacer`, `circuit_breaker`, `network_error`, `content: null`, `Zod` |
-| **Reasoning & Tools** | `reasoning scrubber`, `collapse-reasoning`, `dots`, `XML tool calling`, `<think>`, `trapped thinking`, `tool compaction` |
-| **Testing & Test Hygiene** | `test`, `bun test`, `pytest`, `test hygiene`, `airgap`, `test parking`, `mock response`, `simulation banner`, `UnmockedOutboundCallError`, `--live` |
-| **Errors & Limits** | `429`, `500`, `502`, `503`, `NoResponseError`, `ghosting`, `fast-canning`, `Retry-After`, `GCP_ENABLE_RETRIES`, `MissingSessionID`, `FreeUsageLimitError`, `session-id`, `big-pickle` |
-
----
-
-## MANDATORY PRE-RESPONSE RITUAL
-
-**Before writing any code or executing any command, output this block. No exceptions. Not even for trivial tasks. This is your contract with the user.**
-
-```
+```markdown
 ### REQUEST INTAKE
 I understand you want: [one sentence restatement in your own words]
 
 ### CRITICAL ASSUMPTIONS
-(Every assumption that, if wrong, invalidates the entire plan)
 - [ ] Assumption 1
 - [ ] Assumption 2
 
 ### RISKS AND UNKNOWNS
-(What could break, what must be verified BEFORE touching code)
 - Risk 1
 - Unknown 1
 
@@ -130,469 +56,82 @@ I understand you want: [one sentence restatement in your own words]
 - [ ] YES - Major change (>50 lines / new deps) -> HALTING. Reply APPROVED / MODIFY / CANCEL.
 - [ ] NO  - Proceeding autonomously. Stating: "Self-approving - YOLO active."
 ```
-
-### Mode Modifier
-- **Antigravity (involved mode):** Always run full ritual. Wait for explicit `APPROVED` before any code.
-- **Opencode (YOLO mode):** Run ritual but self-approve if flagged NO. State "Self-approving - YOLO active" and proceed immediately.
-
-> **WHY THIS EXISTS**: The user should never have to ask "did you understand what I want?" or "what's your plan?" - this ritual makes intent visible and front-loads ambiguity resolution before any damage is done.
+- **Modes**: Antigravity (involved) waits for human `APPROVED`. Opencode (YOLO) self-approves if flagged NO ("Self-approving - YOLO active").
+- [Rationale: Surface intent and front-load ambiguity resolution before touching code].
+- **Fast Path (Trivial Tasks)**: Output the ritual with `APPROVAL?: [x] NO (YOLO)`. To track in beads without validation errors: (1) `bd create "..." -t task -p 4 --acceptance="1. Verified"`, (2) Implement immediately, (3) `bd close <id> --reason "Completed"`.
 
 ---
 
-## RESUME PROTOCOL (Mid-Session Restart)
+## Change Management & Approval Gates
 
-**If you lose context, start a new conversation, or are unsure what was in-flight:**
-
-1. Run `bd list --status in_progress --json` - find any issue with `claimed_by` set. That is YOUR task.
-2. Re-read the bead's `--description` and `--acceptance` fields for full context.
-3. Continue from the last completed step - **DO NOT restart from scratch**.
-4. **NEVER ask the user "what should I work on?"** if `bd list --status in_progress` returns results.
-5. If genuinely nothing is in-progress, run `bd ready` and claim the highest-priority unblocked issue.
-
-> **WHY THIS EXISTS**: Agents losing mid-task context and stalling or restarting is the #1 source of wasted effort. The beads DB is your persistent brain - use it.
+- **Workflow Pipeline**: `Request -> Ritual -> Claim Bead -> Implement -> Quality Gates (Typecheck + Test) -> Close Bead -> Push`
+- **Provider/Model Changes Sequence**: (1) Checkpoint: `uv run python admin/code_hygiene/agent_guardrail.py checkpoint <path>`, (2) Skill: `skill load "literouter"`, (3) Doctor: `bun run scripts/doctor.ts`, (4) Suite: `bun test && uv run pytest tests/integration/`, (5) Validate: `uv run python admin/code_hygiene/agent_guardrail.py validate <path>`. Categories: Provider Add/Remove (`src/index.ts`), Model Add/Remove (`fusion.json`).
+- **Approval Gate (>50 lines, new deps, schema changes)**:
+  1. Write plan: `bd update <id> --design "..."` | 2. Chat: `APPROVAL REQUIRED: [decision]` | 3. Flag: `bd human <id>` | 4. **STOP**.
+  5. **Swapping**: Interactive chat = HALT and wait for user response; Headless/batch execution = run `bd ready` and claim next task while waiting. [Rationale: Respect user focus in chat; prevent stalling in batch].
 
 ---
 
-## PROVIDER/MODEL MANAGEMENT PROTOCOLS
+## Master Commands & Quality Gates
 
-Before adding, modifying, or removing providers or models, you MUST:
+| Gate / Action | Command | Verification Threshold | Environment |
+|---|---|---|---|
+| Static Typecheck | `bun run typecheck` | Zero errors (`tsc --noEmit`), exit code 0 | Local |
+| TS AST Quality | `node node_modules/clean_ts/dist/cli.js validate <file>` | `valid: true`, AST anti-slop pass, complexity < 6 | Local |
+| Python Lint | `uv run ruff check .` | Zero errors output | Local |
+| Fast Gateway Tests | `bun run test:gateway` | All pass (938 fast unit tests in `tests/unit`, no eval noise) | Local |
+| Failure-Only Test | `bun run test:failures` | `bun test --only-failures` (outputs only failing tests) | Local |
+| Eval Grader Tests | `bun run test:eval` | All pass (182 benchmark eval grader tests in `tests/eval`) | Local |
+| Full Gateway Suite | `bun test` | All pass, exit code 0 (pipe to `/tmp/test.log` if needed) | Local |
+| Integration Smoke | `uv run pytest tests/integration/` | All pass against running gateway, exit code 0 | Local |
+| Full Pre-Cutover | `bun run typecheck && bun test && uv run pytest tests/integration/` | Output appended to `tests/test_results.md` with timestamp | Local |
+| UAT Smoke Gate | `uv run pytest tests/integration/ --env=uat` | All pass against live UAT URL from `.env.uat` (not localhost) | **UAT** |
+| Gateway Daemons | Foreground: `bun run src/index.ts` | Daemon (tmux): `bash scripts/start.sh` | Health: `bun run scripts/doctor.ts` | Local |
 
-### 1. Load LiteRouter Skill
-> **MANDATORY**: Always load the `literouter` skill before any provider/model changes:
-> ```bash
-> skill load "literouter"
-> ```
-
-### 2. Validation Workflow
-> Execute this sequence for ALL provider/model changes:
-> 
-> 1. **Pre-Edit Checkpoint**: Run `uv run python admin/code_hygiene/agent_guardrail.py checkpoint <path>` on modified files
-> 2. **Load Playbook**: `skill load "literouter"`
-> 3. **Backup Verification**: Verify gateway health with `bun run scripts/doctor.ts`
-> 4. **Test Suite**: Run `bun test && uv run pytest tests/integration/`
-> 5. **Post-Edit Validation**: Run `uv run python admin/code_hygiene/agent_guardrail.py validate <path>`
-
-### 3. Required Changes Tracking
-> Every provider/model modification MUST be documented in a bead issue:
-> ```bash
-> bd create "Update providers/models: [specific changes]" -t task -p 2 \
->   --description="Adding/changing/removing providers/models [details]" \
->   --deps discovered-from:<previous-bead-id>
-> ```
-
-### 4. Change Categories
-> - **Provider Addition**: Requires new gateway routing rules in `src/index.ts`
-> - **Model Addition**: Requires OpenAI-compat endpoint configuration in `fusion.json`
-> - **Provider Removal**: Requires gateway configuration cleanup in `src/index.ts`
-> - **Model Removal**: Requires upstream reference cleanup in `fusion.json`
-
-### 5. Integration Testing
-> After any provider/model change:
-> - ✅ `bun test` passes (TypeScript unit tests)
-> - ✅ `uv run pytest tests/integration/` passes (smoke tests against running gateway)
-> - ✅ `uv run ruff check .` passes (Python linting)
-> - ✅ Manual verification: `curl -H "Authorization: Bearer <KEY>" localhost:7766/health`
-
-### 6. Failure Handling
-> If ANY step fails:
-> - HALT immediately
-> - Link discovered failures as dependency from the change bead
-> - Run `./bd ready` to pick up next unblocked work
-> - DO NOT proceed to next step until previous issues are resolved
+### Anti-Simulation Gate (Real Execution Mandate)
+- **Zero Simulation**: Never imagine or paraphrase test runs. Every gate artifact must be self-witnessing from actual execution.
+- **Verification Sequence**: `echo "Run: $(date -u +"%Y-%m-%dT%H:%M:%SZ")" | tee -a tests/test_results.md && bun test >> tests/test_results.md 2>&1 && tail -30 tests/test_results.md && ls -lh tests/test_results.md` (paste verbatim). Missing disk timestamps fail cutover automatically. [Rationale: Enforce real terminal execution; reject simulated outputs].
+- **Anti-Context-Bloat**: Never run blanket `bun test` in chat. Use `bun run test:gateway` or `bun run test:failures` during active edits.
 
 ---
 
-## APPROVAL GATE - NON-BLOCKING BEHAVIOUR
+## Engineering Discipline
 
-When halted at an Approval Gate (major change >50 lines, new deps, schema changes):
-
-1. Write the full plan to the bead: `bd update <id> --design "...plan text..."`
-2. State clearly in chat: `APPROVAL REQUIRED: [specific decision needed in one sentence]`
-3. Flag for human: `bd human <id>`
-4. **STOP** - do not loop, do not ask again, do not proceed.
-5. **Interactive vs Headless Swapping**: In interactive user chat, await the user's explicit response (do not swap tasks or hijack the conversation). In headless or autonomous batch execution, run `bd ready` and claim the next unblocked issue while waiting.
-
-> **WHY THIS EXISTS**: Agents that halt and wait indefinitely block all progress in batch mode. In interactive mode, respecting the user's focus prevents context fragmentation.
+1. **Fail Loudly & Surface Errors**: Never swallow exceptions or mask errors. Code failures are signals. Silent failure requires explicit business comments (`# REQUIREMENT: Fail silently because [...]`).
+2. **Deterministic Minimalism (YAGNI)**: Implement strictly what is requested. Zero speculation, no unrequested configurability or premature abstractions.
+3. **Surgical Isolation**: Atomic edits only on relevant AST nodes. No drive-by refactoring or style imposition. Clean up your own dead code/imports.
+4. **Verification-Led Proof (TDD)**: Map requests to verifiable tests/logs. Never loop on retries without updating root-cause analysis.
+5. **Runtime Protocols**: **Bun-First**: Gateway runtime, benchmarks, typecheck, and unit tests MUST use `bun`. **Python/UV**: Pytest smoke tests, linters, and hygiene scripts MUST use `uv run python` / `uv sync`. Never use naked `python` or `pip`.
+6. **Decisive Multi-Tool Dispatch**: Dispatch independent tool calls in parallel. Delegate large file reading to `explore` subagents to avoid context bloat.
 
 ---
 
-## GOLIVE / CUTOVER PROTOCOL
+<!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:custom-dense -->
+## Beads Issue Tracking & Mandatory Auto-Push
 
-**"Testing complete" and "Ready for GoLive" are INVALID claims unless ALL gates below pass and produce artifacts.**
+Use `bd` for ALL task tracking. Markdown TODOs and external trackers are forbidden.
 
-| Gate | Command | Evidence Required | Environment |
-|------|---------|-------------------|-------------|
-| TypeScript Typecheck | `bun run typecheck` | Zero errors (`tsc --noEmit`), exit code 0 | Local |
-| TypeScript Quality / Lint | `node node_modules/clean_ts/dist/cli.js validate <file>` or `uv run python admin/code_hygiene/agent_guardrail.py validate <file>` | `valid: true`, zero AST/slop/complexity errors | Local |
-| Python Lint | `uv run ruff check .` | Zero errors output (Python test files) | Local |
-| Unit | `bun test` | All pass, exit code 0 | Local |
-| Integration / Smoke | `uv run pytest tests/integration/` | All pass against a running gateway, exit code 0 | Local |
-| Full Suite | `bun run typecheck && bun test && uv run pytest tests/integration/` | `tests/test_results.md` updated with current timestamp | Local |
-| E2E / UAT Smoke | `uv run pytest tests/integration/ --env=uat` | Must run against UAT URL from `.env.uat`, not localhost | **UAT** |
-| Cutover | `bd human <golive-bead-id>` | Human approval in chat | Human gate |
-
-**Rules:**
-- Running E2E tests against `localhost` does NOT constitute UAT validation.
-- The UAT smoke test MUST use the live UAT environment URL defined in `.env.uat`.
-- Do NOT auto-proceed past the Cutover gate - it requires explicit human `APPROVED`.
-- Commit `tests/test_results.md` with the test run output before requesting GoLive approval.
-
-### ARTEFACT TIMESTAMP RULE (Anti-Simulation Trap)
-
-**This rule exists because LLMs can fabricate plausible-looking test artefacts when asked to "simulate" or "imagine" a run. All artefacts must be self-witnessing - produced by actual execution, not reconstructed from memory or generated on demand.**
-
-**Rules - no exceptions:**
-
-1. **Every artefact must contain a system-generated timestamp from the actual run.**
-   The agent must show the raw terminal output including the timestamp.
-   Artefacts without a verifiable timestamp from `date` or the test runner are INVALID.
-
-2. **The agent may NOT generate, reconstruct, or paraphrase artefact content.**
-   It must `cat` or `tail` the actual file on disk and paste the verbatim output.
-   Summarising what the output "probably says" is PROHIBITED.
-
-3. **Before claiming any gate passed, run this verification sequence:**
-   ```bash
-    # Step 1: Record exact run time
-    echo "Run started: $(date -u +"%Y-%m-%dT%H:%M:%SZ")" | tee -a tests/test_results.md
-
-    # Step 2: Execute the gate command (example: full suite)
-    bun test && uv run pytest tests/integration/ 2>&1 | tee -a tests/test_results.md
-
-    # Step 3: Confirm the file exists and show its tail
-    echo "--- ARTEFACT PROOF ---" && tail -30 tests/test_results.md
-
-    # Step 4: Show file metadata (size + modified time)
-    ls -lh tests/test_results.md
-   ```
-   The output of Step 3 and Step 4 MUST be pasted verbatim into the chat before claiming the gate passed.
-
-4. **Simulation mode is BANNED during GoLive.**
-   If the user says "imagine today is cutover" or "simulate a full run", you MUST respond:
-   `SIMULATION MODE REJECTED: GoLive gates require real execution against real environments.
-   I will run the actual commands now. If any environment is unavailable, I will halt and report
-   which gate is blocked and why.`
-
-5. **Artefact-on-demand = automatic failure.**
-   If an artefact did not exist before you were asked to show it, the test did not run.
-   Creating the file after the fact is PROHIBITED. The gate must be re-executed from scratch.
-
-> **WHY THIS EXISTS**: LLMs optimise for narrative coherence, not ground truth. A simulated test run
-> produces plausible artefacts because that is what a real run SHOULD produce - not because anything
-> was actually executed. Timestamps and verbatim terminal output are the only proof that cannot be
-> fabricated within a single context window.
-
----
-
-### Workflow Diagram
-```mermaid
-graph TD
-    A[User Request] --> B[Pre-Response Ritual]
-    B --> C{Task Size?}
-    C -->|Trivial| D[Fast Path: bd create -> Code -> bd close]
-    C -->|Complex| E[Research: Kit MCP / search_codebase]
-    E --> F[Architect: Draft Plan in Ritual]
-    F --> G{Major Change?}
-    G -->|Yes| H[Approval Gate: bd human + HALT + pick next task]
-    G -->|No| I[Implement]
-    H --> I
-    I --> J[Critic: Self-Review / Tests]
-    J --> K{GoLive?}
-    K -->|Yes| L[GoLive Protocol: all gates + Artefact Timestamp Rule]
-    K -->|No| M[bd close]
-    L --> N[Human Cutover Approval]
-    N --> M
-```
-
-### Fast Path for Trivial Tasks
-Even for trivial tasks (e.g., typo fix, single-line change), the Pre-Response Ritual MUST still be output (marking `APPROVAL?: [x] NO - Proceeding autonomously. Stating: "Self-approving - YOLO active."`).
-To maintain beads tracking without violating validation:
-1. Create the bead with acceptance criteria: `bd create "..." -t task -p 4 --acceptance="1. Verified"`
-2. Implement the change immediately.
-3. Close the bead: `bd close <id> --reason "Completed"`
-
-### Self-Review (Critic Role)
-Before marking a task as complete, you MUST act as a Critic:
-1. Run TypeScript typecheck: `bun run typecheck` (`tsc --noEmit`)
-2. Validate TypeScript code quality: `node node_modules/clean_ts/dist/cli.js validate <file>` or `uv run python admin/code_hygiene/agent_guardrail.py validate <file>`
-3. Run linters: `uv run ruff check .` (Python test files)
-4. Run tests: Use `bun run test:gateway` or `bun run test:failures` during active code edits to verify changes without context bloat, plus `uv run pytest tests/integration/` (smoke). For full verification, pipe to `/tmp/test.log` (e.g. `bun test > /tmp/test.log 2>&1`).
-5. Verify the implementation matches the original request exactly (no gold-plating).
-6. If any check fails, fix it before proceeding.
-
-> **Anti-Context-Bloat & Silent Truncation Mandate**:
-> Blanket `bun test` runs 1,180 tests and dumps massive logs into your LLM context window, triggering tool output truncation and masking failure stack traces.
-> Agents **MUST** use targeted test runners when verifying code edits:
-> - `bun run test:gateway` (938 fast gateway tests in `tests/unit`, zero eval noise)
-> - `bun run test:eval` (182 benchmark eval grader tests in `tests/eval`)
-> - `bun run test:legacy` (179 legacy dual-path fallback tests in `tests/unit/legacy`)
-> - `bun run test:failures` (`bun test --only-failures` — runs the suite but outputs **only** failing tests)
-> If a full test run is necessary, pipe output to `/tmp/test.log` and verify the exit code (`bun test > /tmp/test.log 2>&1 && echo "Exit code: $?"`).
-
-> **Test Authoring Mandate**: When creating or modifying tests, agents MUST consult the lazy-loaded test hygiene playbook (`.opencode2/skills/literouter/test-hygiene-playbook.md`) for zero-LLM air-gap enforcement, test parking taxonomy, anti-context-bloat guidelines, simulation banners, and teardown symmetry.
-
-## Build/Lint/Test Commands
-- Run TypeScript static typecheck: `bun run typecheck` (`tsc --noEmit`)
-- Run TypeScript AST quality validator: `node node_modules/clean_ts/dist/cli.js validate <path>`
-- Run full unit tests (all 1,180 tests): `bun test`
-- Run fast gateway unit tests (938 tests, no eval noise): `bun run test:gateway`
-- Run benchmark eval grader unit tests (182 tests): `bun run test:eval`
-- Run legacy dual-path fallback tests (179 tests): `bun run test:legacy`
-- Run anti-bloat failure-only runner: `bun run test:failures` (`bun test --only-failures`)
-- Run integration/smoke tests (live gateway): `uv run pytest tests/integration/`
-- Run linters: `uv run ruff check .` (Python test files)
-- Install dependencies: `bun install` (gateway) + `uv sync` (pytest smoke deps)
-- Start gateway (daemon, tmux `literouter`): `bash scripts/start.sh`
-- Run gateway in foreground: `bun run src/index.ts`
-- Health probe (FYI key validation — does NOT gate boot): `bun run scripts/doctor.ts`
-
-## Agent Guardrail & Sanitization
-To prevent broken scripts, AST violations, and escape artifacts (`\\n`, `\\u`), always use the guardrail workflow
-(tools live in `admin/code_hygiene/`, synced from baziforecaster):
-1. **Checkpoint**: `uv run python admin/code_hygiene/agent_guardrail.py checkpoint <path>` (Run BEFORE editing)
-2. **Edit**: Make your changes to the file.
-3. **Validate**: `uv run python admin/code_hygiene/agent_guardrail.py validate <path>` (Run AFTER editing)
-   - For `.ts`/`.tsx` files: Automatically delegates to `clean_ts` (`node node_modules/clean_ts/dist/cli.js validate <path>`), enforcing `tsc` strictness, AST anti-slop rules, cognitive complexity < 6, and no swallowed catches.
-   - For `.py` files: Runs AST hygiene, syntax checks, and anti-hallucination guardrails.
-   - If it fails: Check the output diff and fix errors.
-   - If it passes: It automatically runs `agent_sanitizer.py` to fix escape artifacts.
-
-## Guiding Principles for Coding
-
-### a. We are building a repo to help people, always let codes fail and surface
-Code failures are signals - they reveal what needs attention and improvement.
-Never swallow exceptions or mask errors to make things "appear" working.
-If something fails, let it fail loudly and clearly so the team and users know
-exactly what is happening. A failing system that surfaces its problems is
-infinitely more valuable than a silent system that is quietly broken.
-
-### b. Do not let codes fail silently unless it is a requirement
-If code must fail silently due to a specific business or technical requirement,
-that requirement must be explicitly documented as a comment on that code.
-For example:
-```python
-# REQUIREMENT: Fail silently here because [specific reason].
-# Do not raise exceptions or log at ERROR level.
-try:
-    ...
-except Exception:
-    pass  # Explicit silent failure per documented requirement
-```
-Otherwise, do not let code fail silently - always raise, log, or signal failure.
-
-### c. Find ways to provide logs or ways to help you debug if the scripts are not working
-Every significant operation should produce actionable logs. Use structured logging
-with appropriate log levels (DEBUG, INFO, WARNING, ERROR) to capture context.
-When errors occur, log:
-- What was being attempted
-- The inputs or state at the time
-- The specific error or failure point
-- A stack trace or relevant diagnostic details
-Provide clear, reproducible error messages. If possible, include guidance for
-next steps or recovery actions. For complex operations, emit progress markers
-so it's clear how far execution got before failure.
-
-### d. Decisive Execution, Targeted Exploration & Multi-Tool Dispatch
-- **Context Bloat Prevention**: To avoid context window degradation in long sessions, never dump large raw source files into the main orchestration session.
-- **Explorer Agents for Reading**: When file inspection is genuinely necessary, delegate reading to dedicated `explore` subagents (1 file = 1 agent) to extract only the relevant signatures, AST nodes, and contracts.
-- **Parallel Multi-Tool Execution**: Never serialize independent tool calls turn-by-turn. When multiple files, checks, or tasks are known, dispatch all tool calls simultaneously in parallel (multi-tool calls all at once).
-- **Compiler & Test Grounding**: Rely on TypeScript static typecheck (`bun run typecheck`), AST validation (`clean_ts`), and test suites (`bun test`) to catch contract mismatches rather than manual reading loops.
-
-# YOU MUST FOLLOW THIS
-
-1. Pre-Implementation Intent Alignment
-
-Goal: Eliminate assumptions and enforce architectural synchronization.
-
-    Explicit State Declaration: Before writing code, state your understanding of the current system state and the specific "Delta" (change) intended.
-
-    The Ambiguity Halt: If a request allows for multiple valid implementation paths, stop. Present a MECE (Mutually Exclusive, Collectively Exhaustive) matrix of trade-offs and wait for selection.
-
-    Rational Pushback: If the requested approach creates technical debt or violates Ockham's Razor, you are required to propose a simpler alternative. Do not be a "yes-man" to suboptimal architecture.
-
-2. Deterministic Minimalism (YAGNI Protocol)
-
-Goal: Zero-speculation code with high functional density.
-
-    Speculation Zero: Implement strictly what is requested. Prohibit "future-proofing," unrequested configurability, or generic utility abstractions.
-
-    Functional Parsimony: Target the highest code-to-value ratio. If a solution can be implemented in 50 lines, a 200-line implementation is a failure. Refactor for density before outputting.
-
-    Negative Logic: Do not include error handling for impossible states or "just-in-case" catch-all blocks unless specifically instructed.
-
-3. Surgical Isolation & Structural Integrity
-
-Goal: Minimize diff noise and maintain pristine context.
-
-    Atomic Edits: Modify only the specific AST nodes or logic blocks necessary. Leave adjacent code, formatting, and comments strictly untouched (no "drive-by" refactoring).
-
-    Technical Mirroring: Match the existing file's style, paradigm, and "vibe" with 100% fidelity. Do not impose external preferences on local patterns.
-
-    Orphan Management: You are responsible for your own waste. Remove any variables, imports, or functions rendered obsolete exclusively by your changes. Leave pre-existing dead code alone.
-
-4. Verification-Led Execution (TDD for Agents)
-
-Goal: Close the loop between plan and proof.
-
-    Verification Mapping: Transform every task into a set of verifiable success criteria (e.g., "Feature X works" -> "Test case Y passes and log Z is emitted").
-
-    Deterministic Planning: For multi-stage tasks, provide a strict Plan->Verify checklist. Do not proceed to Step N+1 until Step N is verified via tool output or state check.
-
-    State-Driven Loops: If a verification step fails, perform a root-cause analysis and update the plan before retrying. "Trying again" without a plan change is prohibited.
-
-5. Environment & Tooling (TypeScript & Bun First)
-
-Goal: Enforce execution consistency and tool awareness.
-
-    Bun Protocol: LiteRouter is a Bun / TypeScript gateway. You MUST use `bun` for all gateway runtime executions, typechecking (`bun run typecheck`), benchmarks, and unit tests (`bun test`).
-
-    Python & UV Protocol: When executing Python tools, Python integration smoke tests (`uv run pytest tests/integration/`), or Python linters (`uv run ruff check .`), you MUST use `uv` (e.g., `uv run python ...`, `uv sync`). Never use naked `python` or `pip` commands.
-
-<!-- BEGIN BEADS INTEGRATION v:1 profile:full hash:19cc25d9 -->
-## Issue Tracking with bd (beads)
-
-**IMPORTANT**: This project uses **bd (beads)** for ALL issue tracking. Do NOT use markdown TODOs, task lists, or other tracking methods.
-
-### Why bd?
-
-- Dependency-aware: Track blockers and relationships between issues
-- Git-friendly: Dolt-powered version control with native sync
-- Agent-optimized: JSON output, ready work detection, discovered-from links
-- Prevents duplicate tracking systems and confusion
-
-### Quick Start
-
-**Check for ready work:**
-
+### Core CLI Workflow
 ```bash
-bd ready --json
+bd ready --json                                               # Find unblocked work
+bd create "Title" -t task -p 2 -d "..." --acceptance="..."    # Create task (--acceptance mandatory)
+bd update <id> --claim --json                                 # Claim task atomically
+bd close <id> --reason "Completed" --json                     # Complete task
+bd dolt push                                                  # Push Dolt database state to remote
 ```
 
-**Create new issues (Definition of Done is MANDATORY):**
+### Quality & Validation Enforcement
+- Strict creation enforcement active (`validation.on-create: error`). Required sections: `task`/`feature`: `--acceptance="..."`; `bug`: steps to reproduce in `-d` and `--acceptance`; `chore`: zero extra fields.
+- Emergency bailout if trapped in retry loop: `bd config set validation.on-create warn` (reset with `error`).
 
-```bash
-# Standard task or feature (must provide --acceptance)
-bd create "Issue title" -t task -p 2 \
-  -d "Detailed context" \
-  --acceptance="1. Test command passes\n2. Output artifact exists" --json
-
-# Discovered work linked to parent
-bd create "Issue title" -p 1 \
-  -d "What this issue is about" \
-  --acceptance="1. Regression test added\n2. Bug resolved" \
-  --deps discovered-from:bd-123 --json
-```
-
-**Claim and update:**
-
-```bash
-bd update <id> --claim --json
-bd update bd-42 --priority 1 --json
-```
-
-**Complete work:**
-
-```bash
-bd close bd-42 --reason "Completed" --json
-```
-
-### Issue Types
-
-- `bug` - Something broken
-- `feature` - New functionality
-- `task` - Work item (tests, docs, refactoring)
-- `epic` - Large feature with subtasks
-- `chore` - Maintenance (dependencies, tooling)
-
-### Priorities
-
-- `0` - Critical (security, data loss, broken builds)
-- `1` - High (major features, important bugs)
-- `2` - Medium (default, nice-to-have)
-- `3` - Low (polish, optimization)
-- `4` - Backlog (future ideas)
-
-### Workflow for AI Agents
-
-1. **Check ready work**: `bd ready` shows unblocked issues
-2. **Claim your task atomically**: `bd update <id> --claim`
-3. **Work on it**: Implement, test, document
-4. **Discover new work?** Create linked issue:
-   - `bd create "Found bug" --description="Details about what was found" -p 1 --deps discovered-from:<parent-id>`
-5. **Complete**: `bd close <id> --reason "Done"`
-
-### Quality & Validation Enforcement (Definition of Done)
-- **Hard Enforcement Active**: `validation.on-create: error` is enabled in `.beads/config.yaml`. Any `bd create` command missing required criteria will fail immediately with exit code 1.
-- **Required Sections Matrix**:
-  - `task` & `feature`: Requires `## Acceptance Criteria` (pass via `--acceptance="..."` flag or in markdown body).
-  - `bug`: Requires `## Steps to Reproduce` (in `--description`) AND `## Acceptance Criteria` (via `--acceptance`).
-  - `epic`: Requires `## Success Criteria` (pass via `--acceptance="..."` or in markdown body).
-  - `decision`: Requires `## Decision`, `## Rationale`, and `## Alternatives Considered` in markdown body.
-  - `chore`: No extra sections required (zero-friction maintenance).
-- **Emergency Bailout (Anti-Looping Hook)**:
-  If a non-Claude model or subagent gets trapped in an endless retry loop trying to create an issue without criteria, pull the hook immediately:
-  ```bash
-  # Soften to warning (allows creation, breaks the retry doom loop):
-  bd config set validation.on-create warn
-
-  # Re-enable strict enforcement once unstuck:
-  bd config set validation.on-create error
-  ```
-
-### Lifecycle
-- `bd defer <id>` / `bd supersede <id>` for issue management
-- `bd stale` / `bd orphans` / `bd lint` for hygiene
-- `bd human <id>` to flag for human decisions
-- `bd formula list` / `bd mol pour <name>` for structured workflows
-
-### Sync
-
-bd stores issue history in Dolt:
-
-- Each write auto-commits to Dolt history
-- Use `bd dolt push`/`bd dolt pull` for remote sync
-- Do not treat `.beads/issues.jsonl` as the sync protocol
-
-**Architecture in one line:** issues live in a local Dolt DB; sync uses `refs/dolt/data` on your git remote; `.beads/issues.jsonl` is a passive export. See https://github.com/gastownhall/beads/blob/main/docs/SYNC_CONCEPTS.md for details and anti-patterns.
-
-### Important Rules
-
-- ✅ Use bd for ALL task tracking
-- ✅ Always use `--json` flag for programmatic use
-- ✅ Link discovered work with `discovered-from` dependencies
-- ✅ Check `bd ready` before asking "what should I work on?"
-- ❌ Do NOT create markdown TODO lists
-- ❌ Do NOT use external issue trackers
-- ❌ Do NOT duplicate tracking systems
-
-For more details, see README.md and docs/QUICKSTART.md.
-
-## Agent Context Profiles
-
-The managed Beads block is task-tracking guidance, configured for mandatory auto-push in this repository.
-
-- **Team-maintainer (Active / Mandatory Push)**: All finished work must pass quality gates, commit changes, push beads state, and push git commits to remote (`git pull --rebase && bd dolt push && git push`). Work is NOT complete until `git push` succeeds.
-- **Conservative / Minimal**: Overridden by active repository policy. Agents must push upon task completion.
-
-## Session Completion
-
-When ending a work session, you MUST complete ALL steps below. Work is NOT complete until `git push` succeeds.
-
-1. **File issues for remaining work** - Create beads for anything that needs follow-up (always with `--acceptance="..."`)
-2. **Run quality gates** (if code changed) - `bun run typecheck`, `bun test`, `uv run pytest tests/integration/`
-3. **Update issue status** - Close finished work (`bd close <id> --reason "..."`), update in-progress items
+### Session Completion (Mandatory Auto-Push Protocol)
+Work is **NOT complete** until `git push` succeeds. Never stop before pushing.
+1. **File remaining work**: Create beads for follow-up work with `--acceptance="..."`.
+2. **Run quality gates**: `bun run typecheck && bun test:gateway && uv run pytest tests/integration/`.
+3. **Close finished issues**: `bd close <id> --reason "Completed"`.
 4. **PUSH TO REMOTE (MANDATORY)**:
    ```bash
-   git pull --rebase
-   bd dolt push
-   git push
+   git pull --rebase && bd dolt push && git push
    ```
-5. **Hand off** - Summarize changes, validation, issue status, and confirm successful push.
-
-**CRITICAL RULES:**
-- Work is NOT complete until `git push` succeeds.
-- NEVER stop before pushing - that leaves work stranded locally.
-- NEVER say "ready to push when you are" - YOU must push.
-- If push fails, resolve and retry until it succeeds.
-
+5. **Handoff**: Report changed files, validation evidence, issue status, and confirm successful push.
 <!-- END BEADS INTEGRATION -->
