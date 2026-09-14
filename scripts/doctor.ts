@@ -368,9 +368,42 @@ async function probePoolSequential(
   return results;
 }
 
-async function runDoctor(): Promise<void> {
+export interface DoctorOptions {
+  readonly full?: boolean;
+  readonly sampleLimit?: number;
+  readonly provider?: "gg" | "nv" | "or" | "zn" | "gc" | null;
+}
+
+export async function runDoctor(options?: DoctorOptions): Promise<void> {
+  const rawArgs = process.argv.slice(2).map((a) => a.toLowerCase().replace(/^--?/, ""));
+  let targetProvider: "gg" | "nv" | "or" | "zn" | "gc" | null = options?.provider ?? null;
+  let cliFull = options?.full ?? false;
+  let cliSampleLimit = options?.sampleLimit;
+
+  for (const arg of rawArgs) {
+    if (arg === "full" || arg === "f" || arg === "all") {
+      cliFull = true;
+      continue;
+    }
+    if (arg.startsWith("sample=") || arg.startsWith("limit=")) {
+      const parsed = parseInt(arg.split("=")[1] ?? "", 10);
+      if (!Number.isNaN(parsed) && parsed > 0) cliSampleLimit = parsed;
+      continue;
+    }
+    const clean = (arg.startsWith("provider=") ? arg.split("=")[1] : arg) ?? "";
+    if (["gg", "google", "gemini"].includes(clean)) targetProvider = "gg";
+    else if (["nv", "nvidia", "nim"].includes(clean)) targetProvider = "nv";
+    else if (["or", "openrouter"].includes(clean)) targetProvider = "or";
+    else if (["zn", "zen"].includes(clean)) targetProvider = "zn";
+    else if (["gc", "gcp", "gemma"].includes(clean)) targetProvider = "gc";
+  }
+
+  const isFull = cliFull;
+  const sampleLimit = cliSampleLimit ?? 2;
+  const bannerMode = isFull ? "[FULL AUDIT]" : `[FAST SAMPLE: max ${sampleLimit}/provider]`;
+
   console.log("================================================================================");
-  console.log("🩺 LITEROUTER DIAGNOSTIC DOCTOR [NON-BLOCKING]");
+  console.log(`🩺 LITEROUTER DIAGNOSTIC DOCTOR ${bannerMode}`);
   console.log("================================================================================");
 
   checkFile(".env", false);
@@ -395,69 +428,81 @@ async function runDoctor(): Promise<void> {
 
   console.log("\n--- [2/2] Upstream API Key Health Probes (1s delay between keys) ---");
 
-  const rawArgs = process.argv.slice(2).map((a) => a.toLowerCase().replace(/^--?/, ""));
-  let targetProvider: "gg" | "nv" | "or" | "zn" | "gc" | null = null;
-  for (const arg of rawArgs) {
-    const clean = (arg.startsWith("provider=") ? arg.split("=")[1] : arg) ?? "";
-    if (["gg", "google", "gemini"].includes(clean)) targetProvider = "gg";
-    else if (["nv", "nvidia", "nim"].includes(clean)) targetProvider = "nv";
-    else if (["or", "openrouter"].includes(clean)) targetProvider = "or";
-    else if (["zn", "zen"].includes(clean)) targetProvider = "zn";
-    else if (["gc", "gcp", "gemma"].includes(clean)) targetProvider = "gc";
+  function selectKeys(allKeys: readonly string[]): { keys: readonly string[]; isSampled: boolean; total: number } {
+    const total = allKeys.length;
+    if (isFull || total <= sampleLimit) {
+      return { keys: allKeys, isSampled: false, total };
+    }
+    return { keys: allKeys.slice(0, sampleLimit), isSampled: true, total };
   }
 
   const probeResults: ProbeResult[] = [];
 
-  const googleKeys = pools.get("gg") ?? [];
+  const googleSelection = selectKeys(pools.get("gg") ?? []);
   if (targetProvider && targetProvider !== "gg") {
     console.log("\n[Google (Gemini 3.5 Flash Lite)] ⏭️ Skipped (filter active).");
-  } else if (googleKeys.length > 0) {
-    console.log(`\n[Google (Gemini 3.5 Flash Lite)] Probing ${googleKeys.length} key(s)...`);
-    const res = await probePoolSequential("Google (Gemini 3.5 Flash Lite)", googleKeys, probeGoogleKey, 1000);
+  } else if (googleSelection.keys.length > 0) {
+    const probeMsg = googleSelection.isSampled
+      ? `Probing ${googleSelection.keys.length} of ${googleSelection.total} key(s) (sample mode, max ${sampleLimit})...`
+      : `Probing ${googleSelection.keys.length} key(s)...`;
+    console.log(`\n[Google (Gemini 3.5 Flash Lite)] ${probeMsg}`);
+    const res = await probePoolSequential("Google (Gemini 3.5 Flash Lite)", googleSelection.keys, probeGoogleKey, 1000);
     probeResults.push(...res);
   } else {
     console.log("\n[Google (Gemini 3.5 Flash Lite)] ⏭️ Skipped: No keys configured.");
   }
 
-  const nvidiaKeys = pools.get("nv") ?? [];
+  const nvidiaSelection = selectKeys(pools.get("nv") ?? []);
   if (targetProvider && targetProvider !== "nv") {
     console.log("\n[NVIDIA NIM] ⏭️ Skipped (filter active).");
-  } else if (nvidiaKeys.length > 0) {
-    console.log(`\n[NVIDIA NIM] Probing ${nvidiaKeys.length} key(s)...`);
-    const res = await probePoolSequential("NVIDIA NIM", nvidiaKeys, probeNvidiaKey, 1000);
+  } else if (nvidiaSelection.keys.length > 0) {
+    const probeMsg = nvidiaSelection.isSampled
+      ? `Probing ${nvidiaSelection.keys.length} of ${nvidiaSelection.total} key(s) (sample mode, max ${sampleLimit})...`
+      : `Probing ${nvidiaSelection.keys.length} key(s)...`;
+    console.log(`\n[NVIDIA NIM] ${probeMsg}`);
+    const res = await probePoolSequential("NVIDIA NIM", nvidiaSelection.keys, probeNvidiaKey, 1000);
     probeResults.push(...res);
   } else {
     console.log("\n[NVIDIA NIM] ⏭️ Skipped: No keys configured.");
   }
 
-  const openrouterKeys = pools.get("or") ?? [];
+  const openrouterSelection = selectKeys(pools.get("or") ?? []);
   if (targetProvider && targetProvider !== "or") {
     console.log("\n[OpenRouter] ⏭️ Skipped (filter active).");
-  } else if (openrouterKeys.length > 0) {
-    console.log(`\n[OpenRouter] Probing ${openrouterKeys.length} key(s)...`);
-    const res = await probePoolSequential("OpenRouter", openrouterKeys, probeOpenrouterKey, 1000);
+  } else if (openrouterSelection.keys.length > 0) {
+    const probeMsg = openrouterSelection.isSampled
+      ? `Probing ${openrouterSelection.keys.length} of ${openrouterSelection.total} key(s) (sample mode, max ${sampleLimit})...`
+      : `Probing ${openrouterSelection.keys.length} key(s)...`;
+    console.log(`\n[OpenRouter] ${probeMsg}`);
+    const res = await probePoolSequential("OpenRouter", openrouterSelection.keys, probeOpenrouterKey, 1000);
     probeResults.push(...res);
   } else {
     console.log("\n[OpenRouter] ⏭️ Skipped: No keys configured.");
   }
 
-  const zenKeys = pools.get("zn") ?? [];
+  const zenSelection = selectKeys(pools.get("zn") ?? []);
   if (targetProvider && targetProvider !== "zn") {
     console.log("\n[Zen] ⏭️ Skipped (filter active).");
-  } else if (zenKeys.length > 0) {
-    console.log(`\n[Zen] Probing ${zenKeys.length} key(s)...`);
-    const res = await probePoolSequential("Zen", zenKeys, probeZenKeyWithFreshSession, 1000);
+  } else if (zenSelection.keys.length > 0) {
+    const probeMsg = zenSelection.isSampled
+      ? `Probing ${zenSelection.keys.length} of ${zenSelection.total} key(s) (sample mode, max ${sampleLimit})...`
+      : `Probing ${zenSelection.keys.length} key(s)...`;
+    console.log(`\n[Zen] ${probeMsg}`);
+    const res = await probePoolSequential("Zen", zenSelection.keys, probeZenKeyWithFreshSession, 1000);
     probeResults.push(...res);
   } else {
     console.log("\n[Zen] ⏭️ Skipped: No keys configured.");
   }
 
-  const gcpKeys = pools.get("gc") ?? [];
+  const gcpSelection = selectKeys(pools.get("gc") ?? []);
   if (targetProvider && targetProvider !== "gc") {
     console.log("\n[GCP (Gemma)] ⏭️ Skipped (filter active).");
-  } else if (gcpKeys.length > 0) {
-    console.log(`\n[GCP (Gemma)] Probing ${gcpKeys.length} key(s)...`);
-    const res = await probePoolSequential("GCP (Gemma)", gcpKeys, probeGcpKey, 1000);
+  } else if (gcpSelection.keys.length > 0) {
+    const probeMsg = gcpSelection.isSampled
+      ? `Probing ${gcpSelection.keys.length} of ${gcpSelection.total} key(s) (sample mode, max ${sampleLimit})...`
+      : `Probing ${gcpSelection.keys.length} key(s)...`;
+    console.log(`\n[GCP (Gemma)] ${probeMsg}`);
+    const res = await probePoolSequential("GCP (Gemma)", gcpSelection.keys, probeGcpKey, 1000);
     probeResults.push(...res);
   } else {
     console.log("\n[GCP (Gemma)] ⏭️ Skipped: No keys configured.");
@@ -479,9 +524,13 @@ async function runDoctor(): Promise<void> {
   } else {
     console.log("- Key Probes:    0 probed");
   }
+  if (!isFull) {
+    console.log(`- Mode:          Sample mode (max ${sampleLimit} keys/provider).`);
+    console.log("                 For exhaustive audit of all keys, run: bun run scripts/doctor_full.ts (or --full)");
+  }
   console.log("================================================================================");
 }
 
 if (import.meta.main) {
-  runDoctor();
+  await runDoctor();
 }

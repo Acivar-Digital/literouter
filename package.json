@@ -16,6 +16,7 @@
     "test:failures": "bun test --only-failures",
     "typecheck": "tsc --noEmit",
     "doctor": "bun run scripts/doctor.ts",
+    "doctor:full": "bun run scripts/doctor_full.ts",
     "flush": "bun run scripts/flush.ts",
     "guardrail": "bun run scripts/guardrail.ts"
   },

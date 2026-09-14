@@ -5,6 +5,11 @@ All notable changes to LiteRouter will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- **Fast Diagnostic Doctor & Key Stratification (`scripts/doctor.ts`, `scripts/doctor_full.ts`, `package.json`)**:
+  - **Stratified Sample Probing**: By default, `bun run scripts/doctor.ts` now probes at most 2 keys per configured provider (`sampleLimit = 2`), reducing diagnostic health probe latency across large key pools from minutes down to ~5-8 seconds while preventing key quota waste and 429 rate limit cooldowns during development cycles.
+  - **Exhaustive Key Audit (`scripts/doctor_full.ts` & `--full`)**: Added `scripts/doctor_full.ts` and `--full` flag (`bun run scripts/doctor.ts --full` / `bun run doctor:full`) for running exhaustive, un-sampled key probes across all keys in all provider pools.
+  - **Provider Filtering**: Preserved targeted provider probe filtering across both modes (e.g. `bun run scripts/doctor.ts zn`, `bun run scripts/doctor_full.ts nv`).
+
 - **Accelerated Parallel Test Runner & OpenCode2 Native Tool (`scripts/test_runner.ts`, `.opencode2/plugins/`)**:
   - **Domain-Partitioned Parallel Execution**: Partitioned 938+ gateway unit tests across 7 isolated domains (`handlers`, `network`, `stream`, `engine`, `telemetry`, `core`, `eval`), executing concurrently in child worker subprocesses via `scripts/test_runner.ts` (`bun test` / `bun test:lr`).
   - **Anti-Context-Bloat Pass Suppression**: Automatically suppresses all passing test noise, capturing process outputs silently and printing a single-line summary with timing and pass counts upon success. Failures are cleanly isolated and surfaced without terminal truncation.
