@@ -7,7 +7,9 @@
   "scripts": {
     "start": "bun run src/index.ts",
     "dev": "bun --watch src/index.ts",
-    "test": "bun test",
+    "test": "bun run scripts/test_runner.ts",
+    "test:lr": "bun run scripts/test_runner.ts",
+    "test:raw": "bun test",
     "test:gateway": "bun test tests/unit",
     "test:eval": "bun test tests/eval",
     "test:legacy": "bun test tests/unit/legacy",

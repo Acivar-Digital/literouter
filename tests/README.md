@@ -6,82 +6,222 @@ Comprehensive automated test architecture, hermetic validation framework, and in
 
 ---
 
-## 1. Executive Overview & Architecture
+## 1. Executive Overview & Test Architecture
 
-LiteRouter v4.1 employs a multi-tiered test matrix designed for maximum execution speed, zero external quota consumption, and deterministic state isolation. The suite exercises:
-- The **v4.1 Unified Engine** (`src/engine/dispatch.ts`, `src/transformers/`, `src/handlers/v4/`).
-- The **Legacy Dual-Path Fallback** (`src/handlers/legacy/`, `src/network/h2_pool.ts`).
-- The **Benchmark Grader Harness** (`eval/stages/`, `eval/graders/`).
-- The **Integration & Downstream Agent Gauntlet** (OpenCode 2, Claude Code CLI, Pydantic AI).
+LiteRouter v4.1 employs an accelerated, multi-tiered test matrix designed for sub-second developer iteration, deterministic state isolation, and zero external quota consumption. The test runner architecture decouples the test suite into:
+
+1. **Accelerated Domain Runner (`scripts/test_runner.ts`)**: The default engine for `bun test` and `bun run test:lr`. Slices the test suite into 8 discrete domains and executes them concurrently across isolated subprocesses via `Bun.spawn`.
+2. **Hermetic Unit Test Matrix (`tests/unit/`)**: Over 900 gateway unit tests exercising the v4.1 Unified Engine (`dispatch.ts`), streaming transformers, RequestPacer, CooldownManager, telemetry, and legacy fallback handlers.
+3. **Benchmark Eval Grader Harness (`tests/eval/`)**: 182 grading tests evaluating AST patchers, Pydantic graders, prompt injection vetoes, and DOM web evaluators using hermetic mock doubles.
+4. **Integration & Downstream Agent Gauntlet (`tests/integration/`)**: Pytest integration harness validating v4 vs legacy A/B parity, ephemeral gateway lifecycles, and downstream developer tools (OpenCode 2, Claude Code CLI, Pydantic AI).
 
 ```
-                            ┌──────────────────────────────────────────────┐
-                            │             tests/ Test Suites               │
-                            └──────────────────────┬───────────────────────┘
-                                                   │
-         ┌─────────────────────────┬───────────────┴───────────────┬─────────────────────────┐
-         ▼                         ▼                               ▼                         ▼
-  tests/unit/                tests/eval/                  tests/integration/           tests/smoke/
-(938 Tests, ~15s)          (182 Tests, ~44ms)             (28 Pytest Items)         (Liveness Probes)
-  ├─ Engine Dispatch         ├─ AST Patch Grader            ├─ v4 A/B Parity          └─ health_probe.test.ts
-  ├─ Transformers            ├─ Pydantic Grader             ├─ Downstream Gauntlet
-  ├─ Telemetry/Tracing       ├─ Security Injection Grader   ├─ Cooldown / Breaker
-  ├─ Request Pacer           ├─ DOM/Web Evaluators          └─ Dots XML Cross-Wire
-  └─ legacy/ (179 tests)     └─ (Hermetic mocks only)
+                             ┌────────────────────────────────────────────────────────┐
+                             │       LiteRouter Test Matrix (Bun & Python)            │
+                             └───────────────────────────┬────────────────────────────┘
+                                                         │
+         ┌───────────────────────────────────────────────┼───────────────────────────────────────────────┐
+         ▼                                               ▼                                               ▼
+┌─────────────────────────────────┐             ┌─────────────────────────────────┐             ┌─────────────────────────────────┐
+│     Accelerated Domain Runner   │             │       Evaluation Graders        │             │       Integration Gauntlet      │
+│     (scripts/test_runner.ts)    │             │          (tests/eval/)          │             │       (tests/integration/)      │
+├─────────────────────────────────┤             ├─────────────────────────────────┤             ├─────────────────────────────────┤
+│ • 8 Isolated Domains            │             │ • 182 Grader Tests (~60ms)      │             │ • 28 Pytest Items (~11s)        │
+│ • Parallel Bun.spawn Subprocs   │             │ • AST Patch Grader              │             │ • v4 A/B Parity Verification    │
+│ • Zero Context Bloat Filtering  │             │ • Pydantic Contract Grader      │             │ • Downstream Tool Gauntlet      │
+│ • Single-Line Pass Summaries    │             │ • Prompt Injection Defense      │             │ • Dots XML Cross-Wire E2E       │
+│ • Surgical Failure Extraction   │             │ • Mock Doubles Only             │             │ • Ephemeral Gateway Lifecycle   │
+└─────────────────────────────────┘             └─────────────────────────────────┘             └─────────────────────────────────┘
 ```
 
 ---
 
-## 2. Directory Map & Suite Matrix
+## 2. Accelerated Domain Test Runner (`scripts/test_runner.ts`)
 
-| Directory | Primary Runner | Test Count | Scope & Coverage | Speed |
-|---|---|---|---|---|
-| [`tests/unit/`](./unit/README.md) | `bun run test:gateway` | **938 tests** | Core v4.1 engine dispatch, payload transformers (`oa`, `cl`, `gg`, `oo`, `ao`), directive parser, telemetry ring-buffer, trace writer, RequestPacer, and CooldownManager. Includes legacy fallback tests. | ~15s full / <250ms engine |
-| [`tests/eval/`](./eval/README.md) | `bun run test:eval` | **182 tests** | Unit tests for the benchmark eval harness (`eval/`). Validates AST patchers, Pydantic graders, prompt injection vetoes, and web DOM scoring using hermetic mock doubles. | ~44ms |
-| [`tests/unit/legacy/`](./unit/legacy/README.md) | `bun run test:legacy` | **179 tests** | Dual-path backward compatibility tests. Verifies monolithic legacy handlers (`openai_compat`, `google_native_fusion`), HTTP/2 multiplex pool, and legacy parsers. | ~7s |
-| [`tests/integration/`](./integration/README.md) | `uv run pytest tests/integration/` | **28 items** | Pytest integration tests, v4 vs legacy A/B parity, ephemeral gateway lifecycle, downstream tool gauntlet (OpenCode 2, Claude Code CLI, Pydantic AI), and Dots XML cross-wire. | ~11s |
-| `tests/smoke/` | `bun test tests/smoke` | **3 tests** | Gateway health probe, liveness verification, and startup assertions. | <100ms |
-| `tests/fixtures/` | *Static Artifacts* | N/A | Golden stream recordings (`mock_openai_stream.txt`, `mock_anthropic_stream.txt`, `mock_dots_xml_stream.txt`, `mock_gemini_thought_sig.json`). | N/A |
+LiteRouter routes primary accelerated test execution through `scripts/test_runner.ts`. Running `bun run test` or `bun run test:lr` invokes this runner rather than raw sequential test runs. Note that running naked `bun test` invokes Bun's built-in test runner directly, whereas `bun run test` and `bun run test:lr` execute the domain-partitioned runner.
 
----
+### Why Accelerated Domain Execution?
+- **Speed via Concurrency**: Spawns multiple parallel `bun test` child processes partitioned across distinct architectural domains, utilizing all available CPU cores.
+- **State Isolation**: Subprocesses execute in isolated memory spaces, preventing singleton state bleed (`pacerRegistry`, `globalCooldownManager`, `KeyPool`) across disparate domains.
+- **Anti-Bloat Output Filtering**: Suppresses thousands of lines of passing logs, runtime emojis, and banners. Emits a clean one-line pass summary or concise, surgical diffs on failure.
 
-## 3. Quick Command Matrix
+### The 8 Test Domains
 
-| Command | Target Suite | Description & Best Use Case |
+The test runner automatically categorizes tests into 8 domains via `categorizeTests()`:
+
+| Domain | Target Path / Tests Included | Focus Area |
 |---|---|---|
-| `bun run test:gateway` | `tests/unit/` | **Default for core development**. Runs 938 gateway tests without noisy benchmark evaluation banners. |
-| `bun run test:failures` | Full Suite | **Anti-bloat runner** (`bun test --only-failures`). Executes the entire suite but prints output **only** for failing tests. |
-| `bun run test:eval` | `tests/eval/` | Runs 182 benchmark grader unit tests in ~44ms. Tests evaluation logic without making live model calls. |
-| `bun run test:legacy` | `tests/unit/legacy/` | Runs 179 dual-path fallback tests to ensure backward compatibility for `LITEROUTER_ENGINE=legacy`. |
-| `bun test` | Full Suite | Runs all 1,180 TypeScript unit and eval tests across 97 files. |
-| `uv run pytest tests/integration/` | `tests/integration/` | Runs hermetic Python integration tests, downstream agent gauntlet, and A/B parity suite. |
-| `bun run typecheck` | Whole Project | Static TypeScript typecheck (`tsc --noEmit`). Must report zero errors. |
+| **`handlers`** | `tests/unit/handlers/` | HTTP endpoint adapters, protocol routing, route dispatchers (`openai_compat`, `anthropic_compat`, `google_native_fusion`). |
+| **`network`** | `tests/unit/network/`, `pacer.test.ts`, `cooldown.test.ts`, `pool.test.ts`, `fetcher.test.ts`, `pacer_cooldown_integration.test.ts`, `gcp_pacer_conveyor.test.ts` | RequestPacer conveyor belts, CooldownManager 429 quarantines, HTTP/2 multiplex connection pools, and fetcher resilience. |
+| **`stream`** | `tests/unit/transformers/`, `midstream_retry.test.ts`, `safe_close.test.ts`, `tool_call_stream_regression.test.ts`, `responses_transformer.test.ts`, `thinking_transformer.test.ts`, `thought_signature.test.ts`, `gemma_transformer.test.ts`, `ling_transformer.test.ts`, `dots_*.test.ts`, `gold_xml_*.test.ts`, `test_*xml*.test.ts` | Streaming transformers (`oa`, `cl`, `gg`, `oo`, `ao`), SSE line splitters, thinking tag wrappers, XML stream reconstruction, mid-stream retry, socket aborts. |
+| **`engine`** | `tests/unit/engine/`, `engine_dual_path.test.ts` | Unified engine dispatch (`src/engine/dispatch.ts`), fallback cascades, dual-path resolution (`LITEROUTER_ENGINE=v4\|legacy`). |
+| **`telemetry`** | `tests/unit/telemetry/`, `visual_telemetry.test.ts` | Ring-buffer telemetry storage, trace recorders, visual metrics formatters, latency tracking. |
+| **`legacy`** | `tests/unit/legacy/` | Monolithic legacy handlers, legacy parsers, and backward-compatibility regressions. |
+| **`core`** | All other `tests/unit/*.test.ts` (e.g. `directive_parser.test.ts`, `model_presets.test.ts`, `auth.test.ts`) | Auth verification, directive parsing, API key rotation pools, configuration loaders, system utilities. |
+| **`eval`** | `tests/eval/` | Benchmark evaluation suite, AST patchers, Pydantic graders, DOM evaluators, prompt injection validators. |
+
+### Parallel Subprocess Execution via `Bun.spawn`
+
+When executed without domain arguments, the runner resolves the 7 unit domains (`UNIT_DOMAINS`) and launches parallel child processes:
+
+```typescript
+const proc = Bun.spawn(["bun", "test", ...target.files], {
+  stdout: "pipe",
+  stderr: "pipe",
+  env: process.env,
+});
+
+const [stdout, stderr, exitCode] = await Promise.all([
+  new Response(proc.stdout).text(),
+  new Response(proc.stderr).text(),
+  proc.exited,
+]);
+```
+
+All domains run simultaneously. Results are gathered with `Promise.all`, aggregated, and reported in a unified summary upon completion.
 
 ---
 
-## 4. Developer & AI Agent Workflow Guidance
+## 3. Targeted Subcommands for Fast Iteration
 
-### Preventing LLM Context Bloat & Silent Truncation
-Running blanket `bun test` outputs over **1,100 lines of streaming logs and test passes**. In LLM harness environments (OpenCode, Claude Code, Antigravity), massive terminal output causes **context window bloat** and **silent truncation**, hiding critical stack traces and failure root causes.
+Rather than running the full test suite during active development, agents and developers can target individual domains directly via subcommands:
 
-#### 🟢 The Recommended Agent Workflow:
-1. **Target your active subsystem**:
-   - Modifying engine dispatch or transformers? Run `bun test tests/unit/engine/` (<2s).
-   - Modifying directive parsing or keys? Run `bun test tests/unit/directive_parser.test.ts`.
-   - Modifying telemetry? Run `bun test tests/unit/telemetry/`.
-2. **Pre-commit verification**:
-   - Run `bun run test:gateway` to verify all 938 gateway tests.
-   - Run `bun run test:eval` to verify all 182 eval grader tests.
-   - Run `bun run test:failures` if you suspect a regression elsewhere in the repository.
-3. **Full Suite Log Redirection**:
-   If executing the full suite is required for GoLive evidence, redirect stdout to prevent context explosion:
-   ```bash
-   bun test > /tmp/test.log 2>&1 && echo "Suite passed cleanly: exit code $?" || tail -n 50 /tmp/test.log
-   ```
+```bash
+# Run only network domain tests (pacer, cooldown, pools, fetcher)
+bun run test:lr network
+
+# Run only stream transformer and SSE tests
+bun run test:lr stream
+
+# Run only handler tests
+bun run test:lr handlers
+
+# Run only engine dispatch tests
+bun run test:lr engine
+
+# Run only telemetry tests
+bun run test:lr telemetry
+
+# Run only core tests (auth, keys, directives)
+bun run test:lr core
+
+# Run only legacy fallback tests
+bun run test:lr legacy
+
+# Run evaluation grader tests
+bun run test:lr eval
+```
+
+### Filtering Within Domains or by Pattern
+The runner accepts secondary filter arguments or direct pattern matches:
+
+```bash
+# Target only the pacer test within the network domain
+bun run test:lr network pacer
+
+# Target any test matching "directive" across all domains
+bun run test:lr directive
+
+# Run silent mode (suppresses pass summary in scripts)
+bun run test:lr network --silent
+```
 
 ---
 
-## 5. Hermetic Air-Gap Barrier (`tests/preload.ts`)
+## 4. Zero Context Bloat Architecture
+
+Terminal output pollution is a critical failure mode in agentic development environments (OpenCode, Claude Code, Antigravity IDE). Running raw test runners dumps thousands of lines of passing assertions, banners, and server logs, exhausting LLM context windows and triggering silent truncation.
+
+### Pass Suppression
+When tests pass, all stdout and stderr from child processes are completely suppressed. The runner emits a single clean summary line:
+
+```text
+✓ All tests passed (1170 tests across 7 domains in 18.26s)
+```
+
+### Surgical Failure Extraction (`extractFailureOutput`)
+When a test fails, passing output from successful domains remains suppressed. For the failing domain, `extractFailureOutput()` strips:
+- Passing test assertions (`(pass) ...`)
+- Server runtime emojis (`🔄`, `🟢`, `🏁`, `⚡`, `⚠️`, `🎯`, `🤖`, `🔵`)
+- Bun test version headers (`bun test v...`)
+- Generic test file summaries
+
+Only the failing test title, expectation diff (expected vs received), and the relevant stack trace are surfaced:
+
+```text
+✗ Tests failed: 1 failed, 1169 passed across 7 domains in 17.84s
+
+--- [stream] Failure ---
+(fail) Stream Transformer > preserves thought blocks in reasoning stream
+  expect(received).toEqual(expected)
+  - Expected: "<thought>Analyzing prompt...</thought>"
+  + Received: ""
+    at tests/unit/transformers/thinking_transformer.test.ts:42:12
+```
+
+---
+
+## 5. Unbuffered Raw Fallback (`bun run test:raw`)
+
+When debugging low-level Bun runtime behavior, test harness crashes, or when interactive unbuffered output is required, use the unbuffered fallback:
+
+```bash
+# Native bun test run across all tests (unbuffered, no domain slicing)
+bun run test:raw
+
+# Raw run targeting a specific test file
+bun run test:raw tests/unit/directive_parser.test.ts
+
+# Raw run with native Bun flags
+bun run test:raw --bail --timeout 10000
+```
+
+`bun run test:raw` executes native `bun test` directly without going through `scripts/test_runner.ts`.
+
+---
+
+## 6. Python Integration Suite (`tests/integration/`)
+
+LiteRouter maintains an end-to-end integration test suite using Python and `pytest`. This suite validates live HTTP interactions against the running gateway (or an ephemeral mock instance) and asserts downstream compatibility.
+
+```bash
+# Run the complete integration test suite
+uv run pytest tests/integration/
+
+# Run specific integration categories
+uv run pytest tests/integration/test_v4_ab_parity.py        # v4 vs Legacy A/B parity
+uv run pytest tests/integration/test_downstream_gauntlet.py # Agent tool calls (OpenCode, Claude, Pydantic)
+uv run pytest tests/integration/test_dots_transformer_e2e.py # XML & thinking tag transformations
+```
+
+### Scope & Coverage:
+1. **v4 vs Legacy Parity (`test_v4_ab_parity.py`)**: Confirms payload and response equivalence between the v4 Unified Engine and the legacy monolithic handlers.
+2. **Downstream Agent Gauntlet (`test_downstream_gauntlet.py`)**: Asserts that LiteRouter seamlessly handles payloads generated by real AI agent clients:
+   - **OpenCode 2**: Reasoning tokens, tool-calling schemas, SSE chunk handling.
+   - **Claude Code CLI**: Messages API conversion, Anthropic thinking blocks, stream reconnects.
+   - **Pydantic AI**: Structured output schemas, validation error recovery, function calls.
+3. **Dots XML Cross-Wire (`test_dots_transformer_e2e.py`)**: Tests raw XML and pseudo-tool call translation across models.
+4. **Provider Matrices (`tests/integration/matrices/`)**: Matrix validation for Nemo, Google, and OpenRouter endpoints.
+
+---
+
+## 7. Command Reference Matrix
+
+| Command | Target Suite | Description & Best Use Case | Output Profile |
+|---|---|---|---|
+| `bun run test` / `bun run test:lr` | All 7 Unit Domains | **Default fast runner**. Runs 1,100+ tests across domains in parallel subprocesses. | Single-line pass summary; failure diffs only. |
+| `bun run test:lr <domain>` | Single Domain | **Targeted iteration**. Runs only the specified domain (`handlers`, `network`, `stream`, etc.). | Single-line pass summary; failure diffs only. |
+| `bun run test:raw` | Full Suite (Native) | **Unbuffered fallback**. Native `bun test` without domain runner wrapper or output suppression. | Full unbuffered Bun test logs. |
+| `bun run test:gateway` | `tests/unit/` | Direct Bun test invocation of the entire gateway unit test directory. | Standard Bun test output. |
+| `bun run test:failures` | Full Suite | Anti-bloat raw runner (`bun test --only-failures`). | Only failing tests shown. |
+| `bun run test:eval` | `tests/eval/` | Benchmark grader unit tests (182 tests in ~60ms). | Standard Bun test output. |
+| `bun run test:legacy` | `tests/unit/legacy/` | Legacy dual-path backward-compatibility tests (179 tests). | Standard Bun test output. |
+| `uv run pytest tests/integration/` | `tests/integration/` | Python integration suite, downstream agent gauntlet, and A/B parity. | Standard Pytest output. |
+| `bun run typecheck` | Whole Project | Static TypeScript typecheck (`tsc --noEmit`). | Zero errors required. |
+
+---
+
+## 8. Hermetic Air-Gap Barrier (`tests/preload.ts`)
 
 LiteRouter enforces a zero-cost, hermetic air-gap barrier during all automated test executions. Configured via `bunfig.toml` (`preload = ["./tests/preload.ts"]`), the barrier guarantees:
 
@@ -95,7 +235,7 @@ LiteRouter enforces a zero-cost, hermetic air-gap barrier during all automated t
 
 ---
 
-## 6. Test Simulation Transparency Banners
+## 9. Test Simulation Transparency Banners
 
 When tests intentionally inject failure conditions (HTTP 429 rate limits, HTTP 500 server crashes, circuit breaker trips, mid-stream socket aborts), the test **MUST** emit a transparency banner before triggering the failure:
 
@@ -109,7 +249,7 @@ This prevents developers and automated diagnostic monitors from misinterpreting 
 
 ---
 
-## 7. State Teardown & Anti-Flake Symmetry
+## 10. State Teardown & Anti-Flake Symmetry
 
 LiteRouter gateway components use singleton registries (`globalKeyPool`, `globalCooldownManager`, `pacerRegistry`, `circuitBreakers`, `h2_pool`). To guarantee zero cross-test state leakage:
 
@@ -140,16 +280,17 @@ LiteRouter gateway components use singleton registries (`globalKeyPool`, `global
 
 ---
 
-## 8. Rate Limiting & Pacing Architecture (v4.1)
+## 11. Rate Limiting & Pacing Architecture (v4.1)
 
 - **Zdist Formally Retired**: Preemptive client-side sliding-window rate tracking (`RateLimitTracker` / `zdist.ts`) was retired in v4.1 (see `docs/GRAVEYARD/ZDIST.md`). Upstream LLM rate limits behave as dynamic leaky buckets with clock drift, making local preemptive tracking brittle and counterproductive.
 - **Active Architecture**: Replaced by deterministic **RequestPacer** (`src/network/pacer.ts` spacing ingress requests by `min_delay_ms`) to smooth burst traffic, paired with **CooldownManager** (`src/network/cooldown.ts` reactive 429 quarantine with `Retry-After` header extraction and fallback TTL). Tested extensively in `tests/unit/pacer.test.ts` and `tests/unit/cooldown.test.ts`.
 
 ---
 
-## 9. Full Quality Gate Pipeline
+## 12. Full Quality Gate Pipeline
 
 Before marking any task complete or submitting code changes:
+
 ```bash
 # 1. Typecheck (Zero errors required)
 bun run typecheck
@@ -157,8 +298,8 @@ bun run typecheck
 # 2. Python Linting (Integration test hygiene)
 uv run ruff check .
 
-# 3. Fast Gateway Tests (938 tests)
-bun run test:gateway
+# 3. Accelerated Gateway Tests (1,100+ tests across parallel domains)
+bun test
 
 # 4. Evaluation Grader Tests (182 tests)
 bun run test:eval

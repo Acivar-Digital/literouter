@@ -19,6 +19,9 @@ describe("Index Ingress Pacer Dynamic Configuration (literouter-xkuv)", () => {
       async () => ({ queueDwellMs: 0, release: () => {} })
     );
 
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = (async () => new Response(JSON.stringify({ error: "mock" }), { status: 401 })) as unknown as typeof fetch;
+
     const req = new Request("http://localhost:7766/v1/chat/completions", {
       method: "POST",
       headers: {
@@ -36,6 +39,8 @@ describe("Index Ingress Pacer Dynamic Configuration (literouter-xkuv)", () => {
     } catch (err: unknown) {
       // Upstream mock error is expected; we only verify ingress pacer acquisition
       expect(err).toBeDefined();
+    } finally {
+      globalThis.fetch = origFetch;
     }
 
     expect(acquireSpy).toHaveBeenCalled();
@@ -94,10 +99,15 @@ describe("Index Ingress Pacer Dynamic Configuration (literouter-xkuv)", () => {
       }),
     });
 
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = (async () => new Response(JSON.stringify({ error: "mock" }), { status: 401 })) as unknown as typeof fetch;
+
     try {
       await dispatchRoute(req, "lr-or-oa-ch-no", "req-test-pacer-disabled");
     } catch (err: unknown) {
       expect(err).toBeDefined();
+    } finally {
+      globalThis.fetch = origFetch;
     }
 
     expect(acquireSpy).not.toHaveBeenCalled();

@@ -82,7 +82,10 @@ I understand you want: [one sentence restatement in your own words]
 | Fast Gateway Tests | `bun run test:gateway` | All pass (938 fast unit tests in `tests/unit`, no eval noise) | Local |
 | Failure-Only Test | `bun run test:failures` | `bun test --only-failures` (outputs only failing tests) | Local |
 | Eval Grader Tests | `bun run test:eval` | All pass (182 benchmark eval grader tests in `tests/eval`) | Local |
-| Full Gateway Suite | `bun test` | All pass, exit code 0 (pipe to `/tmp/test.log` if needed) | Local |
+| Full Gateway Suite | `bun test` or `bun test:lr` | Accelerated domain-partitioned runner (runs 7 domains in parallel subprocesses, silent on success, outputs only isolated failures), exit code 0 | Local |
+| Targeted Domain Test | `bun test <domain>` | Rapid iteration on slice (e.g. `bun test handlers`, `bun test network`, `bun test stream`, `bun test engine`, `bun test telemetry`, `bun test core`, `bun test eval`) | Local |
+| Raw Unbuffered Tests | `bun run test:raw` | Verbose fallback for debugging | Local |
+| OpenCode2 Test Tool | `test_literouter` native tool | Zero-bloat programmatic test invocation | Local |
 | Integration Smoke | `uv run pytest tests/integration/` | All pass against running gateway, exit code 0 | Local |
 | Full Pre-Cutover | `bun run typecheck && bun test && uv run pytest tests/integration/` | Output appended to `tests/test_results.md` with timestamp | Local |
 | UAT Smoke Gate | `uv run pytest tests/integration/ --env=uat` | All pass against live UAT URL from `.env.uat` (not localhost) | **UAT** |
@@ -91,7 +94,7 @@ I understand you want: [one sentence restatement in your own words]
 ### Anti-Simulation Gate (Real Execution Mandate)
 - **Zero Simulation**: Never imagine or paraphrase test runs. Every gate artifact must be self-witnessing from actual execution.
 - **Verification Sequence**: `echo "Run: $(date -u +"%Y-%m-%dT%H:%M:%SZ")" | tee -a tests/test_results.md && bun test >> tests/test_results.md 2>&1 && tail -30 tests/test_results.md && ls -lh tests/test_results.md` (paste verbatim). Missing disk timestamps fail cutover automatically. [Rationale: Enforce real terminal execution; reject simulated outputs].
-- **Anti-Context-Bloat**: Never run blanket `bun test` in chat. Use `bun run test:gateway` or `bun run test:failures` during active edits.
+- **Anti-Context-Bloat**: `bun test` (or `bun test:lr`) is now natively anti-context-bloat (suppresses all passing test noise and outputs a clean single-line summary on pass, extracting only failures). For even faster targeted iteration during active edits, use `bun test <domain>` (e.g. `bun test handlers`), `bun run test:gateway`, `bun run test:failures`, or the `test_literouter` native tool.
 
 ---
 

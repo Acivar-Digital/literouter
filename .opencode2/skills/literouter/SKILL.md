@@ -21,7 +21,10 @@ description: LiteRouter API Gateway operational guide for Bun/TypeScript proxy o
 | Restart gateway | `bash scripts/restart.sh` |
 | Health probe (auth-free) | `curl -sk https://localhost:7766/health` |
 | Hard key reset (auth-free) | `curl -sk -X POST https://localhost:7766/reset` |
-| Unit tests (all) | `bun test` |
+| Unit tests (all) | `bun test` or `bun test:lr` (accelerated domain-partitioned test runner: runs 7 domains in parallel subprocesses, completely silent on success, outputs only isolated failures) |
+| Targeted domain test slice | `bun test <domain>` (e.g. `bun test handlers`, `bun test network`, `bun test stream`, `bun test engine`, `bun test telemetry`, `bun test core`, `bun test legacy`, `bun test eval`) |
+| Raw unbuffered test runner | `bun run test:raw` (verbose escape hatch) |
+| OpenCode2 test tool | `test_literouter` native plugin tool for zero-bloat programmatic test execution |
 | Fast gateway unit tests | `bun run test:gateway` (`tests/unit`, 938 tests, no eval noise) |
 | Benchmark eval grader tests | `bun run test:eval` (`tests/eval`, 182 tests) |
 | Legacy dual-path fallback tests | `bun run test:legacy` (`tests/unit/legacy`, 179 tests) |
@@ -34,6 +37,12 @@ description: LiteRouter API Gateway operational guide for Bun/TypeScript proxy o
 | Model speed & throughput | `bun run eval/speed.ts` (measures TTFT, duration, tokens/sec; alias: `scripts/bench_speed.ts`) |
 | OpenCode2 Auto-Patch | `bash scripts/opencode2_autopatch.sh` (fast <5ms self-heal & binary verification) |
 | Typecheck & lint | `bun run typecheck` && `uv run ruff check .` |
+
+> **Accelerated Test Runner & Subcommands (`bun test` / `bun test:lr`)**:
+> - `bun test` or `bun test:lr`: Accelerated domain-partitioned test runner (runs 7 domains in parallel subprocesses, completely silent on success, outputs only isolated failures)
+> - `bun test <domain>`: Fast targeted slice (e.g. `bun test handlers`, `bun test network`, `bun test stream`, `bun test engine`, `bun test telemetry`, `bun test core`, `bun test legacy`, `bun test eval`)
+> - `bun run test:raw`: Raw unbuffered Bun test runner (verbose escape hatch)
+> - OpenCode2 tool: `test_literouter` native plugin tool for zero-bloat programmatic test execution.
 
 > Auth scope: `GET /health` and `POST /reset` perform **no auth check and no method check** — see [scripts-ops.md §2](scripts-ops.md#2-get-health-liveness-probe-no-auth-any-method) and [§3](scripts-ops.md#3-post-reset-hard-reset-no-auth-any-method-hot-reload-scope). The authenticated variant is `POST /admin/pool/reset` ([§3.3](scripts-ops.md#33-auth-gated-variant-post-adminpoolreset)).
 

@@ -5,6 +5,12 @@ All notable changes to LiteRouter will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- **Accelerated Parallel Test Runner & OpenCode2 Native Tool (`scripts/test_runner.ts`, `.opencode2/plugins/`)**:
+  - **Domain-Partitioned Parallel Execution**: Partitioned 938+ gateway unit tests across 7 isolated domains (`handlers`, `network`, `stream`, `engine`, `telemetry`, `core`, `eval`), executing concurrently in child worker subprocesses via `scripts/test_runner.ts` (`bun test` / `bun test:lr`).
+  - **Anti-Context-Bloat Pass Suppression**: Automatically suppresses all passing test noise, capturing process outputs silently and printing a single-line summary with timing and pass counts upon success. Failures are cleanly isolated and surfaced without terminal truncation.
+  - **OpenCode2 Native Tool (`test_literouter`)**: Integrated a zero-bloat custom test tool into OpenCode2 plugins for programmatic subagent and agentic test execution without polluting agent context.
+  - **Subcommand & Targeted Execution Support**: Added instant domain filtering (e.g. `bun test <domain>` such as `bun test handlers` or `bun test network`) and raw unbuffered execution fallback (`bun run test:raw`) for unhindered debugging.
+
 - **Fusion Model Indicator Formatting in Logger and Telemetry (`src/ui/logger.ts`, `src/telemetry/session.ts`, `src/engine/dispatch.ts`)**:
   - **Visual Model Resolution Indicator (`formatModelDisplay`)**: Standardized model identification across inbound requests and cascade hops in `src/ui/logger.ts`. Standard requests display as `🤖 [req_id] Model: <model>`, while cascade chains format as `🤖 [req_id] Model: <requested> ➔ <resolved> (Tier <n>)`.
   - **Logger Emitters & Types (`src/ui/logger.ts`)**: Added `formatModelDisplay`, standalone `logModel` emitter, and extended `InboundLogDetails` with optional `resolvedModel` and `tier` fields.
