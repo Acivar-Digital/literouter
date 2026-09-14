@@ -60,7 +60,8 @@ describe("Location Config - loadLocationConfig", () => {
     expect(config.port).toBeGreaterThanOrEqual(1);
     expect(config.port).toBeLessThanOrEqual(65535);
     expect(typeof config.tls_enabled).toBe("boolean");
-    expect(typeof config.path).toBe("string");
+    expect(typeof config.parent_dir).toBe("string");
+    expect(typeof config.working_folder).toBe("string");
   });
 
   it("reads a custom valid location configuration file successfully", () => {

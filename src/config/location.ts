@@ -6,6 +6,8 @@ export const LocationConfigSchema = z.object({
   host: z.string().min(1),
   port: z.number().int().min(1).max(65535),
   tls_enabled: z.boolean(),
+  parent_dir: z.string().min(1).optional(),
+  working_folder: z.string().min(1).optional(),
   path: z.string().min(1).optional(),
 });
 

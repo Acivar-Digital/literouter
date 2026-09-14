@@ -8,22 +8,37 @@ DEFAULT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd -P)"
 LOCATION_FILE="$DEFAULT_ROOT/config/location.json"
 
 if [ ! -f "$LOCATION_FILE" ]; then
-    echo "❌ [FATAL] $LOCATION_FILE is missing. LiteRouter requires host, port, tls_enabled, and path to be defined in $LOCATION_FILE." >&2
+    echo "❌ [FATAL] $LOCATION_FILE is missing. LiteRouter requires host, port, tls_enabled, and location in $LOCATION_FILE." >&2
     exit 1
 fi
 if ! jq -e '.host != null and .port != null and .tls_enabled != null' "$LOCATION_FILE" >/dev/null 2>&1; then
-    echo "❌ [FATAL] $LOCATION_FILE is malformed. Required schema: { \"host\": \"...\", \"port\": 1234, \"tls_enabled\": true/false, \"path\": \"...\" }" >&2
+    echo "❌ [FATAL] $LOCATION_FILE is malformed. Required schema: { \"host\": \"...\", \"port\": 1234, \"tls_enabled\": true/false }" >&2
     exit 1
 fi
 
 HOST=$(jq -r '.host' "$LOCATION_FILE")
 PORT=$(jq -r '.port' "$LOCATION_FILE")
 TLS_ENABLED=$(jq -r '.tls_enabled' "$LOCATION_FILE")
-STORED_PATH=$(jq -r '.path // empty' "$LOCATION_FILE")
 
-# Working directory authoritative from location.json
-ROOT_DIR="${STORED_PATH:-$DEFAULT_ROOT}"
-cd "$ROOT_DIR"
+PARENT_DIR=$(jq -r '.parent_dir // empty' "$LOCATION_FILE")
+WORKING_FOLDER=$(jq -r '.working_folder // empty' "$LOCATION_FILE")
+
+if [ -n "$PARENT_DIR" ] && [ -n "$WORKING_FOLDER" ]; then
+    if [[ "$PARENT_DIR" = /* ]]; then
+        FULL_PARENT="$PARENT_DIR"
+    else
+        FULL_PARENT="$HOME/$PARENT_DIR"
+    fi
+    ROOT_DIR="$FULL_PARENT/$WORKING_FOLDER"
+else
+    STORED_PATH=$(jq -r '.path // empty' "$LOCATION_FILE")
+    ROOT_DIR="${STORED_PATH:-$DEFAULT_ROOT}"
+    FULL_PARENT="$(dirname "$ROOT_DIR")"
+    WORKING_FOLDER="$(basename "$ROOT_DIR")"
+fi
+
+cd "$FULL_PARENT"
+cd "$WORKING_FOLDER"
 
 PROTOCOL="http"
 if [ "$TLS_ENABLED" = "true" ]; then PROTOCOL="https"; fi
@@ -63,9 +78,10 @@ if [ -f logs/gateway.log ]; then bash scripts/prune-logs.sh || true; fi
 
 echo "🚀 Starting LiteRouter v4.0 (Bun) on ${HOST}:${PORT} (${PROTOCOL}) at ${ROOT_DIR}..."
 
-# Launch Bun process in detached tmux session anchored to location.json directory
-tmux new-session -d -s "$TMUX_SESSION" -c "$ROOT_DIR"
+# Launch Bun process in detached tmux session using two-step parent -> working folder navigation
+tmux new-session -d -s "$TMUX_SESSION"
 tmux send-keys -t "$TMUX_SESSION" "export PATH=\"$HOME/.bun/bin:/home/linuxbrew/.linuxbrew/bin:/usr/local/bin:\$PATH\"" C-m
+tmux send-keys -t "$TMUX_SESSION" "cd \"$FULL_PARENT\" && cd \"$WORKING_FOLDER\"" C-m
 tmux send-keys -t "$TMUX_SESSION" "export LITEROUTER_HOST=\"$HOST\" LITEROUTER_PORT=\"$PORT\" LITEROUTER_TLS_ENABLED=\"$TLS_ENABLED\" && bun run src/index.ts 2>&1 | tee -a logs/gateway.log" C-m
 
 # Wait for server ready with health polling
@@ -107,7 +123,8 @@ if [ "$READY" -eq 1 ]; then
     t_pad=$(( 70 - 1 - t_len ))
     printf "║%s%*s║\n" "$title" "$t_pad" ""
     printf "║%*s║\n" 70 ""
-    format_box_line "Location:" "$ROOT_DIR"
+    format_box_line "Parent Dir:" "$PARENT_DIR"
+    format_box_line "Working Folder:" "$WORKING_FOLDER"
     format_box_line "Endpoint:" "${PROTOCOL}://${HOST}:${PORT}"
     if [ -n "$LAN_IP" ] && [ "$HOST" != "$LAN_IP" ]; then
         format_box_line "LAN Endpoint:" "${PROTOCOL}://${LAN_IP}:${PORT}"
