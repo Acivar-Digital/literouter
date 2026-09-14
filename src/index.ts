@@ -51,7 +51,6 @@ try {
   initProviderRegistry();
   initStrategyRegistry();
   traceWriter.init();
-  console.log(`[BOOT] Provider registry loaded: ${getAllProviders().length} providers`);
 } catch (err) {
   console.error(`[BOOT] FATAL: Provider registry failed to load`, err);
   process.exit(1);

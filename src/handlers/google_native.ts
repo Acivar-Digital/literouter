@@ -97,7 +97,6 @@ export function loadAndCacheNativeChains(): void {
       const parsed = JSON.parse(readFileSync(configPath, "utf-8"));
       if (parsed.native_chains && typeof parsed.native_chains === "object") {
         cachedNativeChains = parsed.native_chains;
-        logInfo(EMOJI.boot, `Loaded native_chains: ${Object.keys(parsed.native_chains).join(", ")}`);
         return;
       }
     }
