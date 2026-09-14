@@ -2,7 +2,6 @@ import { existsSync, readFileSync } from "node:fs";
 import http2 from "node:http2";
 import { resolve } from "node:path";
 import type { Server } from "bun";
-import { emitEnvDeprecationWarnings } from "./config/deprecation";
 import { getEnv, resolveEngine } from "./config/env";
 import { loadKeyPools } from "./config/keys";
 import {
@@ -58,7 +57,6 @@ try {
 }
 
 initializeKeyPools(process.env);
-emitEnvDeprecationWarnings();
 
 function loadTlsOptions(tlsEnabledFlag?: boolean): { cert: string; key: string } | undefined {
   if (process.env.LITEROUTER_TLS_ENABLED === "false" || tlsEnabledFlag === false) {
