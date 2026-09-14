@@ -101,6 +101,9 @@ if [ -n "$BUN_PID" ]; then
 fi
 
 if [ "$READY" -eq 1 ]; then
+    # Clear any early shell-init/daemon warnings from pane history
+    tmux clear-history -t "$TMUX_SESSION" 2>/dev/null || true
+
     LAN_IP=$(hostname -I 2>/dev/null | awk '{print $1}' || echo "127.0.0.1")
 
     format_box_line() {
