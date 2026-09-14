@@ -78,11 +78,9 @@ if [ -f logs/gateway.log ]; then bash scripts/prune-logs.sh || true; fi
 
 echo "🚀 Starting LiteRouter v4.0 (Bun) on ${HOST}:${PORT} (${PROTOCOL}) at ${ROOT_DIR}..."
 
-# Launch Bun process in detached tmux session using two-step parent -> working folder navigation
-tmux new-session -d -s "$TMUX_SESSION"
-tmux send-keys -t "$TMUX_SESSION" "export PATH=\"$HOME/.bun/bin:/home/linuxbrew/.linuxbrew/bin:/usr/local/bin:\$PATH\"" C-m
-tmux send-keys -t "$TMUX_SESSION" "cd \"$FULL_PARENT\" && cd \"$WORKING_FOLDER\"" C-m
-tmux send-keys -t "$TMUX_SESSION" "export LITEROUTER_HOST=\"$HOST\" LITEROUTER_PORT=\"$PORT\" LITEROUTER_TLS_ENABLED=\"$TLS_ENABLED\" && bun run src/index.ts 2>&1 | tee -a logs/gateway.log" C-m
+# Quiet launch: pane starts directly with gateway output, no typed-command echo.
+# Single authority for bind remains config/location.json (no LITEROUTER_* exports).
+tmux new-session -d -s "$TMUX_SESSION" -c "$ROOT_DIR" 'export PATH="$HOME/.bun/bin:/home/linuxbrew/.linuxbrew/bin:/usr/local/bin:$PATH"; exec bun run src/index.ts 2>&1 | tee -a logs/gateway.log'
 
 # Wait for server ready with health polling
 MAX_RETRIES=15
