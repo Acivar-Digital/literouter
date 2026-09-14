@@ -78,7 +78,18 @@ function loadTlsOptions(tlsEnabledFlag?: boolean): { cert: string; key: string }
   return undefined;
 }
 
-export function handleHardReset(): Response {
+export function handleHardReset(req?: Request, rawKey?: string): Response {
+  const token = rawKey || (req ? extractDirectiveToken(req) : "") || "";
+  const authKey = getEnv().LITEROUTER_AUTH_KEY;
+  const isValid = (authKey && token === authKey) || parseDirective(token) !== null;
+
+  if (!isValid) {
+    return Response.json(
+      { error: { message: "Unauthorized admin access", type: "authentication_error" } },
+      { status: 401 }
+    );
+  }
+
   try {
     initProviderRegistry();
     initStrategyRegistry();
@@ -94,6 +105,9 @@ export function handleHardReset(): Response {
     resetProvidersRegistryCache();
     loadAndCacheNativeChains();
     resetNativeFlashTierIndex();
+    if (typeof Bun !== "undefined" && typeof Bun.gc === "function") {
+      Bun.gc(true); // Proactive compaction of JIT and heap after resetting registries
+    }
     return Response.json(
       {
         status: "ok",
@@ -156,7 +170,7 @@ async function handleAdminPoolReset(req: Request, rawKey: string): Promise<Respo
     );
   }
 
-  return handleHardReset();
+  return handleHardReset(req, rawKey);
 }
 
 function handleHealthCheck(): Response {
@@ -193,7 +207,6 @@ const ROUTE_MAP: Readonly<Record<string, RouteHandler>> = {
 
 const SYSTEM_MAP: Readonly<Record<string, () => Response>> = {
   "/health": handleHealthCheck,
-  "/reset": handleHardReset,
   "/api/hello": handleHealthCheck,
   "/hello": handleHealthCheck,
 };
@@ -339,6 +352,10 @@ export async function dispatchRoute(
 
   if (path === "/admin/pool/reset") {
     return handleAdminPoolReset(req, rawKey);
+  }
+
+  if (path === "/reset") {
+    return handleHardReset(req, rawKey);
   }
 
   const sysHandler = SYSTEM_MAP[path];

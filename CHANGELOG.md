@@ -4,6 +4,28 @@ All notable changes to LiteRouter will be documented in this file.
 
 ## [Unreleased] — 2026-09-14
 
+### Added
+- **Config-driven location serving (`config/location.json`, `src/config/location.ts`)**:
+  - Introduced `config/location.json` containing 3 authoritative serving keys: `host`, `port`, `tls_enabled`.
+  - Added strict Zod-validated `loadLocationConfig()` loader in `src/config/location.ts` with explicit fail-loud error messages on missing or malformed configuration files.
+  - Added comprehensive unit tests in `tests/unit/location_config.test.ts`.
+- **Bun v1.4.2 runtime optimization & skill update**:
+  - Upgraded runtime environment to Bun v1.4.2.
+  - Added proactive heap and JIT code compaction via `Bun.gc(true)` inside `handleHardReset()`.
+  - Documented Bun v1.4.2 architecture (native ALPN HTTP/2 in `Bun.serve`, JIT idle memory compaction, streaming `Bun.write`, and hardened array GC) in `.opencode2/skills/literouter/SKILL.md` (§16.5) and `gc-memory.md`.
+
+### Security
+- **Auth-gated `/reset` endpoint (`src/index.ts`)**:
+  - Protected `GET/POST /reset` behind `LITEROUTER_AUTH_KEY` / directive token validation matching `/admin/pool/reset`.
+  - Returns `401 Unauthorized` for missing or invalid credentials. `/health` remains fully public.
+  - Added unit test suite in `tests/unit/reset_endpoint.test.ts`.
+
+### Changed
+- **Bash management scripts (`scripts/start.sh`, `scripts/status.sh`)**:
+  - Refactored `start.sh` and `status.sh` to extract `host`, `port`, and `tls_enabled` directly from `config/location.json` using `jq -e`.
+  - Added fail-loud fatal aborts if `config/location.json` is missing or schema-invalid before touching any processes.
+  - Updated readiness probe to dynamically query `${PROTOCOL}://${HOST}:${PORT}/health` instead of hardcoded `localhost`.
+
 ### Removed
 - **Circuit Breaker fully excised**: Removed `CircuitBreakerConfigSchema`, `CircuitBreakerConfig` type, and `getCircuitBreakerForProvider()` from schema, network layer, engine dispatch, and all handlers (`openai_compat`, `openai_original`, `gcp_compat`, `google_native`, `anthropic_compat`). No circuit breaker concept remains in the runtime path.
 - **Dead code purged**: `getConsecutiveAuthFailures()` stub (hardcoded `return 0`) removed from `pool.ts`. `normalizeGoogleNativeModel`, `extractModelFromPath`, `buildGoogleNativeUpstreamUrl`, `buildTierUpstreamUrl` v3 relics removed from `google_native.ts`.

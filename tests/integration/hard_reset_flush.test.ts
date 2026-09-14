@@ -15,6 +15,9 @@ describe("Operational Hard Reset & Flush Integration", () => {
   it("handles GET /reset and flushes all rate limits and quarantines", async () => {
     const req = new Request("http://localhost:7766/reset", {
       method: "GET",
+      headers: {
+        Authorization: "Bearer lr-oa-oa-ch-no",
+      },
     });
 
     const res = await handleAppRequest(req);
@@ -30,6 +33,9 @@ describe("Operational Hard Reset & Flush Integration", () => {
   it("handles POST /reset unfreezing quarantined key states and reloading registry", async () => {
     const req = new Request("http://localhost:7766/reset", {
       method: "POST",
+      headers: {
+        Authorization: "Bearer lr-oa-oa-ch-no",
+      },
     });
 
     const res = await handleAppRequest(req);
@@ -56,7 +62,7 @@ describe("Operational Hard Reset & Flush Integration", () => {
     });
 
     try {
-      const res = handleHardReset();
+      const res = handleHardReset(undefined, "lr-oa-oa-ch-no");
       expect(res.status).toBe(500);
 
       // Previous config remains intact and active
