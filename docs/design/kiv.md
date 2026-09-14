@@ -129,5 +129,36 @@ Requirements:
    - Instructions on connecting Cursor, OpenCode, and LibreChat from laptop without entering raw provider keys.
 ```
 
+---
+
+## Future cost visibility (estimateCost math)
+
+* **Status**: 🔭 KIV (Keep In View) — Deferred
+* **Source**: `relayplane` vendor repo (`arthityap/vendor/relayplane`)
+
+### Proposed Architecture
+1. **`estimateCost(model, inputTokens, outputTokens, cacheCreation?, cacheRead?)`**:
+   - Pure function mapping model tokens against USD pricing table.
+   - Handles Anthropic prompt-cache pricing (creation ×1.25, read ×0.1).
+2. **Consolidated `MODEL_PRICING` Table**:
+   - Single source of truth for pricing (USD per 1M tokens) avoiding drift.
+3. **Post-Response Telemetry from `usage`**:
+   - Recover token counts from upstream non-streaming response `usage` or streaming SSE chunks (`message_start`, `message_delta`), then calculate cost.
+4. **Storage**:
+   - Aggregate into Redis/Valkey (or SQLite) keyed by API key / workspace / day.
+
+---
+
+## Travel Puck feasibility
+
+* **Analysis Summary**: On-device native mobile app packaging (iOS App Store / Android Play Store) is **technically infeasible** because Bun does not compile for or support iOS/Android, and mobile OS sandboxing (especially iOS ATS and background execution limits) prohibits general TCP server listening.
+* **Viable Hardware Form Factors**:
+  - **Linux Travel Puck (Pi Zero 2 W / Pi 4 / GL.iNet ARM64)**: Full native Bun + Valkey support on aarch64 Linux. Provides physical hardware credential isolation.
+  - **Termux + PRoot Debian (Android CLI)**: Viable for power users on rooted or unrooted Android devices via F-Droid Termux.
+  - **Remote Proxy Manager**: Lightweight mobile web/native UI acting strictly as a remote configuration and observability frontend to a headless LiteRouter daemon on LAN/VPS.
+* **Archived Analysis**: See full evaluation in `docs/archive/mobile-feasibility.md`.
+
+
+
 
 

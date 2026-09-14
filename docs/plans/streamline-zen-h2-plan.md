@@ -293,3 +293,26 @@ Before submitting for Senior Engineer review, verify:
 - [ ] SSE chunks pass through `reassembleResponse` with byte-for-byte fidelity.
 - [ ] Live terminal output shows `[Upstream: HTTP/2]` for Zen on `/v1/responses`.
 - [ ] Fallback to `HTTP/1.1` works when HTTP/2 is disabled.
+
+---
+
+## Appendix: Build spec (from streamline02_build.md)
+
+- **CleanTS Complexity Threshold**: Strict cognitive complexity < 6 per function. `reassembleResponse` in `src/network/fetcher.ts` scores 3; `executeUpstreamFetch` scores 1. Zero swallowed exceptions across catch blocks.
+- **Rollback Procedure**: Revert modified files (`git checkout src/network/fetcher.ts src/handlers/openai_original.ts`) and restart gateway daemon (`bash scripts/restart.sh`). Reverts cleanly with zero schema or config drift.
+- **Wire Telemetry (`[Upstream: HTTP/2]`)**: Upstream protocol is extracted from `fetchResult.actualUpstreamProtocol` in `fetchWithTtftGuard` and passed to `logTtft`, replacing erroneous downstream inbound protocol reflection. Live output verifies `🟢 [TTFT] | <ms> | First chunk streamed downstream [Upstream: HTTP/2]`.
+- **AST Inventory & Separation of Concerns**:
+  - `src/network/fetcher.ts`: Appends `reassembleResponse()` export (~35 lines) to handle transport-level stream reconstruction (merging `firstChunk` with `rawReader`) so handlers stay pure.
+  - `src/handlers/openai_original.ts`: Replaces naked `fetch` with `executeUpstreamFetch` calling `fetchWithTtftGuard`, forwarding proper wire protocol to `logTtft`.
+  - `tests/unit/openai_original_h2.test.ts`: Unit test suite (~140 lines) validating 100% byte fidelity, cancellation propagation, and empty chunk handling.
+  - `tests/unit/visual_telemetry.test.ts`: Validates terminal UI layouts and visual telemetry contracts remain intact.
+
+---
+
+## Appendix: Red-team audit (from streamline03_audit.md)
+
+- **Zero-Trust Findings**: Audit confirmed strict compliance with security boundaries: zero `.env*` or key touches; credentials masked to provider codes/indices (`zn`, `Key #1`); SSRF-proof static routing via `UPSTREAM_URLS`; downstream headers sanitized via `sanitizeOutboundHeaders()`. CleanTS passed with zero errors (`valid: true`).
+- **h2_pool Lifecycle & Multiplexing**: Every outbound stream holds an `H2StreamGuard` decrementing `session.activeStreams` on finish/abort/error. Sessions multiplex across matching origins (`https://opencode.ai#zn:N`), eliminating TCP/TLS handshakes while maintaining idle keep-alives without descriptor leaks.
+- **RST_STREAM Abort Handling**: Downstream disconnection delegates immediately to `rawReader.cancel()`, sending an upstream `RST_STREAM` frame and freeing the multiplex slot immediately. Disconnects prior to TTFT fire `abortController.abort()` returning HTTP 499 with 0 retries.
+- **Banner Mismatch Finding**: Audit revealed `src/ui/banner.ts` omitted `/v1/responses` from the hardcoded `Endpoints Registered:` list. This is purely cosmetic—the router in `src/index.ts` actively serves `/v1/responses`. Documented for banner alignment without altering router code.
+

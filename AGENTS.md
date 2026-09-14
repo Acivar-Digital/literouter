@@ -13,7 +13,7 @@ Mandatory operational guidance for AI agents working in this repository.
 
 ## Technical Knowledge Base & Fixed Core Paths
 - **LiteRouter Skill (Absolute)**: `/home/yapilwsl/arthityap/literouter/.opencode2/skills/literouter/SKILL.md` (dir: `.opencode2/skills/literouter/`)
-- **Key Docs**: `CHANGELOG.md`, `docs/ARCHITECTURE.md`, `docs/Fix_Streaming_01.md` (streaming spec), `docs/Longrunning_Mode.md`
+- **Key Docs**: `CHANGELOG.md`, `docs/architecture.md`, `docs/streaming-fix.md` (streaming spec), `docs/longrunning-mode.md`
 - **Main Handlers**: `src/handlers/openai_compat.ts`, `src/network/fetcher.ts`, `src/network/pacer.ts`
 - **Lazy-Load Guides**: Antigravity IDE: `.opencode2/skills/literouter/agy-ide-setup.md` | TUI Math: `.opencode2/skills/literouter/tui-latex-math-rendering.md` | Test Hygiene: `.opencode2/skills/literouter/test-hygiene-playbook.md`
 - **Rate Limiting (Zdist Retired)**: Client-side sliding-window tracking is retired (see `docs/GRAVEYARD/ZDIST.md`). Active stack: deterministic **RequestPacer** (`src/network/pacer.ts`) + reactive **CooldownManager** (`src/network/cooldown.ts` 429 quarantine with `Retry-After`).

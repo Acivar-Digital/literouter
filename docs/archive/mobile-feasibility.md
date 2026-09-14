@@ -32,7 +32,7 @@ The following is verified against the codebase (`src/index.ts`, `src/config/env.
 Client → HTTP :7766 (Bun.serve) → Valkey/ZSET Key Rotation → Upstream APIs
 ```
 - The gateway **listens on a TCP port** (default `7766`, configurable via `LITEROUTER_PORT`) using Bun's built-in HTTP server (`serve()` at src/index.ts:655).
-- It **exits(1) on Valkey connection failure** — Redis/Valkey is a hard dependency with no in-memory fallback (src/index.ts:279, 291; ARCHITECTURE.md:81, 87).
+- It **exits(1) on Valkey connection failure** — Redis/Valkey is a hard dependency with no in-memory fallback (src/index.ts:279, 291; architecture.md:81, 87).
 - It reads `models.json` and `fusion.json` from the filesystem at startup (src/index.ts:186-222).
 - It writes trace files to `logs/traces/` (src/index.ts:122).
 

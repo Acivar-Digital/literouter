@@ -82,3 +82,19 @@ LiteRouter is designed as a **long-running resilient proxy** for AI agent harnes
 
 3. **Conveyor Belt Ingress Queue**:
    * Maintain the FIFO pacer queue for orderly rate-paced dispatch to available keys.
+
+---
+
+## Appendix: Earlier two-leg explanation (from Fix_Streaming.md)
+
+Earlier streaming latency investigations diagnosed redundant reasoning suppression across two distinct legs:
+- **Leg 1 (Outbound Request Payload: Client ──► LiteRouter ──► Provider)**: LiteRouter strips reasoning history via `scrubReasoningFromMessages()` to prevent context bloat upstream.
+- **Leg 2 (Inbound Streaming Response: Provider ──► LiteRouter ──► Client TUI)**: Runtime SSE chunk parsing (`JSON.parse` ──► strip reasoning keys ──► `JSON.stringify` + 5s synthetic heartbeats) caused severe terminal latency and frozen screens during reasoning.
+
+To eliminate Leg 2 stalls while retaining essential Leg 1 history scrubbing, the runtime provides a bypass flag in `.env`:
+```bash
+# Bypass Leg 2 SSE parsing/filtering so raw chunks stream with zero delay to the TUI
+LITEROUTER_STREAM_FILTER_REASONING=false
+```
+When set to `false` (default), SSE chunks stream directly through with zero delay or line-buffering latency.
+

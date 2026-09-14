@@ -153,3 +153,17 @@ This ensures downstream SDKs (e.g. OpenAI Python/Node SDK or Claude Code CLI) pa
 ⏳ [08-20-12:30:01:300] [req_abc123] Pacer Dispatch | Key #2/10 | Total Dwell: 200ms
 🟢 [08-20-12:30:02:500] [TTFT req_abc123] TTFT = 1200ms | Stream established via HTTP/2
 ```
+
+---
+
+## Appendix: Earlier summary (Routing_Logic.md)
+
+| Category / Error | In-Flight Retry? | Action | Quarantine Duration |
+| :--- | :--- | :--- | :--- |
+| **Transport (`ConnectTimeout`, GOAWAY, TCP RST)** | ✅ Yes (3 tries) | `retry_rotate` | ❌ 0s |
+| **Client Deterministic (400 Bad Param, 404, 422)** | ❌ No | `fail_fast` | ❌ 0s |
+| **Auth Failure (401 / 403 Revoked Key)** | ✅ Yes (3 tries) | `retry_rotate` | ✅ 7 Days (`604,800s`) |
+| **Rate Limit / Quota Exhaustion (429)** | ✅ Yes (3 tries) | `retry_rotate` | ✅ Dynamic / `Retry-After` (7d if quota out) |
+| **Transient Upstream Server Errors (5xx)** | ✅ Yes (3 tries) | `retry_rotate` | ✅ 10s |
+| **TTFT Timeout / 0-Byte Ghost HTTP 200** | ✅ Yes (3 tries) | `retry_rotate` | ✅ 60s |
+

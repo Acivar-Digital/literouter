@@ -2435,3 +2435,33 @@ A phase is complete when ALL of these hold:
 ---
 
 *End of document. This blueprint is self-contained. A builder requires only this file, the existing codebase, and the AGENTS.md operational mandates.*
+
+---
+
+## Appendix: Superseded redesign01 (rejected) — preserved points
+
+The initial v4.1 draft (`docs/redesign01.md`, rejected in favor of the dual-path blueprint) proposed unifying provider settings and telemetry into a single-step rewrite. While rejected due to architectural risk (monolithic rewrite on `main` without safety flags), several core contracts and design specs were adopted into the blueprint:
+
+- **Provider Identity Contract**: `config/providers.json` acts as the single source of truth for display names, provider codes (`or`, `nv`, `gg`, `zn`, `gc`), endpoints, and retry parameters, eliminating hardcoded provider maps (`PROVIDER_NAMES` in `logger.ts`).
+- **Telemetry Session Contract (`RequestTelemetry`)**: Lifecycle encapsulation where handlers do not compute durations or speeds; instead, a single telemetry session records inbound headers, key rotations (`rotateKey`), rate limits/quarantines (`recordLimit`), first token arrival (`markTtft`), and token usage (`recordUsage`).
+- **RAM Ring Buffer Specs (32MB / 64KB)**: Bounded in-memory store maintaining the last 100 request traces under a strict 32MB total RAM cap. Individual request leg bodies exceeding 64KB are truncated with size notices (`... [TRUNCATED: original payload size ${totalBytes} bytes]`) to eliminate OOM risks during large prompt workflows, accompanied by lazy SQLite writes (`logs/traces.db`) every 30s or 100 traces/16MB.
+- **Secret Redaction Pipeline**: Mandatory sanitization of sensitive authorization tokens (`Bearer [REDACTED_CLIENT_TOKEN]`, `x-api-key`, `x-goog-api-key`) and regex pattern masking for vendor key formats (`sk-or-v1-...`, `nvapi-...`, `AIzaSy...`, `sk-lr-...`) ensuring zero raw API keys touch RAM traces or SQLite persistence.
+- **Pure Stateless Payload Transformer Design**: Stripping all transport mechanics (timers, jitter delays, pacer queues, key loops) out of request handlers, leaving pure functional transformers that map inbound requests to vendor wire formats and back.
+
+---
+
+## Appendix: Execution slices (from redesign03)
+
+The operational workplan in `docs/redesign03.md` decomposed the v4.1 architecture blueprint into 26 parallel executable slices across 7 phases:
+
+- **26-Slice Matrix Summary**:
+  - **Phase 0 (2 slices)**: Baseline, git backup branch `v4.0`, version bump to `4.1.0`, and dual-path engine flag scaffolding (`LITEROUTER_ENGINE=legacy|v4`).
+  - **Phase 1 (3 slices)**: Configuration foundation, Zod schema extensions, in-memory `providers.ts` registry, and `config/providers.json` migration with hot-reload.
+  - **Phase 2 (4 slices)**: Telemetry engine, allowlist sanitization (`sanitize.ts`), `RequestTelemetry` session, 32MB RAM ring buffer, and SQLite trace flusher (`scripts/trace.ts`).
+  - **Phase 3 (6 slices)**: Core dispatch engine (`dispatch.ts`), uniform retry jitter (`retry.ts`), exponential cooldown (`cooldown.ts`), status classifier, circuit breaker state machine, and provider strategies (`standard`, `native_cascade`, `gcp_guarded`, `zen_single_flight`, `anthropic_direct`).
+  - **Phase 4 (5 slices)**: Pure payload transformers (`openai_chat`, `openai_responses`, `anthropic_messages`, `anthropic_openai_xwire`, `google_native`).
+  - **Phase 5 (3 slices)**: Thin v4 route handlers (<50 LOC each), v4 route dispatcher, and server integration.
+  - **Phase 6 (3 slices)**: Comprehensive A/B parity testing, downstream agent gauntlet (OpenCode 2, Claude Code, Pydantic AI), and default engine cutover.
+- **Dependency Graph**: P0 (Flags) $\to$ P1 (Config Registry) $\to$ P2 (Telemetry) $\to$ P3 (Dispatch & Strategies) $\to$ P4 (Transformers) $\to$ P5 (V4 Route Handlers) $\to$ P6 (A/B Validation & Cutover).
+- **Subagent Execution Contract**: Orchestrator never edits code directly; dispatches isolated slices to subagents with strict target files, DoD verification commands, backward-compatibility constraints (`LITEROUTER_ENGINE=legacy`), zero runtime npm deps (`zod` + `bun:sqlite` only), and inviolable `.env.local` protection.
+

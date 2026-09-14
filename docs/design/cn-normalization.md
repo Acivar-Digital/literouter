@@ -441,3 +441,39 @@ After implementation, update these files:
 | Assistant prefill / `</think>\n{` injection | Aggregators (Zen, OpenRouter) return HTTP 400 on trailing assistant messages. |
 | Model-specific prompt engineering | LiteRouter is a protocol adapter, not a prompt optimizer. If Ling ignores JSON instructions, that is a model limitation, not a gateway bug. |
 | Inkling 403 whitelist header fix | Already solved by existing `config/providers.json` headers (`HTTP-Referer: https://opencode.ai`, `X-Title: OpenCode`, `User-Agent: OpenCode/1.18.29`). No change needed. |
+
+---
+
+## Appendix: CN_Issues.md preserved
+
+### 1. `cn` Nuance Protocol Contract
+| Scenario | Directive / Condition | LiteRouter Behavior | Upstream Impact |
+|---|---|---|---|
+| OpenCode agentic tool call | `lr-or-oa-ch-cn` | Preserves native `tool_calls`, retains `finish_reason: "tool_calls"`, skips `parseLingXml` override | Zero XML injected, tool call executed natively |
+| Pydantic AI JSON schema | `response_format: {"type": "json_object"}` | Strips `response_format` from outbound body; runs `stripJsonFencesAndExtract` on content | Prevents upstream HTTP 400 rejection; returns parseable JSON |
+| Streaming SSE chunks | Stream mode + `cn` | Bypasses `createLingStreamTransformer`, streams native `delta.tool_calls` and reasoning directly | Zero-buffering SSE delivery |
+
+### 2. Markdown Fence Stripper (`stripJsonFencesAndExtract`)
+```typescript
+export function stripJsonFencesAndExtract(text: string): string {
+  let t = text.trim();
+  if (t.startsWith("```")) {
+    const nl = t.indexOf("\n");
+    t = nl !== -1 ? t.slice(nl + 1) : t.replace(/^```(?:json)?/i, "").trim();
+    if (t.endsWith("```")) {
+      t = t.slice(0, -3).trim();
+    }
+  }
+  const start = t.indexOf("{");
+  const end = t.lastIndexOf("}");
+  if (start !== -1 && end !== -1 && end > start) {
+    return t.slice(start, end + 1);
+  }
+  return t.trim();
+}
+```
+
+### 3. Verification & Acceptance (§4 Summary)
+- **Unit Suite (`tests/unit/cn_nuance.test.ts`)**: Directive parsing (`lr-or-oa-ch-cn`), payload tool preservation, `response_format` deletion, fence extraction (` ```json\n{"a": 1}\n``` ` $\to$ `{"a": 1}`), and native `tool_calls` non-overwriting.
+- **Integration Gates**: Zero `user <> o <tool_calls>` text leakage in OpenCode 2 agentic workflows; zero 400 rejection or `JSONDecodeError` on Pydantic AI structured outputs.
+
