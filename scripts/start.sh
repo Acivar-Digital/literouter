@@ -79,8 +79,8 @@ if [ -f logs/gateway.log ]; then bash scripts/prune-logs.sh || true; fi
 echo "🚀 Starting LiteRouter v4.0 (Bun) on ${HOST}:${PORT} (${PROTOCOL}) at ${ROOT_DIR}..."
 
 # Quiet launch: pane starts directly with gateway output, no typed-command echo.
-# Ensure clean cd to ROOT_DIR inside the subshell to withstand any stale tmux daemon cwd.
-tmux new-session -d -s "$TMUX_SESSION" -c "$ROOT_DIR" "bash -c 'cd / && cd \"$ROOT_DIR\" && export PATH=\"\$HOME/.bun/bin:/home/linuxbrew/.linuxbrew/bin:/usr/local/bin:\$PATH\"; exec bun run src/index.ts 2>&1 | tee -a logs/gateway.log'"
+# Use --noprofile --norc + escape clear so any stale daemon cwd warnings never leak into the pane.
+tmux new-session -d -s "$TMUX_SESSION" -c "$ROOT_DIR" "bash --noprofile --norc -c 'cd / && cd \"$ROOT_DIR\" && printf \"\\033[2J\\033[H\" && export PATH=\"\$HOME/.bun/bin:/home/linuxbrew/.linuxbrew/bin:/usr/local/bin:\$PATH\"; exec bun run src/index.ts 2>&1 | tee -a logs/gateway.log'"
 
 # Wait for server ready with health polling
 MAX_RETRIES=15
