@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
+export PATH="$HOME/.bun/bin:/home/linuxbrew/.linuxbrew/bin:/usr/local/bin:$PATH"
 set -euo pipefail
-cd "$(dirname "$0")/.."
+ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd -P)"
+cd "$ROOT_DIR"
 
 LOCATION_FILE="config/location.json"
 if [ ! -f "$LOCATION_FILE" ]; then
@@ -53,9 +55,10 @@ if [ -f logs/gateway.log ]; then bash scripts/prune-logs.sh || true; fi
 
 echo "🚀 Starting LiteRouter v4.0 (Bun) on ${HOST}:${PORT} (${PROTOCOL})..."
 
-# Launch Bun process in detached tmux session
-tmux new-session -d -s "$TMUX_SESSION"
-tmux send-keys -t "$TMUX_SESSION" "cd $(pwd)" C-m
+# Launch Bun process in detached tmux session with explicit working directory
+tmux new-session -d -s "$TMUX_SESSION" -c "$ROOT_DIR"
+tmux send-keys -t "$TMUX_SESSION" "cd \"$ROOT_DIR\"" C-m
+tmux send-keys -t "$TMUX_SESSION" "export PATH=\"$HOME/.bun/bin:/home/linuxbrew/.linuxbrew/bin:/usr/local/bin:\$PATH\"" C-m
 tmux send-keys -t "$TMUX_SESSION" "export LITEROUTER_HOST=\"$HOST\" LITEROUTER_PORT=\"$PORT\" LITEROUTER_TLS_ENABLED=\"$TLS_ENABLED\" && bun run src/index.ts 2>&1 | tee -a logs/gateway.log" C-m
 
 # Wait for server ready with health polling
