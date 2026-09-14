@@ -31,16 +31,17 @@ All lifecycle scripts `cd` to the repo root, source `.env` then `.env.local`
 bash scripts/start.sh
 ```
 
+> 📖 Pane-rubbish guide: [`tmux-hygiene.md`](tmux-hygiene.md) — clear `getcwd`/echo noise, quiet-boot design.
+
 What it does, in order (verified against source):
 
 1. If `tmux has-session -t literouter` succeeds, prints "already running" and
    exits `0` (does **not** start a second instance).
 2. `mkdir -p logs`; prunes `logs/gateway.log` via `scripts/prune-logs.sh`.
-3. Launches Bun detached:
-   `bun run src/index.ts 2>&1 | tee -a logs/gateway.log` inside the tmux session.
-4. Polls `GET ${PROTOCOL}://localhost:${PORT}/health` up to 15 times at 0.5 s
+3. Quiet launch (no `send-keys`, no typed-command echo): `tmux new-session -d -s literouter -c "$ROOT_DIR"` with a single initial command running `bash --noprofile --norc -c 'cd / && cd "$ROOT_DIR" && printf "\033[2J\033[H" && ... exec bun run src/index.ts 2>&1 | tee -a logs/gateway.log'`. Bind authority stays `config/location.json`.
+4. Polls `GET ${PROTOCOL}://${HOST}:${PORT}/health` up to 15 times at 0.5 s
    intervals, succeeding when the body contains `"status":"healthy"`.
-5. Records `pgrep -f "bun run src/index.ts"` output into `.literouter.pid`.
+5. On success runs `tmux clear-history -t literouter` to wipe any early `shell-init/getcwd` lines from scrollback, records `pgrep -f "bun run src/index.ts"` output into `.literouter.pid`.
 6. On success prints the endpoint banner; on timeout dumps the last 20 tmux
    pane lines, runs `scripts/stop.sh`, and exits `1`.
 

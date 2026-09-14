@@ -13,6 +13,8 @@ tmux attach -t literouter
 ```
 Detach anytime using `Ctrl+B`, then `D`.
 
+> 📖 Pane rubbish (`shell-init/getcwd` noise, typed-command echo, blank fill): see [`tmux-hygiene.md`](tmux-hygiene.md). Safe wipe without restart: `tmux clear-history -t literouter`. Never `send-keys` into a running gateway pane.
+
 ### Structured Log Markers (`logs/gateway.log`)
 - 🔵 `[INBOUND]` — Inbound downstream HTTP request with detected directive key.
 - 🟢 `[SERVED]` — Successfully proxied response with latency and status code.
@@ -147,3 +149,8 @@ curl -sk -X POST https://localhost:7766/reset
   1. **Size Concurrency by In-Flight Streams, Not RPM**: Set worker pool concurrency to $\le 70\%$ of available key pool size ($C = K \times 0.70$, e.g. 10 workers for 15 keys) to guarantee $\le 1$ active stream per key with reserve buffer for cooldown rotations.
   2. **Stagger Takeoff Spacing**: Set `TAKEOFF_SPACING \ge \text{TTFT} / C$ (e.g. $\ge 3.5\text{s}$ spacing for 27s TTFT at 10 concurrency) to prevent thundering-herd queue pileups.
   3. **Extend Worker Timeout**: Set `WORKER_TIMEOUT \ge 150.0\text{s}` to accommodate upstream queue spikes on community free-tier reasoning models.
+
+### Pattern 16: Tmux Pane Rubbish (`shell-init/getcwd`, typed-command echo)
+- **Symptom**: Pane top shows `shell-init: getcwd: cannot access parent directories`, `chdir: ...`, or reprinted `export PATH` / `cd` boot commands. Gateway `health` is `healthy`.
+- **Cause**: Stale tmux server cwd (deleted dir) or pre-`524a539` `send-keys` boot. See [`tmux-hygiene.md`](tmux-hygiene.md).
+- **Fix**: `tmux clear-history -t literouter`. Boot only via `bash scripts/restart.sh`. Recurring VPS noise = Aug-16 server holding deleted cwd — maintenance-window server restart.

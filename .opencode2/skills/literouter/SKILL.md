@@ -11,6 +11,20 @@ description: LiteRouter API Gateway operational guide for Bun/TypeScript proxy o
 >
 > **Lazy-load skill.** This SKILL.md is the entry point only. When the user's request matches the skill description, load this file first. For deep dives into specific topics, read the referenced markdown files in this directory.
 
+### Lazy-Load Protocol (mandatory)
+1. Read this SKILL.md entry point only — do NOT pre-read topic files.
+2. Match the task to ONE row in §14 Topic Map and load ONLY that file.
+3. Pane-rubbish / `getcwd` / quiet-boot tasks → load `tmux-hygiene.md` only.
+4. Never load all skill files; never grep the whole skill dir for a targeted question.
+
+## §0. Tmux Pane Hygiene (clear rubbish)
+
+> 📖 **Full runbook**: [`tmux-hygiene.md`](tmux-hygiene.md) — load it for any pane-cleanup task.
+
+- Wipe scrollback without disturbing serving: `tmux clear-history -t literouter` (VPS: prefix `export PATH="/home/linuxbrew/.linuxbrew/bin:/usr/local/bin:$PATH"` over ssh).
+- `start.sh` already boots quiet (`new-session -c`, `--noprofile --norc`, post-boot `clear-history`); always boot via `bash scripts/restart.sh`, never manual double-`cd`.
+- Recurring VPS `shell-init/getcwd` = Aug-16 tmux server holding deleted `literouter-old` cwd — needs a maintenance-window server restart (kills all sessions).
+
 ## §1. Quick Reference
 
 | Action | Command |
@@ -360,6 +374,7 @@ bun run scripts/probe_model.ts <model_name> [--directive <directive_key>] [--url
 | **Directive grammar (full `lr-*` matrix, validity, dispatch, engine gate)** | `directive-grammar.md` (§11) | User asks about any directive key, provider/payload/completion/nuance code, `gb`/`g1`/`tp`/`lg`, fusion preset names, 400 mismatch errors, engine selection, or `/v1/traces` 404s |
 | **Config schemas (`fusion.json`, `models.json`, `providers.json`, Zod)** | `config-schemas.md` (§12) | User asks about config files, headers registry, endpoints, limits, provider strategies, engine env, `FUSION_UPSTREAM_URL`, or edit→reset workflow |
 | **Scripts & ops (lifecycle, `/health`, `/reset`, doctor, runbooks)** | `scripts-ops.md` (§13) | User asks about `start/stop/restart`, health, reset scope, `doctor.ts`/`doctor_zn.ts`, Zen probing, or operator runbooks |
+| **Tmux pane hygiene (clear rubbish, `getcwd`, quiet boot)** | `tmux-hygiene.md` (§0) | User asks about tmux rubbish, `shell-init`/`getcwd`/`chdir` noise, typed-command echo, blank pane fill, `clear-history`, or quiet `start.sh` boot |
 | **Error → action matrix (status, wiring, file index, env knobs)** | `error-action-matrix.md` (§13) | User asks about 429/5xx handling, retry/quarantine wiring, cooldown env knobs, or where a file lives in `src/` |
 | **LiteRouter master architecture, in-memory engine, keys, endpoints & directives** | `architecture.md` | Complete system design, in-memory vs Redis/Valkey ("We choose not to") rationale, routing matrix, compatibility layers, resilience mechanics |
 | **Zen provider (identity gating, sessions, directives, toggles, Responses API, Muse reasoning)** | `zen-provider.md` | User asks about Zen, `zn`, `big-pickle`, `muse-spark-1.3-contributor-free`, OpenAI Responses API (`/v1/responses`), `reasoningEffort` options, session-id forwarding, Zen directive keys, or Zen retry/quarantine toggles |
