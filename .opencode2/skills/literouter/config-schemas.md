@@ -174,11 +174,7 @@ Per-provider model handling on the passthrough path (transforms, not gates):
 
 `config/providers.json` is the **sole source of truth** for all provider definitions and operational parameters.
 Top-level shape: `{ "providers": { "<name>": { ... } } }`.
-Entry keys (verified): `code`, `name`, `env_key`, `base_url`, `auth_header`,
-`endpoints`, `strategy` (enum in `ProviderStrategySchema`,
-`src/config/schema.ts:113-121`), strictly required operational blocks:
-`request_retry`, `key_cooldown`, `pacer`, `circuit_breaker`, plus optional
-`limits`, `headers`, `conserve_rules`.
+Entry keys (verified in v4): `code`, `name`, `env_key`, `strategy`, `base_url`, `auth_header`, `headers?` (optional), `endpoints`, `conserve_rules?` (optional), `request_retry`, `pacer`. `key_cooldown` is `.optional()` in Zod (`ProviderConfigEntrySchema`) but carries no runtime behavior. `circuit_breaker` and `limits` (`rpm`/`rpd`/`tpm`) are fully removed from schema and `providers.json`.
 
 All 13 active and catalog providers explicitly declare their operational
 parameters (`strategy`, `request_retry`, `key_cooldown`, `pacer`, `circuit_breaker`).
@@ -216,9 +212,10 @@ compliance; invalid or missing blocks fail loudly and halt startup.
 
 Codes must stay in sync with `ProviderCodeSchema`
 (`src/config/schema.ts:3-17`); directive parsing, `globalKeyPool`, and the
-pacer all key off the two-letter code. All 13 providers on disk explicitly
-declare `name`, `env_key`, `strategy`, `request_retry`, `key_cooldown`, `pacer`,
-and `circuit_breaker` configurations.
+pacer all key off the two-letter code. All 13 providers declare `name`,
+`env_key`, `strategy`, `request_retry`, `pacer`, and optionally `key_cooldown`
+(`.optional()` in Zod, zero runtime behavior). `circuit_breaker` and `limits`
+are fully removed.
 
 ### 3.2 `headers` registry (static per-provider headers)
 
@@ -250,10 +247,7 @@ action `:streamGenerateContent` + `?alt=sse` preserved).
 
 ### 3.4 `limits` (`rpm` / `rpd` / `tpm`) and Registry Lifecycle
 
-Each provider has a `default` limit; `google` additionally carries per-model
-overrides mirroring the `quota` values in `config/models.json` (e.g.
-`gemini-3.1-flash-lite`, `gemini-3.5-flash`, `gemma-4-26b`,
-`text-embedding-004`, `antigravity`).
+`limits` (`rpm`/`rpd`/`tpm`) are fully purged from provider schemas and `providers.json`. No limit tracking is performed at the gateway; upstream rate limits are dynamic.
 
 Provider registry state is managed centrally by `initProviderRegistry()` and
 `getProviderConfig()` in `src/config/providers.ts`. Redundant in-memory duplicate
@@ -278,9 +272,11 @@ each provider's factory at boot; an unknown `strategy` string throws
 in `src/index.ts:49-57` catches registry failures and calls
 `process.exit(1)` — a bad strategy is fatal, never fail-open.
 
-### 3.6 Operational Governance & Zero-Hardcoding: `request_retry`, `key_cooldown`, `pacer`, `circuit_breaker`
+### 3.6 Operational Governance & Zero-Hardcoding: `request_retry`, `key_cooldown`, `pacer`
 
-`config/providers.json` is the **sole source of truth** for all provider operational configurations. All four operational blocks (`pacer`, `circuit_breaker`, `key_cooldown`, `request_retry`) are **strictly required** by `ProviderConfigEntrySchema` (`src/config/schema.ts:123-138`) on every registered provider.
+`config/providers.json` is the **sole source of truth** for provider operational configurations. Required blocks: `pacer`, `request_retry`. Optional (zero runtime behavior): `key_cooldown` (`.optional()` in Zod). `circuit_breaker` and `limits` are fully removed.
+
+`config/providers.json` is the **sole source of truth** for all provider operational configurations. Required blocks (`pacer`, `request_retry`) are strictly enforced by `ProviderConfigEntrySchema` (`src/config/schema.ts:123-138`). `key_cooldown` is `.optional()` in Zod but carries zero runtime behavior. `circuit_breaker` and `limits` are fully removed.
 
 Missing any of these blocks or supplying invalid values triggers a loud fatal error at startup:
 ```
@@ -307,9 +303,7 @@ Operational parameters directly govern runtime behavior across all four gateway 
    - **Switch Branch Removal**: `src/network/pacer.ts` (`getPacerForProvider`) now extracts `min_delay_ms`, `max_queue_depth`, and `max_queue_wait_ms` directly from `provConfig.pacer`, eliminating hardcoded `switch (provider)` blocks and environment-variable-specific delays.
    - **GCP Dynamic Pacing**: `src/handlers/gcp_compat.ts` (`acquireGcpPacer`) dynamically binds to `getProviderConfig("gc").pacer` parameters instead of static GCP env vars.
 
-3. **`circuit_breaker`** (`enabled`, `failure_threshold`, `failure_window_ms`, `open_duration_ms`, `half_open_probes`):
-   - Configures provider circuit breaker failure thresholds, sliding evaluation windows, open duration cooldowns, and half-open probe caps in `src/network/circuit_breaker.ts` (`getCircuitBreakerForProvider`).
-   - Breaker evaluation is dynamically skipped if `provConfig.circuit_breaker?.enabled === false`.
+3. **No `circuit_breaker`**: Fully excised in v4. No breaker mechanism exists in schema, network layer, or engine (`src/network/circuit_breaker.ts` removed; `getCircuitBreakerForProvider` no longer exists). `circuit_breaker` does not appear in `ProviderConfigEntrySchema` or `providers.json`.
 
 4. **`key_cooldown`** (`enabled`, `cooldown_sec`, `rate_limit_sec`):
    - **Quarantine Gating**: `src/network/pool.ts` (`isProviderQuarantineEnabled`) checks `provConfig.key_cooldown?.enabled` alongside circuit breaker state, replacing hardcoded switch branches.
@@ -352,7 +346,7 @@ native base override via `MOCK_GG_PORT` / `GOOGLE_NATIVE_BASE_URL`
 | `NuanceCodeSchema` | `:34-42` | `no dp ts gm g3 sb tc` |
 | `RateLimitSchema` | `:44-48` | `{ rpm, rpd, tpm }` non-negative ints |
 | `ProviderEndpointsSchema` | `:50-53` | record `CompletionCode → path` |
-| `ProviderConfigEntrySchema` | `:123-138` | one `config/providers.json` entry (strictly requires `pacer`, `circuit_breaker`, `key_cooldown`, `request_retry`) |
+| `ProviderConfigEntrySchema` | `:123-138` | one `config/providers.json` entry (strictly requires `pacer`, `request_retry`; `key_cooldown` `.optional()` zero runtime; `circuit_breaker` removed) |
 | `ProviderStrategySchema` | `:113-121` | `standard native_cascade gcp_guarded zen_single_flight anthropic_direct` (default `standard`) |
 | `ProvidersConfigSchema` | `:140-142` | `{ providers: {...} }` |
 | `FusionTierSchema` | `:67-71` | `{ priority, apikey, model }` |

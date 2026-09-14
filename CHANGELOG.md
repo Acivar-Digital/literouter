@@ -9,6 +9,7 @@ All notable changes to LiteRouter will be documented in this file.
 - **Dead code purged**: `getConsecutiveAuthFailures()` stub (hardcoded `return 0`) removed from `pool.ts`. `normalizeGoogleNativeModel`, `extractModelFromPath`, `buildGoogleNativeUpstreamUrl`, `buildTierUpstreamUrl` v3 relics removed from `google_native.ts`.
 - **Schema fields removed**: `circuit_breaker` field removed from `ProviderConfigEntrySchema`. `key_cooldown` made optional.
 - **Stale integration tests removed**: Deleted `tests/integration/anthropic_compat.test.ts` (provider `an` pruned). Removed circuit breaker 503 assertions from `h2_resilience.test.ts` and `test_v4_smoke.py`.
+- **`providers.json` dead fields stripped**: Removed `limits`, `circuit_breaker`, and `key_cooldown` blocks from all 5 providers (`openrouter`, `nvidia`, `google`, `zen`, `gcp`). Canonical provider config now contains only: `code`, `name`, `env_key`, `strategy`, `base_url`, `auth_header`, `headers?`, `endpoints`, `conserve_rules?`, `request_retry`, `pacer`.
 
 ### Fixed
 - **Pacer jitter wired**: `scheduleDrain()` now computes a fresh random interval between `min_delay_ms` and `max_delay_ms` on every drain (per-dispatch jitter). `getPacerForProvider()` passes `max_delay_ms` through `PacerConfig.maxDelayMs`.
@@ -16,6 +17,7 @@ All notable changes to LiteRouter will be documented in this file.
 - **Mock port warning**: `overrideProviderUrl` logs `logger.warn` on invalid `MOCK_<CODE>_PORT` env var before falling back to production URL.
 - **Import coupling fixed**: `gcp_compat.ts` now imports `resolveUpstreamEndpoint` directly from `../config/providers` (not via `./openai_compat` re-export).
 - **Retry jitter standardized**: `gcp_compat.ts` retry loop uses `calculateRetryDelay(provConfig.request_retry.delay, attempt)` matching `openai_compat.ts` pattern.
+- **Retry → pacer flow confirmed**: Every retry attempt releases its pacer lease, sleeps `request_retry.delay` jitter, then re-acquires the pacer before next dispatch. No retry path bypasses the pacer queue.
 - **`key_cooldown` optional chaining**: All access sites in `dispatch.ts` and `gcp_compat.ts` guard against undefined with `?.`.
 
 ### Security
