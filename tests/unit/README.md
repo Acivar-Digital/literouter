@@ -78,9 +78,9 @@ Verifies bidirectional translation and reasoning stripping across all five wire 
 
 ### Run Entire Gateway Suite (Recommended)
 ```bash
-bun run test:gateway
+bun test # or bun test:lr (or legacy alias bun run test:gateway)
 ```
-*Executes all 938 tests across 76 files in `tests/unit/` (including legacy fallback tests) in ~15s.*
+*Executes all tests across 7 domains in parallel subprocesses (~2.5s).*
 
 ### Run Targeted Subsystems
 ```bash

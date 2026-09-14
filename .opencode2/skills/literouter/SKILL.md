@@ -25,7 +25,7 @@ description: LiteRouter API Gateway operational guide for Bun/TypeScript proxy o
 | Targeted domain test slice | `bun test <domain>` (e.g. `bun test handlers`, `bun test network`, `bun test stream`, `bun test engine`, `bun test telemetry`, `bun test core`, `bun test legacy`, `bun test eval`) |
 | Raw unbuffered test runner | `bun run test:raw` (verbose escape hatch) |
 | OpenCode2 test tool | `test_literouter` native plugin tool for zero-bloat programmatic test execution |
-| Fast gateway unit tests | `bun run test:gateway` (`tests/unit`, 938 tests, no eval noise) |
+| Fast gateway unit tests | `bun run test:gateway` (aliases to `bun test` / `test_runner.ts` accelerated parallel runner) |
 | Benchmark eval grader tests | `bun run test:eval` (`tests/eval`, 182 tests) |
 | Legacy dual-path fallback tests | `bun run test:legacy` (`tests/unit/legacy`, 179 tests) |
 | Anti-bloat failure runner | `bun run test:failures` (`bun test --only-failures`) |

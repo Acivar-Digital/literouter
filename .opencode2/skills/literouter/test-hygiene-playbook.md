@@ -157,7 +157,7 @@ eval/                           # Live model evaluations (NOT run by bun test)
 
 ### 3.1 `tests/unit/` (v4.1 Core Gateway & Subsystems)
 - **Scope**: Pure logic tests, dispatcher, route execution, AST parsers, directive token validation, cooldown math, header builders, scrubber transforms, pacer conveyor, and telemetry.
-- **Performance**: Ultra-fast execution (<10ms per test). Executed via `bun run test:gateway` (938 tests).
+- **Performance**: Ultra-fast execution (<10ms per test). Executed via accelerated parallel runner `bun test` / `bun test:lr` (or alias `bun run test:gateway`).
 - **Environment**: In-memory data structures only; loopback test doubles for mock provider responses.
 - **Examples**: `tests/unit/engine/dispatch.test.ts`, `tests/unit/network/cooldown.test.ts`, `tests/unit/transformers/scrubber.test.ts`.
 
@@ -244,7 +244,7 @@ Never run blanket `bun test` during iterative development. LiteRouter provides f
 
 | Command | Target Scope | Test Count | When to Use |
 |---|---|---|---|
-| `bun run test:gateway` | `tests/unit` (Core engine, transformers, handlers) | ~938 tests | **Primary runner** for gateway edits, routing, pacer, cooldown, and scrubber work. No eval noise. |
+| `bun test` or `bun test:lr` | All domains / targeted slice | ~1,170 tests | **Primary runner** (accelerated parallel runner; `bun run test:gateway` aliases here). Silent on success. |
 | `bun run test:eval` | `tests/eval` (Benchmark grader logic) | ~182 tests | When modifying eval graders, patch tools, or benchmark validation rules. |
 | `bun run test:legacy` | `tests/unit/legacy` (Dual-path legacy fallback) | ~179 tests | When verifying compatibility of legacy handlers or monolithic fallbacks. |
 | `bun run test:failures` | `bun test --only-failures` | Only failed tests | When running across the suite to surface **only** regressions without passing spam. |
@@ -379,7 +379,7 @@ uv run python admin/code_hygiene/agent_guardrail.py validate <test_file>
 bun test <test_file>
 
 # Gate 4: Fast gateway verification or anti-bloat failure check
-bun run test:gateway
+bun test
 # or for failure-only verification across entire suite:
 bun run test:failures
 

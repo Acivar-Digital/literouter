@@ -79,7 +79,7 @@ I understand you want: [one sentence restatement in your own words]
 | Static Typecheck | `bun run typecheck` | Zero errors (`tsc --noEmit`), exit code 0 | Local |
 | TS AST Quality | `node node_modules/clean_ts/dist/cli.js validate <file>` | `valid: true`, AST anti-slop pass, complexity < 6 | Local |
 | Python Lint | `uv run ruff check .` | Zero errors output | Local |
-| Fast Gateway Tests | `bun run test:gateway` | All pass (938 fast unit tests in `tests/unit`, no eval noise) | Local |
+| Fast Gateway Tests | `bun test` or `bun test:lr` | All pass (accelerated parallel runner, 7 domains, silent on success) | Local |
 | Failure-Only Test | `bun run test:failures` | `bun test --only-failures` (outputs only failing tests) | Local |
 | Eval Grader Tests | `bun run test:eval` | All pass (182 benchmark eval grader tests in `tests/eval`) | Local |
 | Full Gateway Suite | `bun test` or `bun test:lr` | Accelerated domain-partitioned runner (runs 7 domains in parallel subprocesses, silent on success, outputs only isolated failures), exit code 0 | Local |
@@ -94,7 +94,7 @@ I understand you want: [one sentence restatement in your own words]
 ### Anti-Simulation Gate (Real Execution Mandate)
 - **Zero Simulation**: Never imagine or paraphrase test runs. Every gate artifact must be self-witnessing from actual execution.
 - **Verification Sequence**: `echo "Run: $(date -u +"%Y-%m-%dT%H:%M:%SZ")" | tee -a tests/test_results.md && bun test >> tests/test_results.md 2>&1 && tail -30 tests/test_results.md && ls -lh tests/test_results.md` (paste verbatim). Missing disk timestamps fail cutover automatically. [Rationale: Enforce real terminal execution; reject simulated outputs].
-- **Anti-Context-Bloat**: `bun test` (or `bun test:lr`) is now natively anti-context-bloat (suppresses all passing test noise and outputs a clean single-line summary on pass, extracting only failures). For even faster targeted iteration during active edits, use `bun test <domain>` (e.g. `bun test handlers`), `bun run test:gateway`, `bun run test:failures`, or the `test_literouter` native tool.
+- **Anti-Context-Bloat**: `bun test` (or `bun test:lr`) is now natively anti-context-bloat (suppresses all passing test noise and outputs a clean single-line summary on pass, extracting only failures). For even faster targeted iteration during active edits, use `bun test <domain>` (e.g. `bun test handlers`), `bun run test:failures`, or the `test_literouter` native tool.
 
 ---
 
@@ -130,7 +130,7 @@ bd dolt push                                                  # Push Dolt databa
 ### Session Completion (Mandatory Auto-Push Protocol)
 Work is **NOT complete** until `git push` succeeds. Never stop before pushing.
 1. **File remaining work**: Create beads for follow-up work with `--acceptance="..."`.
-2. **Run quality gates**: `bun run typecheck && bun test:gateway && uv run pytest tests/integration/`.
+2. **Run quality gates**: `bun run typecheck && bun test && uv run pytest tests/integration/`.
 3. **Close finished issues**: `bd close <id> --reason "Completed"`.
 4. **PUSH TO REMOTE (MANDATORY)**:
    ```bash

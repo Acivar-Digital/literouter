@@ -212,7 +212,7 @@ uv run pytest tests/integration/test_dots_transformer_e2e.py # XML & thinking ta
 | `bun run test` / `bun run test:lr` | All 7 Unit Domains | **Default fast runner**. Runs 1,100+ tests across domains in parallel subprocesses. | Single-line pass summary; failure diffs only. |
 | `bun run test:lr <domain>` | Single Domain | **Targeted iteration**. Runs only the specified domain (`handlers`, `network`, `stream`, etc.). | Single-line pass summary; failure diffs only. |
 | `bun run test:raw` | Full Suite (Native) | **Unbuffered fallback**. Native `bun test` without domain runner wrapper or output suppression. | Full unbuffered Bun test logs. |
-| `bun run test:gateway` | `tests/unit/` | Direct Bun test invocation of the entire gateway unit test directory. | Standard Bun test output. |
+| `bun run test:gateway` | All 7 Unit Domains | Aliases to `bun test` / `test_runner.ts` parallel runner (backward compatibility). | Single-line pass summary; failure diffs only. |
 | `bun run test:failures` | Full Suite | Anti-bloat raw runner (`bun test --only-failures`). | Only failing tests shown. |
 | `bun run test:eval` | `tests/eval/` | Benchmark grader unit tests (182 tests in ~60ms). | Standard Bun test output. |
 | `bun run test:legacy` | `tests/unit/legacy/` | Legacy dual-path backward-compatibility tests (179 tests). | Standard Bun test output. |
