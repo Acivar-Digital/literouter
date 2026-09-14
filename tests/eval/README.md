@@ -40,7 +40,7 @@ When testing evaluation graders, test assertions intentionally trigger high-seve
 These loud console warnings are **expected assertions** verifying that malicious model outputs are caught and vetoed.
 
 Partitioning these into `tests/eval/` (executable via `bun run test:eval`) achieves two key architectural goals:
-1. **Separation of Concerns**: Core gateway developers can run `bun run test:gateway` without alarm-banner noise.
+1. **Separation of Concerns**: Core gateway developers can run domain slices like `bun test handlers` or `bun test engine` without alarm-banner noise.
 2. **Context Window Protection**: Prevents LLM coding agents from misinterpreting simulated veto warnings as runtime gateway failures.
 
 ---

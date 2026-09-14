@@ -100,3 +100,47 @@ export function getAllProviders(): readonly ProviderConfigEntry[] {
   }
   return Array.from(registry.byCode.values());
 }
+
+export function overrideProviderUrl(url: string, providerCode: string): string {
+  const mockPort = process.env[`MOCK_${providerCode.toUpperCase()}_PORT`];
+  if (!mockPort) {
+    return url;
+  }
+  try {
+    const parsed = new URL(url);
+    parsed.protocol = "http:";
+    parsed.host = `localhost:${mockPort}`;
+    return parsed.toString();
+  } catch {
+    return url;
+  }
+}
+
+export function resolveUpstreamEndpoint(
+  providerCodeOrName: string,
+  endpointKey: string,
+  model?: string
+): { url: string; authHeader: "Bearer" | "x-api-key"; rawPath: string; headers: Record<string, string> } {
+  if (isRegisteredProvider(providerCodeOrName)) {
+    const p = getProviderConfig(providerCodeOrName);
+    const endpoints = p.endpoints as Record<string, string | undefined>;
+    const rawPath = endpoints[endpointKey] ?? (endpointKey.startsWith("/") ? endpointKey : undefined);
+    if (rawPath) {
+      const formatted = model !== undefined ? rawPath.replace("{model}", model) : rawPath;
+      const originalUrl = `${p.base_url}${formatted.startsWith("/") ? formatted : `/${formatted}`}`;
+      return {
+        url: overrideProviderUrl(originalUrl, p.code),
+        authHeader: p.auth_header ?? "Bearer",
+        rawPath: formatted.startsWith("/") ? formatted : `/${formatted}`,
+        headers: p.headers ?? {},
+      };
+    }
+  }
+
+  return {
+    url: overrideProviderUrl("https://openrouter.ai/api/v1/chat/completions", providerCodeOrName),
+    authHeader: "Bearer",
+    rawPath: "/api/v1/chat/completions",
+    headers: {},
+  };
+}

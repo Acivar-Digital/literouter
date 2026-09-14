@@ -78,14 +78,19 @@ Verifies bidirectional translation and reasoning stripping across all five wire 
 
 ### Run Entire Gateway Suite (Recommended)
 ```bash
-bun test # or bun test:lr (or legacy alias bun run test:gateway)
+bun test
 ```
 *Executes all tests across 7 domains in parallel subprocesses (~2.5s).*
 
-### Run Targeted Subsystems
+### Run Targeted Domains (Domain Slice Runner)
 ```bash
-# Engine dispatch & strategies only (<250ms)
-bun test tests/unit/engine/
+bun test handlers
+bun test network
+bun test stream
+bun test engine
+bun test telemetry
+bun test core
+bun test eval
 
 # Payload transformers only (~1.5s)
 bun test tests/unit/transformers/

@@ -31,6 +31,8 @@ import {
   isRegisteredProvider,
   initProviderRegistry,
   getAllProviders,
+  overrideProviderUrl,
+  resolveUpstreamEndpoint,
 } from "../config/providers";
 import { getEnv } from "../config/env";
 import { getPacerForProvider, PacerQueueOverflowError, type PacerAcquireResult } from "../network/pacer";
@@ -77,48 +79,7 @@ export function getProviderEndpointConfig(providerCode: string): ProviderEndpoin
     : undefined;
 }
 
-export function overrideProviderUrl(url: string, providerCode: string): string {
-  const mockPort = process.env[`MOCK_${providerCode.toUpperCase()}_PORT`];
-  if (!mockPort) {
-    return url;
-  }
-  try {
-    const parsed = new URL(url);
-    parsed.protocol = "http:";
-    parsed.host = `localhost:${mockPort}`;
-    return parsed.toString();
-  } catch {
-    return url;
-  }
-}
-
-export function resolveUpstreamEndpoint(
-  providerCode: string,
-  completionCode: string,
-  model: string
-): { url: string; authHeader: "Bearer" | "x-api-key"; rawPath: string; headers: Record<string, string> } {
-  if (isRegisteredProvider(providerCode)) {
-    const p = getProviderConfig(providerCode);
-    const endpoints = p.endpoints as Record<string, string | undefined>;
-    if (endpoints[completionCode]) {
-      const rawPath = endpoints[completionCode] as string;
-      const formatted = rawPath.replace("{model}", model);
-      const originalUrl = `${p.base_url}${formatted}`;
-      return {
-        url: overrideProviderUrl(originalUrl, providerCode),
-        authHeader: p.auth_header ?? "Bearer",
-        rawPath: formatted,
-        headers: p.headers ?? {},
-      };
-    }
-  }
-  return {
-    url: overrideProviderUrl("https://openrouter.ai/api/v1/chat/completions", providerCode),
-    authHeader: "Bearer",
-    rawPath: "/api/v1/chat/completions",
-    headers: {},
-  };
-}
+export { overrideProviderUrl, resolveUpstreamEndpoint };
 
 function generateZenSessionId(): string {
   const chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";

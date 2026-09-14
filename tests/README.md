@@ -10,7 +10,7 @@ Comprehensive automated test architecture, hermetic validation framework, and in
 
 LiteRouter v4.1 employs an accelerated, multi-tiered test matrix designed for sub-second developer iteration, deterministic state isolation, and zero external quota consumption. The test runner architecture decouples the test suite into:
 
-1. **Accelerated Domain Runner (`scripts/test_runner.ts`)**: The default engine for `bun test` and `bun run test:lr`. Slices the test suite into 8 discrete domains and executes them concurrently across isolated subprocesses via `Bun.spawn`.
+1. **Accelerated Domain Runner (`scripts/test_runner.ts`)**: The default engine for `bun test`. Slices the test suite into 8 discrete domains and executes them concurrently across isolated subprocesses via `Bun.spawn`.
 2. **Hermetic Unit Test Matrix (`tests/unit/`)**: Over 900 gateway unit tests exercising the v4.1 Unified Engine (`dispatch.ts`), streaming transformers, RequestPacer, CooldownManager, telemetry, and legacy fallback handlers.
 3. **Benchmark Eval Grader Harness (`tests/eval/`)**: 182 grading tests evaluating AST patchers, Pydantic graders, prompt injection vetoes, and DOM web evaluators using hermetic mock doubles.
 4. **Integration & Downstream Agent Gauntlet (`tests/integration/`)**: Pytest integration harness validating v4 vs legacy A/B parity, ephemeral gateway lifecycles, and downstream developer tools (OpenCode 2, Claude Code CLI, Pydantic AI).
@@ -38,7 +38,7 @@ LiteRouter v4.1 employs an accelerated, multi-tiered test matrix designed for su
 
 ## 2. Accelerated Domain Test Runner (`scripts/test_runner.ts`)
 
-LiteRouter routes primary accelerated test execution through `scripts/test_runner.ts`. Running `bun run test` or `bun run test:lr` invokes this runner rather than raw sequential test runs. Note that running naked `bun test` invokes Bun's built-in test runner directly, whereas `bun run test` and `bun run test:lr` execute the domain-partitioned runner.
+LiteRouter routes primary accelerated test execution through `scripts/test_runner.ts` via `bun test`. Running `bun test` invokes this domain-partitioned runner rather than raw sequential test runs (for unbuffered native execution, use `bun run test:raw`).
 
 ### Why Accelerated Domain Execution?
 - **Speed via Concurrency**: Spawns multiple parallel `bun test` child processes partitioned across distinct architectural domains, utilizing all available CPU cores.
@@ -84,32 +84,32 @@ All domains run simultaneously. Results are gathered with `Promise.all`, aggrega
 
 ## 3. Targeted Subcommands for Fast Iteration
 
-Rather than running the full test suite during active development, agents and developers can target individual domains directly via subcommands:
+Rather than running the full test suite during active development, agents and developers can target individual domains directly:
 
 ```bash
 # Run only network domain tests (pacer, cooldown, pools, fetcher)
-bun run test:lr network
+bun test network
 
 # Run only stream transformer and SSE tests
-bun run test:lr stream
+bun test stream
 
 # Run only handler tests
-bun run test:lr handlers
+bun test handlers
 
 # Run only engine dispatch tests
-bun run test:lr engine
+bun test engine
 
 # Run only telemetry tests
-bun run test:lr telemetry
+bun test telemetry
 
 # Run only core tests (auth, keys, directives)
-bun run test:lr core
+bun test core
 
 # Run only legacy fallback tests
-bun run test:lr legacy
+bun test legacy
 
 # Run evaluation grader tests
-bun run test:lr eval
+bun test eval
 ```
 
 ### Filtering Within Domains or by Pattern
@@ -117,13 +117,13 @@ The runner accepts secondary filter arguments or direct pattern matches:
 
 ```bash
 # Target only the pacer test within the network domain
-bun run test:lr network pacer
+bun test network pacer
 
 # Target any test matching "directive" across all domains
-bun run test:lr directive
+bun test directive
 
 # Run silent mode (suppresses pass summary in scripts)
-bun run test:lr network --silent
+bun test network --silent
 ```
 
 ---
@@ -209,13 +209,11 @@ uv run pytest tests/integration/test_dots_transformer_e2e.py # XML & thinking ta
 
 | Command | Target Suite | Description & Best Use Case | Output Profile |
 |---|---|---|---|
-| `bun run test` / `bun run test:lr` | All 7 Unit Domains | **Default fast runner**. Runs 1,100+ tests across domains in parallel subprocesses. | Single-line pass summary; failure diffs only. |
-| `bun run test:lr <domain>` | Single Domain | **Targeted iteration**. Runs only the specified domain (`handlers`, `network`, `stream`, etc.). | Single-line pass summary; failure diffs only. |
+| `bun test` | All 7 Unit Domains | **Default fast runner**. Runs 1,100+ tests across domains in parallel subprocesses. | Single-line pass summary; failure diffs only. |
+| `bun test <domain>` | Single Domain | **Targeted iteration**. Runs only the specified domain (`handlers`, `network`, `stream`, etc.). | Single-line pass summary; failure diffs only. |
 | `bun run test:raw` | Full Suite (Native) | **Unbuffered fallback**. Native `bun test` without domain runner wrapper or output suppression. | Full unbuffered Bun test logs. |
-| `bun run test:gateway` | All 7 Unit Domains | Aliases to `bun test` / `test_runner.ts` parallel runner (backward compatibility). | Single-line pass summary; failure diffs only. |
 | `bun run test:failures` | Full Suite | Anti-bloat raw runner (`bun test --only-failures`). | Only failing tests shown. |
-| `bun run test:eval` | `tests/eval/` | Benchmark grader unit tests (182 tests in ~60ms). | Standard Bun test output. |
-| `bun run test:legacy` | `tests/unit/legacy/` | Legacy dual-path backward-compatibility tests (179 tests). | Standard Bun test output. |
+| `bun run test:eval` | `tests/eval/` | Benchmark grader unit tests (`scripts/test_runner.ts eval`, 182 tests). | Single-line pass summary; failure diffs only. |
 | `uv run pytest tests/integration/` | `tests/integration/` | Python integration suite, downstream agent gauntlet, and A/B parity. | Standard Pytest output. |
 | `bun run typecheck` | Whole Project | Static TypeScript typecheck (`tsc --noEmit`). | Zero errors required. |
 
