@@ -56,7 +56,7 @@ echo "🚀 Starting LiteRouter v4.0 (Bun) on ${HOST}:${PORT} (${PROTOCOL})..."
 # Launch Bun process in detached tmux session
 tmux new-session -d -s "$TMUX_SESSION"
 tmux send-keys -t "$TMUX_SESSION" "cd $(pwd)" C-m
-tmux send-keys -t "$TMUX_SESSION" "export LITEROUTER_HOST=\"$HOST\" LITEROUTER_PORT=\"$PORT\" && bun run src/index.ts 2>&1 | tee -a logs/gateway.log" C-m
+tmux send-keys -t "$TMUX_SESSION" "export LITEROUTER_HOST=\"$HOST\" LITEROUTER_PORT=\"$PORT\" LITEROUTER_TLS_ENABLED=\"$TLS_ENABLED\" && bun run src/index.ts 2>&1 | tee -a logs/gateway.log" C-m
 
 # Wait for server ready with health polling
 MAX_RETRIES=15

@@ -8,6 +8,7 @@ import {
   getAllProviders,
   initProviderRegistry,
 } from "./config/providers";
+import { loadLocationConfig } from "./config/location";
 import { initStrategyRegistry } from "./engine/strategy_registry";
 import { parseDirective, type ParsedDirective } from "./directive/parser";
 import { extractDirectiveToken } from "./directive/validator";
@@ -577,8 +578,21 @@ export function createServer(portOverride?: number): Server<unknown> | LiteRoute
   initializeKeyPools();
   loadAndCacheNativeChains();
   const env = getEnv();
-  const port = portOverride ?? env.LITEROUTER_PORT;
-  const tls = loadTlsOptions(env.LITEROUTER_TLS_ENABLED);
+
+  const location = (() => {
+    try {
+      return loadLocationConfig();
+    } catch {
+      return undefined;
+    }
+  })();
+
+  const port = portOverride ?? location?.port ?? env.LITEROUTER_PORT;
+  const host = location?.host ?? env.LITEROUTER_HOST;
+  const tlsEnabled = portOverride !== undefined
+    ? (process.env.LITEROUTER_TLS_ENABLED !== undefined ? process.env.LITEROUTER_TLS_ENABLED === "true" : Boolean(loadTlsOptions(true)))
+    : (location !== undefined ? location.tls_enabled : env.LITEROUTER_TLS_ENABLED);
+  const tls = tlsEnabled ? loadTlsOptions(true) : undefined;
 
   const pools = loadKeyPools(process.env);
   const keyPools = Array.from(pools.entries())
@@ -681,7 +695,7 @@ export function createServer(portOverride?: number): Server<unknown> | LiteRoute
       }
     });
 
-    h2Server.listen(port, env.LITEROUTER_HOST);
+    h2Server.listen(port, host);
 
     return {
       port,
@@ -695,7 +709,7 @@ export function createServer(portOverride?: number): Server<unknown> | LiteRoute
 
   return Bun.serve({
     port,
-    hostname: env.LITEROUTER_HOST,
+    hostname: host,
     idleTimeout: env.LITEROUTER_IDLE_TIMEOUT_SEC,
     tls: tls ? { cert: tls.cert, key: tls.key } : undefined,
     async fetch(req: Request) {
