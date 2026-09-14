@@ -19,8 +19,8 @@ description: LiteRouter API Gateway operational guide for Bun/TypeScript proxy o
 | Check status | `bash scripts/status.sh` |
 | Stop gateway | `bash scripts/stop.sh` |
 | Restart gateway | `bash scripts/restart.sh` |
-| Health probe (auth-free) | `curl -sk https://localhost:7766/health` |
-| Hard key reset (auth-free) | `curl -sk -X POST https://localhost:7766/reset` |
+| Health probe (public) | `curl -s http://10.32.34.243:7766/health` (or configured host in `config/location.json`) |
+| Hard key reset (auth-gated) | `curl -s -X POST http://10.32.34.243:7766/reset -H "Authorization: Bearer <LITEROUTER_AUTH_KEY>"` |
 | Unit tests (all) | `bun run test` (or `bun test:lr`) (accelerated domain-partitioned test runner: runs 7 domains in parallel subprocesses, completely silent on success, outputs only isolated failures) |
 | Targeted domain test slice | `bun run test <domain>` (or `bun test:lr <domain>`) (e.g. `bun run test handlers`, `bun run test network`, `bun run test stream`, `bun run test engine`, `bun run test telemetry`, `bun run test core`, `bun run test eval`) |
 | Raw unbuffered test runner | `bun run test:raw` (verbose escape hatch) |
@@ -42,7 +42,23 @@ description: LiteRouter API Gateway operational guide for Bun/TypeScript proxy o
 > - `bun run test:raw`: Raw unbuffered Bun test runner (verbose escape hatch)
 > - OpenCode2 tool: `test_literouter` native tool for zero-bloat programmatic test invocation.
 
-> Auth scope: `GET /health` and `POST /reset` perform **no auth check and no method check** — see [scripts-ops.md §2](scripts-ops.md#2-get-health-liveness-probe-no-auth-any-method) and [§3](scripts-ops.md#3-post-reset-hard-reset-no-auth-any-method-hot-reload-scope). The authenticated variant is `POST /admin/pool/reset` ([§3.3](scripts-ops.md#33-auth-gated-variant-post-adminpoolreset)).
+> **Auth scope**: `GET /health` is public (auth-free) for liveness probes. `/reset` is **auth-gated** behind `LITEROUTER_AUTH_KEY` or valid directive token (matches `POST /admin/pool/reset`; returns `401 Unauthorized` without valid Bearer auth) — see [scripts-ops.md §2](scripts-ops.md#2-get-health-liveness-probe-no-auth-any-method) and [§3](scripts-ops.md#3-post-reset-hard-reset-no-auth-any-method-hot-reload-scope).
+
+### Downstream Serving & ZeroTier Topology (`config/location.json`)
+- **Authoritative Configuration**: `config/location.json` is the sole downstream authority:
+  ```json
+  {
+    "host": "10.32.34.243",
+    "port": 7766,
+    "tls_enabled": false
+  }
+  ```
+- **Interface Bindings**:
+  - **VPS (`vps466a`)**: `10.32.34.243:7766` (`ztdhgfvars` ZeroTier interface).
+  - **WSL (Local)**: `10.32.34.172:7766` (`ztdhgfvars` ZeroTier interface).
+  - Never bind to `0.0.0.0` or expose raw unauthenticated ports.
+- **Client Routing**: Clients (OpenCode, Claude Code, Scribe in VPS tmux) configure `baseURL` pointing to `http://10.32.34.243:7766/v1` (or WSL `http://10.32.34.172:7766/v1`).
+- **Transport**: Downstream is plain HTTP/1.1 over secure ZeroTier overlay; Upstream connections to providers remain HTTP/2 over TLS managed via `Http2Pool`.
 
 ## §2. Active Key Pools (summary)
 
@@ -378,7 +394,7 @@ bun run scripts/probe_model.ts <model_name> [--directive <directive_key>] [--url
 5. **Fusion presets are ONLY `quad` / `pydn` / `fast` / `deep`** (verified keys of `config/fusion.json`). `smart` / `code` / `cheap` do not exist ([directive-grammar.md §7](directive-grammar.md#7-fusion-presets-lr-fse-)).
 6. **No `fusion.schema.json` on disk.** The `$schema` pointer inside `config/fusion.json` is informational only; never link it as a file ([config-schemas.md §1.4](config-schemas.md#14-validation-gap-verified-on-disk)).
 7. **`FUSION_UPSTREAM_URL` is a legacy Python sidecar env var, not a TS constant** (zero hits in `src/`) — see [config-schemas.md §4](config-schemas.md#4-fusion_upstream_url-what-it-is-and-is-not).
-8. **`POST /reset` hot-reloads `config/providers.json` headers but cannot rebind port** — port/host/cert changes need `bash scripts/restart.sh`. `GET /health` + `POST /reset` are **auth-free** ([scripts-ops.md §3](scripts-ops.md#3-post-reset-hard-reset-no-auth-any-method-hot-reload-scope), [§3.2](scripts-ops.md#32-hot-reload-scope-configprovidersjson-headers-included)).
+8. **`POST /reset` is auth-gated and hot-reloads caches but cannot rebind ports** — requires `Bearer <LITEROUTER_AUTH_KEY>` or valid directive token. `GET /health` is public. Port/host/TLS changes are governed by `config/location.json` and require `bash scripts/restart.sh` to rebind the socket ([scripts-ops.md §3](scripts-ops.md#3-post-reset-hard-reset-no-auth-any-method-hot-reload-scope)).
 9. **Pure In-Memory Architecture (Zero Redis/Valkey Dependency)**: LiteRouter deliberately chooses NOT to use Redis, Valkey, or `Bun.redis` for core state. Single-threaded non-preemptive event-loop atomicity, `RequestPacer` FIFO burst smoothing, <0.05ms RAM lookups, and zero external failure domains eliminate external daemon baggage for single-instance gateways (see `architecture.md` §1 & `docs/ARCHITECTURE.md` §2.4).
 10. **`config/providers.json` is the sole source of truth for provider operational knobs across all 13 providers.** Required: `pacer`, `request_retry`. Optional (zero runtime behavior in v4): `key_cooldown` (`.optional()` in Zod schema, carries no runtime behavior). `circuit_breaker` and `limits` are fully removed. Missing or invalid required blocks abort gateway startup (`validateProviderConfigsFailLoud()`). All 17 legacy provider-specific operational env vars (`GCP_*`, `ZEN_*`, `OPENROUTER_*`) have been purged.
 11. **Purged Dead Ballast**: `limits` (`rpm`, `rpd`, `tpm`) has been completely purged from provider schemas and `config/providers.json` (removing the retired Zdist relic). Fine-grained `key_cooldown` knobs (`initial_cooldown_ms`, `backoff_factor`, `max_consecutive_failures`) and `max_delay_ms` are purged.

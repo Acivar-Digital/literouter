@@ -9,6 +9,12 @@ All notable changes to LiteRouter will be documented in this file.
   - Introduced `config/location.json` containing 3 authoritative serving keys: `host`, `port`, `tls_enabled`.
   - Added strict Zod-validated `loadLocationConfig()` loader in `src/config/location.ts` with explicit fail-loud error messages on missing or malformed configuration files.
   - Added comprehensive unit tests in `tests/unit/location_config.test.ts`.
+- **VPS Staged Production Cutover (`10.32.34.243:7766`)**:
+  - Deployed LiteRouter commit `f06ade2` to VPS (`ssh://vps466a/home/vps466a/services/literouter`), bound strictly to ZeroTier IP `10.32.34.243:7766` (`tls_enabled: false` downstream, multiplexed H2 TLS upstream).
+  - Preserved legacy backup at `~/backups/literouter-v1-20260914_220035.zip` (`chmod 600`, integrity verified with `unzip -t`).
+  - Upgraded VPS Bun runtime from `1.3.13` to `1.4.2` via `bun upgrade`.
+  - Repointed VPS client configuration in `~/.config/opencode/config.json` lines 17 & 584 from `localhost:7766` to `http://10.32.34.243:7766`.
+  - Verified 5 operational cutover gates: public `/health` (200), unauthenticated `/reset` (401), authenticated `/reset` (200), model discovery, and live inference probe with Gemini 3.5 Flash Lite.
 - **Bun v1.4.2 runtime optimization & skill update**:
   - Upgraded runtime environment to Bun v1.4.2.
   - Added proactive heap and JIT code compaction via `Bun.gc(true)` inside `handleHardReset()`.
@@ -25,6 +31,12 @@ All notable changes to LiteRouter will be documented in this file.
   - Refactored `start.sh` and `status.sh` to extract `host`, `port`, and `tls_enabled` directly from `config/location.json` using `jq -e`.
   - Added fail-loud fatal aborts if `config/location.json` is missing or schema-invalid before touching any processes.
   - Updated readiness probe to dynamically query `${PROTOCOL}://${HOST}:${PORT}/health` instead of hardcoded `localhost`.
+  - Exported `LITEROUTER_TLS_ENABLED="$TLS_ENABLED"` alongside host and port before spawning daemon tmux session.
+  - Hardened PATH exports in daemon control scripts to reliably discover `tmux` in `/home/linuxbrew/.linuxbrew/bin/tmux` and `bun` in `~/.bun/bin/bun`.
+
+### Fixed
+- **Downstream Server Protocol & Host Binding (`src/index.ts`)**:
+  - Connected `loadLocationConfig()` directly into `createServer()` options so server `hostname` and `tls` options strictly track `config/location.json` instead of falling back to default cert detection or `localhost`.
 
 ### Removed
 - **Circuit Breaker fully excised**: Removed `CircuitBreakerConfigSchema`, `CircuitBreakerConfig` type, and `getCircuitBreakerForProvider()` from schema, network layer, engine dispatch, and all handlers (`openai_compat`, `openai_original`, `gcp_compat`, `google_native`, `anthropic_compat`). No circuit breaker concept remains in the runtime path.

@@ -152,16 +152,15 @@ it never fails the run on this check.
 
 ---
 
-## 3. `POST /reset` — Hard Reset (No Auth, Any Method) & Hot-Reload Scope
+## 3. `POST /reset` — Hard Reset (Auth-Gated) & Hot-Reload Scope
 
-### 3.1 Exact semantics (`src/index.ts:61-79`, `SYSTEM_MAP`)
+### 3.1 Exact semantics (`src/index.ts:61-118`, `SYSTEM_MAP`)
 
-`SYSTEM_MAP` routes `/reset` to `handleHardReset()` with **no auth check and
-no method check**. `GET /reset` works identically to `POST /reset`, but the
-canonical operator form is `POST`:
+`SYSTEM_MAP` routes `/reset` (and its alias `/admin/pool/reset`) to `handleHardReset()` with **strict authentication gating**. Callers must provide either `Authorization: Bearer <LITEROUTER_AUTH_KEY>` or a valid `lr-` directive token in the `Authorization` header. Requests lacking valid credentials are rejected immediately with HTTP `401 Unauthorized`:
 
 ```bash
-curl -sk -X POST https://localhost:7766/reset | python3 -m json.tool
+curl -s -X POST http://10.32.34.243:7766/reset \
+  -H "Authorization: Bearer <LITEROUTER_AUTH_KEY>" | python3 -m json.tool
 ```
 
 What a reset clears, in source order:
@@ -169,13 +168,13 @@ What a reset clears, in source order:
 1. `globalCooldownManager.clearAll()` — all key cooldowns.
 2. `globalKeyPool.reset()` (all providers) + `initializeKeyPools()` —
    re-reads key pools from the environment (picks up `.env.local` edits).
-3. `clearCircuitBreakerRegistry()` — breaker open/half-open state + stats.
-4. `clearPacerRegistry()` — per-provider pacing queues/timers.
-5. `resetHttp2Pool()` — outbound H2 sessions (subsequent requests re-ALPN).
-6. `resetProvidersRegistryCache()` — nulls the `config/providers.json` cache
+3. `clearPacerRegistry()` — per-provider pacing queues/timers.
+4. `resetHttp2Pool()` — outbound H2 sessions (subsequent requests re-ALPN).
+5. `resetProvidersRegistryCache()` — nulls the `config/providers.json` cache
    so the next request re-reads the file from disk (§3.2).
-7. `loadAndCacheNativeChains()` + `resetNativeFlashTierIndex()` — native
+6. `loadAndCacheNativeChains()` + `resetNativeFlashTierIndex()` — native
    chain config and flash-tier rotation cursor.
+7. `Bun.gc(true)` — synchronous heap and JIT code compaction (Bun v1.4.2+).
 
 Exact success contract: HTTP `200`
 `{"status":"ok","message":"Hard reset successful. Cooldowns, circuit breakers,`
@@ -183,15 +182,15 @@ Exact success contract: HTTP `200`
 
 ### 3.2 Hot-reload scope — `config/providers.json` headers included
 
-`getProvidersRegistry()` (`src/handlers/openai_compat.ts:75-89`) caches the
+`getProvidersRegistry()` (`src/handlers/openai_compat.ts`) caches the
 parsed `config/providers.json` in memory; `resetProvidersRegistryCache()`
 sets the cache to `null`. Therefore **editing `config/providers.json` on disk
-followed by `POST /reset` hot-reloads without a restart**, including:
+followed by authenticated `POST /reset` hot-reloads without a restart**, including:
 
 - `base_url`, per-completion `endpoints` paths (`{model}` templated),
 - `auth_header` (`"Bearer"` vs `"x-api-key"`),
 - per-provider `headers` (e.g. OpenRouter `HTTP-Referer`, `X-Title`,
-  `User-Agent` fan-out verified live in `config/providers.json:7-11`).
+  `User-Agent` fan-out verified live in `config/providers.json`).
 
 Operator recipe:
 
@@ -199,31 +198,32 @@ Operator recipe:
 # 1. Edit config/providers.json (headers, base_url, endpoints ...)
 # 2. Validate JSON parses before resetting:
 python3 -c "import json; json.load(open('config/providers.json')); print('providers.json OK')"
-# 3. Hot-reload without restart:
-curl -sk -X POST https://localhost:7766/reset
+# 3. Hot-reload without restart (authenticated):
+curl -s -X POST http://10.32.34.243:7766/reset \
+  -H "Authorization: Bearer <LITEROUTER_AUTH_KEY>"
 # 4. Confirm healthy:
-curl -sk https://localhost:7766/health | python3 -m json.tool
+curl -s http://10.32.34.243:7766/health | python3 -m json.tool
 ```
 
-Same rule for key rotation: edit `.env.local` first, then `POST /reset`
+Same rule for key rotation: edit `.env.local` first, then authenticated `POST /reset`
 (step 2 above re-runs `initializeKeyPools()`). What `POST /reset` can **not**
-do: rebind port/host, reload TLS certs, or re-`source` `.env` — those need
-`bash scripts/restart.sh` (§1.4).
+do: rebind port/host or reload TLS certs — those are governed by `config/location.json`
+and require `bash scripts/restart.sh` (§1.4).
 
 ### 3.3 Auth-gated variant — `POST /admin/pool/reset`
 
-Unlike `/reset`, `/admin/pool/reset` **requires auth**: either
+Both `/reset` and `/admin/pool/reset` share identical credential verification: either
 `Authorization: Bearer <LITEROUTER_AUTH_KEY>` or any valid `lr-` directive
-token (`src/index.ts:81-124`). Invalid credentials return HTTP `401`
+token (`src/index.ts`). Invalid credentials return HTTP `401`
 `{"error":{"message":"Unauthorized admin access",...}}`.
 
 ```bash
-# Full hard reset (same effect as POST /reset, but authenticated):
-curl -sk -X POST https://localhost:7766/admin/pool/reset \
+# Full hard reset (identical to POST /reset):
+curl -s -X POST http://10.32.34.243:7766/admin/pool/reset \
   -H "Authorization: Bearer <LITEROUTER_AUTH_KEY>"
 
 # Single-provider pool reset via query param (cooldowns + timers for one pool):
-curl -sk -X POST "https://localhost:7766/admin/pool/reset?provider=nv" \
+curl -s -X POST "http://10.32.34.243:7766/admin/pool/reset?provider=nv" \
   -H "Authorization: Bearer <LITEROUTER_AUTH_KEY>"
 
 # Single-provider pool reset via JSON body (POST or PUT only):
@@ -451,16 +451,16 @@ curl -sk https://localhost:7766/health | python3 -m json.tool
 bun run scripts/doctor.ts
 
 # Rotate a key without restart (edit .env.local first), then reset + verify
-curl -sk -X POST https://localhost:7766/reset
-curl -sk https://localhost:7766/health | python3 -m json.tool
+curl -s -X POST http://10.32.34.243:7766/reset -H "Authorization: Bearer <LITEROUTER_AUTH_KEY>"
+curl -s http://10.32.34.243:7766/health | python3 -m json.tool
 
 # Change providers.json headers/endpoints without restart
 python3 -c "import json; json.load(open('config/providers.json')); print('providers.json OK')"
-curl -sk -X POST https://localhost:7766/reset
+curl -s -X POST http://10.32.34.243:7766/reset -H "Authorization: Bearer <LITEROUTER_AUTH_KEY>"
 bun run scripts/doctor.ts or
 
 # Cooldown-storm recovery (429 cascade): full reset, then targeted probe
-curl -sk -X POST https://localhost:7766/reset
+curl -s -X POST http://10.32.34.243:7766/reset -H "Authorization: Bearer <LITEROUTER_AUTH_KEY>"
 bun run scripts/doctor.ts nv
 
 # Single-provider pool reset (authenticated, no full reset)
