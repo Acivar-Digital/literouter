@@ -207,10 +207,6 @@ export class KeyPool extends EventEmitter {
     return state;
   }
 
-  public getConsecutiveAuthFailures(_provider: string, _index: number): number {
-    return 0;
-  }
-
   public async waitForKeyAvailable(
     provider: ProviderCode | string,
     timeoutMs: number,

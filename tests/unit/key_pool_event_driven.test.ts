@@ -161,7 +161,6 @@ describe("KeyPool — Event-Driven Key Availability & Lifecycle", () => {
         pool.reportFailure(provider, 0, 403, undefined, undefined, now);
       }).toThrow();
       expect(cooldownManager.isQuarantined("deepseek:0", now)).toBe(false);
-      expect(pool.getConsecutiveAuthFailures(provider, 0)).toBe(0);
     });
 
     it("resets key availability upon reportSuccess", () => {
@@ -173,7 +172,6 @@ describe("KeyPool — Event-Driven Key Availability & Lifecycle", () => {
       expect(cooldownManager.isQuarantined("deepseek:0", now)).toBe(true);
 
       pool.reportSuccess(provider, 0);
-      expect(pool.getConsecutiveAuthFailures(provider, 0)).toBe(0);
       expect(cooldownManager.isQuarantined("deepseek:0", now)).toBe(false);
     });
   });

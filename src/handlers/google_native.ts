@@ -1,7 +1,8 @@
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { getEnv } from "../config/env";
-import { getProviderConfig } from "../config/providers";
+import { getProviderConfig, overrideProviderUrl, resolveUpstreamEndpoint } from "../config/providers";
+import type { ParsedDirective } from "../directive/parser";
 import { createUnauthorizedResponse, validateDirective } from "../directive/validator";
 import { fetchWithTtftGuard } from "../network/fetcher";
 import { getPacerForProvider, PacerQueueOverflowError } from "../network/pacer";
@@ -19,7 +20,7 @@ import {
   logUsage,
   logWarn,
 } from "../ui/logger";
-import { globalKeyPool, handleOpenAICompat, resolveUpstreamEndpoint } from "./openai_compat";
+import { globalKeyPool, handleOpenAICompat } from "./openai_compat";
 
 function getGoogleMaxAttempts(): number {
   const ggConfig = getProviderConfig("gg");
@@ -75,13 +76,6 @@ export function getCurrentFlashTierIndex(): number {
   return getNativeTierIndex("gemini-flash");
 }
 
-export function normalizeGoogleNativeModel(rawModel: string): string {
-  if (rawModel.startsWith("google/")) {
-    return rawModel.slice("google/".length);
-  }
-  return rawModel;
-}
-
 export function resolveNativeChain(normalizedModel: string): readonly string[] | undefined {
   const configuredChain = cachedNativeChains[normalizedModel];
   if (Array.isArray(configuredChain) && configuredChain.length > 0) {
@@ -114,13 +108,11 @@ export function loadAndCacheNativeChains(): void {
 }
 
 export function getNativeChain(chainName: string): readonly string[] {
-  const normalized = normalizeGoogleNativeModel(chainName);
-  return resolveNativeChain(normalized) ?? [];
+  return resolveNativeChain(chainName) ?? [];
 }
 
 export function isNativeFusionModel(model: string): boolean {
-  const normalized = normalizeGoogleNativeModel(model);
-  const chain = resolveNativeChain(normalized);
+  const chain = resolveNativeChain(model);
   return chain !== undefined && chain.length > 0;
 }
 
@@ -158,45 +150,6 @@ interface NativeForwardContext {
   readonly bodyBuffer: ArrayBuffer;
 }
 
-function extractModelFromPath(pathname: string): string {
-  const match = pathname.match(/\/(?:v1beta|v1)\/models\/([^:]+)/);
-  const raw = match?.[1] ?? "gemini-2.5-flash";
-  return normalizeGoogleNativeModel(raw);
-}
-
-function getGoogleNativeBaseUrl(): string {
-  const mockPort = process.env.MOCK_GG_PORT;
-  if (mockPort) {
-    return `http://127.0.0.1:${mockPort}`;
-  }
-  const envBase = process.env.GOOGLE_NATIVE_BASE_URL;
-  if (envBase) {
-    return envBase.endsWith("/") ? envBase.slice(0, -1) : envBase;
-  }
-  return "https://generativelanguage.googleapis.com";
-}
-
-function buildGoogleNativeUpstreamUrl(url: URL): URL {
-  const base = getGoogleNativeBaseUrl();
-  const upstreamUrl = new URL(`${base}${url.pathname}${url.search}`);
-  if (upstreamUrl.searchParams.has("key")) {
-    upstreamUrl.searchParams.delete("key");
-  }
-  return upstreamUrl;
-}
-
-function buildTierUpstreamUrl(baseUpstreamUrl: URL, tierModel: string): URL {
-  const cloned = new URL(baseUpstreamUrl.toString());
-  cloned.pathname = cloned.pathname.replace(
-    /\/(v1beta|v1)\/models\/[^:]+/,
-    (match) => {
-      const version = match.startsWith("/v1beta") ? "v1beta" : "v1";
-      return `/${version}/models/${tierModel}`;
-    }
-  );
-  return cloned;
-}
-
 function prepareUpstreamHeaders(reqHeaders: Headers, apiKey: string): Headers {
   const upstreamHeaders = new Headers();
   for (const [k, v] of reqHeaders) {
@@ -206,9 +159,10 @@ function prepareUpstreamHeaders(reqHeaders: Headers, apiKey: string): Headers {
   }
   upstreamHeaders.set("x-goog-api-key", apiKey);
   upstreamHeaders.set("accept-encoding", "identity");
-  upstreamHeaders.set("user-agent", process.env.LITEROUTER_USER_AGENT || "OpenCode/1.18.29");
-  upstreamHeaders.set("http-referer", process.env.LITEROUTER_HTTP_REFERER || "https://opencode.ai");
-  upstreamHeaders.set("referer", process.env.LITEROUTER_HTTP_REFERER || "https://opencode.ai");
+  const ggHeaders = getProviderConfig("gg").headers ?? {};
+  upstreamHeaders.set("user-agent", process.env.LITEROUTER_USER_AGENT || ggHeaders["User-Agent"] || "OpenCode/1.18.29");
+  upstreamHeaders.set("http-referer", process.env.LITEROUTER_HTTP_REFERER || ggHeaders["HTTP-Referer"] || ggHeaders["Referer"] || "https://opencode.ai");
+  upstreamHeaders.set("referer", process.env.LITEROUTER_HTTP_REFERER || ggHeaders["HTTP-Referer"] || ggHeaders["Referer"] || "https://opencode.ai");
   upstreamHeaders.set("x-title", process.env.LITEROUTER_X_TITLE || "OpenCode");
   return upstreamHeaders;
 }
@@ -296,24 +250,26 @@ function logNativeInbound(
   });
 }
 
-function validateGoogleDirective(rawKey: string): Response | null {
+function validateGoogleDirective(rawKey: string): { directive?: ParsedDirective; error?: Response } {
   const validation = validateDirective(rawKey);
   if (validation.valid === false) {
-    return createUnauthorizedResponse(validation.error);
+    return { error: createUnauthorizedResponse(validation.error) };
   }
   const directive = validation.directive;
   if (directive.type !== "direct" || directive.provider !== "gg") {
-    return Response.json(
-      {
-        error: {
-          message: "Google native requires a Google directive (lr-gg-*)",
-          type: "invalid_request_error",
+    return {
+      error: Response.json(
+        {
+          error: {
+            message: "Google native requires a Google directive (lr-gg-*)",
+            type: "invalid_request_error",
+          },
         },
-      },
-      { status: 400 }
-    );
+        { status: 400 }
+      ),
+    };
   }
-  return null;
+  return { directive };
 }
 
 function getRequestBody(method: string, bodyBuffer: ArrayBuffer): ArrayBuffer | undefined {
@@ -774,7 +730,7 @@ async function executeNativeFusionCascade(
   rawKey: string,
   reqId: string,
   url: URL,
-  baseUpstreamUrl: URL,
+  endpointKey: string,
   bodyBuffer: ArrayBuffer,
   chainKey = "gemini-flash",
   chain: readonly string[] = resolveNativeChain(chainKey) ?? DEFAULT_FLASH_CHAIN
@@ -793,7 +749,16 @@ async function executeNativeFusionCascade(
   for (let cycleStep = 0; cycleStep < totalTiers; cycleStep++) {
     const tierIdx = (startTier + cycleStep) % totalTiers;
     const tierModel = chain[tierIdx] ?? chain[0] ?? "gemini-3.5-flash";
-    const tierUpstreamUrl = buildTierUpstreamUrl(baseUpstreamUrl, tierModel);
+    const resolvedEndpoint = resolveUpstreamEndpoint("gg", endpointKey, tierModel);
+    const tierUpstreamUrl = new URL(resolvedEndpoint.url);
+    if (url.pathname.includes(":streamGenerateContent")) {
+      tierUpstreamUrl.pathname = tierUpstreamUrl.pathname.replace(":generateContent", ":streamGenerateContent");
+    }
+    for (const [k, v] of url.searchParams) {
+      if (k.toLowerCase() !== "key") {
+        tierUpstreamUrl.searchParams.set(k, v);
+      }
+    }
 
     const context: NativeForwardContext = {
       req,
@@ -840,34 +805,62 @@ async function executeSingleModelForward(context: NativeForwardContext): Promise
   );
 }
 
+function extractModelFromPath(pathname: string): string {
+  const match = pathname.match(/\/(?:v1beta|v1)\/models\/([^:]+)/);
+  const raw = match?.[1] ?? "";
+  return raw.replace(/^(?:google\/|gcp\/)/i, "");
+}
+
 export async function handleGoogleNative(
   req: Request,
   rawKey: string,
   reqId: string
 ): Promise<Response> {
-  const authError = validateGoogleDirective(rawKey);
-  if (authError) {
-    return authError;
+  const auth = validateGoogleDirective(rawKey);
+  if (auth.error) {
+    return auth.error;
   }
+  const directive = auth.directive!;
+  const endpointKey = directive.type === "direct" && directive.completion ? directive.completion : "gc";
 
   const url = new URL(req.url);
-  const baseUpstreamUrl = buildGoogleNativeUpstreamUrl(url);
-  const requestedModel = extractModelFromPath(url.pathname);
-  const normalizedModel = normalizeGoogleNativeModel(requestedModel);
   const bodyBuffer = await req.arrayBuffer();
 
-  const chain = resolveNativeChain(normalizedModel);
+  let model = extractModelFromPath(url.pathname);
+  if (!model && bodyBuffer.byteLength > 0) {
+    try {
+      const parsedBody = JSON.parse(new TextDecoder().decode(bodyBuffer)) as Record<string, unknown>;
+      if (typeof parsedBody.model === "string") {
+        model = parsedBody.model.replace(/^(?:google\/|gcp\/)/i, "");
+      }
+    } catch {
+      // not JSON or body without model
+    }
+  }
+
+  const chain = resolveNativeChain(model);
   if (chain && chain.length > 0) {
     return executeNativeFusionCascade(
       req,
       rawKey,
       reqId,
       url,
-      baseUpstreamUrl,
+      endpointKey,
       bodyBuffer,
-      normalizedModel,
+      model,
       chain
     );
+  }
+
+  const resolvedEndpoint = resolveUpstreamEndpoint("gg", endpointKey, model);
+  const upstreamUrl = new URL(resolvedEndpoint.url);
+  if (url.pathname.includes(":streamGenerateContent")) {
+    upstreamUrl.pathname = upstreamUrl.pathname.replace(":generateContent", ":streamGenerateContent");
+  }
+  for (const [k, v] of url.searchParams) {
+    if (k.toLowerCase() !== "key") {
+      upstreamUrl.searchParams.set(k, v);
+    }
   }
 
   const context: NativeForwardContext = {
@@ -875,8 +868,8 @@ export async function handleGoogleNative(
     rawKey,
     reqId,
     url,
-    upstreamUrl: baseUpstreamUrl,
-    model: requestedModel,
+    upstreamUrl,
+    model,
     bodyBuffer,
   };
 
@@ -923,7 +916,8 @@ export async function handleGoogleInteractionsPassthrough(
   }
 
   const url = new URL(req.url);
-  const base = getGoogleNativeBaseUrl();
+  const ggConfig = getProviderConfig("gg");
+  const base = overrideProviderUrl(ggConfig.base_url, "gg");
   const upstreamUrl = new URL(`${base}${url.pathname}${url.search}`);
 
   const pacerError = await acquireNativePacer(req.signal);

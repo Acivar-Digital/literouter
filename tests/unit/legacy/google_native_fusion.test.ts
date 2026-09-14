@@ -181,7 +181,8 @@ describe("Google Native gemini-flash Fusion Unit Tests", () => {
 
   // 3. All keys return 429 on Tier 1 -> Rotates through all keys before advancing to Tier 2
   it("rotates through all keys on Tier 1 before advancing to Tier 2 on 429 rate limit", async () => {
-    getProviderConfig("gg").key_cooldown.enabled = false;
+    const gg184 = getProviderConfig("gg");
+    if (gg184?.key_cooldown) gg184.key_cooldown.enabled = false;
     const fetchCalls: MockFetchCall[] = [];
 
     globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {

@@ -65,7 +65,7 @@ I understand you want: [one sentence restatement in your own words]
 ## Change Management & Approval Gates
 
 - **Workflow Pipeline**: `Request -> Ritual -> Claim Bead -> Implement -> Quality Gates (Typecheck + Test) -> Close Bead -> Push`
-- **Provider/Model Changes Sequence**: (1) Checkpoint: `uv run python admin/code_hygiene/agent_guardrail.py checkpoint <path>`, (2) Skill: `skill load "literouter"`, (3) Doctor: `bun run scripts/doctor.ts`, (4) Suite: `bun test && uv run pytest tests/integration/`, (5) Validate: `uv run python admin/code_hygiene/agent_guardrail.py validate <path>`. Categories: Provider Add/Remove (`src/index.ts`), Model Add/Remove (`fusion.json`).
+- **Provider/Model Changes Sequence**: (1) Checkpoint: `uv run python admin/code_hygiene/agent_guardrail.py checkpoint <path>`, (2) Skill: `skill load "literouter"`, (3) Doctor: `bun run scripts/doctor.ts`, (4) Suite: `bun run test && uv run pytest tests/integration/`, (5) Validate: `uv run python admin/code_hygiene/agent_guardrail.py validate <path>`. Categories: Provider Add/Remove (`src/index.ts`), Model Add/Remove (`fusion.json`).
 - **Approval Gate (>50 lines, new deps, schema changes)**:
   1. Write plan: `bd update <id> --design "..."` | 2. Chat: `APPROVAL REQUIRED: [decision]` | 3. Flag: `bd human <id>` | 4. **STOP**.
   5. **Swapping**: Interactive chat = HALT and wait for user response; Headless/batch execution = run `bd ready` and claim next task while waiting. [Rationale: Respect user focus in chat; prevent stalling in batch].
@@ -79,21 +79,21 @@ I understand you want: [one sentence restatement in your own words]
 | Static Typecheck | `bun run typecheck` | Zero errors (`tsc --noEmit`), exit code 0 | Local |
 | TS AST Quality | `node node_modules/clean_ts/dist/cli.js validate <file>` | `valid: true`, AST anti-slop pass, complexity < 6 | Local |
 | Python Lint | `uv run ruff check .` | Zero errors output | Local |
-| Unit Test Suite | `bun test` | Accelerated domain-partitioned runner (runs 7 domains in parallel subprocesses, silent on success, outputs only isolated failures), exit code 0 | Local |
-| Targeted Domain Test | `bun test <domain>` | Rapid iteration on slice (e.g. `bun test handlers`, `bun test network`, `bun test stream`, `bun test engine`, `bun test telemetry`, `bun test core`, `bun test eval`) | Local |
+| Unit Test Suite | `bun run test` (or `bun test:lr`) | Accelerated domain-partitioned runner (runs 7 domains in parallel subprocesses, silent on success, outputs only isolated failures), exit code 0 | Local |
+| Targeted Domain Test | `bun run test <domain>` (or `bun test:lr <domain>`) | Rapid iteration on slice (e.g. `bun run test handlers`, `bun run test network`, `bun run test stream`, `bun run test engine`, `bun run test telemetry`, `bun run test core`, `bun run test eval`) | Local |
 | Failure-Only Test | `bun run test:failures` | `bun test --only-failures` (outputs only failing tests) | Local |
 | Eval Grader Tests | `bun run test:eval` | All pass (182 benchmark eval grader tests in `tests/eval`) | Local |
 | Raw Unbuffered Tests | `bun run test:raw` | Verbose fallback for debugging | Local |
 | OpenCode2 Test Tool | `test_literouter` native tool | Zero-bloat programmatic test invocation | Local |
 | Integration Smoke | `uv run pytest tests/integration/` | All pass against running gateway, exit code 0 | Local |
-| Full Pre-Cutover | `bun run typecheck && bun test && uv run pytest tests/integration/` | Output appended to `tests/test_results.md` with timestamp | Local |
+| Full Pre-Cutover | `bun run typecheck && bun run test && uv run pytest tests/integration/` | Output appended to `tests/test_results.md` with timestamp | Local |
 | UAT Smoke Gate | `uv run pytest tests/integration/ --env=uat` | All pass against live UAT URL from `.env.uat` (not localhost) | **UAT** |
 | Gateway Daemons | Foreground: `bun run src/index.ts` | Daemon (tmux): `bash scripts/start.sh` | Health: `bun run scripts/doctor.ts` | Local |
 
 ### Anti-Simulation Gate (Real Execution Mandate)
 - **Zero Simulation**: Never imagine or paraphrase test runs. Every gate artifact must be self-witnessing from actual execution.
-- **Verification Sequence**: `echo "Run: $(date -u +"%Y-%m-%dT%H:%M:%SZ")" | tee -a tests/test_results.md && bun test >> tests/test_results.md 2>&1 && tail -30 tests/test_results.md && ls -lh tests/test_results.md` (paste verbatim). Missing disk timestamps fail cutover automatically. [Rationale: Enforce real terminal execution; reject simulated outputs].
-- **Anti-Context-Bloat**: `bun test` is now natively anti-context-bloat (suppresses all passing test noise and outputs a clean single-line summary on pass, extracting only failures). For even faster targeted iteration during active edits, use `bun test <domain>` (e.g. `bun test handlers`), `bun run test:failures`, or the `test_literouter` native tool.
+- **Verification Sequence**: `echo "Run: $(date -u +"%Y-%m-%dT%H:%M:%SZ")" | tee -a tests/test_results.md && bun run test >> tests/test_results.md 2>&1 && tail -30 tests/test_results.md && ls -lh tests/test_results.md` (paste verbatim). Missing disk timestamps fail cutover automatically. [Rationale: Enforce real terminal execution; reject simulated outputs].
+- **Anti-Context-Bloat**: Use `bun run test` (or `bun test:lr`). NEVER run naked `bun test` as Bun treats `test` as a built-in keyword that bypasses scripts/test_runner.ts and dumps unbuffered output. For even faster targeted iteration during active edits, use `bun run test <domain>` (e.g. `bun run test handlers` or `bun test:lr handlers`), `bun run test:failures`, or the `test_literouter` native tool.
 
 ---
 
@@ -129,7 +129,7 @@ bd dolt push                                                  # Push Dolt databa
 ### Session Completion (Mandatory Auto-Push Protocol)
 Work is **NOT complete** until `git push` succeeds. Never stop before pushing.
 1. **File remaining work**: Create beads for follow-up work with `--acceptance="..."`.
-2. **Run quality gates**: `bun run typecheck && bun test && uv run pytest tests/integration/`.
+2. **Run quality gates**: `bun run typecheck && bun run test && uv run pytest tests/integration/`.
 3. **Close finished issues**: `bd close <id> --reason "Completed"`.
 4. **PUSH TO REMOTE (MANDATORY)**:
    ```bash

@@ -29,40 +29,22 @@ describe("Strict Provider Schema Tamper & Fail-Loud Tests", () => {
     expect(() => initProviderRegistry(tampered)).toThrow(ZodError);
   });
 
-  it("Test 3: Deleting circuit_breaker causes validation to FAIL LOUDLY with ZodError", () => {
+  it("Test 3: circuit_breaker is excised and omitting it succeeds", () => {
     const tampered = JSON.parse(JSON.stringify(rawProviders));
     delete tampered.providers.nvidia.circuit_breaker;
 
     const result = ProvidersConfigSchema.safeParse(tampered);
-    expect(result.success).toBe(false);
-    if (!result.success) {
-      expect(result.error).toBeInstanceOf(ZodError);
-      const hasMissingCb = result.error.issues.some(
-        (issue) =>
-          issue.path.join(".") === "providers.nvidia.circuit_breaker" &&
-          issue.message === "Required"
-      );
-      expect(hasMissingCb).toBe(true);
-    }
-    expect(() => initProviderRegistry(tampered)).toThrow(ZodError);
+    expect(result.success).toBe(true);
+    expect(() => initProviderRegistry(tampered)).not.toThrow();
   });
 
-  it("Test 4: Deleting key_cooldown causes validation to FAIL LOUDLY with ZodError", () => {
+  it("Test 4: key_cooldown is optional and omitting it succeeds", () => {
     const tampered = JSON.parse(JSON.stringify(rawProviders));
     delete tampered.providers.google.key_cooldown;
 
     const result = ProvidersConfigSchema.safeParse(tampered);
-    expect(result.success).toBe(false);
-    if (!result.success) {
-      expect(result.error).toBeInstanceOf(ZodError);
-      const hasMissingCooldown = result.error.issues.some(
-        (issue) =>
-          issue.path.join(".") === "providers.google.key_cooldown" &&
-          issue.message === "Required"
-      );
-      expect(hasMissingCooldown).toBe(true);
-    }
-    expect(() => initProviderRegistry(tampered)).toThrow(ZodError);
+    expect(result.success).toBe(true);
+    expect(() => initProviderRegistry(tampered)).not.toThrow();
   });
 
   it("Test 5: Deleting request_retry causes validation to FAIL LOUDLY with ZodError", () => {

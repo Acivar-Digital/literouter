@@ -79,6 +79,7 @@ export class FastFifoQueue<T> {
 
 export interface PacerConfig {
   readonly minIntervalMs?: number; // Minimum wait between consecutive request dispatches
+  readonly maxDelayMs?: number; // Optional upper bound for randomized jitter interval
   readonly maxRpm?: number; // Optional backwards compatibility / fallback calculation
   readonly maxQueueDepth?: number; // Optional queue depth limit
   readonly maxQueueWaitMs?: number; // Maximum queue dwell before timeout
@@ -241,9 +242,13 @@ export class RequestPacer {
     if (this.maxConcurrency > 0 && this.activeInFlight >= this.maxConcurrency) {
       return;
     }
-    const minInterval = this.getMinInterval();
+    const min = this.getMinInterval();
+    const max = this.config.maxDelayMs;
+    const interval = max && max > min
+      ? min + Math.floor(Math.random() * (max - min + 1))
+      : min;
     const elapsed = Date.now() - this.lastDispatchTimeMs;
-    const waitMs = Math.max(0, minInterval - elapsed);
+    const waitMs = Math.max(0, interval - elapsed);
 
     this.drainTimer = setTimeout(() => {
       this.drainTimer = null;
@@ -292,11 +297,13 @@ export function getPacerForProvider(
     if (minIntervalMs === undefined) {
       throw new Error(`[RequestPacer] Missing or invalid minIntervalMs for provider "${provider}"`);
     }
+    const maxDelayMs = config?.maxDelayMs ?? provPacer?.max_delay_ms;
     const maxQueueDepth = config?.maxQueueDepth ?? provPacer?.max_queue_depth ?? 500;
     const maxQueueWaitMs = config?.maxQueueWaitMs ?? provPacer?.max_queue_wait_ms ?? 15000;
     const maxConcurrency = config?.maxConcurrency ?? provPacer?.max_concurrency ?? 0;
     pacer = new RequestPacer({
       minIntervalMs,
+      maxDelayMs,
       maxQueueDepth,
       maxRpm: config?.maxRpm,
       maxQueueWaitMs,

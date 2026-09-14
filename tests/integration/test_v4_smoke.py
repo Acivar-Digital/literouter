@@ -158,50 +158,6 @@ def test_v4_key_cooldown_rotation_on_429(
     assert second_key in (KEY_1, KEY_2)
 
 
-def test_v4_circuit_breaker_rejection_on_repeated_500(
-    v4_smoke_harness: Tuple[str, MockUpstreamContext],
-) -> None:
-    """Verify that repeated 500 errors trip the circuit breaker resulting in 503 with Retry-After."""
-    gw_url, ctx = v4_smoke_harness
-    _reset_gateway(gw_url)
-    ctx.reset()
-    ctx.state.fail_all_500 = True
-
-    # Send requests until the failure threshold (5) is tripped
-    with httpx.Client(http2=True, verify=False) as client:
-        # Request 1 (3 attempts)
-        client.post(
-            f"{gw_url}/v1/chat/completions",
-            json=_make_req_payload(stream=False),
-            headers=_headers(),
-            timeout=10.0,
-        )
-        # Request 2 (further attempts, trips breaker to OPEN)
-        client.post(
-            f"{gw_url}/v1/chat/completions",
-            json=_make_req_payload(stream=False),
-            headers=_headers(),
-            timeout=10.0,
-        )
-
-        # Request 3: Circuit breaker is OPEN -> immediate 503 response
-        resp_tripped = client.post(
-            f"{gw_url}/v1/chat/completions",
-            json=_make_req_payload(stream=False),
-            headers=_headers(),
-            timeout=10.0,
-        )
-
-    assert resp_tripped.status_code == 503
-    assert "retry-after" in resp_tripped.headers, "Missing Retry-After header on 503 circuit breaker response"
-    retry_after = int(resp_tripped.headers["retry-after"])
-    assert retry_after > 0
-
-    err_body = resp_tripped.json()
-    assert "error" in err_body
-    assert err_body["error"].get("code") == "circuit_breaker_open"
-
-
 def test_v4_trace_inspection_by_id(
     v4_smoke_harness: Tuple[str, MockUpstreamContext],
 ) -> None:

@@ -1,5 +1,3 @@
-import { getProviderConfig, isRegisteredProvider } from "../config/providers";
-
 export type CircuitState = "CLOSED" | "OPEN" | "HALF_OPEN";
 
 export interface CircuitBreakerConfig {
@@ -116,15 +114,10 @@ export function getCircuitBreakerForProvider(
 ): ProviderCircuitBreaker {
   let breaker = breakerRegistry.get(provider);
   if (!breaker) {
-    const cbConfig =
-      !config && isRegisteredProvider(provider)
-        ? getProviderConfig(provider).circuit_breaker
-        : undefined;
-
     breaker = new ProviderCircuitBreaker(provider, {
-      failureThreshold: config?.failureThreshold ?? cbConfig?.failure_threshold ?? 5,
-      cooldownMs: config?.cooldownMs ?? cbConfig?.open_duration_ms ?? 60000,
-      maxCanaryDurationMs: config?.maxCanaryDurationMs ?? cbConfig?.failure_window_ms ?? 60000,
+      failureThreshold: config?.failureThreshold ?? 5,
+      cooldownMs: config?.cooldownMs ?? 60000,
+      maxCanaryDurationMs: config?.maxCanaryDurationMs ?? 60000,
     });
     breakerRegistry.set(provider, breaker);
   }

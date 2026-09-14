@@ -99,29 +99,6 @@ describe("Unified Dispatch Pipeline (Slice 3.5)", () => {
     globalKeyPool.setPool("or", ["sk-or-test-key-1", "sk-or-test-key-2"]);
   });
 
-  it("returns 503 circuit breaker open rejection without calling fetch", async () => {
-    const breaker = getCircuitBreaker("or");
-    // Trip breaker with 5 failures
-    for (let i = 0; i < 5; i += 1) {
-      breaker.recordFailure(500);
-    }
-    expect(breaker.isOpen()).toBe(true);
-
-    let fetchCalled = false;
-    const fetchFn = async () => {
-      fetchCalled = true;
-      return new Response("OK", { status: 200 });
-    };
-
-    const req = buildRequest();
-    const res = await executeDispatchPipeline(req, fetchFn);
-
-    expect(res.status).toBe(503);
-    expect(fetchCalled).toBe(false);
-    const body = (await res.json()) as { error: { code: string } };
-    expect(body.error.code).toBe("circuit_breaker_open");
-  });
-
   it("short-circuits when strategy preDispatch returns a Response", async () => {
     const customStrategy: ProviderExecutionStrategy = {
       preDispatch: () => {
@@ -305,15 +282,7 @@ describe("Unified Dispatch Pipeline (Slice 3.5)", () => {
     quarantineSpy.mockRestore();
   });
 
-  it("executes transformer and records breaker success on successful non-streaming response", async () => {
-    const breaker = getCircuitBreaker("or");
-    let recordedSuccess = false;
-    const originalRecordSuccess = breaker.recordSuccess.bind(breaker);
-    breaker.recordSuccess = () => {
-      recordedSuccess = true;
-      originalRecordSuccess();
-    };
-
+  it("executes transformer on successful non-streaming response", async () => {
     const fetchFn = async () => {
       return new Response(JSON.stringify({ id: "resp-1", usage: { prompt_tokens: 10, completion_tokens: 20 } }), {
         status: 200,
@@ -327,7 +296,6 @@ describe("Unified Dispatch Pipeline (Slice 3.5)", () => {
     expect(res.status).toBe(200);
     const json = (await res.json()) as { transformed: { id: string } };
     expect(json.transformed.id).toBe("resp-1");
-    expect(recordedSuccess).toBe(true);
   });
 
   it("handles streaming response and applies mid-stream cutoff with [DONE] on failure", async () => {

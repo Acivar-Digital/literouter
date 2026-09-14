@@ -2,6 +2,11 @@ import { readFileSync, existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { ZodError } from "zod";
 import { ProvidersConfigSchema, type ProviderConfigEntry } from "./schema";
+import { logWarn, EMOJI } from "../ui/logger";
+
+const logger = {
+  warn: (msg: string) => logWarn(EMOJI.amber, msg),
+};
 
 interface ProviderRegistrySnapshot {
   readonly byCode: ReadonlyMap<string, ProviderConfigEntry>;
@@ -102,7 +107,8 @@ export function getAllProviders(): readonly ProviderConfigEntry[] {
 }
 
 export function overrideProviderUrl(url: string, providerCode: string): string {
-  const mockPort = process.env[`MOCK_${providerCode.toUpperCase()}_PORT`];
+  const code = providerCode.toUpperCase();
+  const mockPort = process.env[`MOCK_${code}_PORT`];
   if (!mockPort) {
     return url;
   }
@@ -112,6 +118,7 @@ export function overrideProviderUrl(url: string, providerCode: string): string {
     parsed.host = `localhost:${mockPort}`;
     return parsed.toString();
   } catch {
+    logger.warn(`[overrideProviderUrl] Invalid MOCK_${code}_PORT env var — falling back to production URL`);
     return url;
   }
 }
@@ -135,6 +142,9 @@ export function resolveUpstreamEndpoint(
         headers: p.headers ?? {},
       };
     }
+    throw new Error(
+      `[resolveUpstreamEndpoint] Unknown endpoint key "${endpointKey}" for provider "${providerCodeOrName}"`
+    );
   }
 
   return {

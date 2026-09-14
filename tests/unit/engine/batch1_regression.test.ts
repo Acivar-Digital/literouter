@@ -140,46 +140,6 @@ describe("Batch1 Regression — strategy / probe-cap / TTFT / auth-negative", ()
     expect(getStrategy("zn")).toBeInstanceOf(StandardStrategy);
   });
 
-  it("B3: over-cap half-open probes get 503 without consuming fetch", async () => {
-    console.log(
-      "🧪 [TEST SIMULATION] Executing resilience gate test: exhausting half-open probes to verify 503 short-circuit without upstream fetch..."
-    );
-    resetCircuitBreakers();
-    resetStrategyRegistry();
-    initProviderRegistry();
-    initStrategyRegistry();
-    globalKeyPool.reset();
-    globalKeyPool.setPool("or", [STUB_KEY_1, STUB_KEY_2]);
-
-    const breaker = getCircuitBreaker("or", {
-      ...DEFAULT_CIRCUIT_BREAKER_CONFIG,
-      failure_threshold: 2,
-      open_duration_ms: 1,
-      half_open_max_probes: 1,
-    });
-    breaker.recordFailure(500);
-    breaker.recordFailure(500);
-    expect(breaker.isOpen()).toBe(true);
-
-    await Bun.sleep(15);
-    expect(breaker.getState()).toBe("HALF_OPEN");
-
-    // Consume the single allowed probe so the dispatch-time probe is over cap.
-    expect(breaker.canProbe()).toBe(true);
-
-    let fetchCalled = false;
-    const fetchFn = async () => {
-      fetchCalled = true;
-      return new Response("OK", { status: 200 });
-    };
-
-    const res = await executeDispatchPipeline(buildRequest(), fetchFn);
-    expect(res.status).toBe(503);
-    expect(fetchCalled).toBe(false);
-    const body = (await res.json()) as { error: { code: string } };
-    expect(body.error.code).toBe("breaker_open");
-  });
-
   it("B4: TTFT timeout releases slot via retryable path ending 504", async () => {
     console.log(
       "🧪 [TEST SIMULATION] Executing resilience gate test: hanging upstream to trigger TTFT guard through the retryable path to 504..."

@@ -93,15 +93,6 @@ export const ProviderPacerConfigSchema = z
     path: ["max_delay_ms"],
   });
 
-export const CircuitBreakerConfigSchema = z.object({
-  enabled: z.boolean(),
-  failure_threshold: z.number().int().positive(),
-  failure_window_ms: z.number().int().positive(),
-  open_duration_ms: z.number().int().positive(),
-  half_open_max_probes: z.number().int().positive().default(2),
-  success_threshold_to_close: z.number().int().positive().default(2),
-});
-
 export const ConserveRuleSchema = z.object({
   status: z.number().int(),
   contains: z.string().min(1),
@@ -132,9 +123,8 @@ export const ProviderConfigEntrySchema = z.object({
   env_key: z.string().min(1),
   strategy: ProviderStrategySchema.optional().default("standard"),
   request_retry: RequestRetrySchema,
-  key_cooldown: KeyCooldownSchema,
+  key_cooldown: KeyCooldownSchema.optional(),
   pacer: ProviderPacerConfigSchema,
-  circuit_breaker: CircuitBreakerConfigSchema,
 });
 
 export const ProvidersConfigSchema = z.object({
@@ -247,7 +237,6 @@ export type RequestRetryDelayConfig = z.infer<typeof RequestRetryDelaySchema>;
 export type RequestRetryConfig = z.infer<typeof RequestRetrySchema>;
 export type KeyCooldownConfig = z.infer<typeof KeyCooldownSchema>;
 export type ProviderPacerConfig = z.infer<typeof ProviderPacerConfigSchema>;
-export type CircuitBreakerConfig = z.infer<typeof CircuitBreakerConfigSchema>;
 export type ConserveRule = z.infer<typeof ConserveRuleSchema>;
 export type ProviderStrategyType = z.infer<typeof ProviderStrategySchema>;
 export type ProviderConfigEntry = z.infer<typeof ProviderConfigEntrySchema>;

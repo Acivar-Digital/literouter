@@ -73,29 +73,4 @@ describe("HTTP/2 & Resiliency End-to-End Integration", () => {
     expect(body.error).toBeDefined();
     expect(body.error.type).toBe("rate_limit_exceeded");
   });
-
-  it("fast-fails when circuit breaker is OPEN", async () => {
-    const breaker = getCircuitBreakerForProvider("nv", {
-      failureThreshold: 1,
-      cooldownMs: 60000,
-    });
-    breaker.recordFailure(true); // Trip to OPEN
-    expect(breaker.getState()).toBe("OPEN");
-
-    const req = new Request("http://localhost:7766/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: "Bearer lr-nv-oa-ch-no",
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "meta/llama-3.3-70b-instruct",
-        messages: [{ role: "user", content: "Hello" }],
-      }),
-    });
-
-    const res = await handleAppRequest(req);
-    // When circuit breaker is open and attempts are exhausted, 503 is returned
-    expect(res.status).toBe(503);
-  });
 });

@@ -43,7 +43,6 @@ import {
 import { getEnv } from "../config/env";
 import { getProviderConfig, isRegisteredProvider } from "../config/providers";
 import { getPacerForProvider, PacerQueueOverflowError } from "../network/pacer";
-import { getCircuitBreakerForProvider } from "../network/circuit_breaker";
 import type { DirectDirective } from "../directive/parser";
 import { isFatalAuthError, type SelectedKey } from "../network/pool";
 
@@ -980,19 +979,7 @@ async function executeAnthropicDirectCall(
   clientHeaders?: Headers
 ): Promise<Response> {
   const env = getEnv();
-  const breaker = env.LITEROUTER_CIRCUIT_BREAKER
-    ? getCircuitBreakerForProvider(directive.provider)
-    : null;
-
   const quarantineEnabled = globalKeyPool.isQuarantineEnabled(directive.provider);
-  if (breaker && !breaker.isAvailable()) {
-    logLimit(reqId, directive.provider, selected.index, 503, quarantineEnabled ? 60 : undefined, selected.totalKeys);
-    throw new UpstreamRetryableError(
-      `Provider '${directive.provider}' circuit breaker is OPEN`,
-      503,
-      { action: "retry_rotate", reason: "circuit_breaker_open", quarantineTtlSec: 60 }
-    );
-  }
 
   const endpoint = resolveUpstreamEndpoint(directive.provider, directive.completion, payload.model);
   const headers = buildAuthHeaders(endpoint.authHeader, selected.key, directive.provider, clientHeaders);
@@ -1012,12 +999,6 @@ async function executeAnthropicDirectCall(
   const isStream = Boolean(payload.stream);
 
   if (response.status >= 400) {
-    if (response.status >= 500 || response.status === 529) {
-      breaker?.recordFailure(true);
-    } else {
-      breaker?.recordFailure(false);
-    }
-
     const fullBody = await collectFullBody(firstChunk, rawReader);
     const bodyText = new TextDecoder().decode(fullBody);
 
@@ -1158,7 +1139,6 @@ async function executeAnthropicDirectCall(
       }
 
       if (!isErrorPayload) {
-        breaker?.recordSuccess();
         globalKeyPool.reportSuccess(directive.provider, selected.index);
         logTtft(reqId, ttftMs, "First chunk streamed downstream", protocol);
 
@@ -1217,7 +1197,6 @@ async function executeAnthropicDirectCall(
     });
   }
 
-  breaker?.recordSuccess();
   globalKeyPool.reportSuccess(directive.provider, selected.index);
   logTtft(reqId, ttftMs, "Stream established", protocol);
 

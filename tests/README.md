@@ -10,7 +10,7 @@ Comprehensive automated test architecture, hermetic validation framework, and in
 
 LiteRouter v4.1 employs an accelerated, multi-tiered test matrix designed for sub-second developer iteration, deterministic state isolation, and zero external quota consumption. The test runner architecture decouples the test suite into:
 
-1. **Accelerated Domain Runner (`scripts/test_runner.ts`)**: The default engine for `bun test`. Slices the test suite into 8 discrete domains and executes them concurrently across isolated subprocesses via `Bun.spawn`.
+1. **Accelerated Domain Runner (`scripts/test_runner.ts`)**: The default engine for `bun run test` (or `bun test:lr`). Slices the test suite into 8 discrete domains and executes them concurrently across isolated subprocesses via `Bun.spawn`.
 2. **Hermetic Unit Test Matrix (`tests/unit/`)**: Over 900 gateway unit tests exercising the v4.1 Unified Engine (`dispatch.ts`), streaming transformers, RequestPacer, CooldownManager, telemetry, and legacy fallback handlers.
 3. **Benchmark Eval Grader Harness (`tests/eval/`)**: 182 grading tests evaluating AST patchers, Pydantic graders, prompt injection vetoes, and DOM web evaluators using hermetic mock doubles.
 4. **Integration & Downstream Agent Gauntlet (`tests/integration/`)**: Pytest integration harness validating v4 vs legacy A/B parity, ephemeral gateway lifecycles, and downstream developer tools (OpenCode 2, Claude Code CLI, Pydantic AI).
@@ -38,7 +38,7 @@ LiteRouter v4.1 employs an accelerated, multi-tiered test matrix designed for su
 
 ## 2. Accelerated Domain Test Runner (`scripts/test_runner.ts`)
 
-LiteRouter routes primary accelerated test execution through `scripts/test_runner.ts` via `bun test`. Running `bun test` invokes this domain-partitioned runner rather than raw sequential test runs (for unbuffered native execution, use `bun run test:raw`).
+LiteRouter routes primary accelerated test execution through `scripts/test_runner.ts` via `bun run test` (or `bun test:lr`). Running `bun run test` or `bun test:lr` invokes this domain-partitioned runner rather than raw sequential test runs (NEVER run naked `bun test` as Bun treats `test` as a built-in keyword that bypasses `package.json` scripts and dumps unbuffered output; for unbuffered native execution, use `bun run test:raw`).
 
 ### Why Accelerated Domain Execution?
 - **Speed via Concurrency**: Spawns multiple parallel `bun test` child processes partitioned across distinct architectural domains, utilizing all available CPU cores.
@@ -88,28 +88,29 @@ Rather than running the full test suite during active development, agents and de
 
 ```bash
 # Run only network domain tests (pacer, cooldown, pools, fetcher)
-bun test network
+bun run test network
+# or: bun test:lr network
 
 # Run only stream transformer and SSE tests
-bun test stream
+bun run test stream
 
 # Run only handler tests
-bun test handlers
+bun run test handlers
 
 # Run only engine dispatch tests
-bun test engine
+bun run test engine
 
 # Run only telemetry tests
-bun test telemetry
+bun run test telemetry
 
 # Run only core tests (auth, keys, directives)
-bun test core
+bun run test core
 
 # Run only legacy fallback tests
-bun test legacy
+bun run test legacy
 
 # Run evaluation grader tests
-bun test eval
+bun run test eval
 ```
 
 ### Filtering Within Domains or by Pattern
@@ -117,13 +118,13 @@ The runner accepts secondary filter arguments or direct pattern matches:
 
 ```bash
 # Target only the pacer test within the network domain
-bun test network pacer
+bun run test network pacer
 
 # Target any test matching "directive" across all domains
-bun test directive
+bun run test directive
 
 # Run silent mode (suppresses pass summary in scripts)
-bun test network --silent
+bun run test network --silent
 ```
 
 ---
@@ -209,8 +210,8 @@ uv run pytest tests/integration/test_dots_transformer_e2e.py # XML & thinking ta
 
 | Command | Target Suite | Description & Best Use Case | Output Profile |
 |---|---|---|---|
-| `bun test` | All 7 Unit Domains | **Default fast runner**. Runs 1,100+ tests across domains in parallel subprocesses. | Single-line pass summary; failure diffs only. |
-| `bun test <domain>` | Single Domain | **Targeted iteration**. Runs only the specified domain (`handlers`, `network`, `stream`, etc.). | Single-line pass summary; failure diffs only. |
+| `bun run test` (or `bun test:lr`) | All 7 Unit Domains | **Default fast runner**. Runs 1,100+ tests across domains in parallel subprocesses. | Single-line pass summary; failure diffs only. |
+| `bun run test <domain>` (or `bun test:lr <domain>`) | Single Domain | **Targeted iteration**. Runs only the specified domain (`handlers`, `network`, `stream`, etc.). | Single-line pass summary; failure diffs only. |
 | `bun run test:raw` | Full Suite (Native) | **Unbuffered fallback**. Native `bun test` without domain runner wrapper or output suppression. | Full unbuffered Bun test logs. |
 | `bun run test:failures` | Full Suite | Anti-bloat raw runner (`bun test --only-failures`). | Only failing tests shown. |
 | `bun run test:eval` | `tests/eval/` | Benchmark grader unit tests (`scripts/test_runner.ts eval`, 182 tests). | Single-line pass summary; failure diffs only. |
@@ -297,7 +298,8 @@ bun run typecheck
 uv run ruff check .
 
 # 3. Accelerated Gateway Tests (1,100+ tests across parallel domains)
-bun test
+bun run test
+# or: bun test:lr
 
 # 4. Evaluation Grader Tests (182 tests)
 bun run test:eval

@@ -2,6 +2,25 @@
 
 All notable changes to LiteRouter will be documented in this file.
 
+## [Unreleased] — 2026-09-14
+
+### Removed
+- **Circuit Breaker fully excised**: Removed `CircuitBreakerConfigSchema`, `CircuitBreakerConfig` type, and `getCircuitBreakerForProvider()` from schema, network layer, engine dispatch, and all handlers (`openai_compat`, `openai_original`, `gcp_compat`, `google_native`, `anthropic_compat`). No circuit breaker concept remains in the runtime path.
+- **Dead code purged**: `getConsecutiveAuthFailures()` stub (hardcoded `return 0`) removed from `pool.ts`. `normalizeGoogleNativeModel`, `extractModelFromPath`, `buildGoogleNativeUpstreamUrl`, `buildTierUpstreamUrl` v3 relics removed from `google_native.ts`.
+- **Schema fields removed**: `circuit_breaker` field removed from `ProviderConfigEntrySchema`. `key_cooldown` made optional.
+- **Stale integration tests removed**: Deleted `tests/integration/anthropic_compat.test.ts` (provider `an` pruned). Removed circuit breaker 503 assertions from `h2_resilience.test.ts` and `test_v4_smoke.py`.
+
+### Fixed
+- **Pacer jitter wired**: `scheduleDrain()` now computes a fresh random interval between `min_delay_ms` and `max_delay_ms` on every drain (per-dispatch jitter). `getPacerForProvider()` passes `max_delay_ms` through `PacerConfig.maxDelayMs`.
+- **`resolveUpstreamEndpoint` fails loudly**: Unknown endpoint key now throws `[resolveUpstreamEndpoint] Unknown endpoint key "..." for provider "..."` instead of silently falling through to OpenRouter fallback.
+- **Mock port warning**: `overrideProviderUrl` logs `logger.warn` on invalid `MOCK_<CODE>_PORT` env var before falling back to production URL.
+- **Import coupling fixed**: `gcp_compat.ts` now imports `resolveUpstreamEndpoint` directly from `../config/providers` (not via `./openai_compat` re-export).
+- **Retry jitter standardized**: `gcp_compat.ts` retry loop uses `calculateRetryDelay(provConfig.request_retry.delay, attempt)` matching `openai_compat.ts` pattern.
+- **`key_cooldown` optional chaining**: All access sites in `dispatch.ts` and `gcp_compat.ts` guard against undefined with `?.`.
+
+### Security
+- `normalizeGcpModel` and `isGemmaModel` billing guardrail in `gcp_compat.ts` retained intact — only Gemma models pass to GCP provider.
+
 ## [Unreleased]
 
 ### Added

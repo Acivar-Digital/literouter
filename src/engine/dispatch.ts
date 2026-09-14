@@ -2,7 +2,6 @@ import { getEnv } from "../config/env";
 import { getProviderConfig } from "../config/providers";
 import type { ProviderConfigEntry } from "../config/schema";
 import type { ParsedDirective } from "../directive/types";
-import { getCircuitBreaker } from "./circuit_breaker";
 import { acquirePacer } from "./pacer_adapter";
 import { calculateRetryDelay } from "./retry";
 import { defaultClassifyFailure, type FailureAction } from "./status_classify";
@@ -409,51 +408,6 @@ export async function executeDispatchPipeline(
   telemetry.setResolvedTarget(initialTarget.model, initialTier);
   telemetry.emitInbound();
 
-  const breaker = getCircuitBreaker(providerCode, provConfig.circuit_breaker);
-  if (breaker.isOpen()) {
-    telemetry.error("Circuit breaker open");
-    telemetry.served(503);
-    recordTrace(telemetry, 503, {
-      clientInbound: sanitizeBody(req.rawInboundBody),
-      clientOutbound: JSON.stringify({
-        error: {
-          code: "circuit_breaker_open",
-          message: `Provider ${provConfig.name ?? providerCode} circuit breaker is open.`,
-          type: "service_unavailable",
-        },
-      }),
-    });
-    return breaker.rejectResponse(provConfig.name ?? providerCode);
-  }
-
-  if (breaker.getState() === "HALF_OPEN" && !breaker.canProbe()) {
-    telemetry.error("Circuit breaker half-open probe limit reached");
-    telemetry.served(503);
-    recordTrace(telemetry, 503, {
-      clientInbound: sanitizeBody(req.rawInboundBody),
-      clientOutbound: JSON.stringify({
-        error: {
-          code: "breaker_open",
-          message: `Provider ${provConfig.name ?? providerCode} circuit breaker half-open probe limit reached.`,
-          type: "service_unavailable",
-        },
-      }),
-    });
-    return new Response(
-      JSON.stringify({
-        error: {
-          code: "breaker_open",
-          message: `Provider ${provConfig.name ?? providerCode} circuit breaker half-open probe limit reached.`,
-          type: "service_unavailable",
-        },
-      }),
-      {
-        status: 503,
-        headers: { "content-type": "application/json", "x-request-id": req.reqId },
-      }
-    );
-  }
-
   const poolSize = globalKeyPool.getPoolSize(providerCode);
   const initialKey = globalKeyPool.selectNextKey(providerCode);
 
@@ -585,8 +539,7 @@ export async function executeDispatchPipeline(
       );
 
       if (upstreamResponse.status < 400) {
-        breaker.recordSuccess();
-        if (provConfig.key_cooldown.reset_after_success) {
+        if (provConfig.key_cooldown?.reset_after_success) {
           globalKeyPool.reportSuccess(providerCode, key.index);
         }
 
@@ -603,7 +556,6 @@ export async function executeDispatchPipeline(
           const resilientStream = createCutoffResilientStream(
             transformedStream,
             (streamErr) => {
-              breaker.recordFailure(500);
               telemetry.error("Mid-stream upstream failure encountered", streamErr);
             },
             req.clientSignal,
@@ -671,7 +623,6 @@ export async function executeDispatchPipeline(
 
       if (failureAction === "fail_fast") {
         pacerLease?.release();
-        breaker.recordFailure(upstreamResponse.status);
         telemetry.served(upstreamResponse.status, attempt, maxAttempts);
         recordTrace(telemetry, upstreamResponse.status, {
           clientInbound: sanitizeBody(req.rawInboundBody),
@@ -694,7 +645,6 @@ export async function executeDispatchPipeline(
 
       // failureAction === "retry_same_target"
       pacerLease?.release();
-      breaker.recordFailure(upstreamResponse.status);
 
       if (attempt < maxAttempts) {
         const delayMs = retryAfterSec !== undefined
@@ -724,7 +674,6 @@ export async function executeDispatchPipeline(
       }
 
       if (err instanceof NoResponseError) {
-        breaker.recordFailure(504);
         telemetry.error("Upstream TTFT timeout during dispatch attempt", err);
 
         if (attempt < maxAttempts) {
@@ -741,7 +690,6 @@ export async function executeDispatchPipeline(
         return buildTtftTimeoutResponse(req.reqId, ttftTimeoutMs);
       }
 
-      breaker.recordFailure(0);
       telemetry.error("Network or fetch error during dispatch attempt", err);
 
       if (attempt < maxAttempts) {

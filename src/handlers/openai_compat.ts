@@ -36,7 +36,6 @@ import {
 } from "../config/providers";
 import { getEnv } from "../config/env";
 import { getPacerForProvider, PacerQueueOverflowError, type PacerAcquireResult } from "../network/pacer";
-import { getCircuitBreakerForProvider } from "../network/circuit_breaker";
 import {
   EMOJI,
   extractErrorMessage,
@@ -234,19 +233,6 @@ async function executeDirectCall(
     ? getProviderConfig(directive.provider)
     : undefined;
   const isSingleFlight = !(provConfig?.request_retry?.enabled ?? true);
-  const breakerEnabled = provConfig?.circuit_breaker?.enabled ?? true;
-  const breaker = env.LITEROUTER_CIRCUIT_BREAKER && breakerEnabled
-    ? getCircuitBreakerForProvider(directive.provider)
-    : null;
-
-  if (breaker && !breaker.isAvailable()) {
-    logLimit(reqId, directive.provider, selected.index, 503, 60, selected.totalKeys);
-    throw new UpstreamRetryableError(
-      `Provider '${directive.provider}' circuit breaker is OPEN`,
-      503,
-      { action: "retry_rotate", reason: "circuit_breaker_open", quarantineTtlSec: 60 }
-    );
-  }
 
   let activePayload = payload;
   if ((directive.provider === "or" || (directive.provider as string) === "openrouter") && payload.model.startsWith("openrouter/")) {
@@ -284,12 +270,6 @@ async function executeDirectCall(
   const isStream = Boolean(payload.stream);
 
   if (response.status >= 400) {
-    if (response.status >= 500 || response.status === 529) {
-      breaker?.recordFailure(true);
-    } else {
-      breaker?.recordFailure(false);
-    }
-
     const fullBody = await collectFullBody(firstChunk, rawReader);
     const bodyText = new TextDecoder().decode(fullBody);
     const providerConfig = getProviderEndpointConfig(directive.provider);
@@ -418,7 +398,6 @@ async function executeDirectCall(
     });
   }
 
-  breaker?.recordSuccess();
   globalKeyPool.reportSuccess(directive.provider, selected.index);
   logTtft(reqId, ttftMs, isStream ? "Stream established" : "First chunk streamed downstream", protocol);
 
@@ -1046,13 +1025,6 @@ async function tryExecuteTier(
   const tierDirective = parseDirective(tier.apikey);
   if (!tierDirective || tierDirective.type !== "direct") {
     return null;
-  }
-  const env = getEnv();
-  if (env.LITEROUTER_CIRCUIT_BREAKER) {
-    const breaker = getCircuitBreakerForProvider(tierDirective.provider);
-    if (!breaker.isAvailable()) {
-      return null;
-    }
   }
   const tierBody: OpenAIRequestPayload = { ...body, model: tier.model };
   try {

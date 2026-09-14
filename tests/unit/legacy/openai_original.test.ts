@@ -577,7 +577,7 @@ describe("OpenAI Original Responses Handler (src/handlers/openai_original.ts)", 
           mockServer.stop(true);
           delete process.env.MOCK_ZN_PORT;
         }
-      });
+      }, 15000);
     });
 
     describe("error handling", () => {

@@ -1,7 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import rawProviders from "../../../config/providers.json";
 import {
-  CircuitBreakerConfigSchema,
   ConserveRuleSchema,
   KeyCooldownSchema,
   ProviderConfigEntrySchema,
@@ -167,37 +166,6 @@ describe("ProviderPacerConfigSchema", () => {
   });
 });
 
-describe("CircuitBreakerConfigSchema", () => {
-  it("rejects empty object when required fields are missing", () => {
-    expect(CircuitBreakerConfigSchema.safeParse({}).success).toBe(false);
-  });
-
-  it("accepts custom circuit breaker configurations", () => {
-    const parsed = CircuitBreakerConfigSchema.parse({
-      enabled: false,
-      failure_threshold: 10,
-      failure_window_ms: 120000,
-      open_duration_ms: 45000,
-      half_open_max_probes: 3,
-      success_threshold_to_close: 1,
-    });
-    expect(parsed).toEqual({
-      enabled: false,
-      failure_threshold: 10,
-      failure_window_ms: 120000,
-      open_duration_ms: 45000,
-      half_open_max_probes: 3,
-      success_threshold_to_close: 1,
-    });
-  });
-
-  it("rejects non-positive thresholds and probe counts", () => {
-    expect(CircuitBreakerConfigSchema.safeParse({ failure_threshold: 0 }).success).toBe(false);
-    expect(CircuitBreakerConfigSchema.safeParse({ half_open_max_probes: 0 }).success).toBe(false);
-    expect(CircuitBreakerConfigSchema.safeParse({ success_threshold_to_close: -1 }).success).toBe(false);
-  });
-});
-
 describe("ConserveRuleSchema", () => {
   it("parses valid rule with default ttl ('midnight_utc')", () => {
     const parsed = ConserveRuleSchema.parse({
@@ -315,14 +283,6 @@ describe("ProviderConfigEntrySchema", () => {
       max_queue_depth: 100,
       max_queue_wait_ms: 15000,
     },
-    circuit_breaker: {
-      enabled: true,
-      failure_threshold: 5,
-      failure_window_ms: 60000,
-      open_duration_ms: 30000,
-      half_open_max_probes: 2,
-      success_threshold_to_close: 2,
-    },
   };
 
   it("parses an entry with fully specified operational knobs", () => {
@@ -364,12 +324,6 @@ describe("ProviderConfigEntrySchema", () => {
         max_delay_ms: 600,
         max_queue_depth: 80,
         max_queue_wait_ms: 20000,
-      },
-      circuit_breaker: {
-        enabled: false,
-        failure_threshold: 5,
-        failure_window_ms: 60000,
-        open_duration_ms: 30000,
       },
     };
 
@@ -429,21 +383,17 @@ describe("ProviderConfigEntrySchema", () => {
       expect(providers.nvidia?.strategy).toBe("standard");
       expect(providers.google?.name).toBe("Google AI Studio");
       expect(providers.google?.strategy).toBe("native_cascade");
-      expect(providers.google?.circuit_breaker.enabled).toBe(false);
       expect(providers.zen?.name).toBe("Zen");
       expect(providers.zen?.strategy).toBe("standard");
       expect(providers.zen?.request_retry.max_attempts).toBe(5);
-      expect(providers.zen?.circuit_breaker.enabled).toBe(false);
       expect(providers.gcp?.name).toBe("Google Cloud (GCP)");
       expect(providers.gcp?.strategy).toBe("gcp_guarded");
-      expect(providers.gcp?.circuit_breaker.enabled).toBe(false);
 
       // Verify all providers have valid applied operational configurations
       for (const provider of Object.values(providers)) {
         expect(provider.strategy).toBeDefined();
         expect(provider.request_retry).toBeDefined();
-        expect(provider.circuit_breaker).toBeDefined();
-        expect(typeof provider.key_cooldown.enabled).toBe("boolean");
+        expect(typeof provider.key_cooldown?.enabled).toBe("boolean");
       }
     }
   });

@@ -176,8 +176,7 @@ describe("GCP Compatibility Architecture (gc)", () => {
       expect(prov.request_retry.max_attempts).toBe(3);
       expect(prov.request_retry.delay.min_ms).toBe(200);
       expect(prov.request_retry.delay.max_ms).toBe(500);
-      expect(prov.key_cooldown.enabled).toBe(false);
-      expect(prov.circuit_breaker.enabled).toBe(false);
+      expect(prov.key_cooldown?.enabled).toBe(false);
     });
 
     it("respects disabled request_retry (process.env.GCP_ENABLE_RETRIES=false and provider config)", async () => {
@@ -269,7 +268,7 @@ describe("GCP Compatibility Architecture (gc)", () => {
     it("bypasses key quarantine when key_cooldown is disabled (process.env.GCP_ENABLE_QUARANTINE=false and provider config)", async () => {
       process.env.GCP_ENABLE_QUARANTINE = "false";
       const prov = getProviderConfig("gc");
-      prov.key_cooldown.enabled = false;
+      if (prov.key_cooldown) prov.key_cooldown.enabled = false;
       prov.request_retry.enabled = false;
       prov.pacer!.enabled = false;
 
@@ -307,7 +306,7 @@ describe("GCP Compatibility Architecture (gc)", () => {
 
     it("quarantines key on network transport drop when key_cooldown.enabled is true", async () => {
       const prov = getProviderConfig("gc");
-      prov.key_cooldown.enabled = true;
+      if (prov.key_cooldown) prov.key_cooldown.enabled = true;
       prov.request_retry.enabled = false;
       prov.pacer!.enabled = false;
 
@@ -424,18 +423,15 @@ describe("GCP Compatibility Architecture (gc)", () => {
     it("restores provider config cleanly after mutations via initProviderRegistry", () => {
       const prov = getProviderConfig("gc");
       prov.request_retry.enabled = false;
-      prov.key_cooldown.enabled = false;
-      prov.circuit_breaker.enabled = true;
+      if (prov.key_cooldown) prov.key_cooldown.enabled = false;
 
       expect(getProviderConfig("gc").request_retry.enabled).toBe(false);
-      expect(getProviderConfig("gc").key_cooldown.enabled).toBe(false);
-      expect(getProviderConfig("gc").circuit_breaker.enabled).toBe(true);
+      expect(getProviderConfig("gc").key_cooldown?.enabled).toBe(false);
 
       initProviderRegistry();
 
       expect(getProviderConfig("gc").request_retry.enabled).toBe(true);
-      expect(getProviderConfig("gc").key_cooldown.enabled).toBe(false);
-      expect(getProviderConfig("gc").circuit_breaker.enabled).toBe(false);
+      expect(getProviderConfig("gc").key_cooldown?.enabled).toBe(false);
     });
   });
 

@@ -71,7 +71,6 @@ describe("KeyPool & Cooldown — Fail-Fast 401/403 and Purged 65s Quarantine", (
         }).toThrow(FatalAuthError);
 
         expect(pool.getCooldownManager().isQuarantined("prov:0", now)).toBe(false);
-        expect(pool.getConsecutiveAuthFailures("prov", 0)).toBe(0);
       }
     });
 

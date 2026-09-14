@@ -13,10 +13,9 @@ import { isFatalAuthError, type SelectedKey } from "../network/pool";
 import { sanitizeAndTransformPayload } from "../transformers/payload";
 import type { OpenAIRequestPayload } from "../transformers/nuances";
 import { getEnv } from "../config/env";
-import { getProviderConfig } from "../config/providers";
+import { getProviderConfig, resolveUpstreamEndpoint } from "../config/providers";
 import { calculateRetryDelay } from "../engine/retry";
 import { getPacerForProvider, PacerQueueOverflowError } from "../network/pacer";
-import { getCircuitBreakerForProvider } from "../network/circuit_breaker";
 import {
   EMOJI,
   extractErrorMessage,
@@ -43,7 +42,6 @@ import {
 import {
   globalKeyPool,
   type RequestClientOptions,
-  resolveUpstreamEndpoint,
   UpstreamRetryableError,
   waitAndSelectKey,
 } from "./openai_compat";
@@ -132,19 +130,6 @@ async function executeGcpDirectCall(
 ): Promise<Response> {
   const env = getEnv();
   const gcConfig = getProviderConfig("gc");
-  const breaker = (env.LITEROUTER_CIRCUIT_BREAKER && gcConfig.circuit_breaker.enabled)
-    ? getCircuitBreakerForProvider("gc")
-    : null;
-
-  if (breaker && !breaker.isAvailable()) {
-    logWarn(EMOJI.error, `[BREAKER ${reqId}] Provider 'gc' circuit breaker is OPEN. Fast-failing GCP request.`);
-    const breakerTtlSec = Math.ceil(gcConfig.circuit_breaker.open_duration_ms / 1000);
-    throw new UpstreamRetryableError(
-      "Provider 'gc' circuit breaker is OPEN",
-      503,
-      { action: "retry_rotate", reason: "circuit_breaker_open", quarantineTtlSec: breakerTtlSec }
-    );
-  }
 
   const normalizedModel = normalizeGcpModel(payload.model);
   const activePayload = payload.model !== normalizedModel ? { ...payload, model: normalizedModel } : payload;
@@ -169,12 +154,6 @@ async function executeGcpDirectCall(
   const isStream = Boolean(payload.stream);
 
   if (response.status >= 400) {
-    if (breaker && (response.status >= 500 || response.status === 529)) {
-      breaker.recordFailure(true);
-    } else if (breaker) {
-      breaker.recordFailure(false);
-    }
-
     const fullBody = await collectFullBody(firstChunk, rawReader);
     const bodyText = new TextDecoder().decode(fullBody);
 
@@ -210,7 +189,12 @@ async function executeGcpDirectCall(
       bodyText,
     });
 
-    if (gcConfig.key_cooldown.enabled && classification.quarantineTtlSec > 0) {
+    const default429Ttl = Math.ceil((gcConfig.key_cooldown?.initial_cooldown_ms ?? 60000) / 1000);
+    const effectiveQuarantineTtl = classification.quarantineTtlSec > 0
+      ? classification.quarantineTtlSec
+      : (response.status === 429 ? default429Ttl : 0);
+
+    if (gcConfig.key_cooldown?.enabled && effectiveQuarantineTtl > 0) {
       globalKeyPool.reportFailure(
         "gc",
         selected.index,
@@ -218,16 +202,15 @@ async function executeGcpDirectCall(
         response.headers,
         bodyText,
         Date.now(),
-        classification.quarantineTtlSec
+        effectiveQuarantineTtl
       );
-    } else if (!gcConfig.key_cooldown.enabled && classification.quarantineTtlSec > 0) {
+    } else if (!gcConfig.key_cooldown?.enabled && effectiveQuarantineTtl > 0) {
       logWarn(EMOJI.zap, `[GCP ${reqId}] Dumb-forwarder mode: Key ${selected.index} quarantine bypassed.`);
     }
 
     const rawErrorMsg = extractErrorMessage(bodyText);
-    const default429Ttl = Math.ceil(gcConfig.key_cooldown.initial_cooldown_ms / 1000);
-    const ttlSec = gcConfig.key_cooldown.enabled
-      ? (classification.quarantineTtlSec > 0 ? classification.quarantineTtlSec : (response.status === 429 ? default429Ttl : undefined))
+    const ttlSec = gcConfig.key_cooldown?.enabled
+      ? (effectiveQuarantineTtl > 0 ? effectiveQuarantineTtl : undefined)
       : undefined;
     logLimit(reqId, "gc", selected.index, response.status, ttlSec, selected.totalKeys, rawErrorMsg);
 
@@ -267,7 +250,6 @@ async function executeGcpDirectCall(
     });
   }
 
-  breaker?.recordSuccess();
   globalKeyPool.reportSuccess("gc", selected.index);
   logTtft(reqId, ttftMs, isStream ? "Stream established" : "First chunk streamed downstream", protocol);
 
@@ -335,10 +317,10 @@ async function executeGcpDirectCall(
     },
     retryProvider: async (reason: string, _hasEmittedTokens?: boolean) => {
       const classification = classifyTransportError(reason);
-      if (gcConfig.key_cooldown.enabled && classification.quarantineTtlSec > 0) {
+      if (gcConfig.key_cooldown?.enabled && classification.quarantineTtlSec > 0) {
         globalKeyPool.reportFailure("gc", currentKeyIndex, 500, undefined, reason, Date.now(), classification.quarantineTtlSec);
       }
-      const ttlSec = gcConfig.key_cooldown.enabled && classification.quarantineTtlSec > 0
+      const ttlSec = gcConfig.key_cooldown?.enabled && classification.quarantineTtlSec > 0
         ? classification.quarantineTtlSec
         : undefined;
       logLimit(reqId, "gc", currentKeyIndex, 500, ttlSec, selected.totalKeys, reason);
@@ -389,7 +371,7 @@ async function executeGcpDirectCall(
             return null;
           }
           if (nextResult.response.status >= 400) {
-            if (gcConfig.key_cooldown.enabled) {
+            if (gcConfig.key_cooldown?.enabled) {
               globalKeyPool.reportFailure("gc", nextSelected.index, nextResult.response.status);
             }
             continue;
@@ -400,7 +382,7 @@ async function executeGcpDirectCall(
             rawReader: nextResult.rawReader,
           };
         } catch (retryErr: unknown) {
-          if (retryErr instanceof NoResponseError && gcConfig.key_cooldown.enabled) {
+          if (retryErr instanceof NoResponseError && gcConfig.key_cooldown?.enabled) {
             const transportClass = classifyTransportError(retryErr);
             globalKeyPool.reportFailure("gc", nextSelected.index, 0, undefined, retryErr.message, Date.now(), transportClass.quarantineTtlSec);
           }
@@ -498,7 +480,7 @@ async function tryGcpAttempt(
       return { success: false, error: err, retryable: true };
     }
     if (err instanceof NoResponseError) {
-      if (gcConfig.key_cooldown.enabled) {
+      if (gcConfig.key_cooldown?.enabled) {
         const transportClass = classifyTransportError(err);
         globalKeyPool.reportFailure("gc", selected.index, 0, undefined, err.message, Date.now(), transportClass.quarantineTtlSec);
       }
@@ -558,7 +540,7 @@ async function executeGcpAttemptLoop(
     }
 
     const dwellMs = Date.now() - startTime;
-    if (provConfig.key_cooldown.enabled && globalKeyPool.shouldLoadShed("gc", dwellMs, maxWaitMs)) {
+    if (provConfig.key_cooldown?.enabled && globalKeyPool.shouldLoadShed("gc", dwellMs, maxWaitMs)) {
       const minTtl = globalKeyPool.getMinQuarantineTtlMs("gc");
       const retryAfterSec = Math.max(1, Math.ceil(minTtl / 1000));
       return Response.json(

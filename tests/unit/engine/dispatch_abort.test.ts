@@ -1,7 +1,6 @@
 import { describe, expect, test, beforeEach, afterEach } from "bun:test";
 import { initProviderRegistry } from "../../../src/config/providers";
 import type { ParsedDirective } from "../../../src/directive/types";
-import { getCircuitBreaker } from "../../../src/engine/circuit_breaker";
 import {
   executeDispatchPipeline,
   type DispatchRequest,
@@ -143,8 +142,6 @@ describe("Dispatch mid-stream abort discrimination (S1 cutoff)", () => {
     const accumulated = await drainStream(res.body);
     expect(accumulated).not.toContain("data: [DONE]");
 
-    const breaker = getCircuitBreaker("or");
-    expect(breaker.getFailureCount()).toBe(0);
     expect(telemetryErrorCalls.filter((c) => c.message.includes("Mid-stream"))).toHaveLength(0);
     expect(telemetryServedStatuses.filter((s) => s >= 500)).toHaveLength(0);
   });
@@ -168,15 +165,13 @@ describe("Dispatch mid-stream abort discrimination (S1 cutoff)", () => {
     const accumulated = await drainStream(res.body);
     expect(accumulated).not.toContain("data: [DONE]");
 
-    const breaker = getCircuitBreaker("or");
-    expect(breaker.getFailureCount()).toBe(0);
     expect(telemetryErrorCalls.filter((c) => c.message.includes("Mid-stream"))).toHaveLength(0);
     expect(telemetryServedStatuses.filter((s) => s >= 500)).toHaveLength(0);
   });
 
-  test("genuine mid-stream upstream error emits [DONE] and records breaker failure", async () => {
+  test("genuine mid-stream upstream error emits [DONE]", async () => {
     console.log(
-      "🧪 [TEST SIMULATION] Injecting mock mid-stream upstream socket error to verify [DONE] termination and breaker failure..."
+      "🧪 [TEST SIMULATION] Injecting mock mid-stream upstream socket error to verify [DONE] termination..."
     );
     const fetchFn = async () =>
       new Response(faultyUpstreamStream(new Error("Upstream socket closed abruptly")), {
@@ -191,8 +186,6 @@ describe("Dispatch mid-stream abort discrimination (S1 cutoff)", () => {
     const accumulated = await drainStream(res.body);
     expect(accumulated).toContain("data: [DONE]");
 
-    const breaker = getCircuitBreaker("or");
-    expect(breaker.getFailureCount()).toBe(1);
     expect(telemetryErrorCalls.filter((c) => c.message.includes("Mid-stream"))).toHaveLength(1);
   });
 
@@ -233,8 +226,5 @@ describe("Dispatch mid-stream abort discrimination (S1 cutoff)", () => {
     } finally {
       reader.releaseLock();
     }
-
-    const breaker = getCircuitBreaker("or");
-    expect(breaker.getFailureCount()).toBe(0);
   });
 });

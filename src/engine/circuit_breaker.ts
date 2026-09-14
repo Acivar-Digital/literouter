@@ -1,6 +1,13 @@
-import type { CircuitBreakerConfig } from "../config/schema";
-
 export type CircuitBreakerState = "CLOSED" | "OPEN" | "HALF_OPEN";
+
+export interface CircuitBreakerConfig {
+  enabled: boolean;
+  failure_threshold: number;
+  failure_window_ms: number;
+  open_duration_ms: number;
+  half_open_max_probes: number;
+  success_threshold_to_close: number;
+}
 
 export const DEFAULT_CIRCUIT_BREAKER_CONFIG: CircuitBreakerConfig = {
   enabled: true,

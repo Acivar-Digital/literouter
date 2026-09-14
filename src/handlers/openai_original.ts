@@ -4,7 +4,6 @@ import { getEnv } from "../config/env";
 import { getProviderConfig, isRegisteredProvider } from "../config/providers";
 import { calculateRetryDelay } from "../engine/retry";
 import { classifyUpstreamError } from "../network/classifier";
-import { getCircuitBreakerForProvider } from "../network/circuit_breaker";
 import {
   fetchWithTtftGuard,
   reassembleResponse,
@@ -776,25 +775,6 @@ async function dispatchUpstreamFetch(
   const maxWaitMs = provConfig?.pacer?.max_queue_wait_ms ?? (env.LITEROUTER_PACER_MAX_QUEUE_WAIT_MS || 300000);
   const totalKeys = poolSize > 0 ? poolSize : 1;
 
-  const breaker =
-    env.LITEROUTER_CIRCUIT_BREAKER && (provConfig?.circuit_breaker?.enabled ?? true)
-      ? getCircuitBreakerForProvider(route.provider)
-      : null;
-  if (breaker && !breaker.isAvailable()) {
-    logWarn(EMOJI.error, `[BREAKER ${reqId}] Provider '${route.provider}' circuit breaker is OPEN. Fast-failing Responses request.`);
-    return {
-      errorResponse: Response.json(
-        {
-          error: {
-            message: `Provider '${route.provider}' circuit breaker is OPEN`,
-            type: "service_unavailable",
-          },
-        },
-        { status: 503, headers: { "Retry-After": "60" } }
-      ),
-    };
-  }
-
   let currentKey = route.key;
   let currentKeyIndex = route.keyIndex;
   const loopStart = Date.now();
@@ -910,7 +890,6 @@ async function dispatchUpstreamFetch(
 
     const res = execResult.response;
     if (res.status < 400) {
-      breaker?.recordSuccess();
       globalKeyPool.reportSuccess(route.provider, currentKeyIndex);
       return {
         response: res,
@@ -919,14 +898,6 @@ async function dispatchUpstreamFetch(
         measuredTtftMs: execResult.measuredTtftMs,
         pacerRelease: pacerResult.release,
       };
-    }
-
-    if (breaker) {
-      if (res.status >= 500 || res.status === 529) {
-        breaker.recordFailure(true);
-      } else {
-        breaker.recordFailure(false);
-      }
     }
 
     const errBodyText = await res.clone().text().catch(() => "");
