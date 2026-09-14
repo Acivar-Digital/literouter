@@ -6,6 +6,7 @@ export const LocationConfigSchema = z.object({
   host: z.string().min(1),
   port: z.number().int().min(1).max(65535),
   tls_enabled: z.boolean(),
+  path: z.string().min(1).optional(),
 });
 
 export type LocationConfig = z.infer<typeof LocationConfigSchema>;

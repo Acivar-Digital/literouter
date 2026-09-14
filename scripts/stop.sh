@@ -1,7 +1,18 @@
 #!/usr/bin/env bash
 export PATH="$HOME/.bun/bin:/home/linuxbrew/.linuxbrew/bin:/usr/local/bin:$PATH"
 set -euo pipefail
-ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd -P)"
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+DEFAULT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd -P)"
+LOCATION_FILE="$DEFAULT_ROOT/config/location.json"
+
+ROOT_DIR="$DEFAULT_ROOT"
+if [ -f "$LOCATION_FILE" ]; then
+    STORED_PATH=$(jq -r '.path // empty' "$LOCATION_FILE" 2>/dev/null || true)
+    if [ -n "$STORED_PATH" ] && [ -d "$STORED_PATH" ]; then
+        ROOT_DIR="$STORED_PATH"
+    fi
+fi
 cd "$ROOT_DIR"
 
 TMUX_SESSION="literouter"
@@ -37,13 +48,17 @@ fi
 
 # 3. Best-effort kill of any orphan Bun servers on port
 set +e
-if [ -f .env ]; then
+PORT="7766"
+if [ -f "$LOCATION_FILE" ]; then
+    PORT=$(jq -r '.port // 7766' "$LOCATION_FILE" 2>/dev/null || echo "7766")
+elif [ -f .env ]; then
     set -a
     source .env 2>/dev/null
     set +a
+    PORT="${LITEROUTER_PORT:-7766}"
 fi
 set -e
-PORT="${LITEROUTER_PORT:-7766}"
+
 ORPHAN_PIDS=$(lsof -ti ":$PORT" 2>/dev/null || true)
 if [ -n "$ORPHAN_PIDS" ]; then
     echo "   • Releasing port $PORT held by PIDs: $ORPHAN_PIDS..."
