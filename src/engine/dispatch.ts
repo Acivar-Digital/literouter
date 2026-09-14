@@ -37,6 +37,7 @@ export interface ResolvedTarget {
   readonly model: string;
   readonly upstreamUrl: string;
   readonly extraHeaders?: Record<string, string>;
+  readonly tier?: number;
 }
 
 export type FetchFn = (
@@ -378,6 +379,34 @@ export async function executeDispatchPipeline(
     model: modelName,
     ...dirParams,
   });
+
+  let initialTarget: ResolvedTarget;
+  try {
+    const resolutionCtx: DispatchContext = {
+      reqId: req.reqId,
+      path: req.path,
+      directive: req.directive,
+      providerConfig: provConfig,
+      telemetry,
+      clientSignal: req.clientSignal,
+      selectedKey: { key: "", index: 0, poolSize: 1 },
+      attempt: 1,
+      maxAttempts: provConfig.request_retry.enabled ? provConfig.request_retry.max_attempts : 1,
+    };
+    initialTarget =
+      (strategy.resolveTarget?.(resolutionCtx, req.rawInboundBody) as ResolvedTarget | undefined) ??
+      defaultTarget(provConfig, req);
+  } catch {
+    initialTarget = defaultTarget(provConfig, req);
+  }
+
+  const initialTier =
+    initialTarget.tier ??
+    (initialTarget.extraHeaders?.["x-literouter-tier"]
+      ? parseInt(initialTarget.extraHeaders["x-literouter-tier"].split("/")[0] ?? "", 10) || undefined
+      : undefined);
+
+  telemetry.setResolvedTarget(initialTarget.model, initialTier);
   telemetry.emitInbound();
 
   const breaker = getCircuitBreaker(providerCode, provConfig.circuit_breaker);
@@ -511,10 +540,26 @@ export async function executeDispatchPipeline(
     };
 
     const resolvedTarget = strategy.resolveTarget?.(currentCtx, req.rawInboundBody) ?? defaultTarget(provConfig, req);
+    const targetTier =
+      (resolvedTarget as ResolvedTarget).tier ??
+      (resolvedTarget.extraHeaders?.["x-literouter-tier"]
+        ? parseInt(resolvedTarget.extraHeaders["x-literouter-tier"].split("/")[0] ?? "", 10) || undefined
+        : undefined);
     const target: ResolvedTarget = {
       ...resolvedTarget,
+      tier: targetTier,
       upstreamUrl: overrideProviderUrl(resolvedTarget.upstreamUrl, providerCode),
     };
+
+    if (
+      resolvedTarget.model !== telemetry.session.resolvedModel ||
+      targetTier !== telemetry.session.tier
+    ) {
+      telemetry.setResolvedTarget(resolvedTarget.model, targetTier);
+      telemetry.emitResolvedModel();
+    } else {
+      telemetry.setResolvedTarget(resolvedTarget.model, targetTier);
+    }
     const authHeaders = strategy.buildAuthHeaders?.(key.key, req.clientHeaders) ?? defaultAuthHeaders(provConfig, key.key);
     const injectedHeaders = strategy.injectHeaders?.(currentCtx, authHeaders) ?? authHeaders;
     const finalHeaders = mergeOutboundHeaders(

@@ -56,9 +56,54 @@ Emits 1–3 lines. Rich object form is the standard; string-legacy form (`logger
 
 - Line 1: `🔵 ts [reqId] Inbound METHOD PATH [protocol] from clientAgent`. `protocol` optional (`[HTTP/1.1]`, `[HTTP/2]`).
 - Line 2 (only if `directiveStr`): `🎯 ts [reqId] Directive: <key> -> Target: <Provider> | Wire: <Wire> | EP: <endpoint>`. Target/wire resolved via `getProviderDisplayName` / `getWireDisplayName`; missing target → `Direct`, missing wire → `OpenAI`.
-- Line 3 (only if `model`): `🤖 ts [reqId] Model: <model> | Key: <Prov> [Key #i/n]` (when `keyIndex` set) or `| Pool: <Prov> (n keys)` (pool view) + `| Nuances: [...]` (only when nuances ≠ `["no"]`) + `| Ref: <UA>` — UA only, ` @ <URL>` stripped at display (`logger.ts:132` `split(\" @ \")[0]`).
+- Line 3 (only if `model`): `🤖 ts [reqId] Model: <modelDisplay> | Key: <Prov> [Key #i/n]` (when `keyIndex` set) or `| Pool: <Prov> (n keys)` (pool view) + `| Nuances: [...]` (only when nuances ≠ `["no"]`) + `| Ref: <UA>` — UA only, ` @ <URL>` stripped at display (`logger.ts:163` `split(" @ ")[0]`). `<modelDisplay>` is rendered via `formatModelDisplay(d.model, d.resolvedModel, d.tier)`.
 - `referrer` sourcing: looked up from `config/providers.json` `headers` via `resolveUpstreamEndpoint` / `buildAuthHeaders` — never hardcoded in handlers.
 - Emitters: every handler entry (`openai_compat.ts`, `anthropic_compat.ts`, `gcp_compat.ts`, `openai_original.ts`, `google_native.ts`).
+
+### `formatModelDisplay(model, resolvedModel?, tier?)` & `logModel(...)` (`logger.ts:87-107`)
+
+Telemetry helper `formatModelDisplay` standardizes model identification across inbound requests and cascade hops:
+
+```typescript
+export function formatModelDisplay(
+  model: string,
+  resolvedModel?: string,
+  tier?: number
+): string
+```
+
+#### Formatting Behavior
+- **Standard requests** (no resolution override or `resolvedModel === model`):
+  ```
+  🤖 [MM-DD-HH:mm:ss:ms] [req_id] Model: <model>
+  ```
+  Example: `🤖 [09-14-12:00:00:123] [req_demo] Model: anthropic/claude-3.7-sonnet`
+- **Fusion / native cascade chains** (`resolvedModel && resolvedModel !== model`):
+  ```
+  🤖 [MM-DD-HH:mm:ss:ms] [req_id] Model: <requested> ➔ <resolved> (Tier <n>)
+  ```
+  Example: `🤖 [09-14-12:00:00:123] [req_demo] Model: gemini-flash ➔ gemini-2.5-flash (Tier 1)`
+  *(Note: If `tier` is omitted or `undefined`, the `(Tier <n>)` suffix is omitted)*.
+
+#### Session & Engine Dispatch Wiring
+- **Telemetry Session**: Stored in `SessionData.resolvedModel?: string` and `SessionData.tier?: number` (`src/telemetry/session.ts`).
+- **Target Resolution in Dispatch**: Managed in `src/engine/dispatch.ts`:
+  1. Initial target assignment:
+     ```typescript
+     telemetry.setResolvedTarget(initialTarget.model, initialTier);
+     telemetry.emitInbound();
+     ```
+  2. Cascade progression (target switch on failure/hop):
+     ```typescript
+     if (
+       resolvedTarget.model !== telemetry.session.resolvedModel ||
+       targetTier !== telemetry.session.tier
+     ) {
+       telemetry.setResolvedTarget(resolvedTarget.model, targetTier);
+       telemetry.emitResolvedModel();
+     }
+     ```
+- **Standalone Model Emitter**: `telemetry.emitResolvedModel()` calls `logModel(this.reqId, this.session.model ?? "unknown", this.session.resolvedModel, this.session.tier)` (`logger.ts:98-107`) to emit the updated arrow banner whenever cascade targets advance post-inbound.
 
 ### `logTtft(reqId, ttftMs, details?, protocol?)` (`logger.ts:143-152`)
 ```
@@ -129,7 +174,7 @@ Emits 2 lines, same timestamp base:
 🐢 [PACER] ... dwell=0ms ...
 🔵 [req] Inbound POST /v1/responses ...
 🎯 [req] Directive: ...
-🤖 [req] Model: ...
+🤖 [req] Model: ...                      (<model> or <requested> ➔ <resolved> (Tier <n>))
 📦 ... prep (handler-built)
 🔌 ... upstream dispatch (handler-built)
 🟢 [TTFT req] TTFT = Nms | Stream established [Upstream: HTTP/x]

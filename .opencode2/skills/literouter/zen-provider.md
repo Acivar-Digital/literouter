@@ -99,9 +99,95 @@ When missing (e.g. automated Pydantic evals, curl, unit tests), the gateway auto
 synthesizes a valid canonical `ses_...` token so requests do not fail with `400 MissingSessionID`.
 Per §4.1, engine dispatch MUST NEVER drop this helper.
 
-## 9. Referrer & Session-ID Mechanics (troubleshooting reference)
+---
 
-### 9.1 Where each upstream header originates
+## 9. OpenAI Responses API & Muse Reasoning Configuration (`muse-spark-1.3-contributor-free`)
+
+Zen provides native access to reasoning models via the **OpenAI Responses API (`POST /v1/responses`)**, with **`muse-spark-1.3-contributor-free`** (and `muse-spark-1.2-contributor-free`) serving as the flagship coding and orchestrator model.
+
+### 9.1 Protocol & Directive Key
+- **Endpoint**: `POST /v1/responses` (OpenAI Responses standard wire)
+- **Directive Key**: **`lr-zn-oo-rs-no`**
+  - Provider: `zn` (Zen)
+  - Payload Wire: `oo` (OpenAI Original / Responses wire, unscrubbed CoT)
+  - Completion Slot: `rs` (Responses endpoint)
+  - Nuance: `no` (Standard passthrough)
+- **Client SDK**: Connects via `@ai-sdk/openai` (`aisdk:@ai-sdk/openai`), NOT `@ai-sdk/openai-compatible`.
+
+### 9.2 Upstream Reasoning Effort Specification
+Under the Responses API wire, Zen expects reasoning configuration inside a nested `reasoning` block:
+```json
+{
+  "model": "muse-spark-1.3-contributor-free",
+  "input": "Write a recursive Fibonacci function",
+  "reasoning": {
+    "effort": "xhigh"
+  }
+}
+```
+
+Live testing against upstream Zen verifies the following effort options:
+
+| Effort Setting | Upstream Status | CoT Tokens | Behavior & Guidance |
+|---|---|---|---|
+| **`minimal`** | `200 OK` | ~130 | Fast, concise reasoning trace. Supported by Zen directly. |
+| **`low`** | `200 OK` | ~488 | Reduced thinking budget for quick agent turns. |
+| **`medium`** | `200 OK` | ~582 | Balanced reasoning depth. |
+| **`high`** | `200 OK` | ~457 | **Default** level when no reasoning effort is explicitly specified. |
+| **`xhigh`** | `200 OK` | ~667+ | **Maximum working thinking depth**. Optimal for complex coding/orchestration. |
+| **`max`** | `400 Bad Request` | 0 | ⛔ **DO NOT USE**. Upstream console rejects: `The request contains invalid parameters`. |
+| **`none`** | `400 Bad Request` | 0 | ⛔ **DO NOT USE**. Muse is reasoning-only: `reasoning_effort 'none' is not supported`. |
+
+### 9.3 OpenCode 2 Declarative Configuration (`config.json` / `opencode.json`)
+
+To register Zen Muse in OpenCode 2, configure `lr-zn-rs` under `providers`:
+
+```json
+{
+  "providers": {
+    "lr-zn-rs": {
+      "package": "aisdk:@ai-sdk/openai",
+      "npm": "@ai-sdk/openai",
+      "name": "LiteRouter Zen Responses",
+      "settings": {
+        "baseURL": "https://localhost:7766/v1",
+        "apiKey": "lr-zn-oo-rs-no",
+        "chunkTimeout": 120000
+      },
+      "options": {
+        "baseURL": "https://localhost:7766/v1",
+        "apiKey": "lr-zn-oo-rs-no",
+        "chunkTimeout": 120000
+      },
+      "models": {
+        "muse-spark-1.3-contributor-free": {
+          "name": "Muse Spark 1.3 Free (LR)",
+          "limit": {
+            "context": 1048576,
+            "output": 943718
+          },
+          "options": {
+            "reasoning": true,
+            "reasoningEffort": "xhigh"
+          }
+        }
+      }
+    }
+  },
+  "model": "lr-zn-rs/muse-spark-1.3-contributor-free"
+}
+```
+
+### 9.4 Operational Guardrails
+1. **Always Set `chunkTimeout: 120000`**: Muse generates hundreds of reasoning tokens before emitting its first content delta. Standard 30s timeouts will prematurely abort requests.
+2. **Never Pass Top-Level `reasoning_effort`**: In native Responses API payloads, `reasoning_effort` at the root will be rejected by Zen with `unknown parameter reasoning_effort`. It must be nested under `reasoning: { effort: "..." }`.
+3. **Dual Model Availability**:
+   - `muse-spark-1.3-contributor-free` & `muse-spark-1.2-contributor-free`: Free-tier accessible with valid contributor keys.
+   - `muse-spark-1.3` & `muse-spark-1.2`: Requires paid credits (`HTTP 401` on free tier).
+
+## 10. Referrer & Session-ID Mechanics (troubleshooting reference)
+
+### 10.1 Where each upstream header originates
 
 `resolveUpstreamEndpoint` (`src/handlers/openai_compat.ts:106-131`) returns the
 registry `headers` object verbatim; `buildAuthHeaders` (`:133-181`) and the unified
@@ -125,7 +211,7 @@ Notes:
   same registry headers, so it shows what Zen was told — compare it first when
   identity errors appear.
 
-### 9.2 Why two layers exist
+### 10.2 Why two layers exist
 
 Zen gates in two stages: static headers answer "is this OpenCode at all"
 (fail → `429 FreeUsageLimitError`); session headers answer "which OpenCode
@@ -133,7 +219,7 @@ session is calling" (fail → `400 MissingSessionID` on gated free-tier models).
 Referrer fixes layer 1 only — `big-pickle` and other free-tier models additionally
 require layer 2, which is why the legacy static-only probe always returned 400.
 
-### 9.3 Symptom → check table
+### 10.3 Symptom → check table
 
 | Symptom | Most likely cause | Check |
 |---|---|---|

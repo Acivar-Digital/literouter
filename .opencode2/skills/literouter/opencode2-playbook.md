@@ -90,7 +90,7 @@ OpenCode 2 connects to LiteRouter on `https://localhost:7766/v1` using declarati
     },
     "lr-zn": {
       "npm": "@ai-sdk/openai-compatible",
-      "name": "LR-ZN (LiteRouter Zen)",
+      "name": "LR-ZN (LiteRouter Zen Chat)",
       "options": {
         "baseURL": "https://localhost:7766/v1",
         "apiKey": "lr-zn-oa-ch-no",
@@ -102,6 +102,29 @@ OpenCode 2 connects to LiteRouter on `https://localhost:7766/v1` using declarati
           "limit": {
             "context": 200000,
             "output": 65536
+          }
+        }
+      }
+    },
+    "lr-zn-rs": {
+      "package": "aisdk:@ai-sdk/openai",
+      "npm": "@ai-sdk/openai",
+      "name": "LR-ZN-RS (LiteRouter Zen Responses)",
+      "options": {
+        "baseURL": "https://localhost:7766/v1",
+        "apiKey": "lr-zn-oo-rs-no",
+        "chunkTimeout": 120000
+      },
+      "models": {
+        "muse-spark-1.3-contributor-free": {
+          "name": "Muse Spark 1.3 Free (LR)",
+          "limit": {
+            "context": 1048576,
+            "output": 943718
+          },
+          "options": {
+            "reasoning": true,
+            "reasoningEffort": "xhigh"
           }
         }
       }

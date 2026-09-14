@@ -113,6 +113,46 @@ Create `~/.config/opencode2/config.json` (and symlink `~/.config/opencode2/openc
 }
 ```
 
+#### Step 4b: Configuring OpenAI Responses API Reasoning Models (e.g. Zen Muse)
+For native reasoning models exposed via OpenAI Responses API (`POST /v1/responses`), use `@ai-sdk/openai` with directive key `lr-zn-oo-rs-no` and explicit `reasoningEffort`:
+
+```json
+{
+  "providers": {
+    "lr-zn-rs": {
+      "package": "aisdk:@ai-sdk/openai",
+      "npm": "@ai-sdk/openai",
+      "name": "LiteRouter Zen Responses",
+      "settings": {
+        "baseURL": "https://localhost:7766/v1",
+        "apiKey": "lr-zn-oo-rs-no",
+        "chunkTimeout": 120000
+      },
+      "options": {
+        "baseURL": "https://localhost:7766/v1",
+        "apiKey": "lr-zn-oo-rs-no",
+        "chunkTimeout": 120000
+      },
+      "models": {
+        "muse-spark-1.3-contributor-free": {
+          "name": "Muse Spark 1.3 Free (LR)",
+          "limit": {
+            "context": 1048576,
+            "output": 943718
+          },
+          "options": {
+            "reasoning": true,
+            "reasoningEffort": "xhigh"
+          }
+        }
+      }
+    }
+  },
+  "model": "lr-zn-rs/muse-spark-1.3-contributor-free"
+}
+```
+*Note*: Supported reasoning effort levels for Muse are `"minimal"`, `"low"`, `"medium"`, `"high"`, and `"xhigh"`. Do not use `"max"` (rejected by upstream with HTTP 400) or `"none"`. Always specify `chunkTimeout: 120000` to prevent timeouts during extended chain-of-thought phases.
+
 Link config:
 ```bash
 ln -sfn ~/.config/opencode2/config.json ~/.config/opencode2/opencode.json

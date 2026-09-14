@@ -5,6 +5,13 @@ All notable changes to LiteRouter will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- **Fusion Model Indicator Formatting in Logger and Telemetry (`src/ui/logger.ts`, `src/telemetry/session.ts`, `src/engine/dispatch.ts`)**:
+  - **Visual Model Resolution Indicator (`formatModelDisplay`)**: Standardized model identification across inbound requests and cascade hops in `src/ui/logger.ts`. Standard requests display as `🤖 [req_id] Model: <model>`, while cascade chains format as `🤖 [req_id] Model: <requested> ➔ <resolved> (Tier <n>)`.
+  - **Logger Emitters & Types (`src/ui/logger.ts`)**: Added `formatModelDisplay`, standalone `logModel` emitter, and extended `InboundLogDetails` with optional `resolvedModel` and `tier` fields.
+  - **Telemetry Session State Tracking (`src/telemetry/session.ts`)**: Extended `SessionData` with `resolvedModel?: string` and `tier?: number`, adding `setResolvedTarget(model, tier)` and `emitResolvedModel()` to emit updated model resolution banners on target progression hops.
+  - **Dispatch Pipeline Synchronization (`src/engine/dispatch.ts`)**: Wired strategy target resolution (`strategy.resolveTarget`) prior to initial inbound banner emission, synchronizing `resolvedModel` and `tier` so initial inbound logging displays the resolved model and tier. Mid-flight cascade target switches on subsequent retry attempts automatically invoke `emitResolvedModel()`.
+  - **Skill Documentation**: Updated `.opencode2/skills/literouter/SKILL.md` and `.opencode2/skills/literouter/logger.md` with complete telemetry specifications, session fields, and logging patterns for fusion cascades.
+
 - **Ground-Truth Provider Architecture & Single Conveyor Pipe Refactor**:
   - **Purged Dead Ballast**: Eradicated `limits` (`rpm`, `rpd`, `tpm`) across all providers and 12 Google models (Zdist relic); purged `circuit_breaker` across all providers into safe pass-through (zero artificial 503 outage tripping); purged fine-grained `key_cooldown` knobs and `max_delay_ms`.
   - **Single FIFO Conveyor Pipe**: Standardized `RequestPacer` default `max_queue_depth: 500` with strict FIFO ordering, zero shadow fallbacks (`?? 200`), and clean downstream `AbortSignal` dequeuing to eliminate queuing leaks on client disconnects.

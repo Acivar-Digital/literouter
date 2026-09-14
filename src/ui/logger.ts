@@ -84,6 +84,28 @@ export function getWireDisplayName(code: string): string {
   return WIRE_NAMES[normalized] || code.toUpperCase();
 }
 
+export function formatModelDisplay(
+  model: string,
+  resolvedModel?: string,
+  tier?: number
+): string {
+  if (resolvedModel && resolvedModel !== model) {
+    return `${model} ➔ ${resolvedModel}${tier !== undefined ? ` (Tier ${tier})` : ""}`;
+  }
+  return `${model}`;
+}
+
+export function logModel(
+  reqId: string,
+  model: string,
+  resolvedModel?: string,
+  tier?: number
+): void {
+  const ts = formatTimestamp();
+  const display = formatModelDisplay(model, resolvedModel, tier);
+  console.log(`${EMOJI.model} ${ts} [${reqId}] Model: ${display}`);
+}
+
 export interface InboundLogDetails {
   readonly reqId: string;
   readonly method: string;
@@ -95,6 +117,8 @@ export interface InboundLogDetails {
   readonly wireFormat?: string;
   readonly endpoint?: string;
   readonly model?: string;
+  readonly resolvedModel?: string;
+  readonly tier?: number;
   readonly keyIndex?: number;
   readonly totalKeys?: number;
   readonly nuances?: readonly string[];
@@ -137,7 +161,8 @@ export function logInbound(
         ? ` | Nuances: [${d.nuances.join(", ")}]`
         : "";
       const refInfo = d.referrer ? ` | Ref: ${d.referrer.split(" @ ")[0]}` : "";
-      console.log(`${EMOJI.model} ${ts} [${d.reqId}] Model: ${d.model}${keyInfo}${nuanceInfo}${refInfo}`);
+      const modelDisplay = formatModelDisplay(d.model, d.resolvedModel, d.tier);
+      console.log(`${EMOJI.model} ${ts} [${d.reqId}] Model: ${modelDisplay}${keyInfo}${nuanceInfo}${refInfo}`);
     }
     return;
   }

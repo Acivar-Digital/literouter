@@ -4,11 +4,12 @@ import {
   formatTimestamp,
   formatTokenNumber,
   getHttpStatusText,
-  getWireDisplayName,
+  logInbound,
+  logModel,
 } from "../ui/logger";
 import { type MetricsHook, noopMetrics } from "./hooks";
 
-export interface TelemetryInit {
+export interface SessionData {
   readonly reqId: string;
   readonly method: string;
   readonly path: string;
@@ -19,12 +20,16 @@ export interface TelemetryInit {
   readonly wireFormat?: string;
   readonly endpoint?: string;
   readonly model?: string;
+  resolvedModel?: string;
+  tier?: number;
   readonly keyIndex?: number;
   readonly totalKeys?: number;
   readonly nuances?: readonly string[];
   readonly referrer?: string;
   readonly metricsHook?: MetricsHook;
 }
+
+export interface TelemetryInit extends SessionData {}
 
 export interface UsageRecord {
   readonly promptTokens: number;
@@ -80,8 +85,10 @@ export class RequestTelemetry {
   private readonly metrics: MetricsHook;
   private lastUsage?: UsageRecord;
   private status?: number;
+  public readonly session: SessionData;
 
   constructor(private readonly init: TelemetryInit) {
+    this.session = { ...init };
     this.reqId = init.reqId;
     this.providerCode = init.targetProvider ?? "unknown";
     this.currentKeyIndex = init.keyIndex;
@@ -91,45 +98,44 @@ export class RequestTelemetry {
 
   // ── Lifecycle Methods ──
 
-  /** Called once at request receipt. Emits inbound banner. */
-  emitInbound(): void {
-    const ts = formatTimestamp();
-    const d = this.init;
-    const client = d.clientAgent || "Unknown";
-    const protoStr = d.protocol ? ` [${d.protocol}]` : "";
-    console.log(`${EMOJI.inbound} ${ts} [${d.reqId}] Inbound ${d.method} ${d.path}${protoStr} from ${client}`);
-
-    if (d.directiveStr) {
-      const target = d.targetProvider ? getProviderDisplayName(d.targetProvider) : "Direct";
-      const wire = d.wireFormat ? getWireDisplayName(d.wireFormat) : "OpenAI";
-      const ep = d.endpoint ? ` | EP: ${d.endpoint}` : "";
-      console.log(`${EMOJI.directive} ${ts} [${d.reqId}] Directive: ${d.directiveStr} -> Target: ${target} | Wire: ${wire}${ep}`);
-    }
-
-    if (d.model) {
-      this.emitInboundModelLine(ts);
-    }
-
-    this.metrics.onRequestStart(this.reqId, this.providerCode, this.init.model ?? "unknown");
+  /** Update resolved model target and tier. */
+  setResolvedTarget(model?: string, tier?: number): void {
+    this.session.resolvedModel = model;
+    this.session.tier = tier;
   }
 
-  private emitInboundModelLine(ts: string): void {
-    const provLabel = this.init.targetProvider ? getProviderDisplayName(this.init.targetProvider) : "Provider";
-    let keyInfo = "";
-    if (this.currentKeyIndex !== undefined && this.currentKeyIndex >= 0) {
-      const keyIdx = this.currentKeyIndex + 1;
-      const keyTotal = this.totalKeys !== undefined ? `/${this.totalKeys}` : "";
-      keyInfo = ` | Key: ${provLabel} [Key #${keyIdx}${keyTotal}]`;
-    } else if (this.totalKeys !== undefined) {
-      keyInfo = ` | Pool: ${provLabel} (${this.totalKeys} ${this.totalKeys === 1 ? "key" : "keys"})`;
-    }
+  /** Emits resolved model banner if strategy resolution happened post-inbound. */
+  emitResolvedModel(): void {
+    logModel(
+      this.reqId,
+      this.session.model ?? "unknown",
+      this.session.resolvedModel,
+      this.session.tier
+    );
+  }
 
-    const nuances = this.init.nuances;
-    const nuanceInfo = nuances && nuances.length > 0 && nuances[0] !== "no"
-      ? ` | Nuances: [${nuances.join(", ")}]`
-      : "";
-    const refInfo = this.init.referrer ? ` | Ref: ${this.init.referrer.split(" @ ")[0]}` : "";
-    console.log(`${EMOJI.model} ${ts} [${this.reqId}] Model: ${this.init.model}${keyInfo}${nuanceInfo}${refInfo}`);
+  /** Called once at request receipt. Emits inbound banner. */
+  emitInbound(): void {
+    logInbound({
+      reqId: this.session.reqId,
+      method: this.session.method,
+      path: this.session.path,
+      clientAgent: this.session.clientAgent,
+      protocol: this.session.protocol,
+      directiveStr: this.session.directiveStr,
+      targetProvider: this.session.targetProvider,
+      wireFormat: this.session.wireFormat,
+      endpoint: this.session.endpoint,
+      model: this.session.model,
+      resolvedModel: this.session.resolvedModel,
+      tier: this.session.tier,
+      keyIndex: this.currentKeyIndex !== undefined && this.currentKeyIndex >= 0 ? this.currentKeyIndex : undefined,
+      totalKeys: this.totalKeys,
+      nuances: this.session.nuances,
+      referrer: this.session.referrer,
+    });
+
+    this.metrics.onRequestStart(this.reqId, this.providerCode, this.session.model ?? "unknown");
   }
 
   /** Update key index and optionally total keys count. */
@@ -263,7 +269,7 @@ export class RequestTelemetry {
     return {
       reqId: this.reqId,
       provider: this.providerCode,
-      model: this.init.model ?? "unknown",
+      model: this.session.model ?? "unknown",
       durationMs: this.getDurationMs(),
       ttftMs: this.getTtftMs(),
       ...(this.lastUsage ? {

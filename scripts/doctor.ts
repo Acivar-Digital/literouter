@@ -156,7 +156,7 @@ async function pingLocalServer(): Promise<void> {
 
 async function probeGoogleKey(key: string): Promise<ProbeResult> {
   const masked = maskKey(key);
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemma-4-31b-it:generateContent?key=${encodeURIComponent(key)}`;
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent?key=${encodeURIComponent(key)}`;
   const payload = {
     contents: [{ parts: [{ text: "ping" }] }],
     generationConfig: { maxOutputTokens: 10 },
@@ -171,18 +171,18 @@ async function probeGoogleKey(key: string): Promise<ProbeResult> {
     });
 
     if (res.status === 200) {
-      return { provider: "Google (Gemma 31B)", maskedKey: masked, status: "PASS", message: "200 OK (Healthy)", statusCode: 200 };
+      return { provider: "Google (Gemini 3.5 Flash Lite)", maskedKey: masked, status: "PASS", message: "200 OK (Healthy)", statusCode: 200 };
     }
     if (res.status === 401 || res.status === 403) {
-      return { provider: "Google (Gemma 31B)", maskedKey: masked, status: "FAIL", message: `HTTP ${res.status} Unauthorized / Forbidden`, statusCode: res.status };
+      return { provider: "Google (Gemini 3.5 Flash Lite)", maskedKey: masked, status: "FAIL", message: `HTTP ${res.status} Unauthorized / Forbidden`, statusCode: res.status };
     }
     if (res.status === 429) {
-      return { provider: "Google (Gemma 31B)", maskedKey: masked, status: "WARN", message: "HTTP 429 Rate Limited (Active)", statusCode: 429 };
+      return { provider: "Google (Gemini 3.5 Flash Lite)", maskedKey: masked, status: "WARN", message: "HTTP 429 Rate Limited (Active)", statusCode: 429 };
     }
-    return { provider: "Google (Gemma 31B)", maskedKey: masked, status: "WARN", message: `HTTP ${res.status} Upstream Warning`, statusCode: res.status };
+    return { provider: "Google (Gemini 3.5 Flash Lite)", maskedKey: masked, status: "WARN", message: `HTTP ${res.status} Upstream Warning`, statusCode: res.status };
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
-    return { provider: "Google (Gemma 31B)", maskedKey: masked, status: "WARN", message: `Connection error: ${detail}` };
+    return { provider: "Google (Gemini 3.5 Flash Lite)", maskedKey: masked, status: "WARN", message: `Connection error: ${detail}` };
   }
 }
 
@@ -410,13 +410,13 @@ async function runDoctor(): Promise<void> {
 
   const googleKeys = pools.get("gg") ?? [];
   if (targetProvider && targetProvider !== "gg") {
-    console.log("\n[Google (Gemma 31B)] ⏭️ Skipped (filter active).");
+    console.log("\n[Google (Gemini 3.5 Flash Lite)] ⏭️ Skipped (filter active).");
   } else if (googleKeys.length > 0) {
-    console.log(`\n[Google (Gemma 31B)] Probing ${googleKeys.length} key(s)...`);
-    const res = await probePoolSequential("Google (Gemma 31B)", googleKeys, probeGoogleKey, 1000);
+    console.log(`\n[Google (Gemini 3.5 Flash Lite)] Probing ${googleKeys.length} key(s)...`);
+    const res = await probePoolSequential("Google (Gemini 3.5 Flash Lite)", googleKeys, probeGoogleKey, 1000);
     probeResults.push(...res);
   } else {
-    console.log("\n[Google (Gemma 31B)] ⏭️ Skipped: No keys configured.");
+    console.log("\n[Google (Gemini 3.5 Flash Lite)] ⏭️ Skipped: No keys configured.");
   }
 
   const nvidiaKeys = pools.get("nv") ?? [];
