@@ -58,7 +58,20 @@ export function resolveIsStreaming(
   if (Boolean(inboundBody.stream)) {
     return true;
   }
-  return "completion" in directive && directive.completion === "gc";
+  if (
+    (typeof inboundBody.path === "string" &&
+      inboundBody.path.includes(":streamGenerateContent")) ||
+    (typeof inboundBody.endpoint === "string" &&
+      inboundBody.endpoint.includes(":streamGenerateContent")) ||
+    (typeof inboundBody.url === "string" &&
+      inboundBody.url.includes(":streamGenerateContent"))
+  ) {
+    return true;
+  }
+  return (
+    "completion" in directive &&
+    (directive.completion === "gc" || directive.completion === "g1")
+  );
 }
 
 function processChunkTtft(

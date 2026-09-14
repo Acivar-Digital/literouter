@@ -225,10 +225,10 @@ LiteRouter strictly guards against misconfigured client drivers:
   - Outbound Stream: Converts SSE events (`response.output_text.delta`, `response.completed`) into standard `chat.completion.chunk` frames.
 
 ### 4.5 Google Native Dumb Forwarder (`src/handlers/google_native.ts`)
-- **Directive**: `lr-gg-gg-gc-no` (payload `gg`, endpoint `gc`).
-- Exposes direct `/v1beta/models/*:generateContent` and `:streamGenerateContent?alt=sse` routes for the `@ai-sdk/google` package.
-- Features transparent byte-stream passthrough.
-- Rotates `GOOGLE_API_KEYS` on 429/5xx, injecting active keys into the `x-goog-api-key` header.
+- **Directives**: `lr-gg-gg-gc-no` (Google v1beta, endpoint `gc`) and `lr-gg-gg-g1-no` (Google v1, endpoint `g1`).
+- Exposes direct `/v1beta/models/*:generateContent` and `/v1/models/*:generateContent`, plus streaming routes with `:streamGenerateContent?alt=sse` for `@ai-sdk/google` or official Google SDKs.
+- Features transparent byte-stream passthrough, preserving query parameters such as `?alt=sse` for Server-Sent Events (`text/event-stream`).
+- Rotates `GOOGLE_API_KEYS` on 429/5xx, injecting active keys into the `x-goog-api-key` header while stripping client auth parameters.
 - Strips conflicting compression and framing headers (`content-encoding`, `transfer-encoding`).
 - Powers Native Google Fusion Chains (`gemini-flash`, `gemini-flash-lite`).
 
@@ -295,10 +295,10 @@ lr-<provider>-<payload>-<completion>-<nuance>
 | `ms` | Messages | `/v1/messages` or `/api/v1/messages` |
 | `rs` | Responses | `/v1/responses` |
 | `ob` | OpenAI Beta | `/v1beta/openai/chat/completions` (Google AI Studio) |
-| `gc` | GenerateContent | `/v1beta/models/{model}:generateContent` (Google Native) |
+| `gc` | GenerateContent (v1beta) | `/v1beta/models/{model}:generateContent` (Google Native v1beta) |
 | `em` | Embeddings | `/v1/embeddings` |
 | `md` | Models Discovery | `/v1/models` |
-| `g1` | Google v1 | Provider endpoint map key only (completion-code slot, **not** a nuance; see `directive-grammar.md` §4) |
+| `g1` | Google v1 | `/v1/models/{model}:generateContent` (Google Native v1, completion-code slot in `lr-gg-gg-g1-no`, **not** a nuance; preserves `:streamGenerateContent` and `?alt=sse` for SSE; see `directive-grammar.md` §4) |
 | `im` | Images | `/v1/images/generations` |
 | `au` | Audio | `/v1/audio/transcriptions` |
 
@@ -344,7 +344,8 @@ Fusion presets route dynamically across multi-tier fallback chains defined in `c
 | **OpenCode 2 (NVIDIA NIM)** | `lr-nv-oa-ch-ts` | `nvidia/nemotron-3-super-120b-a12b` | Chat completions with Thinking Support (`ts`) enabled |
 | **Claude Code** | `lr-or-cl-ms-no` | `anthropic/claude-3.7-sonnet` | Anthropic Messages API (`/v1/messages`) via OpenRouter |
 | **Claude Code (Direct)** | `lr-an-cl-ms-no` | `claude-3-7-sonnet-20250219` | Direct Anthropic Messages API with key rotation |
-| **Google Native (`@ai-sdk/google`)** | `lr-gg-gg-gc-no` | `gemini-flash`, `gemini-3.5-flash-lite` | Direct Google REST byte-stream with H2 pooling & key rotation |
+| **Google Native v1beta (`@ai-sdk/google`)** | `lr-gg-gg-gc-no` | `gemini-flash`, `gemini-3.5-flash-lite` | Direct Google REST byte-stream with H2 pooling & key rotation (`/v1beta/models/*`) |
+| **Google Native v1 (`@ai-sdk/google`)** | `lr-gg-gg-g1-no` | `gemini-2.5-flash`, `gemini-2.5-pro` | Direct Google REST v1 forwarder (`/v1/models/*`), preserving query params (`?alt=sse`) & SSE stream |
 | **Pydantic AI (Python SDK)** | `lr-nv-oa-ch-no` | `deepseek-ai/deepseek-r1` | High-throughput HTTP/2 multiplexed chat completions |
 | **GCP Vertex AI (Gemma)** | `lr-gc-oa-ch-no` | `gemma-4-31b-it` | GCP Vertex AI with 30 RPM conveyor pacer & zero-cost guardrail |
 | **Dots XML Polyfill** | `lr-or-ao-ch-dp` | `dots-studio/dots-3-note-preview:free` | Anthropic-to-OpenAI cross-wire with XML tool breakout |

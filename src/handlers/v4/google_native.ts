@@ -40,7 +40,7 @@ export async function handleGoogleNative(
   const dispatchReq: DispatchRequest = {
     reqId,
     method: req.method,
-    path: url.pathname,
+    path: `${url.pathname}${url.search}`,
     directive,
     rawInboundBody: body,
     outboundPayload,

@@ -243,8 +243,10 @@ Endpoint codes observed on disk: `ch`, `ms`, `ob`, `gc`, `g1`, `em`, `md`,
 `rs`, `im`, `au` — matching `CompletionCodeSchema`
 (`src/config/schema.ts:21-32`). Examples: google `ob` =
 `/v1beta/openai/chat/completions`, google `gc` =
-`/v1beta/models/{model}:generateContent` (`{model}` is substituted in
-`resolveUpstreamEndpoint`, `src/handlers/openai_compat.ts:106-131`).
+`/v1beta/models/{model}:generateContent` (v1beta), google `g1` =
+`/v1/models/{model}:generateContent` (v1; `{model}` is substituted in
+`resolveUpstreamEndpoint`, `src/handlers/openai_compat.ts:106-131`, and
+action `:streamGenerateContent` + `?alt=sse` preserved).
 
 ### 3.4 `limits` (`rpm` / `rpd` / `tpm`) and Registry Lifecycle
 

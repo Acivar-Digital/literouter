@@ -70,6 +70,15 @@ const directChDirective: ParsedDirective = {
   nuances: ["no"],
 };
 
+const directG1Directive: ParsedDirective = {
+  type: "direct",
+  raw: "lr-gg-gg-g1-no",
+  provider: "gg",
+  payload: "gg",
+  completion: "g1",
+  nuances: ["no"],
+};
+
 const fusionDirective: ParsedDirective = {
   type: "fusion",
   raw: "lr-fse-quad",
@@ -94,10 +103,32 @@ describe("GoogleNativeTransformer", () => {
 
     it("resolves isStreaming accurately", () => {
       expect(resolveIsStreaming({}, directGcDirective)).toBe(true);
+      expect(resolveIsStreaming({}, directG1Directive)).toBe(true);
       expect(resolveIsStreaming({ stream: true }, directChDirective)).toBe(true);
       expect(resolveIsStreaming({ stream: false }, directChDirective)).toBe(false);
       expect(resolveIsStreaming({}, directChDirective)).toBe(false);
       expect(resolveIsStreaming({}, fusionDirective)).toBe(false);
+    });
+
+    it("resolves isStreaming to true when inboundBody has path or url containing :streamGenerateContent", () => {
+      expect(
+        resolveIsStreaming(
+          { path: "/v1/models/gemini-2.5-flash:streamGenerateContent" },
+          directChDirective
+        )
+      ).toBe(true);
+      expect(
+        resolveIsStreaming(
+          { url: "https://generativelanguage.googleapis.com/v1/models/gemini-2.5-flash:streamGenerateContent?alt=sse" },
+          directChDirective
+        )
+      ).toBe(true);
+      expect(
+        resolveIsStreaming(
+          { endpoint: "/v1beta/models/gemini-2.5-flash:streamGenerateContent" },
+          directChDirective
+        )
+      ).toBe(true);
     });
 
     it("detects content chunks properly", () => {

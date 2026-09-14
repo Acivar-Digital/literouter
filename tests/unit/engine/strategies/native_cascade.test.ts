@@ -28,6 +28,7 @@ function createMockContext(overrides?: Partial<DispatchContext>): DispatchContex
       auth_header: "Bearer",
       endpoints: {
         gc: "/v1beta/models/{model}:generateContent",
+        g1: "/v1/models/{model}:generateContent",
         ob: "/v1beta/openai/chat/completions",
       },
       ...overrides?.providerConfig,
@@ -219,6 +220,45 @@ describe("Slice 3.4: NativeCascadeStrategy", () => {
     expect(resolved.model).toBe("gemini-2.5-flash");
     expect(resolved.upstreamUrl).toBe(
       "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:streamGenerateContent"
+    );
+  });
+
+  it("rewrites g1 completion stream URL and preserves alt=sse query param without leaking key", () => {
+    const strategy = new NativeCascadeStrategy();
+    const ctx = createMockContext({
+      path: "/v1/models/gemini-3.5-flash-lite:streamGenerateContent?alt=sse&key=leak-test-key",
+      directive: {
+        type: "direct",
+        provider: "gg",
+        payload: "gg",
+        completion: "g1",
+        nuance: "no",
+      } as any,
+    });
+
+    const resolved = strategy.resolveTarget(ctx, {});
+    expect(resolved.model).toBe("gemini-3.5-flash-lite");
+    expect(resolved.upstreamUrl).toBe(
+      "https://generativelanguage.googleapis.com/v1/models/gemini-3.5-flash-lite:streamGenerateContent?alt=sse"
+    );
+    expect(resolved.upstreamUrl).not.toContain("key=");
+    expect(resolved.upstreamUrl).not.toContain("leak-test-key");
+
+    // Also verify pure alt=sse path without key
+    const ctxPure = createMockContext({
+      path: "/v1/models/gemini-3.5-flash-lite:streamGenerateContent?alt=sse",
+      directive: {
+        type: "direct",
+        provider: "gg",
+        payload: "gg",
+        completion: "g1",
+        nuance: "no",
+      } as any,
+    });
+    const resolvedPure = strategy.resolveTarget(ctxPure, {});
+    expect(resolvedPure.model).toBe("gemini-3.5-flash-lite");
+    expect(resolvedPure.upstreamUrl).toBe(
+      "https://generativelanguage.googleapis.com/v1/models/gemini-3.5-flash-lite:streamGenerateContent?alt=sse"
     );
   });
 });

@@ -52,6 +52,13 @@ All notable changes to LiteRouter will be documented in this file.
 - Isolated 179 legacy handler and legacy transport tests into `tests/unit/legacy/`, cleanly separating modern v4 development iteration from legacy fallback tests.
 
 ### Fixed
+- **Google Native v1 (`g1`) Streaming & Query Parameter Preservation (`src/transformers/google_native.ts`, `src/engine/strategies/native_cascade.ts`, `src/handlers/v4/google_native.ts`)**:
+  - Fixed Google Native v1 (`g1`) streaming requests (`POST /v1/models/*:streamGenerateContent?alt=sse`) when using directive key `lr-gg-gg-g1-no`.
+  - `resolveIsStreaming` in `src/transformers/google_native.ts` now supports `g1` completion code and `:streamGenerateContent` path detection.
+  - `NativeCascadeStrategy` in `src/engine/strategies/native_cascade.ts` now rewrites `:generateContent` to `:streamGenerateContent` for both `gc` and `g1`, and preserves inbound query parameters (`?alt=sse`) without leaking `key`.
+  - `handleGoogleNative` in `src/handlers/v4/google_native.ts` now passes full `url.pathname + url.search` in `dispatchReq.path`.
+  - Comprehensive unit test coverage added in `tests/unit/transformers/google_native.test.ts` and `tests/unit/engine/strategies/native_cascade.test.ts`.
+  - Updated LiteRouter skill documentation across `.opencode2/skills/literouter/`.
 - **Zero-Quarantine Transparent Forwarding for Zen (`zn`) & GCP (`gc`) (`config/providers.json`)**:
   - Restored `key_cooldown.enabled: false` for Zen (`zn`) and GCP (`gc`) in `config/providers.json`.
   - Eliminated erroneous 19,883s key cooldown lockouts caused by upstream 429 `Retry-After` headers on Zen free-tier models.

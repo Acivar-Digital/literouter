@@ -39,10 +39,38 @@ export class NativeCascadeStrategy implements ProviderExecutionStrategy {
       );
     }
     let path = endpointTemplate.replace("{model}", model);
-    if (completionCode === "gc" && ctx.path?.includes(":streamGenerateContent")) {
+    if (
+      (completionCode === "gc" || completionCode === "g1") &&
+      ctx.path?.includes(":streamGenerateContent")
+    ) {
       path = path.replace(":generateContent", ":streamGenerateContent");
     }
-    const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+    let normalizedPath = path.startsWith("/") ? path : `/${path}`;
+    if (ctx.path?.includes("?")) {
+      const qIndex = ctx.path.indexOf("?");
+      const inboundParams = new URLSearchParams(ctx.path.slice(qIndex + 1));
+      if (inboundParams.has("key")) {
+        inboundParams.delete("key");
+      }
+      const qSplitIndex = normalizedPath.indexOf("?");
+      const pathname =
+        qSplitIndex === -1 ? normalizedPath : normalizedPath.slice(0, qSplitIndex);
+      const existingQuery =
+        qSplitIndex === -1 ? "" : normalizedPath.slice(qSplitIndex + 1);
+      if (existingQuery) {
+        const params = new URLSearchParams(existingQuery);
+        for (const [k, v] of inboundParams.entries()) {
+          if (!params.has(k)) {
+            params.set(k, v);
+          }
+        }
+        const qs = params.toString();
+        normalizedPath = qs ? `${pathname}?${qs}` : pathname;
+      } else {
+        const qs = inboundParams.toString();
+        normalizedPath = qs ? `${pathname}?${qs}` : pathname;
+      }
+    }
     return `${base}${normalizedPath}`;
   }
 

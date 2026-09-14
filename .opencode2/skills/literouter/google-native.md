@@ -1,37 +1,61 @@
 # Google Native Dumb Forwarder — Architecture, HTTP/2 Pooling, Key Rotation & Runbook
 
 > **CANONICAL LOCATION:** `/home/yapilwsl/arthityap/literouter/.opencode2/skills/literouter/google-native.md`  
-> **PURPOSE:** Load this reference whenever troubleshooting or configuring the **Google Native Dumb Forwarder** (`gg`), native Gemini API requests (`/v1beta/models/*`), `@ai-sdk/google` integration, free-tier key pool rotation across `GOOGLE_API_KEYS`, HTTP/2 outbound session pooling, or related streaming telemetry.  
+> **PURPOSE:** Load this reference whenever troubleshooting or configuring the **Google Native Dumb Forwarder** (`gg`), native Gemini API requests (`/v1beta/models/*` and `/v1/models/*`), `@ai-sdk/google` integration, free-tier key pool rotation across `GOOGLE_API_KEYS`, HTTP/2 outbound session pooling, query parameter passthrough (e.g. `?alt=sse`), or related streaming telemetry.  
 > **ZERO GREP MANDATE:** When diagnosing issues, an engineer or LLM does NOT need to grep or glob the repository; all paths, file lines, schemas, headers, and failure modes are documented here.
 
 ---
 
-## 1. Executive Summary & Directive Key
+## 1. Executive Summary & Directive Keys
 
 The **Google Native Dumb Forwarder** provides high-throughput, low-latency pass-through for native Google Gemini REST API requests without OpenAI-format schema transformation overhead. It sits between client SDKs (such as Vercel AI SDK `@ai-sdk/google` or the official Google GenAI SDK) and Google's production endpoints at `https://generativelanguage.googleapis.com`.
 
-### Canonical Directive Key
+### Canonical Directive Keys
+
+LiteRouter supports both Google AI Studio **v1beta** (`gc`) and **v1** (`g1`) native endpoints:
 
 ```
-lr-gg-gg-gc-no
+lr-gg-gg-gc-no    # Google AI Studio v1beta API
+lr-gg-gg-g1-no    # Google AI Studio v1 API
 ```
 
 | Segment | Value | Description |
 |---|---|---|
 | **Provider** | `gg` | Google upstream provider |
 | **Payload (Wire)** | `gg` | Native Google Gemini JSON payload format (untouched pass-through) |
-| **Endpoint** | `gc` | `generateContent` / `streamGenerateContent` |
+| **Endpoint** | `gc` | Google AI Studio **v1beta** endpoint (`/v1beta/models/{model}:generateContent` / `:streamGenerateContent`) |
+| | `g1` | Google AI Studio **v1** endpoint (`/v1/models/{model}:generateContent` / `:streamGenerateContent`) |
 | **Nuances** | `no` | Standard nuance (no forced reasoning stripping or special filters) |
+
+### Key Difference: `gc` (v1beta) vs `g1` (v1)
+
+- **`gc` (Google AI Studio v1beta)**: Maps to `/v1beta/models/{model}:generateContent` and `/v1beta/models/{model}:streamGenerateContent`. Direct Gemini REST for `@ai-sdk/google` pointing to base URL `/v1beta`. Supports experimental features and preview models.
+- **`g1` (Google AI Studio v1)**: Maps to `/v1/models/{model}:generateContent` and `/v1/models/{model}:streamGenerateContent`. Direct Gemini REST for Google SDKs or `@ai-sdk/google` pointing to base URL `/v1`. Stable API surface. Note: `g1` is a **completion-code slot, not a nuance**.
+
+### Query Parameter Passthrough & SSE Streaming (`?alt=sse`)
+
+- Inbound query parameters (such as `?alt=sse`) are preserved end-to-end.
+- Inbound auth query parameter `?key=...` is stripped from the URL query string and replaced by injecting the rotated API key into the `x-goog-api-key` header upstream.
+- All other query parameters (including `?alt=sse`) are merged and appended to the upstream target URL.
+- When `?alt=sse` is passed (or `:streamGenerateContent` is requested), the response is streamed back to downstream clients over Server-Sent Events (`text/event-stream`).
 
 ### Inbound & Upstream Endpoints
 
 - **Inbound Gateway URLs** (Port `7766`):
-  - Streaming: `https://localhost:7766/v1beta/models/{model}:streamGenerateContent?alt=sse`
-  - Non-streaming: `https://localhost:7766/v1beta/models/{model}:generateContent`
+  - **v1beta (`gc`)**:
+    - Streaming: `https://localhost:7766/v1beta/models/{model}:streamGenerateContent?alt=sse`
+    - Non-streaming: `https://localhost:7766/v1beta/models/{model}:generateContent`
+  - **v1 (`g1`)**:
+    - Streaming: `https://localhost:7766/v1/models/{model}:streamGenerateContent?alt=sse`
+    - Non-streaming: `https://localhost:7766/v1/models/{model}:generateContent`
 - **Upstream Target**:
-  - `https://generativelanguage.googleapis.com/v1beta/models/{model}:streamGenerateContent?alt=sse`
-  - `https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent`
-- **Key Authentication Delivery**: Client sends the directive key `lr-gg-gg-gc-no` in `Authorization: Bearer lr-gg-gg-gc-no`, in header `x-goog-api-key: lr-gg-gg-gc-no`, or in query parameter `?key=lr-gg-gg-gc-no`. LiteRouter intercepts this directive, strips client authorization headers, and injects a real rotated API key into `x-goog-api-key` upstream.
+  - **v1beta (`gc`)**:
+    - `https://generativelanguage.googleapis.com/v1beta/models/{model}:streamGenerateContent?alt=sse`
+    - `https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent`
+  - **v1 (`g1`)**:
+    - `https://generativelanguage.googleapis.com/v1/models/{model}:streamGenerateContent?alt=sse`
+    - `https://generativelanguage.googleapis.com/v1/models/{model}:generateContent`
+- **Key Authentication Delivery**: Client sends directive key `lr-gg-gg-gc-no` (or `lr-gg-gg-g1-no`) in `Authorization: Bearer <key>`, `x-goog-api-key: <key>`, or in query parameter `?key=<key>`. LiteRouter intercepts this directive, strips client authorization headers, and injects a real rotated API key into `x-goog-api-key` upstream.
 
 ---
 
@@ -43,13 +67,13 @@ No searching or guessing required. These are the definitive components governing
 |---|---|---|
 | **`src/handlers/google_native.ts`** | `handleGoogleNative` (`:534`)<br>`attemptNativeForward` (`:508`)<br>`createMonitoredStream` (`:355`) | **Legacy Forwarder Engine**: Validates `lr-gg-*` directive, buffers request body upfront for replay, executes attempt loop (up to 3 attempts), sanitizes headers, pacing, dispatches upstream, and wraps the response in a monitored stream. |
 | **`src/handlers/v4/google_native.ts`** | `handleGoogleNative` (`:5`)<br>`handleV4GoogleNative` (`:55`) | **v4 Thin Route Handler**: Parses directive, extracts model from URL path regex `/\/(?:v1beta|v1)\/models\/([^:]+)/` if absent from body, preserves full inbound path in `DispatchRequest`, and delegates to `executeDispatchPipeline`. |
-| **`src/engine/strategies/native_cascade.ts`** | `NativeCascadeStrategy`<br>`buildGoogleUrl` (`:31`)<br>`resolveTarget` (`:49`) | **v4 Strategy & URL Builder**: Resolves cascade chains (`gemini-flash`), falls back to path model extraction, preserves `:streamGenerateContent` action when present in `ctx.path`, and manages tiered fallback. |
-| **`src/index.ts`** | `dispatchRoute` (`:204-206`) | **Inbound Route Dispatcher**: Intercepts all paths starting with `/v1beta/models/` and routes them directly to `handleGoogleNative(req, rawKey, reqId)`. **Legacy engine only** — default engine is `legacy` (`src/config/env.ts:51`, `src/config/schema.ts:199`); under `LITEROUTER_ENGINE=v4` (or `x-literouter-engine` override header when `LITEROUTER_ENGINE_OVERRIDE` is true, `src/config/env.ts:126-140`) Google native goes via `handleV4GoogleNative` (`src/handlers/v4/router.ts:192-194`) after the `src/index.ts:414-417` branch. Engine selection: `directive-grammar.md` §11. |
+| **`src/engine/strategies/native_cascade.ts`** | `NativeCascadeStrategy`<br>`buildGoogleUrl` (`:31`)<br>`resolveTarget` (`:49`) | **v4 Strategy & URL Builder**: Resolves cascade chains (`gemini-flash`), falls back to path model extraction, maps endpoint templates for `gc` (v1beta) and `g1` (v1), preserves `:streamGenerateContent` action when present in `ctx.path`, and merges query parameters (`?alt=sse`). |
+| **`src/index.ts`** | `dispatchRoute` (`:246`) | **Inbound Route Dispatcher**: Intercepts all paths starting with `/v1beta/models/` or `/v1/models/` and routes them directly to `handleGoogleNative(req, rawKey, reqId)`. **Legacy engine only** — default engine is `legacy` (`src/config/env.ts:51`, `src/config/schema.ts:199`); under `LITEROUTER_ENGINE=v4` (or `x-literouter-engine` override header when `LITEROUTER_ENGINE_OVERRIDE` is true, `src/config/env.ts:126-140`) Google native goes via `handleV4GoogleNative` (`src/handlers/v4/router.ts:192-194`) after the `src/index.ts:414-417` branch. Engine selection: `directive-grammar.md` §11. |
 | **`src/network/fetcher.ts`** | `fetchWithTtftGuard` (`:104`)<br>`executeH2Fetch` (`:407`) | **Transport & TTFT Guard**: Executes the fetch via persistent HTTP/2 session pool, monitors Time-To-First-Token (5s TTFT guard), and tags negotiated protocol (`[Upstream: HTTP/2]`). |
 | **`src/network/h2_pool.ts`** | `Http2Pool.acquireSession` (`:61`)<br>`poolKey` calculation (`fetcher.ts:414`) | **HTTP/2 Connection Pooling**: Maintains persistent H2 multiplexed sockets keyed by `https://generativelanguage.googleapis.com#gg:<keyIndex>`. Each key gets its own persistent H2 socket supporting up to 80 concurrent streams with 180s anti-pinning aging. |
 | **`src/network/pacer.ts`** | `acquireNativePacer` (`google_native.ts:140`)<br>`getPacerForProvider("gg")` | **Token-Bucket Rate Pacer**: Enforces 2000ms conveyor pacing with bounded dwell to avoid burst 429s on Google Free Tier. |
 | **`src/ui/logger.ts`** | `logInbound` (`:97`), `logTtft` (`:143`),<br>`logFinishReason` (`:372`), `logUsage` (`:170`),<br>`logServed` (`:316`), `logLimit` (`:253`) | **Unified Terminal Telemetry**: Emits timestamped column-0 telemetry for incoming directives, upstream TTFT, model tokens, throughput speed (tok/s), and finish reasons. |
-| **`config/providers.json`** | `"google"` block (`:43-78`) | **Registry Specification**: Maps base URL `https://generativelanguage.googleapis.com`, endpoint templates, and default RPM/RPD/TPM limits. |
+| **`config/providers.json`** | `"google"` block (`:125-160`) | **Registry Specification**: Maps base URL `https://generativelanguage.googleapis.com`, endpoint templates (`gc` for `/v1beta/models/{model}:generateContent`, `g1` for `/v1/models/{model}:generateContent`), and default RPM/RPD/TPM limits. |
 
 ---
 
@@ -118,10 +142,10 @@ Rather than buffering the whole response, `src/handlers/google_native.ts:355-378
 3. **Usage Parsing**: Scans for `usageMetadata` (`promptTokenCount`, `candidatesTokenCount`, `totalTokenCount`). When found, calls `logUsage(...)` to log prompt tokens, completion tokens, duration, and calculated generation speed (`tok/s`).
 4. **Stream Completion**: When the stream completes or the client aborts (`cancel()`), calls `emitStreamEndTelemetry` -> `logServed(reqId, durationMs, status, attempt, MAX_NATIVE_ATTEMPTS)` and prints a visual delimiter `logSeparator()`.
 
-### 3.6. Engine v4 Path Model Extraction & Stream Action Preservation
+### 3.6. Engine v4 Path Model Extraction, Stream Action Preservation & Query Passthrough
 When running under Engine v4 (`LITEROUTER_ENGINE=v4.1` or header override), Google Native requests route through the thin handler and unified strategy pipeline:
 1. **URL Path Model Extraction** (`src/handlers/v4/google_native.ts:32-37`):
-   Standard Gemini SDK clients (e.g., `@ai-sdk/google`) send requests to `/v1beta/models/{model}:streamGenerateContent` without specifying a `"model"` field in the JSON body. The v4 handler extracts the model directly from the URL pathname using:
+   Standard Gemini SDK clients (e.g., `@ai-sdk/google`) send requests to `/v1beta/models/{model}:streamGenerateContent` or `/v1/models/{model}:streamGenerateContent` without specifying a `"model"` field in the JSON body. The v4 handler extracts the model directly from the URL pathname using:
    ```typescript
    const match = url.pathname.match(/\/(?:v1beta|v1)\/models\/([^:]+)/);
    if (match?.[1]) {
@@ -129,15 +153,31 @@ When running under Engine v4 (`LITEROUTER_ENGINE=v4.1` or header override), Goog
    }
    ```
    `NativeCascadeStrategy.resolveTarget` (`src/engine/strategies/native_cascade.ts:57-62`) mirrors this with a path extraction fallback (`ctx.path?.match(/\/models\/([^:]+)/)?.[1]`), ensuring virtual native chains (`gemini-flash`) and direct models resolve correctly regardless of whether `body.model` was provided.
-2. **Action Preservation (`:streamGenerateContent` vs `:generateContent`)** (`src/engine/strategies/native_cascade.ts:42-44`):
-   Upstream Google endpoint templates default to non-streaming `:generateContent` (`/v1beta/models/{model}:generateContent`). When building the upstream URL, `NativeCascadeStrategy.buildGoogleUrl` checks `ctx.path`:
+2. **Action Preservation (`:streamGenerateContent` vs `:generateContent`)** (`src/engine/strategies/native_cascade.ts:42-47`):
+   Upstream Google endpoint templates default to non-streaming `:generateContent` (`/v1beta/models/{model}:generateContent` for `gc`, `/v1/models/{model}:generateContent` for `g1`). When building the upstream URL, `NativeCascadeStrategy.buildGoogleUrl` checks `ctx.path`:
    ```typescript
-   if (completionCode === "gc" && ctx.path?.includes(":streamGenerateContent")) {
+   if (
+     (completionCode === "gc" || completionCode === "g1") &&
+     ctx.path?.includes(":streamGenerateContent")
+   ) {
      path = path.replace(":generateContent", ":streamGenerateContent");
    }
    ```
-   This guarantees that streaming RPC calls retain `:streamGenerateContent` in the upstream URL, preventing stream actions from degrading to non-streaming unary responses.
-3. **Retry-After Backoff & Key Telemetry**:
+   This guarantees that streaming RPC calls retain `:streamGenerateContent` in the upstream URL for both v1beta (`gc`) and v1 (`g1`), preventing stream actions from degrading to non-streaming unary responses.
+3. **Query Parameter Preservation & SSE Streaming (`?alt=sse`)** (`src/engine/strategies/native_cascade.ts:49-73`):
+   When inbound requests carry query parameters (e.g. `?alt=sse`), `buildGoogleUrl` extracts `inboundParams`, removes client-side `?key=...` credentials (which are sanitized and injected into `x-goog-api-key` headers upstream), and merges all remaining query parameters into the upstream target URL:
+   ```typescript
+   if (ctx.path?.includes("?")) {
+     const qIndex = ctx.path.indexOf("?");
+     const inboundParams = new URLSearchParams(ctx.path.slice(qIndex + 1));
+     if (inboundParams.has("key")) {
+       inboundParams.delete("key");
+     }
+     // merged onto upstream path
+   }
+   ```
+   Upstream SSE stream chunks are preserved and streamed downstream with content type `text/event-stream`.
+4. **Retry-After Backoff & Key Telemetry**:
    If Google returns HTTP 429 (`RESOURCE_EXHAUSTED`), Engine v4 extracts `Retry-After` and clamps the in-flight pause to `min(retryAfterSec * 1000, 15000)` (up to 15s) before retrying with the next key in `GOOGLE_API_KEYS`. All key indices in terminal logs and session telemetry enforce 1-based indexing (`Key #1` to `Key #N`), eliminating `Key #0`.
 
 ---
@@ -204,8 +244,10 @@ Add the following provider block to the `"providers"` object in `~/.config/openc
 ```
 
 ### Key Configuration Directives:
-- **`baseURL`**: Must point to `https://localhost:7766/v1beta`. The client SDK will automatically append `/models/{model}:streamGenerateContent?alt=sse`.
-- **`apiKey`**: Set to `lr-gg-gg-gc-no`.
+- **`baseURL`**:
+  - For Google v1beta: Point to `https://localhost:7766/v1beta` with `apiKey: "lr-gg-gg-gc-no"`. The client SDK appends `/models/{model}:streamGenerateContent?alt=sse`.
+  - For Google v1: Point to `https://localhost:7766/v1` with `apiKey: "lr-gg-gg-g1-no"`. The client SDK appends `/models/{model}:streamGenerateContent?alt=sse`.
+- **`apiKey`**: Set to `lr-gg-gg-gc-no` (for v1beta) or `lr-gg-gg-g1-no` (for v1).
 - **`chunkTimeout`**: Set to `30000` (30 seconds) to match LiteRouter's internal streaming keep-alive cadence (`LITEROUTER_STREAM_IDLE_TIMEOUT=30`).
 
 ---
@@ -216,10 +258,10 @@ Use this matrix to pinpoint and resolve errors immediately without searching the
 
 | Symptom / Error Message | Root Cause | Immediate Diagnostic & Resolution |
 |---|---|---|
-| `HTTP 401 Unauthorized`<br>`ACCESS_TOKEN_TYPE_UNSUPPORTED` | Upstream received both an OAuth2 `Authorization: Bearer` header and an API key, or client sent an invalid key format. | 1. Check `src/handlers/google_native.ts:96-100`. Verify `authorization` is in `STRIPPED_UPSTREAM_HEADERS`.<br>2. Ensure the client sends `lr-gg-gg-gc-no` (starts with `lr-gg-`).<br>3. Verify `.env.local` contains valid `GOOGLE_API_KEYS`. |
-| `HTTP 400 Bad Request`<br>`Invalid JSON payload received. Unknown name "store"` or `"stream_options"` | Client is sending OpenAI Chat Completions payload schema to Google's Native endpoint (`/v1beta/models/*`). | 1. Google Native endpoint expects Gemini payload schema (`contents`, `generationConfig`, etc.).<br>2. If using OpenAI SDK or `@ai-sdk/openai-compatible`, point to `https://localhost:7766/v1beta/openai` or `https://localhost:7766/v1` with `lr-gg-oa-ob-no`.<br>3. If using native Google SDK, ensure the package is `@ai-sdk/google`. |
+| `HTTP 401 Unauthorized`<br>`ACCESS_TOKEN_TYPE_UNSUPPORTED` | Upstream received both an OAuth2 `Authorization: Bearer` header and an API key, or client sent an invalid key format. | 1. Check `src/handlers/google_native.ts:96-100`. Verify `authorization` is in `STRIPPED_UPSTREAM_HEADERS`.<br>2. Ensure the client sends `lr-gg-gg-gc-no` or `lr-gg-gg-g1-no` (starts with `lr-gg-`).<br>3. Verify `.env.local` contains valid `GOOGLE_API_KEYS`. |
+| `HTTP 400 Bad Request`<br>`Invalid JSON payload received. Unknown name "store"` or `"stream_options"` | Client is sending OpenAI Chat Completions payload schema to Google's Native endpoint (`/v1beta/models/*` or `/v1/models/*`). | 1. Google Native endpoint expects Gemini payload schema (`contents`, `generationConfig`, etc.).<br>2. If using OpenAI SDK or `@ai-sdk/openai-compatible`, point to `https://localhost:7766/v1beta/openai` or `https://localhost:7766/v1` with `lr-gg-oa-ob-no`.<br>3. If using native Google SDK, ensure the package is `@ai-sdk/google`. |
 | `HTTP 429 Too Many Requests`<br>`RESOURCE_EXHAUSTED` | An individual Google Free Tier API key has reached its 15 RPM or Daily quota. | 1. Check LiteRouter logs: `tmux attach -t literouter`. You will see `⚠️ [LIMIT reqId] gg:keyIndex [429]`.<br>2. Forwarder automatically rotates to key index + 1 up to 3 attempts.<br>3. If all keys fail, response is `503 Google key pool exhausted`. Add more keys to `GOOGLE_API_KEYS` in `.env.local` or wait for quota reset. |
-| `HTTP 400 Bad Request`<br>`Google native requires a Google directive (lr-gg-*)` | Client sent a non-Google directive key (e.g. `lr-or-*` or `lr-nv-*`) to `/v1beta/models/*`. | Change client `apiKey` in `config.json` to `lr-gg-gg-gc-no`. |
+| `HTTP 400 Bad Request`<br>`Google native requires a Google directive (lr-gg-*)` | Client sent a non-Google directive key (e.g. `lr-or-*` or `lr-nv-*`) to `/v1beta/models/*` or `/v1/models/*`. | Change client `apiKey` in `config.json` to `lr-gg-gg-gc-no` or `lr-gg-gg-g1-no`. |
 | Downstream client streaming timeout or hang | Client chunk timeout is shorter than model response latency. | Ensure `"chunkTimeout": 30000` is present in both `"settings"` and `"options"` in `~/.config/opencode2/config.json`. |
 | `HTTP 502 Bad Gateway`<br>`Upstream Google request failed` | Network connection timeout or TCP reset connecting to `generativelanguage.googleapis.com`. | Check ZeroTier/WAN connectivity. Test direct curl: `curl -I https://generativelanguage.googleapis.com`. |
 

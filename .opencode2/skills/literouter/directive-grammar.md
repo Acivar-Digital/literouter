@@ -71,11 +71,11 @@ Enum: `src/directive/parser.ts:20-30`, `src/config/schema.ts:21-32`.
 | `ch` | Chat (`POST /v1/chat/completions`) | `src/index.ts:149` → `src/handlers/openai_compat.ts:959` `handleOpenAICompat` |
 | `ms` | Messages (`POST /v1/messages`, `/messages`, `/api/v1/messages`) | `src/index.ts:150-152` → `src/handlers/anthropic_compat.ts:1410` `handleAnthropicCompat` |
 | `rs` | Responses (`POST /v1/responses`) | `src/index.ts:347-348` → `src/handlers/openai_original.ts:975` `handleOpenAiOriginal` |
-| `gc` | GenerateContent (`/v1beta/models/*`, `/v1/models/*`) | `src/index.ts:208-209` → `src/handlers/google_native.ts:781` `handleGoogleNative` |
+| `gc` | GenerateContent v1beta (`/v1beta/models/*:generateContent`, `:streamGenerateContent`) | `src/index.ts:246` → `src/handlers/google_native.ts:781` `handleGoogleNative` (v4: `src/handlers/v4/google_native.ts:5`) |
 | `ob` | OpenAI Beta (`/v1beta/openai/*`) | `src/index.ts:205-206` → `src/handlers/google_native.ts:824` `handleGoogleOpenAIBeta`; `gc` provider also serves `/v1beta/openai/*` via `src/handlers/gcp_compat.ts:614` (`src/index.ts:335-336`) |
 | `em` | Embeddings | Declared in `CompletionCodeSchema` (`src/config/schema.ts:28`); provider endpoint map key (`ProviderEndpointsSchema`, `src/config/schema.ts:50-53`). No dedicated inbound route in `ROUTE_MAP` (`src/index.ts:148-156`). |
 | `md` | Models discovery (`GET /v1/models`, `/v1beta/models`) | `src/index.ts:165-199` → `src/handlers/discovery.ts:113` `handleModelsDiscovery` |
-| `g1` | Google v1 (completion-code slot, **not** a nuance) | Declared `src/directive/parser.ts:25`, `src/config/schema.ts:26`. Provider endpoint map key only. |
+| `g1` | Google v1 (`/v1/models/*:generateContent`, `:streamGenerateContent?alt=sse`) | Google v1 endpoint (completion-code slot, **not** a nuance; directive `lr-gg-gg-g1-no`). `src/index.ts:246` → `src/handlers/google_native.ts` (v4: `src/handlers/v4/google_native.ts:5`). Preserves `:streamGenerateContent` and query params (`?alt=sse`) for SSE streams. |
 | `im` | Images | Declared `src/directive/parser.ts:26`, `src/config/schema.ts:27`. Provider endpoint map key only. |
 | `au` | Audio | Declared `src/directive/parser.ts:28`, `src/config/schema.ts:29`. Provider endpoint map key only. |
 
@@ -113,7 +113,8 @@ mechanical reason. No contradictions — details only.
 | `lr-nv-oa-ch-ts` | `src/handlers/openai_compat.ts:959` | NIM reasoning models emit `reasoning_content`-only opening chunks; `ts` keeps them alive. |
 | `lr-or-cl-ms-no` | `src/handlers/anthropic_compat.ts:1410` | Native Claude on OpenRouter for Claude Code. |
 | `lr-an-cl-ms-no` | `src/handlers/anthropic_compat.ts:1410` | Direct Anthropic Messages with key rotation. |
-| `lr-gg-gg-gc-no` | `src/handlers/google_native.ts:781`<br>(v4: `src/handlers/v4/google_native.ts:5`) | Gemini REST forwarder + native fusion chains; in v4 extracts model from path & preserves `:streamGenerateContent`; `?key=` accepted (`src/directive/validator.ts:37-52`). |
+| `lr-gg-gg-gc-no` | `src/handlers/google_native.ts:781`<br>(v4: `src/handlers/v4/google_native.ts:5`) | Gemini REST forwarder (v1beta `/v1beta/models/*`) + native fusion chains; in v4 extracts model from path & preserves `:streamGenerateContent`; query params (`?alt=sse`) preserved; `?key=` accepted (`src/directive/validator.ts:37-52`). |
+| `lr-gg-gg-g1-no` | `src/handlers/google_native.ts:781`<br>(v4: `src/handlers/v4/google_native.ts:5`) | Gemini REST forwarder (v1 `/v1/models/*`) for Google AI Studio v1 endpoint; extracts model from path, preserves `:streamGenerateContent` and query params (`?alt=sse`), returning SSE streams (`text/event-stream`). |
 | `lr-nv-oa-ch-no` | `src/handlers/openai_compat.ts:959` | High-throughput binary-multiplexed chat (Pydantic AI / `httpx http2=True`). |
 | `lr-gc-oa-ch-no` | `src/handlers/gcp_compat.ts:614` | Vertex Chat, handler-paced 30 RPM conveyor (edge pacer skips `gc`: `src/index.ts:222-223`). |
 | `lr-or-ao-ch-dp` | `src/handlers/openai_compat.ts:959` | Cross-wire + Dots XML extraction for open-weights tool models. |
@@ -175,7 +176,7 @@ Google beta (`/v1beta/openai/`, `/v1beta/models/`, interactions/files;
 
 ## 10. Quick validity checks
 
-Valid: `lr-nv-oa-ch-ts`, `lr-or-ao-ch-dp+ts`, `lr-gg-gg-gc-no`,
+Valid: `lr-nv-oa-ch-ts`, `lr-or-ao-ch-dp+ts`, `lr-gg-gg-gc-no`, `lr-gg-gg-g1-no`,
 `lr-fse-deep`, `lr-tp-oa-ch-no` (tests only).
 Invalid: `lr-nv-oa-ch-gb` (unknown nuance), `lr-xx-oa-ch-no` (unknown
 provider), `lr-nv-oa-ch-` (empty nuance, `src/directive/parser.ts:97-99`),
@@ -192,10 +193,12 @@ Branch: `resolveEngine(req)` at `src/index.ts:414-417` — `v4.1` goes to `dispa
 
 `/v1/traces` is v4-only: `isTracePath` (`src/handlers/v4/router.ts:93-95`) is reachable solely through `dispatchV4` (`router.ts:209-211`). On the legacy engine the same path falls through legacy routing to `404` — a `404` on `/v1/traces` means the gateway is running legacy, not that tracing is broken.
 
-### 11.1. Google Native (gg) v4 Path Extraction & Stream Action Preservation
-Under Engine v4 (`handleV4GoogleNative` in `src/handlers/v4/google_native.ts:5` and `NativeCascadeStrategy` in `src/engine/strategies/native_cascade.ts:31-62`):
+### 11.1. Google Native (gg) v4 Path Extraction, Stream Action Preservation & Query Passthrough
+Under Engine v4 (`handleV4GoogleNative` in `src/handlers/v4/google_native.ts:5` and `NativeCascadeStrategy` in `src/engine/strategies/native_cascade.ts:31-74`):
 - **Path Model Extraction**: When inbound requests arrive at `/v1beta/models/*` or `/v1/models/*` without a `model` property in the JSON body, the model is extracted automatically via `/\/(?:v1beta|v1)\/models\/([^:]+)/`.
-- **Stream Action Preservation**: If the inbound path requests `:streamGenerateContent` (e.g. `/v1beta/models/gemini-2.5-flash:streamGenerateContent`), `NativeCascadeStrategy.buildGoogleUrl` detects `ctx.path?.includes(":streamGenerateContent")` and replaces `:generateContent` with `:streamGenerateContent` in the upstream URL, preserving streaming RPC fidelity.
+- **Endpoint Resolution (`gc` vs `g1`)**: Directives specify target API surface: `gc` maps to `/v1beta/models/{model}:generateContent` (v1beta), while `g1` maps to `/v1/models/{model}:generateContent` (v1).
+- **Stream Action Preservation**: If the inbound path requests `:streamGenerateContent` (e.g. `/v1beta/models/gemini-2.5-flash:streamGenerateContent` or `/v1/models/gemini-2.5-flash:streamGenerateContent`), `NativeCascadeStrategy.buildGoogleUrl` checks `(completionCode === "gc" || completionCode === "g1") && ctx.path?.includes(":streamGenerateContent")` and replaces `:generateContent` with `:streamGenerateContent` in the upstream URL, preserving streaming RPC fidelity.
+- **Query Parameter Passthrough (`?alt=sse`)**: Inbound query parameters (e.g. `?alt=sse`) are preserved on upstream requests, stripping only client credentials (`?key=...`) to inject rotated upstream headers (`x-goog-api-key`), and response streams are delivered as SSE (`text/event-stream`).
 
 ### 11.2. In-Flight Retry-After Backoff & Key #0 Elimination
 Under Engine v4 dispatch (`src/engine/dispatch.ts:567-604`):

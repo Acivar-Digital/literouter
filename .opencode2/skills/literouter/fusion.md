@@ -9,19 +9,22 @@ LiteRouter Fusion (`v4.0`) encompasses two high-availability resilience architec
 ## 1. Google Native Flash & Flash-Lite Fusion (`gemini-flash`, `gemini-flash-lite`)
 
 ### 1.1 Architecture & Concept
-When client requests target the Google Native endpoint using model alias `gemini-flash` or `gemini-flash-lite` (or prefixed with `google/`) with directive key `lr-gg-gg-gc-no`, LiteRouter activates the Native Fusion cascade for that specific chain.
+When client requests target the Google Native endpoint using model alias `gemini-flash` or `gemini-flash-lite` (or prefixed with `google/`) with directive key `lr-gg-gg-gc-no` (v1beta) or `lr-gg-gg-g1-no` (v1), LiteRouter activates the Native Fusion cascade for that specific chain.
 
 #### Endpoint & Directive Specification:
 - **Endpoints**:
-  - Unary: `POST /v1beta/models/<chain>:generateContent`
-  - Streaming: `POST /v1beta/models/<chain>:streamGenerateContent?alt=sse`
-- **Directive Key**: `lr-gg-gg-gc-no` (Google Native Dumb Forwarder, wire `gg`, endpoint `gc`).
-  - Pass via `Authorization: Bearer lr-gg-gg-gc-no` or query parameter `?key=lr-gg-gg-gc-no`.
+  - Unary: `POST /v1beta/models/<chain>:generateContent` or `POST /v1/models/<chain>:generateContent`
+  - Streaming: `POST /v1beta/models/<chain>:streamGenerateContent?alt=sse` or `POST /v1/models/<chain>:streamGenerateContent?alt=sse`
+- **Directive Keys**:
+  - `lr-gg-gg-gc-no` (Google Native Dumb Forwarder, wire `gg`, endpoint `gc` for v1beta)
+  - `lr-gg-gg-g1-no` (Google Native Dumb Forwarder, wire `gg`, endpoint `g1` for v1)
+  - Pass via `Authorization: Bearer <key>`, `x-goog-api-key: <key>`, or query parameter `?key=<key>`.
+- **Query Parameter Passthrough**: Parameters like `?alt=sse` are preserved and streamed over SSE (`text/event-stream`).
 - **Supported Client SDKs**: `@ai-sdk/google` or standard Gemini SDKs configured with:
   ```ts
   const google = createGoogleGenerativeAI({
-    baseURL: "http://localhost:7766/v1beta",
-    apiKey: "lr-gg-gg-gc-no",
+    baseURL: "http://localhost:7766/v1beta", // or http://localhost:7766/v1
+    apiKey: "lr-gg-gg-gc-no",               // or lr-gg-gg-g1-no
   });
   ```
 - **Bare & Prefixed Model Naming**:
