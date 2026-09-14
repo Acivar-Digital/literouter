@@ -39,7 +39,9 @@ export function isFatalAuthError(err: unknown): err is FatalAuthError {
 export function isProviderQuarantineEnabled(provider: string): boolean {
   try {
     const provConfig = getProviderConfig(provider) as { key_cooldown?: { enabled?: boolean } };
-    return provConfig.key_cooldown?.enabled ?? true;
+    const norm = provider.toLowerCase();
+    const defaultEnabled = norm === "zn" || norm === "gc" ? false : true;
+    return provConfig.key_cooldown?.enabled ?? defaultEnabled;
   } catch {
     return true;
   }

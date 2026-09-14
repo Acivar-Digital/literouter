@@ -176,7 +176,7 @@ describe("GCP Compatibility Architecture (gc)", () => {
       expect(prov.request_retry.max_attempts).toBe(3);
       expect(prov.request_retry.delay.min_ms).toBe(200);
       expect(prov.request_retry.delay.max_ms).toBe(500);
-      expect(prov.key_cooldown?.enabled).toBe(false);
+      expect(prov.key_cooldown?.enabled ?? false).toBe(false);
     });
 
     it("respects disabled request_retry (process.env.GCP_ENABLE_RETRIES=false and provider config)", async () => {
@@ -306,7 +306,16 @@ describe("GCP Compatibility Architecture (gc)", () => {
 
     it("quarantines key on network transport drop when key_cooldown.enabled is true", async () => {
       const prov = getProviderConfig("gc");
-      if (prov.key_cooldown) prov.key_cooldown.enabled = true;
+      prov.key_cooldown = {
+        enabled: true,
+        initial_cooldown_ms: 10000,
+        backoff_factor: 1.5,
+        max_cooldown_ms: 60000,
+        max_consecutive_failures: 5,
+        jitter_percent: 20,
+        respect_retry_after: true,
+        reset_after_success: true,
+      };
       prov.request_retry.enabled = false;
       prov.pacer!.enabled = false;
 
@@ -426,12 +435,12 @@ describe("GCP Compatibility Architecture (gc)", () => {
       if (prov.key_cooldown) prov.key_cooldown.enabled = false;
 
       expect(getProviderConfig("gc").request_retry.enabled).toBe(false);
-      expect(getProviderConfig("gc").key_cooldown?.enabled).toBe(false);
+      expect(getProviderConfig("gc").key_cooldown?.enabled ?? false).toBe(false);
 
       initProviderRegistry();
 
       expect(getProviderConfig("gc").request_retry.enabled).toBe(true);
-      expect(getProviderConfig("gc").key_cooldown?.enabled).toBe(false);
+      expect(getProviderConfig("gc").key_cooldown?.enabled ?? false).toBe(false);
     });
   });
 
