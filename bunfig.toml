@@ -1,2 +1,4 @@
 [test]
+root = "tests/unit"
 preload = ["./tests/preload.ts"]
+pathIgnorePatterns = ["tests/integration/*", "tests/eval/*"]
