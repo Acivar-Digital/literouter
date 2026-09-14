@@ -123,17 +123,17 @@
         "enabled": true,
         "max_attempts": 5,
         "delay": {
-          "min_ms": 1000,
+          "min_ms": 200,
           "max_ms": 2000
         }
       },
       "pacer": {
         "enabled": true,
-        "min_delay_ms": 1000,
+        "min_delay_ms": 200,
         "max_delay_ms": 2000,
         "max_queue_depth": 500,
         "max_queue_wait_ms": 15000,
-        "max_concurrency": 7
+        "max_concurrency": 0
       }
     },
     "gcp": {
