@@ -579,19 +579,12 @@ export function createServer(portOverride?: number): Server<unknown> | LiteRoute
   loadAndCacheNativeChains();
   const env = getEnv();
 
-  const location = (() => {
-    try {
-      return loadLocationConfig();
-    } catch {
-      return undefined;
-    }
-  })();
+  // Single authority: config/location.json. No env/hardcoded fallback for bind.
+  const location = loadLocationConfig();
 
-  const port = portOverride ?? location?.port ?? env.LITEROUTER_PORT;
-  const host = location?.host ?? env.LITEROUTER_HOST;
-  const tlsEnabled = portOverride !== undefined
-    ? (process.env.LITEROUTER_TLS_ENABLED !== undefined ? process.env.LITEROUTER_TLS_ENABLED === "true" : Boolean(loadTlsOptions(true)))
-    : (location !== undefined ? location.tls_enabled : env.LITEROUTER_TLS_ENABLED);
+  const port = portOverride ?? location.port;
+  const host = location.host;
+  const tlsEnabled = location.tls_enabled;
   const tls = tlsEnabled ? loadTlsOptions(true) : undefined;
 
   const pools = loadKeyPools(process.env);

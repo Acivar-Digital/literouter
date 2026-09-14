@@ -57,23 +57,22 @@ if [ -f "$PID_FILE" ]; then
     rm -f "$PID_FILE"
 fi
 
-# 3. Best-effort kill of any orphan Bun servers on port
+# 3. Best-effort kill of any orphan Bun servers on the location.json port.
+# Single authority: config/location.json. No .env or hardcoded fallback.
 set +e
-PORT="7766"
 if [ -f "$LOCATION_FILE" ]; then
-    PORT=$(jq -r '.port // 7766' "$LOCATION_FILE" 2>/dev/null || echo "7766")
-elif [ -f .env ]; then
-    set -a
-    source .env 2>/dev/null
-    set +a
-    PORT="${LITEROUTER_PORT:-7766}"
+    PORT=$(jq -e -r '.port' "$LOCATION_FILE" 2>/dev/null || true)
 fi
 set -e
 
-ORPHAN_PIDS=$(lsof -ti ":$PORT" 2>/dev/null || true)
-if [ -n "$ORPHAN_PIDS" ]; then
-    echo "   • Releasing port $PORT held by PIDs: $ORPHAN_PIDS..."
-    echo "$ORPHAN_PIDS" | xargs -r kill -9 2>/dev/null || true
+if [ -n "${PORT:-}" ]; then
+    ORPHAN_PIDS=$(lsof -ti ":$PORT" 2>/dev/null || true)
+    if [ -n "$ORPHAN_PIDS" ]; then
+        echo "   • Releasing port $PORT held by PIDs: $ORPHAN_PIDS..."
+        echo "$ORPHAN_PIDS" | xargs -r kill -9 2>/dev/null || true
+    fi
+else
+    echo "   • Skipping orphan port kill: $LOCATION_FILE missing or invalid (no hardcoded fallback)."
 fi
 
 echo "✅ LiteRouter stopped successfully."

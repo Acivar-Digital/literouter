@@ -131,10 +131,24 @@ function checkKeyPools(combinedEnv: Record<string, string | undefined>): Readonl
 }
 
 async function pingLocalServer(): Promise<void> {
-  const port = getEnv().LITEROUTER_PORT;
-  for (const proto of ["https", "http"]) {
+  // Single authority: config/location.json. No hardcoded localhost/env fallback.
+  let host = "localhost";
+  let port = 7766;
+  let tlsEnabled = false;
+  try {
+    const { loadLocationConfig } = await import("../src/config/location");
+    const loc = loadLocationConfig();
+    host = loc.host;
+    port = loc.port;
+    tlsEnabled = loc.tls_enabled;
+  } catch {
+    const env = getEnv();
+    port = env.LITEROUTER_PORT;
+  }
+  const protos = tlsEnabled ? ["https", "http"] : ["http", "https"];
+  for (const proto of protos) {
     try {
-      const res = await fetch(`${proto}://localhost:${port}/health`, {
+      const res = await fetch(`${proto}://${host}:${port}/health`, {
         signal: AbortSignal.timeout(1500),
         tls: { rejectUnauthorized: false },
       });

@@ -1,9 +1,10 @@
-import { getEnv } from "../src/config/env";
+import { loadLocationConfig } from "../src/config/location";
 import { formatTimestamp } from "../src/ui/logger";
 
 async function flushState(): Promise<void> {
-  const port = getEnv().LITEROUTER_PORT;
-  const url = `http://localhost:${port}/reset`;
+  // Single authority: config/location.json. No hardcoded localhost/env fallback.
+  const loc = loadLocationConfig();
+  const url = `http://${loc.host}:${loc.port}/reset`;
   const ts = formatTimestamp();
 
   console.log(`🔄 ${ts} Invoking hard reset flush at ${url}...`);
