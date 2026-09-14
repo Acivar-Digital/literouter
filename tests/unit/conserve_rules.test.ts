@@ -197,7 +197,11 @@ describe("Conserve Rules — Comprehensive Unit Test Suite", () => {
 
     beforeEach(() => {
       const customProviders = JSON.parse(JSON.stringify(rawProviders));
-      customProviders.providers.openrouter.key_cooldown.enabled = false;
+      customProviders.providers.openrouter.key_cooldown = {
+        enabled: false,
+        initial_cooldown_ms: 60000,
+        max_cooldown_ms: 300000,
+      };
       initProviderRegistry(customProviders);
       pool = new KeyPool();
       pool.setPool("or", ["sk-or-key-0", "sk-or-key-1"]);
@@ -323,7 +327,11 @@ describe("Conserve Rules — Comprehensive Unit Test Suite", () => {
 
     beforeEach(() => {
       const customProviders = JSON.parse(JSON.stringify(rawProviders));
-      customProviders.providers.openrouter.key_cooldown.enabled = false;
+      customProviders.providers.openrouter.key_cooldown = {
+        enabled: false,
+        initial_cooldown_ms: 60000,
+        max_cooldown_ms: 300000,
+      };
       initProviderRegistry(customProviders);
       pool = new KeyPool();
       pool.setPool("or", ["sk-or-key-0", "sk-or-key-1"]);

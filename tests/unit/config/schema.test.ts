@@ -393,7 +393,9 @@ describe("ProviderConfigEntrySchema", () => {
       for (const provider of Object.values(providers)) {
         expect(provider.strategy).toBeDefined();
         expect(provider.request_retry).toBeDefined();
-        expect(typeof provider.key_cooldown?.enabled).toBe("boolean");
+        if (provider.key_cooldown) {
+          expect(typeof provider.key_cooldown.enabled).toBe("boolean");
+        }
       }
     }
   });
