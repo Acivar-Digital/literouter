@@ -57,6 +57,11 @@ All notable changes to LiteRouter will be documented in this file.
 ### Security
 - `normalizeGcpModel` and `isGemmaModel` billing guardrail in `gcp_compat.ts` retained intact — only Gemma models pass to GCP provider.
 
+### Added
+- **OpenAI Responses API alignment with `docs/schemas/response-chat.md` (`src/transformers/openai_responses.ts`, `src/handlers/openai_original.ts`)**:
+  - Telemetry parser now strictly implements the OpenAPI spec: canonical `input_tokens` and `output_tokens` prioritized with legacy fallback preserved; `cached_tokens` extracted from `input_tokens_details`; phantom delta events (`response.content_part.delta`, `response.output_item.delta`) pruned; valid delta events (`response.output_text.delta`, `response.reasoning_text.delta`, `response.function_call_arguments.delta`, `response.audio.delta`, `response.refusal.delta`) explicitly supported; `response.incomplete_details` mapped to `"length"` (`max_output_tokens`) and `"content_filter"`; finish reasons preserved with wire remaining 100% passthrough.
+  - Added comprehensive unit tests: `tests/unit/transformers/openai_responses.test.ts` and `tests/unit/legacy/openai_original.test.ts`.
+
 ## [Unreleased]
 
 ### Added

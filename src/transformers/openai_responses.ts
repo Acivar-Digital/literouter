@@ -5,41 +5,50 @@ import type {
 } from "../engine/transformer";
 import type { RequestTelemetry } from "../telemetry/session";
 
-interface ResponsesUsageDetails {
+export interface ResponsesUsageDetails {
   readonly reasoning_tokens?: number;
 }
 
-interface ResponsesUsagePayload {
+export interface ResponsesInputTokensDetails {
+  readonly cached_tokens?: number;
+}
+
+export interface ResponsesUsagePayload {
   readonly prompt_tokens?: number;
   readonly completion_tokens?: number;
   readonly total_tokens?: number;
   readonly input_tokens?: number;
   readonly output_tokens?: number;
+  readonly cached_tokens?: number;
+  readonly cachedTokens?: number;
   readonly completion_tokens_details?: ResponsesUsageDetails;
   readonly output_tokens_details?: ResponsesUsageDetails;
+  readonly input_tokens_details?: ResponsesInputTokensDetails;
+  readonly prompt_tokens_details?: ResponsesInputTokensDetails;
 }
 
-interface ParsedUsageInfo {
+export interface ParsedUsageInfo {
   readonly promptTokens: number;
   readonly completionTokens: number;
   readonly totalTokens: number;
   readonly reasoningTokens?: number;
+  readonly cachedTokens?: number;
 }
 
-function parseResponsesUsage(usageObj: unknown): ParsedUsageInfo | null {
+export function parseResponsesUsage(usageObj: unknown): ParsedUsageInfo | null {
   if (!usageObj || typeof usageObj !== "object") {
     return null;
   }
   const u = usageObj as ResponsesUsagePayload;
-  const prompt = typeof u.prompt_tokens === "number"
-    ? u.prompt_tokens
-    : typeof u.input_tokens === "number"
-      ? u.input_tokens
+  const prompt = typeof u.input_tokens === "number"
+    ? u.input_tokens
+    : typeof u.prompt_tokens === "number"
+      ? u.prompt_tokens
       : null;
-  const completion = typeof u.completion_tokens === "number"
-    ? u.completion_tokens
-    : typeof u.output_tokens === "number"
-      ? u.output_tokens
+  const completion = typeof u.output_tokens === "number"
+    ? u.output_tokens
+    : typeof u.completion_tokens === "number"
+      ? u.completion_tokens
       : null;
 
   if (prompt === null || completion === null) {
@@ -47,10 +56,23 @@ function parseResponsesUsage(usageObj: unknown): ParsedUsageInfo | null {
   }
 
   const total = typeof u.total_tokens === "number" ? u.total_tokens : prompt + completion;
+
   let reasoning: number | undefined;
-  const details = u.completion_tokens_details ?? u.output_tokens_details;
-  if (details && typeof details === "object" && typeof details.reasoning_tokens === "number") {
-    reasoning = details.reasoning_tokens;
+  if (typeof u.output_tokens_details?.reasoning_tokens === "number") {
+    reasoning = u.output_tokens_details.reasoning_tokens;
+  } else if (typeof u.completion_tokens_details?.reasoning_tokens === "number") {
+    reasoning = u.completion_tokens_details.reasoning_tokens;
+  }
+
+  let cached: number | undefined;
+  if (typeof u.input_tokens_details?.cached_tokens === "number") {
+    cached = u.input_tokens_details.cached_tokens;
+  } else if (typeof u.prompt_tokens_details?.cached_tokens === "number") {
+    cached = u.prompt_tokens_details.cached_tokens;
+  } else if (typeof u.cached_tokens === "number") {
+    cached = u.cached_tokens;
+  } else if (typeof u.cachedTokens === "number") {
+    cached = u.cachedTokens;
   }
 
   return {
@@ -58,10 +80,11 @@ function parseResponsesUsage(usageObj: unknown): ParsedUsageInfo | null {
     completionTokens: completion,
     totalTokens: total,
     reasoningTokens: reasoning,
+    cachedTokens: cached,
   };
 }
 
-function extractResponsesUsageFromPayload(payload: Record<string, unknown>): ParsedUsageInfo | null {
+export function extractResponsesUsageFromPayload(payload: Record<string, unknown>): ParsedUsageInfo | null {
   if (payload.response && typeof payload.response === "object") {
     const resp = payload.response as Record<string, unknown>;
     const parsed = parseResponsesUsage(resp.usage);
@@ -70,25 +93,50 @@ function extractResponsesUsageFromPayload(payload: Record<string, unknown>): Par
   return parseResponsesUsage(payload.usage);
 }
 
-function extractResponsesFinishReason(payload: Record<string, unknown>): string | null {
+export function extractResponsesFinishReason(payload: Record<string, unknown>): string | null {
   const resp = payload.response && typeof payload.response === "object"
     ? (payload.response as Record<string, unknown>)
     : payload;
 
   if (typeof resp.status === "string" && resp.status.length > 0) {
-    return resp.status === "completed" ? "stop" : resp.status;
+    if (resp.status === "completed") {
+      return "stop";
+    }
+    if (resp.status === "incomplete") {
+      const details = resp.incomplete_details as Record<string, unknown> | undefined;
+      const reason = details && typeof details === "object" ? details.reason : undefined;
+      if (reason === "max_output_tokens") {
+        return "length";
+      }
+      if (reason === "content_filter") {
+        return "content_filter";
+      }
+      return "incomplete";
+    }
+    if (resp.status === "cancelled") {
+      return "cancelled";
+    }
+    if (resp.status === "failed") {
+      return "error";
+    }
+    if (resp.status !== "in_progress") {
+      return resp.status;
+    }
   }
+
   if (Array.isArray(resp.choices) && resp.choices[0] && typeof resp.choices[0].finish_reason === "string") {
     return resp.choices[0].finish_reason;
   }
   return null;
 }
 
-function isContentEventOrDelta(eventType: string, parsed: Record<string, unknown>): boolean {
+export function isContentEventOrDelta(eventType: string, parsed: Record<string, unknown>): boolean {
   if (
-    eventType === "response.content_part.delta" ||
     eventType === "response.output_text.delta" ||
-    eventType === "response.output_item.delta"
+    eventType === "response.reasoning_text.delta" ||
+    eventType === "response.function_call_arguments.delta" ||
+    eventType === "response.audio.delta" ||
+    eventType === "response.refusal.delta"
   ) {
     return true;
   }

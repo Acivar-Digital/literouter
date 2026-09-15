@@ -3,6 +3,9 @@ import type { ParsedDirective } from "../../../src/directive/types";
 import {
   OpenAIResponsesTransformer,
   openAiResponsesTransformer,
+  parseResponsesUsage,
+  extractResponsesFinishReason,
+  isContentEventOrDelta,
 } from "../../../src/transformers/openai_responses";
 import type { RequestTelemetry, UsageRecord } from "../../../src/telemetry/session";
 
@@ -230,6 +233,263 @@ describe("OpenAI Responses Transformer (src/transformers/openai_responses.ts)", 
 
       expect(outputText).toBe("");
       expect(mockTelemetry.ttftMarkedCount).toBe(0);
+    });
+
+    it("detects TTFT on reasoning_text.delta", async () => {
+      const transformer = new OpenAIResponsesTransformer();
+      const mockTelemetry = new MockTelemetry();
+      const abortController = new AbortController();
+
+      const streamTransformer = transformer.createWireToClientStream(
+        dummyDirective,
+        mockTelemetry as unknown as RequestTelemetry,
+        abortController.signal
+      );
+
+      const sseChunks = [
+        "event: response.reasoning_text.delta\ndata: {\"delta\":\"Thinking hard...\"}\n\n",
+        "event: response.done\ndata: {\"response\":{\"status\":\"completed\",\"usage\":{\"input_tokens\":10,\"output_tokens\":20,\"total_tokens\":30}}}\n\n",
+      ];
+
+      const inputStream = createStreamFromChunks(sseChunks);
+      const outputStream = inputStream.pipeThrough(streamTransformer);
+      await readStreamToString(outputStream);
+
+      expect(mockTelemetry.ttftMarkedCount).toBe(1);
+    });
+
+    it("detects TTFT on function_call_arguments.delta", async () => {
+      const transformer = new OpenAIResponsesTransformer();
+      const mockTelemetry = new MockTelemetry();
+      const abortController = new AbortController();
+
+      const streamTransformer = transformer.createWireToClientStream(
+        dummyDirective,
+        mockTelemetry as unknown as RequestTelemetry,
+        abortController.signal
+      );
+
+      const sseChunks = [
+        "event: response.function_call_arguments.delta\ndata: {\"delta\":\"{\\\"location\\\": \\\"Tokyo\\\"}\"}\n\n",
+        "event: response.done\ndata: {\"response\":{\"status\":\"completed\",\"usage\":{\"input_tokens\":8,\"output_tokens\":12,\"total_tokens\":20}}}\n\n",
+      ];
+
+      const inputStream = createStreamFromChunks(sseChunks);
+      const outputStream = inputStream.pipeThrough(streamTransformer);
+      await readStreamToString(outputStream);
+
+      expect(mockTelemetry.ttftMarkedCount).toBe(1);
+    });
+
+    it("extracts finishReason 'length' for incomplete with max_output_tokens in stream", async () => {
+      const transformer = new OpenAIResponsesTransformer();
+      const mockTelemetry = new MockTelemetry();
+      const abortController = new AbortController();
+
+      const streamTransformer = transformer.createWireToClientStream(
+        dummyDirective,
+        mockTelemetry as unknown as RequestTelemetry,
+        abortController.signal
+      );
+
+      const sseChunks = [
+        "event: response.output_text.delta\ndata: {\"delta\":\"Cut off text...\"}\n\n",
+        "event: response.done\ndata: {\"response\":{\"status\":\"incomplete\",\"incomplete_details\":{\"reason\":\"max_output_tokens\"},\"usage\":{\"input_tokens\":10,\"output_tokens\":50,\"total_tokens\":60}}}\n\n",
+      ];
+
+      const inputStream = createStreamFromChunks(sseChunks);
+      const outputStream = inputStream.pipeThrough(streamTransformer);
+      await readStreamToString(outputStream);
+
+      expect(mockTelemetry.usageRecords.length).toBe(1);
+      expect(mockTelemetry.usageRecords[0]?.finishReason).toBe("length");
+    });
+
+    it("extracts finishReason 'content_filter' for incomplete with content_filter in stream", async () => {
+      const transformer = new OpenAIResponsesTransformer();
+      const mockTelemetry = new MockTelemetry();
+      const abortController = new AbortController();
+
+      const streamTransformer = transformer.createWireToClientStream(
+        dummyDirective,
+        mockTelemetry as unknown as RequestTelemetry,
+        abortController.signal
+      );
+
+      const sseChunks = [
+        "event: response.refusal.delta\ndata: {\"delta\":\"I cannot answer.\"}\n\n",
+        "event: response.done\ndata: {\"response\":{\"status\":\"incomplete\",\"incomplete_details\":{\"reason\":\"content_filter\"},\"usage\":{\"input_tokens\":15,\"output_tokens\":5,\"total_tokens\":20}}}\n\n",
+      ];
+
+      const inputStream = createStreamFromChunks(sseChunks);
+      const outputStream = inputStream.pipeThrough(streamTransformer);
+      await readStreamToString(outputStream);
+
+      expect(mockTelemetry.usageRecords.length).toBe(1);
+      expect(mockTelemetry.usageRecords[0]?.finishReason).toBe("content_filter");
+    });
+  });
+
+  describe("parseResponsesUsage", () => {
+    it("parses canonical input_tokens, output_tokens, and input_tokens_details.cached_tokens", () => {
+      const usage = {
+        input_tokens: 120,
+        output_tokens: 45,
+        total_tokens: 165,
+        input_tokens_details: {
+          cached_tokens: 64,
+        },
+        output_tokens_details: {
+          reasoning_tokens: 20,
+        },
+      };
+
+      const parsed = parseResponsesUsage(usage);
+      expect(parsed).toEqual({
+        promptTokens: 120,
+        completionTokens: 45,
+        totalTokens: 165,
+        reasoningTokens: 20,
+        cachedTokens: 64,
+      });
+    });
+
+    it("computes totalTokens when total_tokens is omitted", () => {
+      const usage = {
+        input_tokens: 50,
+        output_tokens: 30,
+      };
+
+      const parsed = parseResponsesUsage(usage);
+      expect(parsed).toEqual({
+        promptTokens: 50,
+        completionTokens: 30,
+        totalTokens: 80,
+        reasoningTokens: undefined,
+        cachedTokens: undefined,
+      });
+    });
+
+    it("supports cached_tokens and cachedTokens root fields", () => {
+      const parsed1 = parseResponsesUsage({
+        input_tokens: 10,
+        output_tokens: 20,
+        cached_tokens: 5,
+      });
+      expect(parsed1?.cachedTokens).toBe(5);
+
+      const parsed2 = parseResponsesUsage({
+        prompt_tokens: 10,
+        completion_tokens: 20,
+        cachedTokens: 8,
+      });
+      expect(parsed2?.cachedTokens).toBe(8);
+    });
+
+    it("supports prompt_tokens and completion_tokens with legacy completion_tokens_details", () => {
+      const usage = {
+        prompt_tokens: 40,
+        completion_tokens: 60,
+        total_tokens: 100,
+        completion_tokens_details: {
+          reasoning_tokens: 15,
+        },
+      };
+
+      const parsed = parseResponsesUsage(usage);
+      expect(parsed).toEqual({
+        promptTokens: 40,
+        completionTokens: 60,
+        totalTokens: 100,
+        reasoningTokens: 15,
+        cachedTokens: undefined,
+      });
+    });
+
+    it("returns null for invalid or missing tokens", () => {
+      expect(parseResponsesUsage(null)).toBeNull();
+      expect(parseResponsesUsage(undefined)).toBeNull();
+      expect(parseResponsesUsage("string")).toBeNull();
+      expect(parseResponsesUsage({ input_tokens: 10 })).toBeNull();
+      expect(parseResponsesUsage({ output_tokens: 20 })).toBeNull();
+      expect(parseResponsesUsage({})).toBeNull();
+    });
+  });
+
+  describe("isContentEventOrDelta", () => {
+    it("recognizes valid content delta event types", () => {
+      expect(isContentEventOrDelta("response.output_text.delta", {})).toBe(true);
+      expect(isContentEventOrDelta("response.reasoning_text.delta", {})).toBe(true);
+      expect(isContentEventOrDelta("response.function_call_arguments.delta", {})).toBe(true);
+      expect(isContentEventOrDelta("response.audio.delta", {})).toBe(true);
+      expect(isContentEventOrDelta("response.refusal.delta", {})).toBe(true);
+    });
+
+    it("does not match phantom non-existent spec events by event name alone", () => {
+      expect(isContentEventOrDelta("response.content_part.delta", {})).toBe(false);
+      expect(isContentEventOrDelta("response.output_item.delta", {})).toBe(false);
+    });
+
+    it("falls back to parsed.delta when delta is string or object", () => {
+      expect(isContentEventOrDelta("unknown.event", { delta: "text delta" })).toBe(true);
+      expect(isContentEventOrDelta("unknown.event", { delta: { text: "hello" } })).toBe(true);
+      expect(isContentEventOrDelta("unknown.event", { delta: "" })).toBe(false);
+      expect(isContentEventOrDelta("unknown.event", {})).toBe(false);
+    });
+
+    it("rejects non-delta event types without delta payload", () => {
+      expect(isContentEventOrDelta("response.created", {})).toBe(false);
+      expect(isContentEventOrDelta("response.completed", {})).toBe(false);
+      expect(isContentEventOrDelta("response.output_item.added", {})).toBe(false);
+    });
+  });
+
+  describe("extractResponsesFinishReason", () => {
+    it("maps status 'completed' to 'stop'", () => {
+      expect(extractResponsesFinishReason({ status: "completed" })).toBe("stop");
+      expect(extractResponsesFinishReason({ response: { status: "completed" } })).toBe("stop");
+    });
+
+    it("maps status 'incomplete' with incomplete_details.reason 'max_output_tokens' to 'length'", () => {
+      const payload = {
+        status: "incomplete",
+        incomplete_details: { reason: "max_output_tokens" },
+      };
+      expect(extractResponsesFinishReason(payload)).toBe("length");
+      expect(extractResponsesFinishReason({ response: payload })).toBe("length");
+    });
+
+    it("maps status 'incomplete' with incomplete_details.reason 'content_filter' to 'content_filter'", () => {
+      const payload = {
+        status: "incomplete",
+        incomplete_details: { reason: "content_filter" },
+      };
+      expect(extractResponsesFinishReason(payload)).toBe("content_filter");
+      expect(extractResponsesFinishReason({ response: payload })).toBe("content_filter");
+    });
+
+    it("maps status 'incomplete' with other or missing reason to 'incomplete'", () => {
+      expect(extractResponsesFinishReason({ status: "incomplete" })).toBe("incomplete");
+      expect(extractResponsesFinishReason({ status: "incomplete", incomplete_details: null })).toBe("incomplete");
+      expect(extractResponsesFinishReason({ status: "incomplete", incomplete_details: { reason: "other" } })).toBe("incomplete");
+    });
+
+    it("maps status 'cancelled' to 'cancelled'", () => {
+      expect(extractResponsesFinishReason({ status: "cancelled" })).toBe("cancelled");
+    });
+
+    it("maps status 'failed' to 'error'", () => {
+      expect(extractResponsesFinishReason({ status: "failed" })).toBe("error");
+    });
+
+    it("falls back to choices[0].finish_reason when status is missing", () => {
+      expect(extractResponsesFinishReason({ choices: [{ finish_reason: "stop" }] })).toBe("stop");
+      expect(extractResponsesFinishReason({ choices: [{ finish_reason: "tool_calls" }] })).toBe("tool_calls");
+    });
+
+    it("returns null when no status or choices are present", () => {
+      expect(extractResponsesFinishReason({})).toBeNull();
+      expect(extractResponsesFinishReason({ status: "in_progress" })).toBeNull();
     });
   });
 });

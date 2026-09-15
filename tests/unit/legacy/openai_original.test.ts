@@ -10,6 +10,9 @@ import {
   resolveApiKey,
   resolveUpstreamResponsesUrl,
   shouldStreamResponse,
+  tryParseResponsesFinishReason,
+  tryParseResponsesUsage,
+  tryParseStreamedResponsesFinishReason,
 } from "../../../src/handlers/openai_original";
 import { globalKeyPool } from "../../../src/handlers/openai_compat";
 import { getProviderConfig } from "../../../src/config/providers";
@@ -936,6 +939,235 @@ describe("OpenAI Original Responses Handler (src/handlers/openai_original.ts)", 
       const sourcePath = resolve(import.meta.dir, "../../../src/handlers/openai_original.ts");
       const source = readFileSync(sourcePath, "utf-8");
       expect(source.includes("maxQueueDepth")).toBe(false);
+    });
+  });
+
+  describe("tryParseResponsesUsage (OpenAPI spec response-chat.md alignment)", () => {
+    it("parses canonical OpenResponses usage with input_tokens, output_tokens, cached_tokens, and reasoning_tokens", () => {
+      const payload = JSON.stringify({
+        usage: {
+          input_tokens: 120,
+          input_tokens_details: {
+            cached_tokens: 35,
+          },
+          output_tokens: 80,
+          output_tokens_details: {
+            reasoning_tokens: 25,
+          },
+          total_tokens: 200,
+        },
+      });
+      const parsed = tryParseResponsesUsage(payload);
+      expect(parsed).not.toBeNull();
+      expect(parsed?.promptTokens).toBe(120);
+      expect(parsed?.completionTokens).toBe(80);
+      expect(parsed?.totalTokens).toBe(200);
+      expect(parsed?.cachedTokens).toBe(35);
+      expect(parsed?.reasoningTokens).toBe(25);
+    });
+
+    it("parses usage nested under response.usage", () => {
+      const payload = JSON.stringify({
+        response: {
+          id: "resp_canon_1",
+          usage: {
+            input_tokens: 50,
+            input_tokens_details: {
+              cached_tokens: 15,
+            },
+            output_tokens: 45,
+            output_tokens_details: {
+              reasoning_tokens: 10,
+            },
+          },
+        },
+      });
+      const parsed = tryParseResponsesUsage(payload);
+      expect(parsed).not.toBeNull();
+      expect(parsed?.promptTokens).toBe(50);
+      expect(parsed?.completionTokens).toBe(45);
+      expect(parsed?.totalTokens).toBe(95);
+      expect(parsed?.cachedTokens).toBe(15);
+      expect(parsed?.reasoningTokens).toBe(10);
+    });
+
+    it("falls back to prompt_tokens, completion_tokens, and prompt_tokens_details", () => {
+      const payload = JSON.stringify({
+        usage: {
+          prompt_tokens: 100,
+          completion_tokens: 40,
+          total_tokens: 140,
+          prompt_tokens_details: {
+            cached_tokens: 20,
+          },
+          completion_tokens_details: {
+            reasoning_tokens: 5,
+          },
+        },
+      });
+      const parsed = tryParseResponsesUsage(payload);
+      expect(parsed).not.toBeNull();
+      expect(parsed?.promptTokens).toBe(100);
+      expect(parsed?.completionTokens).toBe(40);
+      expect(parsed?.totalTokens).toBe(140);
+      expect(parsed?.cachedTokens).toBe(20);
+      expect(parsed?.reasoningTokens).toBe(5);
+    });
+
+    it("prioritizes input_tokens and output_tokens over prompt_tokens and completion_tokens", () => {
+      const payload = JSON.stringify({
+        usage: {
+          input_tokens: 200,
+          prompt_tokens: 100,
+          output_tokens: 80,
+          completion_tokens: 40,
+          total_tokens: 280,
+        },
+      });
+      const parsed = tryParseResponsesUsage(payload);
+      expect(parsed).not.toBeNull();
+      expect(parsed?.promptTokens).toBe(200);
+      expect(parsed?.completionTokens).toBe(80);
+      expect(parsed?.totalTokens).toBe(280);
+    });
+
+    it("returns null for malformed JSON or missing token counts", () => {
+      expect(tryParseResponsesUsage("invalid json")).toBeNull();
+      expect(tryParseResponsesUsage(JSON.stringify({}))).toBeNull();
+      expect(tryParseResponsesUsage(JSON.stringify({ usage: {} }))).toBeNull();
+      expect(tryParseResponsesUsage(JSON.stringify({ usage: { input_tokens: 50 } }))).toBeNull();
+    });
+  });
+
+  describe("tryParseResponsesFinishReason (OpenAPI spec response-chat.md alignment)", () => {
+    it("maps status 'completed' to 'stop'", () => {
+      const payload = JSON.stringify({
+        status: "completed",
+      });
+      expect(tryParseResponsesFinishReason(payload)).toBe("stop");
+
+      const nested = JSON.stringify({
+        response: { status: "completed" },
+      });
+      expect(tryParseResponsesFinishReason(nested)).toBe("stop");
+    });
+
+    it("maps status 'incomplete' with reason 'max_output_tokens' to 'length'", () => {
+      const payload = JSON.stringify({
+        status: "incomplete",
+        incomplete_details: {
+          reason: "max_output_tokens",
+        },
+      });
+      expect(tryParseResponsesFinishReason(payload)).toBe("length");
+
+      const nested = JSON.stringify({
+        response: {
+          status: "incomplete",
+          incomplete_details: {
+            reason: "max_output_tokens",
+          },
+        },
+      });
+      expect(tryParseResponsesFinishReason(nested)).toBe("length");
+    });
+
+    it("maps status 'incomplete' with reason 'content_filter' to 'content_filter'", () => {
+      const payload = JSON.stringify({
+        status: "incomplete",
+        incomplete_details: {
+          reason: "content_filter",
+        },
+      });
+      expect(tryParseResponsesFinishReason(payload)).toBe("content_filter");
+    });
+
+    it("maps status 'incomplete' without recognized reason to 'incomplete'", () => {
+      const payloadWithoutReason = JSON.stringify({
+        status: "incomplete",
+      });
+      expect(tryParseResponsesFinishReason(payloadWithoutReason)).toBe("incomplete");
+
+      const payloadWithOtherReason = JSON.stringify({
+        status: "incomplete",
+        incomplete_details: {
+          reason: "other_unknown_reason",
+        },
+      });
+      expect(tryParseResponsesFinishReason(payloadWithOtherReason)).toBe("incomplete");
+    });
+
+    it("maps status 'cancelled' to 'cancelled'", () => {
+      const payload = JSON.stringify({
+        status: "cancelled",
+      });
+      expect(tryParseResponsesFinishReason(payload)).toBe("cancelled");
+    });
+
+    it("maps status 'failed' to 'error'", () => {
+      const payload = JSON.stringify({
+        status: "failed",
+      });
+      expect(tryParseResponsesFinishReason(payload)).toBe("error");
+    });
+
+    it("falls back to response.choices[0].finish_reason when status is not present", () => {
+      const payload = JSON.stringify({
+        choices: [
+          {
+            finish_reason: "tool_calls",
+          },
+        ],
+      });
+      expect(tryParseResponsesFinishReason(payload)).toBe("tool_calls");
+    });
+
+    it("returns null when neither status nor choices are present or JSON is invalid", () => {
+      expect(tryParseResponsesFinishReason("invalid-json")).toBeNull();
+      expect(tryParseResponsesFinishReason(JSON.stringify({ id: "resp_123" }))).toBeNull();
+    });
+  });
+
+  describe("tryParseStreamedResponsesFinishReason", () => {
+    it("extracts finish reason from streamed SSE response events", () => {
+      const sseIncomplete = [
+        "event: response.created",
+        'data: {"response":{"id":"resp_1","status":"in_progress"}}',
+        "",
+        "event: response.text.delta",
+        'data: {"delta":"cutting off..."}',
+        "",
+        "event: response.done",
+        'data: {"response":{"id":"resp_1","status":"incomplete","incomplete_details":{"reason":"max_output_tokens"}}}',
+        "",
+      ].join("\n");
+      expect(tryParseStreamedResponsesFinishReason(sseIncomplete)).toBe("length");
+
+      const sseCompleted = [
+        "event: response.created",
+        'data: {"response":{"id":"resp_2","status":"in_progress"}}',
+        "",
+        "event: response.done",
+        'data: {"response":{"id":"resp_2","status":"completed"}}',
+        "",
+      ].join("\n");
+      expect(tryParseStreamedResponsesFinishReason(sseCompleted)).toBe("stop");
+
+      const sseCancelled = [
+        "event: response.done",
+        'data: {"response":{"id":"resp_3","status":"cancelled"}}',
+        "",
+      ].join("\n");
+      expect(tryParseStreamedResponsesFinishReason(sseCancelled)).toBe("cancelled");
+    });
+
+    it("returns 'stop' fallback if no terminal status in SSE stream", () => {
+      const sseNone = [
+        "event: ping",
+        'data: {"ping":true}',
+        "",
+      ].join("\n");
+      expect(tryParseStreamedResponsesFinishReason(sseNone)).toBe("stop");
     });
   });
 });

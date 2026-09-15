@@ -200,36 +200,71 @@ async function logUpstreamError(reqId: string, route: ResolvedRoute, totalKeys: 
   }
 }
 
-interface ParsedResponsesUsage {
+export interface ParsedResponsesUsage {
   readonly promptTokens: number;
   readonly completionTokens: number;
   readonly totalTokens: number;
   readonly reasoningTokens?: number;
+  readonly cachedTokens?: number;
 }
 
-function tryParseResponsesUsage(text: string): ParsedResponsesUsage | null {
+export function tryParseResponsesUsage(text: string): ParsedResponsesUsage | null {
   try {
     const json = JSON.parse(text) as Record<string, unknown>;
-    const usage = json.usage;
-    if (!usage || typeof usage !== "object") {
+    const root = (json.response && typeof json.response === "object")
+      ? (json.response as Record<string, unknown>)
+      : json;
+    const rawUsage = (root.usage && typeof root.usage === "object")
+      ? root.usage
+      : (json.usage && typeof json.usage === "object")
+        ? json.usage
+        : (typeof json.input_tokens === "number" || typeof json.prompt_tokens === "number")
+          ? json
+          : null;
+    if (!rawUsage || typeof rawUsage !== "object") {
       return null;
     }
-    const u = usage as Record<string, unknown>;
-    const prompt = typeof u.prompt_tokens === "number" ? u.prompt_tokens : typeof u.input_tokens === "number" ? u.input_tokens : null;
-    const completion = typeof u.completion_tokens === "number" ? u.completion_tokens : typeof u.output_tokens === "number" ? u.output_tokens : null;
+    const u = rawUsage as Record<string, unknown>;
+    const prompt = typeof u.input_tokens === "number"
+      ? u.input_tokens
+      : typeof u.prompt_tokens === "number"
+        ? u.prompt_tokens
+        : null;
+    const completion = typeof u.output_tokens === "number"
+      ? u.output_tokens
+      : typeof u.completion_tokens === "number"
+        ? u.completion_tokens
+        : null;
     if (prompt === null || completion === null) {
       return null;
     }
     const total = typeof u.total_tokens === "number" ? u.total_tokens : prompt + completion;
-    let reasoning: number | undefined;
-    const details = u.completion_tokens_details ?? u.output_tokens_details;
-    if (details && typeof details === "object") {
-      const r = (details as Record<string, unknown>).reasoning_tokens;
+
+    let reasoningTokens: number | undefined;
+    const outputDetails = (u.output_tokens_details ?? u.completion_tokens_details) as Record<string, unknown> | undefined;
+    if (outputDetails && typeof outputDetails === "object") {
+      const r = outputDetails.reasoning_tokens;
       if (typeof r === "number") {
-        reasoning = r;
+        reasoningTokens = r;
       }
     }
-    return { promptTokens: prompt, completionTokens: completion, totalTokens: total, reasoningTokens: reasoning };
+
+    let cachedTokens: number | undefined;
+    const inputDetails = (u.input_tokens_details ?? u.prompt_tokens_details) as Record<string, unknown> | undefined;
+    if (inputDetails && typeof inputDetails === "object") {
+      const c = inputDetails.cached_tokens;
+      if (typeof c === "number") {
+        cachedTokens = c;
+      }
+    }
+
+    return {
+      promptTokens: prompt,
+      completionTokens: completion,
+      totalTokens: total,
+      ...(reasoningTokens !== undefined ? { reasoningTokens } : {}),
+      ...(cachedTokens !== undefined ? { cachedTokens } : {}),
+    };
   } catch {
     return null;
   }
@@ -259,14 +294,36 @@ function emitNonStreamCompletion(telemetry: ResponsesTelemetry, bodyText: string
   logSeparator();
 }
 
-function tryParseResponsesFinishReason(text: string): string | null {
+export function tryParseResponsesFinishReason(text: string): string | null {
   try {
     const data = JSON.parse(text) as Record<string, unknown>;
     const response = (data.response && typeof data.response === "object")
       ? (data.response as Record<string, unknown>)
       : data;
     if (typeof response.status === "string" && response.status) {
-      return response.status === "completed" ? "stop" : response.status;
+      if (response.status === "completed") {
+        return "stop";
+      }
+      if (response.status === "incomplete") {
+        const details = response.incomplete_details;
+        if (details && typeof details === "object") {
+          const reason = (details as Record<string, unknown>).reason;
+          if (reason === "max_output_tokens") {
+            return "length";
+          }
+          if (reason === "content_filter") {
+            return "content_filter";
+          }
+        }
+        return "incomplete";
+      }
+      if (response.status === "cancelled") {
+        return "cancelled";
+      }
+      if (response.status === "failed") {
+        return "error";
+      }
+      return response.status;
     }
     if (Array.isArray(response.choices) && response.choices[0] && typeof response.choices[0].finish_reason === "string") {
       return response.choices[0].finish_reason;
@@ -277,7 +334,7 @@ function tryParseResponsesFinishReason(text: string): string | null {
   }
 }
 
-function tryParseStreamedResponsesFinishReason(sseText: string): string | null {
+export function tryParseStreamedResponsesFinishReason(sseText: string): string | null {
   const lines = sseText.split("\n");
   for (let i = lines.length - 1; i >= 0; i--) {
     const line = lines[i];
@@ -292,7 +349,7 @@ function tryParseStreamedResponsesFinishReason(sseText: string): string | null {
   return "stop";
 }
 
-function tryParseStreamedResponsesUsage(sseText: string): ParsedResponsesUsage | null {
+export function tryParseStreamedResponsesUsage(sseText: string): ParsedResponsesUsage | null {
   let last: ParsedResponsesUsage | null = null;
   const lines = sseText.split("\n");
   for (const line of lines) {
