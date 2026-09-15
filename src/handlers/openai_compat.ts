@@ -63,6 +63,7 @@ import {
   isContextLengthError,
   pruneOpenAIPayload,
 } from "../transformers/context_pruner";
+import { ensureSessionHeaders, extractClientSessionId } from "../engine/session_id";
 
 export interface ProviderEndpointConfig extends Omit<ProviderConfigEntry, "conserve_rules"> {
   readonly conserve_rules?: readonly ConserveRule[];
@@ -78,7 +79,7 @@ export function getProviderEndpointConfig(providerCode: string): ProviderEndpoin
     : undefined;
 }
 
-export { overrideProviderUrl, resolveUpstreamEndpoint };
+export { overrideProviderUrl, resolveUpstreamEndpoint, ensureSessionHeaders, extractClientSessionId };
 
 function generateZenSessionId(): string {
   const chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
@@ -96,7 +97,7 @@ export function buildAuthHeaders(
   authHeader: "Bearer" | "x-api-key",
   key: string,
   provider?: string,
-  incomingHeaders?: Headers
+  incomingHeaders?: Headers | Record<string, string>
 ): Record<string, string> {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
@@ -121,24 +122,20 @@ export function buildAuthHeaders(
     }
   }
   if (incomingHeaders) {
-    for (const [k, v] of incomingHeaders.entries()) {
+    const entries =
+      typeof (incomingHeaders as Headers).entries === "function"
+        ? (incomingHeaders as Headers).entries()
+        : Object.entries(incomingHeaders);
+    for (const [k, v] of entries) {
       const lower = k.toLowerCase();
-      if (
-        lower === "session-id" ||
-        lower === "x-session-id" ||
-        lower === "x-opencode-session" ||
-        lower === "x-opencode-session-id" ||
-        lower === "opencode-session-id" ||
-        lower === "opencode-session" || 
-        lower === "x-client-version" || 
-        lower === "x-client-name"
-      ) {
+      if (lower === "x-client-version" || lower === "x-client-name") {
         headers[k] = v;
       }
     }
   }
+  ensureSessionHeaders(headers, incomingHeaders);
   if (provider === "zn" || provider === "zen") {
-    if (!headers["session-id"] && !headers["x-session-id"]) {
+    if (!headers["session-id"]) {
       headers["session-id"] = generateZenSessionId();
     }
   }

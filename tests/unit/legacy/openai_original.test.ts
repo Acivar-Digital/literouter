@@ -90,6 +90,18 @@ describe("OpenAI Original Responses Handler (src/handlers/openai_original.ts)", 
       const headers = buildUpstreamHeaders("test-key-123", "zn", incoming);
       expect(headers["Accept"]).toBe("text/event-stream");
     });
+
+    it("normalizes incoming session headers into upstream session-id and forwards client metadata", () => {
+      const incoming = new Headers({
+        "x-opencode-session": "ses_orig_456",
+        "x-client-version": "2.0.0",
+        "x-client-name": "ClaudeCode",
+      });
+      const headers = buildUpstreamHeaders("test-key-123", "zn", incoming);
+      expect(headers["session-id"]).toBe("ses_orig_456");
+      expect(headers["x-client-version"]).toBe("2.0.0");
+      expect(headers["x-client-name"]).toBe("ClaudeCode");
+    });
   });
 
   describe("resolveApiKey", () => {

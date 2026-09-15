@@ -85,11 +85,20 @@ export function resolveUpstreamResponsesUrl(provider: string): string | null {
 export function buildUpstreamHeaders(
   key: string,
   provider: string,
-  incomingHeaders?: Headers
+  incomingHeaders?: Headers | Record<string, string>
 ): Record<string, string> {
   const headers = buildAuthHeaders("Bearer", key, provider, incomingHeaders);
-  if (incomingHeaders?.has("accept")) {
-    headers["Accept"] = incomingHeaders.get("accept") ?? "*/*";
+  if (incomingHeaders) {
+    if (incomingHeaders instanceof Headers) {
+      if (incomingHeaders.has("accept")) {
+        headers["Accept"] = incomingHeaders.get("accept") ?? "*/*";
+      }
+    } else {
+      const accept = incomingHeaders["accept"] ?? incomingHeaders["Accept"];
+      if (accept) {
+        headers["Accept"] = accept;
+      }
+    }
   }
   return headers;
 }

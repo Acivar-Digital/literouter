@@ -35,6 +35,12 @@ All notable changes to LiteRouter will be documented in this file.
   - Hardened PATH exports in daemon control scripts to reliably discover `tmux` in `/home/linuxbrew/.linuxbrew/bin/tmux` and `bun` in `~/.bun/bin/bun`.
 
 ### Fixed
+- **Canonical session header normalization and client ID preservation (`src/handlers/openai_compat.ts`, `src/handlers/openai_original.ts`, `src/engine/session_id.ts`)**:
+  - Unified `buildAuthHeaders` and `buildUpstreamHeaders` to invoke `ensureSessionHeaders` across all handlers, handling both `Headers` instances and plain object header maps.
+  - Normalized all 6 client session header variants (`session-id`, `x-session-id`, `x-opencode-session`, `x-opencode-session-id`, `opencode-session-id`, `opencode-session`) into canonical upstream `session-id`.
+  - Preserved incoming client session ID on Zen (`zn` / `zen`) provider requests without being overwritten by random session ID generation.
+  - Documented canonical session identity preservation invariant in `.opencode2/skills/literouter/SKILL.md` (§27).
+  - Added test suite coverage in `tests/unit/handlers/session_forwarding.test.ts`, `tests/unit/handlers/openai_compat.test.ts`, and `tests/unit/legacy/openai_original.test.ts`.
 - **Downstream Server Protocol & Host Binding (`src/index.ts`)**:
   - Connected `loadLocationConfig()` directly into `createServer()` options so server `hostname` and `tls` options strictly track `config/location.json` instead of falling back to default cert detection or `localhost`.
 

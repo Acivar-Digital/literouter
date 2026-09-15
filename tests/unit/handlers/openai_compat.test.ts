@@ -141,6 +141,43 @@ describe("openai_compat handler unit tests", () => {
       expect(apiKeyHeaders["x-api-key"]).toBe("test-token-456");
       expect(apiKeyHeaders["anthropic-version"]).toBe("2023-06-01");
     });
+
+    it("forwards incoming client metadata (x-client-version, x-client-name)", () => {
+      const incoming = new Headers({
+        "x-client-version": "1.2.3",
+        "x-client-name": "OpenCode",
+      });
+      const headers = buildAuthHeaders("Bearer", "token", "or", incoming);
+      expect(headers["x-client-version"]).toBe("1.2.3");
+      expect(headers["x-client-name"]).toBe("OpenCode");
+    });
+
+    it.each([
+      ["session-id", "ses_test_1"],
+      ["x-session-id", "ses_test_2"],
+      ["x-opencode-session", "ses_test_3"],
+      ["x-opencode-session-id", "ses_test_4"],
+      ["opencode-session-id", "ses_test_5"],
+      ["opencode-session", "ses_test_6"],
+    ])("normalizes %s into upstream session-id", (headerKey, sessionVal) => {
+      const incoming = new Headers({ [headerKey]: sessionVal });
+      const headers = buildAuthHeaders("Bearer", "token", "or", incoming);
+      expect(headers["session-id"]).toBe(sessionVal);
+    });
+
+    it("preserves incoming client session ID for Zen and does not overwrite it", () => {
+      const incoming = new Headers({
+        "x-opencode-session": "ses_client_zen_session_123",
+      });
+      const headers = buildAuthHeaders("Bearer", "token", "zn", incoming);
+      expect(headers["session-id"]).toBe("ses_client_zen_session_123");
+    });
+
+    it("generates fallback session ID for Zen when no session provided", () => {
+      const headers = buildAuthHeaders("Bearer", "token", "zn");
+      expect(headers["session-id"]).toBeDefined();
+      expect(headers["session-id"]).toMatch(/^ses_/);
+    });
   });
 
   describe("pacer lease lifecycle", () => {
