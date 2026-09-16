@@ -29,6 +29,32 @@ KEY_URL = "https://openrouter.ai/api/v1/key"
 ENV_VAR = "OPENROUTER_API_KEYS"
 
 
+def load_dotenv_fallback() -> None:
+    """Mirror doctor.ts: explicit env wins, else read repo .env.local, else .env.
+
+    Read-only parse; never writes. Keys stay in process memory only.
+    """
+    if os.environ.get(ENV_VAR):
+        return
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    for name in (".env.local", ".env"):
+        path = os.path.join(root, name)
+        try:
+            with open(path, encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line or line.startswith("#") or "=" not in line:
+                        continue
+                    k, _, v = line.partition("=")
+                    if k.strip() == ENV_VAR:
+                        v = v.strip().strip("'").strip('"')
+                        if v:
+                            os.environ[ENV_VAR] = v
+                        return
+        except FileNotFoundError:
+            continue
+
+
 def fetch_key_info(key: str, timeout: int) -> dict:
     """GET /api/v1/key for one key. Raises on HTTP/network failure."""
     req = urllib.request.Request(
@@ -136,6 +162,7 @@ def main() -> int:
     parser.add_argument("--sleep", type=float, default=1.0, help="Pause between keys.")
     args = parser.parse_args()
 
+    load_dotenv_fallback()
     raw = os.environ.get(ENV_VAR, "")
     keys = [k.strip() for k in raw.split(",") if k.strip()]
     if not keys:
