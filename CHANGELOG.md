@@ -2,6 +2,11 @@
 
 All notable changes to LiteRouter will be documented in this file.
 
+## [Unreleased] — 2026-09-17
+
+### Fixed
+- Added Zen's `ms: /v1/messages` endpoint mapping. Union Alpha uses the Anthropic Messages protocol (`lr-zn-cl-ms-no`), not Chat Completions or Responses. Verified live streaming and non-streaming gateway requests return HTTP 200; added a routing regression test (literouter-wrto).
+
 ## [Unreleased] — Error Taxonomy S5 (literouter-ky12 / lyqp / 0w12 / 4nyz / 58xb)
 
 ### Added

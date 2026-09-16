@@ -3383,3 +3383,15 @@ a2d1cb5 fix(engine): abort discrimination in cutoff stream, quiet H2 cancel log 
 e21b759 chore(beads): record literouter-fd1v task completion
 3d3044d chore(eval): add latest evaluation scorecards, reports, and untrack embedded dolt files
 NOTE: `bun run typecheck` reports 1 error in tests/unit/engine/batch1_regression.test.ts(201,8) TS2355 at artefact time; `bun test` 1176 pass / 0 fail. Typecheck fix is out of scope for literouter-j4hr (CHANGELOG + artefact only).
+Run: 2026-09-16T21:41:07Z
+$ bun run scripts/test_runner.ts
+✓ All tests passed (1333 tests across 7 domains in 21.10s)
+
+Union Alpha verification (2026-09-16T21:42:45Z), literouter-wrto:
+- Typecheck: PASS.
+- Regression before fix: unknown Zen endpoint ms; 312 pass, 1 fail.
+- Regression after fix: 313 core tests PASS.
+- Full unit suite: 1333 tests PASS across 7 domains.
+- Live http://10.32.34.172:7766/v1/messages, lr-zn-cl-ms-no, union-alpha: non-streaming HTTP 200 hello; streaming HTTP 200 text_delta hello and message_stop.
+- Integration suite: FAIL during fixture startup, 20 errors, 7 skipped; gateways failed health checks. Log: /tmp/opencode/union-integration.log. No claim of integration success.
+- Required admin/code_hygiene/agent_guardrail.py unavailable in repository.

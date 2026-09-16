@@ -116,6 +116,7 @@
       },
       "endpoints": {
         "ch": "/v1/chat/completions",
+        "ms": "/v1/messages",
         "md": "/v1/models",
         "rs": "/v1/responses"
       },

@@ -5,6 +5,7 @@ import {
   getProviderDisplayName,
   isRegisteredProvider,
   getAllProviders,
+  resolveUpstreamEndpoint,
 } from "../../../src/config/providers";
 
 describe("ProviderRegistry — In-Memory Store", () => {
@@ -23,6 +24,13 @@ describe("ProviderRegistry — In-Memory Store", () => {
     expect(isRegisteredProvider("zn")).toBe(true);
     expect(isRegisteredProvider("gc")).toBe(true);
     expect(isRegisteredProvider("unknown_provider")).toBe(false);
+  });
+
+  it("routes Zen Messages requests to the Anthropic endpoint", () => {
+    const endpoint = resolveUpstreamEndpoint("zn", "ms", "union-alpha");
+    expect(endpoint.url).toBe("https://opencode.ai/zen/v1/messages");
+    expect(endpoint.rawPath).toBe("/v1/messages");
+    expect(endpoint.authHeader).toBe("Bearer");
   });
 
   it("resolves provider config by code (case-insensitive)", () => {
