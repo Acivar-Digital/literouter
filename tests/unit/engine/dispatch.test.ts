@@ -124,6 +124,33 @@ describe("Unified Dispatch Pipeline (Slice 3.5)", () => {
     expect(fetchCalled).toBe(false);
   });
 
+  it.each([
+    ["text/html", "<!doctype html><html>Service unavailable</html>"],
+    ["application/json", "{broken json"],
+  ])("returns a diagnostic 502 without retrying invalid %s responses", async (contentType, body) => {
+    const fetchFn = mock(async () => new Response(body, {
+      status: 200,
+      headers: { "content-type": contentType },
+    }));
+    const res = await executeDispatchPipeline(buildRequest(), fetchFn);
+    expect(res.status).toBe(502);
+    expect(res.headers.get("x-request-id")).toBe("test-req-123");
+    const data = await res.json();
+    expect(data.error.code).toBe("invalid_upstream_response");
+    expect(data.error.message).toContain("non-JSON or malformed JSON");
+    expect(data.error.upstream_status).toBe(200);
+    expect(data.error.upstream_content_type).toBe(contentType);
+    expect(JSON.stringify(data)).not.toContain(body);
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+  });
+
+  it("preserves valid JSON even when the upstream omits a JSON content type", async () => {
+    const res = await executeDispatchPipeline(buildRequest(), async () =>
+      new Response('{"id":"ok"}', { status: 200 }));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ transformed: { id: "ok" } });
+  });
+
   it("merges mandatory provider attribution headers onto outbound request", async () => {
     let capturedHeaders: Headers | Record<string, string> | undefined;
 

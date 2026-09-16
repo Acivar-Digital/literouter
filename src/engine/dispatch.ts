@@ -581,7 +581,30 @@ export async function executeDispatchPipeline(
           });
         }
 
-        const jsonBody = (await upstreamResponse.json()) as Record<string, unknown>;
+        // Read outside the parse guard: transport failures retain their retry policy.
+        const responseText = await upstreamResponse.text();
+        let jsonBody: Record<string, unknown>;
+        try {
+          jsonBody = JSON.parse(responseText) as Record<string, unknown>;
+        } catch {
+          // Never echo the body or parser exception: upstream pages may contain secrets.
+          const contentType = (upstreamResponse.headers.get("content-type") ?? "missing")
+            .split(";")[0]!.trim().slice(0, 100).replace(/[^a-zA-Z0-9/+._-]/g, "_");
+          const error = {
+            message: `Provider ${providerCode} returned non-JSON or malformed JSON (HTTP ${upstreamResponse.status}, content-type ${contentType})`,
+            type: "upstream_response_error",
+            code: "invalid_upstream_response",
+            upstream_status: upstreamResponse.status,
+            upstream_content_type: contentType,
+          };
+          pacerLease?.release();
+          telemetry.error(error.message);
+          telemetry.served(502, attempt, maxAttempts);
+          return Response.json({ error }, {
+            status: 502,
+            headers: { "x-request-id": req.reqId },
+          });
+        }
         const clientJson = req.transformer.transformWireToClient(jsonBody, req.directive);
         telemetry.recordUsage(extractUsage(jsonBody));
         telemetry.served(upstreamResponse.status, attempt, maxAttempts);

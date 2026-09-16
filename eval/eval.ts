@@ -50,7 +50,7 @@ export interface EvalOrchestratorOptions {
   suites?: SuiteType[];
   directiveKey?: string;
   gatewayUrl?: string;
-  wire?: "chat" | "responses" | "auto";
+  wire?: "chat" | "responses" | "messages" | "auto";
   stage?: number;
   reasoningEffort?: "high" | "medium" | "none";
   reasoningTranscript?: boolean;
@@ -894,7 +894,13 @@ export function parseCliArgs(argv: string[] = process.argv.slice(2)): EvalOrches
       opts.gatewayUrl = argv[++i];
     } else if (arg === "--wire" && i + 1 < argv.length) {
       const val = argv[++i]?.toLowerCase();
-      opts.wire = (val === "rs" || val === "responses") ? "responses" : (val === "chat" ? "chat" : "auto");
+      opts.wire = val === "rs" || val === "responses"
+        ? "responses"
+        : val === "chat"
+          ? "chat"
+          : (val === "messages" || val === "ms" || val === "anthropic")
+            ? "messages"
+            : "auto";
     } else if (arg === "--suites" && i + 1 < argv.length) {
       const raw = argv[++i];
       if (raw) {
@@ -959,12 +965,15 @@ export async function runMasterEvaluation(
     model.toLowerCase().includes("muse") ||
     options.directiveKey?.includes("-rs-") ||
     options.gatewayUrl?.includes("/responses");
+  const isMessages = options.wire === "messages" || options.gatewayUrl?.includes("/messages");
 
-  const wire: "chat" | "responses" = isResponses ? "responses" : "chat";
-  const directiveKey = options.directiveKey ?? (isResponses ? "lr-zn-oo-rs-no" : "lr-or-oa-ch-no");
-  const defaultUrl = isResponses
-    ? "https://localhost:7766/v1/responses"
-    : "https://localhost:7766/v1/chat/completions";
+  const wire: "chat" | "responses" = isMessages ? "chat" : isResponses ? "responses" : "chat";
+  const directiveKey = options.directiveKey ?? (isMessages ? "lr-zn-cl-ms-no" : isResponses ? "lr-zn-oo-rs-no" : "lr-or-oa-ch-no");
+  const defaultUrl = isMessages
+    ? "http://10.32.34.172:7766/v1/messages"
+    : isResponses
+      ? "https://localhost:7766/v1/responses"
+      : "https://localhost:7766/v1/chat/completions";
   const gatewayUrl = options.gatewayUrl ?? defaultUrl;
 
   console.log(`\n========================================================================`);
@@ -1089,6 +1098,12 @@ export async function runMasterEvaluation(
 
 if (import.meta.main) {
   const options = parseCliArgs();
+  if (options.wire === "messages") {
+    // Anthropic Messages wire: bridge OpenAI-shaped stage traffic for the
+    // whole process (idempotent). Native x-api-key callers pass through.
+    const { installAnthropicBridge } = await import("./anthropic_bridge");
+    installAnthropicBridge();
+  }
   runMasterEvaluation(options)
     .then((summary) => {
       if (!summary.allSuitesPassed && !options.continueOnFailure) {

@@ -3395,3 +3395,6 @@ Union Alpha verification (2026-09-16T21:42:45Z), literouter-wrto:
 - Live http://10.32.34.172:7766/v1/messages, lr-zn-cl-ms-no, union-alpha: non-streaming HTTP 200 hello; streaming HTTP 200 text_delta hello and message_stop.
 - Integration suite: FAIL during fixture startup, 20 errors, 7 skipped; gateways failed health checks. Log: /tmp/opencode/union-integration.log. No claim of integration success.
 - Required admin/code_hygiene/agent_guardrail.py unavailable in repository.
+Run: 2026-09-16T23:06:03Z
+$ bun run scripts/test_runner.ts
+✓ All tests passed (1336 tests across 7 domains in 24.88s)
