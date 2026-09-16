@@ -1,6 +1,7 @@
 import { getProviderDisplayName } from "../config/providers";
 import {
   EMOJI,
+  deriveErrorType,
   formatTimestamp,
   formatTokenNumber,
   getHttpStatusText,
@@ -53,6 +54,7 @@ export interface RecordLimitInfo {
   readonly totalKeys?: number;
   readonly rawMessage?: string;
   readonly hasUpstreamRetryAfter?: boolean;
+  readonly errorType?: string;
 }
 
 export interface TraceMetrics {
@@ -174,8 +176,9 @@ export class RequestTelemetry {
     const total = info.totalKeys ?? this.totalKeys;
     const keyTotal = total !== undefined ? `/${total}` : "";
     const statusText = getHttpStatusText(info.status);
+    const condensedType = info.errorType ?? deriveErrorType(info.rawMessage, info.status);
 
-    console.warn(`${EMOJI.limit} ${ts} [LIMIT ${this.reqId}] ${provName} [Key #${keyIdx + 1}${keyTotal}] returned ${statusText}`);
+    console.warn(`${EMOJI.limit} ${ts} [LIMIT ${this.reqId}] ${provName} [Key #${keyIdx + 1}${keyTotal}] returned ${statusText} [${condensedType} ${info.status}]`);
     if (info.retryAfterSec && info.hasUpstreamRetryAfter !== false) {
       console.warn(`${EMOJI.limit} ${ts} [LIMIT ${this.reqId}] Parsed Retry-After: ${info.retryAfterSec}s -> Quarantined Key #${keyIdx + 1} for ${info.retryAfterSec}s`);
     }

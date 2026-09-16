@@ -3,6 +3,15 @@
 Status/error → classify fn → cooldown TTL → retry/quarantine → signal string.
 All symbols grounded in `src/` reads. Line numbers are source of truth.
 
+> **Grilled Decisions — literouter-ky12 (S5, docs-only)** — see `CHANGELOG.md` (§Unreleased S5):
+> 1. **401/403 fail-fast canonical** (legacy + v4 aligned): zero retries, zero 24h quarantine; key rotates immediately; tiered auth TTL (300s/1800s/86400s) disabled.
+> 2. **403 zero-quarantine all**: `key_cooldown.enabled: false` enforced; `CooldownManager.quarantineKey` skipped; `quarantine_disabled` returned.
+> 3. **408 retry_rotate via `providers.json` request_retry schedule**: retry delay = `request_retry.delay` (jittered `min_ms`/`max_ms`); no hardcoded `Retry-After: 5`; max attempts from `request_retry.max_attempts`.
+> 4. **Full typed `error_type` parser (3 skins: `standard`, `legacy`, `v4`)**: parser output = `{ error_type: string, status: number, action: 'retry_rotate'|'fail_fast'|'break_open', isRetryable: boolean, quarantineTtlSec: number }`; `error_type` wins over raw `status`; conservation-first (`conserve_rules` overrides generic 429 quarantine); 3 skin variants preserved for backward compat.
+> 5. **Condensed terminal (`error_type` + `status`) + full trace**: terminal line format = `error_type=<type> status=<code> action=<action> isRetryable=<bool>`; full telemetry trace preserved (`session-id`, `key_index`, `provider_code`, `request_retry_ref`, `conserve_rules_ref`).
+>
+> No `.env*` edits; no API keys; no `src/` changes in this slice.
+
 ## 1. Status → action matrix
 
 | # | Signal | Classify fn | Cooldown TTL | Retry / quarantine | Signal / reason string |

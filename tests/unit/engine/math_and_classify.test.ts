@@ -129,7 +129,7 @@ describe("Slice 3.1: Math & Status Classification Utilities", () => {
 
   describe("defaultClassifyFailure()", () => {
     it("correctly classifies all FAIL_FAST_STATUSES", () => {
-      const expectedList = [400, 404, 413, 414, 422, 451, 501, 505];
+      const expectedList = [400, 401, 403, 404, 413, 414, 422, 451, 501, 505];
       for (const status of expectedList) {
         expect(FAIL_FAST_STATUSES.has(status)).toBe(true);
         expect(defaultClassifyFailure(status)).toBe("fail_fast");
@@ -137,7 +137,7 @@ describe("Slice 3.1: Math & Status Classification Utilities", () => {
     });
 
     it("correctly classifies all KEY_ROTATION_STATUSES", () => {
-      const expectedList = [401, 403, 429];
+      const expectedList = [429];
       for (const status of expectedList) {
         expect(KEY_ROTATION_STATUSES.has(status)).toBe(true);
         expect(defaultClassifyFailure(status)).toBe("retry_same_target");
@@ -159,6 +159,26 @@ describe("Slice 3.1: Math & Status Classification Utilities", () => {
       for (const status of unknownStatuses) {
         expect(defaultClassifyFailure(status)).toBe("fail_fast");
       }
+    });
+  });
+
+  describe("classifier vs engine downstream contract (literouter-58xb)", () => {
+    // Classifier layer (src/network/classifier.ts) applies 401 tiered key
+    // quarantine (300s -> 1800s -> 86400s) and 403 fail_fast 0s; the engine
+    // downstream contract here treats both 401/403 as fail_fast and rotates
+    // keys only on 429. See tests/unit/legacy/classifier.test.ts.
+    it("engine treats 401/403 as fail_fast", () => {
+      expect(defaultClassifyFailure(401)).toBe("fail_fast");
+      expect(defaultClassifyFailure(403)).toBe("fail_fast");
+      expect(FAIL_FAST_STATUSES.has(401)).toBe(true);
+      expect(FAIL_FAST_STATUSES.has(403)).toBe(true);
+    });
+
+    it("engine rotates keys only on 429; 401/403 never rotate at this layer", () => {
+      expect(KEY_ROTATION_STATUSES.has(429)).toBe(true);
+      expect(KEY_ROTATION_STATUSES.has(401)).toBe(false);
+      expect(KEY_ROTATION_STATUSES.has(403)).toBe(false);
+      expect(defaultClassifyFailure(429)).toBe("retry_same_target");
     });
   });
 });

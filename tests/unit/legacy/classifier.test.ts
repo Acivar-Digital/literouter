@@ -271,8 +271,12 @@ describe("Error Classifier — classifyUpstreamError & classifyTransportError", 
     });
   });
 
-  describe("HTTP 401 & 403 - Authentication and Authorization errors", () => {
-    it("classifies 401 as retry_rotate with tiered quarantine (default/1st failure = 300s)", () => {
+  describe("HTTP 401 & 403 - classifier key-treatment vs engine fail_fast downstream contract", () => {
+    // NOTE (literouter-58xb): at the classifier layer 401 keeps tiered key
+    // quarantine (300s -> 1800s -> 86400s). The engine downstream contract
+    // (src/engine/status_classify.ts) treats 401/403 as fail_fast — see the
+    // downstream-contract block in tests/unit/engine/math_and_classify.test.ts.
+    it("classifier key-treatment: 401 retry_rotate tiered (default/1st failure = 300s; engine downstream is fail_fast)", () => {
       const result = classifyUpstreamError({
         provider: "oa",
         status: 401,
@@ -285,20 +289,20 @@ describe("Error Classifier — classifyUpstreamError & classifyTransportError", 
       expect(result.isRetryable).toBe(true);
     });
 
-    it("classifies 403 as retry_rotate with tiered quarantine (default/1st failure = 300s)", () => {
+    it("classifier key-treatment: 403 fail_fast with 0s quarantine (never parks the key; engine downstream is fail_fast)", () => {
       const result = classifyUpstreamError({
         provider: "gg",
         status: 403,
         headers: {},
         bodyText: JSON.stringify({ error: { message: "The caller does not have permission" } }),
       });
-      expect(result.action).toBe("retry_rotate");
-      expect(result.quarantineTtlSec).toBe(300);
-      expect(result.reason).toBe("auth_failure_key_quarantined");
-      expect(result.isRetryable).toBe(true);
+      expect(result.action).toBe("fail_fast");
+      expect(result.quarantineTtlSec).toBe(0);
+      expect(result.reason).toBe("Client error (403)");
+      expect(result.isRetryable).toBe(false);
     });
 
-    it("classifies 401 with consecutiveAuthFailures = 2 as 1800s quarantine", () => {
+    it("classifier key-treatment: 401 with consecutiveAuthFailures = 2 quarantines 1800s (engine downstream is fail_fast)", () => {
       const result = classifyUpstreamError({
         provider: "oa",
         status: 401,
@@ -312,7 +316,21 @@ describe("Error Classifier — classifyUpstreamError & classifyTransportError", 
       expect(result.isRetryable).toBe(true);
     });
 
-    it("classifies 403 with consecutiveAuthFailures >= 3 as 86400s quarantine", () => {
+    it("classifier key-treatment: 401 with consecutiveAuthFailures >= 3 quarantines 86400s (engine downstream is fail_fast)", () => {
+      const result = classifyUpstreamError({
+        provider: "oa",
+        status: 401,
+        headers: new Headers(),
+        bodyText: JSON.stringify({ error: { message: "Incorrect API key provided" } }),
+        consecutiveAuthFailures: 3,
+      });
+      expect(result.action).toBe("retry_rotate");
+      expect(result.quarantineTtlSec).toBe(86400);
+      expect(result.reason).toBe("auth_failure_key_quarantined");
+      expect(result.isRetryable).toBe(true);
+    });
+
+    it("403 stays fail_fast with 0s quarantine even with consecutiveAuthFailures >= 3 (no tiering)", () => {
       const result = classifyUpstreamError({
         provider: "gg",
         status: 403,
@@ -320,10 +338,87 @@ describe("Error Classifier — classifyUpstreamError & classifyTransportError", 
         bodyText: JSON.stringify({ error: { message: "The caller does not have permission" } }),
         consecutiveAuthFailures: 3,
       });
+      expect(result.action).toBe("fail_fast");
+      expect(result.quarantineTtlSec).toBe(0);
+      expect(result.isRetryable).toBe(false);
+    });
+  });
+
+  describe("HTTP 408 - Request timeout", () => {
+    it("classifies 408 as retry_rotate with 0s quarantine (delay via providers.json request_retry)", () => {
+      const result = classifyUpstreamError({
+        provider: "or",
+        status: 408,
+        headers: {},
+        bodyText: JSON.stringify({ error: { message: "Request timeout" } }),
+      });
       expect(result.action).toBe("retry_rotate");
-      expect(result.quarantineTtlSec).toBe(86400);
-      expect(result.reason).toBe("auth_failure_key_quarantined");
+      expect(result.quarantineTtlSec).toBe(0);
+      expect(result.reason).toBe("Request timeout (408)");
       expect(result.isRetryable).toBe(true);
+    });
+
+    it("classifies bare 408 with empty body as retry_rotate with 0s quarantine", () => {
+      const result = classifyUpstreamError({
+        provider: "nv",
+        status: 408,
+        headers: new Headers(),
+        bodyText: "",
+      });
+      expect(result.action).toBe("retry_rotate");
+      expect(result.quarantineTtlSec).toBe(0);
+      expect(result.isRetryable).toBe(true);
+    });
+  });
+
+  describe("Canonical error_type wins over status (3 skins)", () => {
+    it("chat skin: error.metadata.error_type=permission_denied on 500 flips to fail_fast 0s", () => {
+      const result = classifyUpstreamError({
+        provider: "nv",
+        status: 500,
+        headers: new Headers(),
+        bodyText: JSON.stringify({
+          error: {
+            message: "Internal server error",
+            metadata: { error_type: "permission_denied" },
+          },
+        }),
+      });
+      expect(result.action).toBe("fail_fast");
+      expect(result.quarantineTtlSec).toBe(0);
+      expect(result.isRetryable).toBe(false);
+      expect(result.errorType).toBe("permission_denied");
+    });
+
+    it("anthropic skin: error.error_type=timeout on 400 flips to retry_rotate", () => {
+      const result = classifyUpstreamError({
+        provider: "an",
+        status: 400,
+        headers: {},
+        bodyText: JSON.stringify({
+          error: { error_type: "timeout", message: "Upstream timed out" },
+        }),
+      });
+      expect(result.action).toBe("retry_rotate");
+      expect(result.quarantineTtlSec).toBe(0);
+      expect(result.isRetryable).toBe(true);
+      expect(result.errorType).toBe("timeout");
+    });
+
+    it("responses skin: top-level error_type=rate_limit_exceeded on 403 flips to retry_rotate", () => {
+      const result = classifyUpstreamError({
+        provider: "oa",
+        status: 403,
+        headers: new Headers(),
+        bodyText: JSON.stringify({
+          error_type: "rate_limit_exceeded",
+          error: { message: "Rate limit reached for requests" },
+        }),
+      });
+      expect(result.action).toBe("retry_rotate");
+      expect(result.quarantineTtlSec).toBe(0);
+      expect(result.isRetryable).toBe(true);
+      expect(result.errorType).toBe("rate_limit_exceeded");
     });
   });
 
@@ -545,8 +640,34 @@ describe("Error Classifier — classifyUpstreamError & classifyTransportError", 
       expect(result.reason).toBe("openrouter_daily_free_quota_exhausted");
     });
 
-    it("falls through when conserve rules do not match status or text", () => {
+    it("conserve-first: conserve rule wins over typed error_type fail_fast", () => {
       const result = classifyUpstreamError({
+        provider: "or",
+        status: 429,
+        headers: {},
+        bodyText: JSON.stringify({
+          error: {
+            message: "free-models-per-day limit reached",
+            error_type: "permission_denied",
+          },
+        }),
+        conserveRules: [
+          {
+            status: 429,
+            contains: "free-models-per-day",
+            ttl: 3600,
+            reason: "openrouter_daily_free_quota_exhausted",
+          },
+        ],
+      });
+      expect(result.action).toBe("retry_rotate");
+      expect(result.isRetryable).toBe(true);
+      expect(result.isConserve).toBe(true);
+      expect(result.quarantineTtlSec).toBe(3600);
+      expect(result.reason).toBe("openrouter_daily_free_quota_exhausted");
+    });
+
+    it("falls through when conserve rules do not match status or text", () => {      const result = classifyUpstreamError({
         provider: "or",
         status: 429,
         headers: {},

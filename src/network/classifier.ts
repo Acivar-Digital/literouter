@@ -17,6 +17,7 @@ export interface ErrorDisposition {
   readonly reason: string;
   readonly isRetryable?: boolean;
   readonly isConserve?: boolean;
+  readonly errorType?: string;
 }
 
 export type ErrorClassification = ErrorDisposition;
@@ -49,6 +50,128 @@ function isStreamCanceledError(text: string): boolean {
     text.includes("err_http2_stream_error") ||
     text.includes("rst_stream")
   );
+}
+
+function strField(obj: unknown, key: string): string | undefined {
+  if (typeof obj !== "object" || obj === null) {
+    return undefined;
+  }
+  const val = (obj as Record<string, unknown>)[key];
+  return typeof val === "string" && val.length > 0 ? val : undefined;
+}
+
+/**
+ * Parse the canonical typed `error_type` from an upstream body across 3 skins:
+ * chat `error.metadata.error_type`, anthropic `error.error_type`,
+ * responses top-level `error_type`. Returns undefined when absent/unparseable.
+ */
+export function parseCanonicalErrorType(bodyText: string | undefined): string | undefined {
+  if (!bodyText) {
+    return undefined;
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(bodyText);
+  } catch {
+    return undefined;
+  }
+  const root = parsed as Record<string, unknown>;
+  return (
+    strField(root, "error_type") ??
+    strField(root.error, "error_type") ??
+    strField((root.error as Record<string, unknown> | undefined)?.metadata, "error_type")
+  );
+}
+
+function resolveAuthTtl(consecutiveAuthFailures?: number): number {
+  const count = consecutiveAuthFailures ?? 1;
+  if (count === 2) {
+    return 1800;
+  }
+  if (count >= 3) {
+    return 86400;
+  }
+  return 300;
+}
+
+const ERROR_TYPE_RETRY_TTL_SEC: Readonly<Record<string, number>> = {
+  timeout: 0,
+  provider_overloaded: 10,
+  provider_unavailable: 10,
+  server: 10,
+  unmapped: 10,
+};
+
+const ERROR_TYPE_FAIL_FAST_ZERO: ReadonlySet<string> = new Set([
+  "context_length_exceeded",
+  "max_tokens_exceeded",
+  "token_limit_exceeded",
+  "string_too_long",
+  "invalid_request",
+  "invalid_prompt",
+  "not_found",
+  "precondition_failed",
+  "payload_too_large",
+  "unprocessable",
+  "invalid_image",
+  "image_too_large",
+  "image_too_small",
+  "unsupported_image_format",
+  "image_not_found",
+  "image_download_failed",
+  "permission_denied",
+  "content_policy_violation",
+  "refusal",
+  "payment_required",
+]);
+
+function dispositionForErrorType(
+  errorType: string,
+  input: UpstreamErrorInfo
+): ErrorDisposition | undefined {
+  if (errorType === "authentication") {
+    return {
+      action: "retry_rotate",
+      quarantineTtlSec: resolveAuthTtl(input.consecutiveAuthFailures),
+      reason: "auth_failure_key_quarantined",
+      isRetryable: true,
+      errorType,
+    };
+  }
+  if (errorType === "rate_limit_exceeded") {
+    const reset = parseResetDelay(input.headers, input.bodyText);
+    const ttlSec =
+      !isProviderQuarantineEnabled(input.provider) || getEnv().COOLDOWN_RATE_LIMIT_TTL_SEC === 0
+        ? 0
+        : Math.round(reset.delayMs / 1000);
+    return {
+      action: "retry_rotate",
+      quarantineTtlSec: ttlSec,
+      reason: "Rate limit reached (429)",
+      isRetryable: true,
+      errorType,
+    };
+  }
+  const retryTtl = ERROR_TYPE_RETRY_TTL_SEC[errorType];
+  if (retryTtl !== undefined) {
+    return {
+      action: "retry_rotate",
+      quarantineTtlSec: retryTtl,
+      reason: `Upstream typed error (${errorType})`,
+      isRetryable: true,
+      errorType,
+    };
+  }
+  if (ERROR_TYPE_FAIL_FAST_ZERO.has(errorType)) {
+    return {
+      action: "fail_fast",
+      quarantineTtlSec: 0,
+      reason: `Upstream typed error (${errorType})`,
+      isRetryable: false,
+      errorType,
+    };
+  }
+  return undefined;
 }
 
 export function classifyTransportError(error: unknown): ErrorDisposition {
@@ -118,7 +241,32 @@ export function classifyUpstreamError(input: UpstreamErrorInfo): ErrorDispositio
     };
   }
 
-  // 1. Status 400: Check provider retryable vs client-side fail fast
+  // 1. Conserve rules FIRST: custom per-provider quota/parking rules
+  if (input.conserveRules && input.conserveRules.length > 0) {
+    for (const rule of input.conserveRules) {
+      if (status === rule.status && text.includes(rule.contains.toLowerCase())) {
+        const ttlSec = resolveConserveTtlSec(rule.ttl);
+        return {
+          action: "retry_rotate",
+          quarantineTtlSec: ttlSec,
+          reason: rule.reason,
+          isRetryable: true,
+          isConserve: true,
+        };
+      }
+    }
+  }
+
+  // 1b. Canonical error_type wins over status (3 skins); fallback to status below.
+  const errorType = parseCanonicalErrorType(rawBody);
+  if (errorType) {
+    const typed = dispositionForErrorType(errorType, input);
+    if (typed) {
+      return typed;
+    }
+  }
+
+  // 2. Status 400: Check provider retryable vs client-side fail fast
   if (status === 400) {
     if (isRetryable400(text)) {
       return {
@@ -136,23 +284,19 @@ export function classifyUpstreamError(input: UpstreamErrorInfo): ErrorDispositio
     };
   }
 
-  // 1b. Conserve rules: Custom per-provider quota/parking rules
-  if (input.conserveRules && input.conserveRules.length > 0) {
-    for (const rule of input.conserveRules) {
-      if (status === rule.status && text.includes(rule.contains.toLowerCase())) {
-        const ttlSec = resolveConserveTtlSec(rule.ttl);
-        return {
-          action: "retry_rotate",
-          quarantineTtlSec: ttlSec,
-          reason: rule.reason,
-          isRetryable: true,
-          isConserve: true,
-        };
-      }
-    }
+  // 2b. Status 408: request timeout — retry_rotate with zero quarantine
+  // (delay is scheduled by the caller's providers.json request_retry, not here).
+  if (status === 408) {
+    return {
+      action: "retry_rotate",
+      quarantineTtlSec: 0,
+      reason: "Request timeout (408)",
+      isRetryable: true,
+      errorType,
+    };
   }
 
-  // 2. Status 429: Check quota exhaustion vs standard rate limit
+  // 3. Status 429: Check quota exhaustion vs standard rate limit
   if (status === 429) {
     if (isQuotaExhausted429(text)) {
       return {
@@ -176,22 +320,29 @@ export function classifyUpstreamError(input: UpstreamErrorInfo): ErrorDispositio
     };
   }
 
-  // 3. Status 401 & 403: Auth errors (tiered quarantine: 300s -> 1800s -> 86400s)
-  if (status === 401 || status === 403) {
-    const authCount = input.consecutiveAuthFailures ?? 1;
-    let ttlSec = 300;
-    if (authCount === 2) ttlSec = 1800;
-    else if (authCount >= 3) ttlSec = 86400;
-
+  // 4. Status 403: forbidden — fail_fast with zero quarantine (never park the key).
+  if (status === 403) {
     return {
-      action: "retry_rotate",
-      quarantineTtlSec: ttlSec,
-      reason: "auth_failure_key_quarantined",
-      isRetryable: true,
+      action: "fail_fast",
+      quarantineTtlSec: 0,
+      reason: "Client error (403)",
+      isRetryable: false,
+      errorType,
     };
   }
 
-  // 4. Status 404: Not found (fail fast)
+  // 5. Status 401: auth failure — tiered key quarantine (300s -> 1800s -> 86400s).
+  if (status === 401) {
+    return {
+      action: "retry_rotate",
+      quarantineTtlSec: resolveAuthTtl(input.consecutiveAuthFailures),
+      reason: "auth_failure_key_quarantined",
+      isRetryable: true,
+      errorType,
+    };
+  }
+
+  // 6. Status 404: Not found (fail fast)
   if (status === 404) {
     return {
       action: "fail_fast",
@@ -201,7 +352,7 @@ export function classifyUpstreamError(input: UpstreamErrorInfo): ErrorDispositio
     };
   }
 
-  // 5. Status 5xx (500, 502, 503, 504, etc.): Transient server error (10s)
+  // 7. Status 5xx (500, 502, 503, 504, etc.): Transient server error (10s)
   if (status >= 500 && status < 600) {
     return {
       action: "retry_rotate",
@@ -211,7 +362,7 @@ export function classifyUpstreamError(input: UpstreamErrorInfo): ErrorDispositio
     };
   }
 
-  // 6. Other 4xx client errors: fail fast
+  // 8. Other 4xx client errors: fail fast
   if (status >= 400 && status < 500) {
     return {
       action: "fail_fast",
@@ -221,7 +372,7 @@ export function classifyUpstreamError(input: UpstreamErrorInfo): ErrorDispositio
     };
   }
 
-  // 7. Any other status code (< 400)
+  // 9. Any other status code (< 400)
   return {
     action: "fail_fast",
     quarantineTtlSec: 0,

@@ -1,11 +1,11 @@
 export type FailureAction = "fail_fast" | "retry_same_target" | "advance_target";
 
 export const FAIL_FAST_STATUSES: ReadonlySet<number> = new Set([
-  400, 404, 413, 414, 422, 451, 501, 505,
+  400, 401, 403, 404, 413, 414, 422, 451, 501, 505,
 ]);
 
 export const KEY_ROTATION_STATUSES: ReadonlySet<number> = new Set([
-  401, 403, 429,
+  429,
 ]);
 
 export const TRANSIENT_RETRY_STATUSES: ReadonlySet<number> = new Set([

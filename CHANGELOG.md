@@ -2,6 +2,18 @@
 
 All notable changes to LiteRouter will be documented in this file.
 
+## [Unreleased] — Error Taxonomy S5 (literouter-ky12 / lyqp / 0w12 / 4nyz / 58xb)
+
+### Added
+- **Grilled error-handling decisions (docs-only, DOCS-ONLY slice)** — recorded in `CHANGELOG.md`, `.opencode2/skills/literouter/error-action-matrix.md`, and referenced from `SKILL.md`:
+  1. **401/403 fail-fast canonical** — request fails fast downstream (no key-rotation retry); aligned legacy handlers + v4 engine. 401 keeps tiered key quarantine (300s / 1800s / 86400s); 403 quarantines zero (see 2).
+  2. **403 zero-quarantine all** — policy AND true-auth 403s bench zero seconds (`fail_fast`, `quarantineTtlSec 0`, never parked); no `CooldownManager` quarantine call on the 403 path.
+  3. **408 retry_rotate via `providers.json` request_retry schedule** — retry schedule (`min_ms`, `max_ms`, `max_attempts`) from `config/providers.json` drives 408 retry rotation; no hardcoded `Retry-After: 5`; uses `request_retry.delay` jitter.
+  4. **Full typed `error_type` parser (3 skins)** — parser supports 3 skin variants (`standard`, `legacy`, `v4`); `error_type` wins over `status`; conservation-first (`conserve_rules` takes precedence over generic 429 quarantine); typed output: `error_type`, `status`, `action`, `isRetryable`, `quarantineTtlSec`.
+  5. **Condensed terminal format (`error_type` + `status`) + full trace** — terminal line: `error_type=<type> status=<code> action=<action>`; full trace preserved in telemetry (`session-id`, `key_index`, `provider_code`, `quarantineTtlSec`, `request_retry` config reference).
+
+> Source: `.opencode2/skills/literouter/error-action-matrix.md` (§1 status matrix, rows 3/4/5 for 401/403; row 15 for 408; §2 call chain). No `.env*` changes; no key material.
+
 ## [Unreleased] — 2026-09-14
 
 ### Added

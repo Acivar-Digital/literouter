@@ -282,6 +282,128 @@ export function extractErrorMessage(bodyText?: string): string | undefined {
   return trimmed;
 }
 
+/**
+ * Derive a condensed snake_case error taxonomy token from an upstream error
+ * message and HTTP status. Defensive fallback used when the classifier does
+ * not supply an error_type (classifier ErrorDisposition carries only `reason`).
+ * Returns only fixed taxonomy tokens — never echoes raw message content, so
+ * the condensed terminal line cannot leak keys or secrets.
+ */
+export function deriveErrorType(rawMessage?: string, status?: number): string {
+  const text = (rawMessage ?? "").toLowerCase();
+
+  if (
+    text.includes("content policy") ||
+    text.includes("content_policy") ||
+    text.includes("content filter") ||
+    text.includes("content_filter") ||
+    text.includes("moderation") ||
+    text.includes("harmful content") ||
+    text.includes("safety")
+  ) {
+    return "content_policy_violation";
+  }
+  if (
+    text.includes("context length") ||
+    text.includes("context_length") ||
+    text.includes("context window") ||
+    text.includes("max_tokens") ||
+    text.includes("maximum context") ||
+    text.includes("too many tokens") ||
+    text.includes("token limit")
+  ) {
+    return "context_length_exceeded";
+  }
+  if (
+    text.includes("insufficient_quota") ||
+    text.includes("insufficient quota") ||
+    text.includes("credit_limit") ||
+    text.includes("credit limit") ||
+    text.includes("out of balance") ||
+    text.includes("quota exceeded") ||
+    text.includes("quota_exceeded")
+  ) {
+    return "insufficient_quota";
+  }
+  if (
+    text.includes("rate limit") ||
+    text.includes("rate_limit") ||
+    text.includes("too many requests") ||
+    text.includes("throttl")
+  ) {
+    return "rate_limit_exceeded";
+  }
+  if (
+    text.includes("invalid api key") ||
+    text.includes("invalid_api_key") ||
+    text.includes("invalid key") ||
+    text.includes("incorrect api key") ||
+    text.includes("invalid authentication")
+  ) {
+    return "invalid_api_key";
+  }
+  if (
+    text.includes("model not found") ||
+    text.includes("model_not_found") ||
+    text.includes("no such model")
+  ) {
+    return "model_not_found";
+  }
+  if (text.includes("overloaded") || text.includes("capacity")) {
+    return "overloaded";
+  }
+  if (
+    text.includes("permission") ||
+    text.includes("forbidden") ||
+    text.includes("access denied") ||
+    text.includes("not allowed") ||
+    text.includes("unauthorized")
+  ) {
+    return "permission_denied";
+  }
+  if (
+    text.includes("internal server error") ||
+    text.includes("internal error") ||
+    text.includes("bad gateway") ||
+    text.includes("service unavailable") ||
+    text.includes("gateway timeout")
+  ) {
+    return "server_error";
+  }
+  if (
+    text.includes("invalid request") ||
+    text.includes("bad request") ||
+    text.includes("validation") ||
+    text.includes("invalid parameter") ||
+    text.includes("malformed")
+  ) {
+    return "invalid_request_error";
+  }
+
+  switch (status) {
+    case 400:
+      return "invalid_request_error";
+    case 401:
+      return "authentication_error";
+    case 403:
+      return "permission_denied";
+    case 404:
+      return "model_not_found";
+    case 409:
+      return "conflict";
+    case 422:
+      return "unprocessable_entity";
+    case 429:
+      return "rate_limit_exceeded";
+    default:
+      break;
+  }
+  if (status !== undefined && status >= 500 && status < 600) {
+    return "server_error";
+  }
+  return "upstream_error";
+}
+
 export function logLimit(
   reqId: string,
   provider: string,
@@ -289,13 +411,15 @@ export function logLimit(
   status = 429,
   retryAfterSec?: number,
   totalKeys?: number,
-  rawMessage?: string
+  rawMessage?: string,
+  errorType?: string
 ): void {
   const ts = formatTimestamp();
   const provName = getProviderDisplayName(provider);
   const keyTotal = totalKeys !== undefined ? `/${totalKeys}` : "";
   const statusText = getHttpStatusText(status);
-  console.warn(`${EMOJI.limit} ${ts} [LIMIT ${reqId}] ${provName} [Key #${keyIdx + 1}${keyTotal}] returned ${statusText}`);
+  const condensedType = errorType ?? deriveErrorType(rawMessage, status);
+  console.warn(`${EMOJI.limit} ${ts} [LIMIT ${reqId}] ${provName} [Key #${keyIdx + 1}${keyTotal}] returned ${statusText} [${condensedType} ${status}]`);
   if (retryAfterSec) {
     console.warn(`${EMOJI.limit} ${ts} [LIMIT ${reqId}] Parsed Retry-After: ${retryAfterSec}s -> Quarantined Key #${keyIdx + 1} for ${retryAfterSec}s`);
   }
