@@ -11,7 +11,7 @@ Usage:
     OPENROUTER_API_KEYS=... uv run python scripts/gen-usage.py --out-dir /tmp/usage
 
 Output:
-    usage/Daily_Usage_YYMMDD-HHMM.md
+    usage/OR-YYMMDD-HHMM.md
 """
 
 from __future__ import annotations
@@ -74,90 +74,46 @@ def fmt_num(value) -> str:
     return str(value)
 
 
-def bar(used, limit, width: int = 10) -> str:
-    if not limit:
-        return "n/a"
-    frac = max(0.0, min(1.0, used / limit))
-    filled = round(frac * width)
-    return "█" * filled + "░" * (width - filled) + f" {frac:.0%}"
-
-
 def build_report(rows: list[dict], errors: list[dict], now: datetime) -> str:
     lines: list[str] = []
-    lines.append(f"# OpenRouter Daily Usage — {now:%Y-%m-%d %H:%M %Z}")
+    lines.append(f"# OR Usage — {now:%Y-%m-%d %H:%M %Z} ({len(rows) + len(errors)} keys)")
     lines.append("")
-    lines.append(
-        f"Source: `GET /api/v1/key` × {len(rows) + len(errors)} key(s) "
-        f"from `{ENV_VAR}`. Labels are OpenRouter-masked; no key material stored."
-    )
-    lines.append("")
-
-    lines.append("## Free-model daily quota (`:free` models)")
-    lines.append("")
-    lines.append("| Key | Funded (≥$10)? | Used / Limit | Remaining | Use |")
-    lines.append("|---|---|---|---|---|")
+    lines.append("| Key | Free used/lim/left | $ Cap | $ Left | $ Day | $ Wk | $ Mo | BYOK Day | BYOK Tot |")
+    lines.append("|---|---|---|---|---|---|---|---|---|")
     for r in rows:
         free = r.get("free") or {}
-        # is_free_tier is a legacy label decoupled from enforcement;
-        # the reported ceiling (50 vs 1000) is the ground truth.
-        funded = "yes" if free.get("limit") == 1000 else ("no" if free.get("limit") == 50 else "?")
+        fl, fu = free.get("limit"), free.get("used")
+        if fl == 1000:
+            fcell = f"{fu}/{fl} ({free.get('remaining')} left)"
+        elif fl == 50:
+            fcell = f"{fu}/{fl} ({free.get('remaining')} left) UNFUNDED"
+        else:
+            fcell = f"{fmt_num(fu)}/{fmt_num(fl)}"
         lines.append(
-            f"| {r['label']} | {funded} | {free.get('used', 'n/a')} / "
-            f"{free.get('limit', 'n/a')} | {free.get('remaining', 'n/a')} | "
-            f"{bar(free.get('used') or 0, free.get('limit') or 0)} |"
+            f"| {r['label']} | {fcell} | {fmt_num(r.get('limit'))} | "
+            f"{fmt_num(r.get('limit_remaining'))} | {fmt_num(r.get('usage_daily'))} | "
+            f"{fmt_num(r.get('usage_weekly'))} | {fmt_num(r.get('usage_monthly'))} | "
+            f"{fmt_num(r.get('byok_daily'))} | {fmt_num(r.get('byok_total'))} |"
         )
     if not rows:
-        lines.append("| _(none)_ | — | — | — | — |")
-    lines.append("")
-    lines.append(
-        "> Note: free-model counters are account-global — every key under one "
-        "account reports the same numbers. Extra keys do not add quota."
-    )
-    lines.append("")
-
-    lines.append("## Credit usage (OpenRouter credits)")
-    lines.append("")
-    lines.append("| Key | Cap | Remaining | Used total | Today | Week | Month |")
-    lines.append("|---|---|---|---|---|---|---|")
-    for r in rows:
-        lines.append(
-            f"| {r['label']} | {fmt_num(r.get('limit'))} | "
-            f"{fmt_num(r.get('limit_remaining'))} | {fmt_num(r.get('usage'))} | "
-            f"{fmt_num(r.get('usage_daily'))} | {fmt_num(r.get('usage_weekly'))} | "
-            f"{fmt_num(r.get('usage_monthly'))} |"
-        )
-    if not rows:
-        lines.append("| _(none)_ | — | — | — | — | — | — |")
-    lines.append("")
-
-    lines.append("## BYOK usage (USD billed by external providers)")
-    lines.append("")
-    lines.append("| Key | Today | Week | Month | Total |")
-    lines.append("|---|---|---|---|---|")
-    for r in rows:
-        lines.append(
-            f"| {r['label']} | {fmt_num(r.get('byok_daily'))} | "
-            f"{fmt_num(r.get('byok_weekly'))} | {fmt_num(r.get('byok_monthly'))} | "
-            f"{fmt_num(r.get('byok_total'))} |"
-        )
-    if not rows:
-        lines.append("| _(none)_ | — | — | — | — |")
-    lines.append("")
-
-    lines.append("## Errors")
+        lines.append("| _(none)_ | — | — | — | — | — | — | — | — |")
     lines.append("")
     if errors:
-        for e in errors:
-            lines.append(f"- key #{e['index']}: {e['message']}")
+        lines.append("Errors: " + "; ".join(f"key #{e['index']}: {e['message']}" for e in errors))
     else:
-        lines.append("None — all keys polled successfully.")
+        lines.append("Errors: none.")
+    lines.append("_Free counters may differ per key; unfunded accounts cap at 50/day._")
     lines.append("")
     return "\n".join(lines)
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Write daily OpenRouter usage report.")
-    parser.add_argument("--out-dir", default="usage", help="Report directory.")
+    parser.add_argument(
+        "--out-dir",
+        default="~/.local/share/literouter/usage",
+        help="Report directory (private, outside repo).",
+    )
     parser.add_argument("--timeout", type=int, default=20, help="HTTP timeout secs.")
     parser.add_argument("--sleep", type=float, default=1.0, help="Pause between keys.")
     args = parser.parse_args()
@@ -200,8 +156,9 @@ def main() -> int:
 
     now = datetime.now().astimezone()
     report = build_report(rows, errors, now)
-    os.makedirs(args.out_dir, exist_ok=True)
-    path = os.path.join(args.out_dir, f"Daily_Usage_{now:%y%m%d-%H%M}.md")
+    out_dir = os.path.expanduser(args.out_dir)
+    os.makedirs(out_dir, exist_ok=True)
+    path = os.path.join(out_dir, f"OR-{now:%y%m%d-%H%M}.md")
     with open(path, "w", encoding="utf-8") as f:
         f.write(report)
     print(f"Wrote {path} ({len(rows)} ok, {len(errors)} errors)")
