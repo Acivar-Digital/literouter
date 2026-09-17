@@ -123,7 +123,8 @@ export function mergeOutboundHeaders(
   injectedHeaders: Record<string, string>,
   provHeaders?: Record<string, string>,
   targetExtraHeaders?: Record<string, string>,
-  payloadHeaders?: Record<string, string>
+  payloadHeaders?: Record<string, string>,
+  clientHeaders?: Headers | Record<string, string>
 ): Record<string, string> {
   const merged: Record<string, string> = {};
   setHeaderCaseInsensitive(merged, "content-type", "application/json");
@@ -134,7 +135,7 @@ export function mergeOutboundHeaders(
   mergeHeaderSource(merged, targetExtraHeaders);
   mergeHeaderSource(merged, provHeaders);
 
-  ensureSessionHeaders(merged, payloadHeaders);
+  ensureSessionHeaders(merged, clientHeaders ?? payloadHeaders);
 
   return merged;
 }
@@ -521,7 +522,8 @@ export async function executeDispatchPipeline(
       injectedHeaders,
       provConfig.headers,
       target.extraHeaders,
-      req.outboundPayload.headers
+      req.outboundPayload.headers,
+      req.clientHeaders
     );
 
     try {

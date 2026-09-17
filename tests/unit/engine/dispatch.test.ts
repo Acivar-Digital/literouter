@@ -174,6 +174,39 @@ describe("Unified Dispatch Pipeline (Slice 3.5)", () => {
     expect(headersRecord.Authorization).toBe("Bearer sk-or-test-key-1");
   });
 
+  it("injects mandatory Zen attribution headers (User-Agent, Referer) and session-id", async () => {
+    let capturedHeaders: Headers | Record<string, string> | undefined;
+
+    const fetchFn = async (_url: unknown, init?: RequestInit) => {
+      capturedHeaders = init?.headers as Record<string, string>;
+      return new Response(JSON.stringify({ id: "ok" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    };
+
+    const req = buildRequest({
+      directive: {
+        raw: "lr-zn-cl-ms-no",
+        type: "direct",
+        provider: "zn",
+        payload: "cl",
+        completion: "ms",
+        nuances: ["no"],
+      },
+    });
+    const res = await executeDispatchPipeline(req, fetchFn);
+
+    expect(res.status).toBe(200);
+    expect(capturedHeaders).toBeDefined();
+    const headersRecord = capturedHeaders as Record<string, string>;
+    expect(headersRecord["User-Agent"]).toBe("OpenCode/1.18.29");
+    expect(headersRecord["Referer"]).toBe("https://opencode.ai");
+    expect(headersRecord["HTTP-Referer"]).toBe("https://opencode.ai");
+    expect(headersRecord["X-Title"]).toBe("OpenCode");
+    expect(headersRecord["session-id"]).toMatch(/^ses_[0-9a-f]{8}8ffe[0-9a-zA-Z]{14}$/);
+  });
+
   it("rotates key and retries on 429 without tripping circuit breaker", async () => {
     const breaker = getCircuitBreaker("or");
     let fetchCount = 0;

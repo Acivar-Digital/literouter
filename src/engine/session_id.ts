@@ -10,14 +10,19 @@ export const SESSION_HEADER_KEYS = [
 ] as const;
 
 export function generateOpenCodeSessionId(): string {
-  const bytes = new Uint8Array(26);
-  crypto.getRandomValues(bytes);
-  let id = "ses_";
-  for (let i = 0; i < 26; i++) {
-    const byte = bytes[i] ?? 0;
-    id += BASE62_CHARS.charAt(byte % BASE62_CHARS.length);
+  const hexBytes = new Uint8Array(4);
+  crypto.getRandomValues(hexBytes);
+  let hex8 = "";
+  for (let i = 0; i < 4; i++) {
+    hex8 += (hexBytes[i] ?? 0).toString(16).padStart(2, "0");
   }
-  return id;
+  const tailBytes = new Uint8Array(14);
+  crypto.getRandomValues(tailBytes);
+  let tail14 = "";
+  for (let i = 0; i < 14; i++) {
+    tail14 += BASE62_CHARS.charAt((tailBytes[i] ?? 0) % BASE62_CHARS.length);
+  }
+  return `ses_${hex8}8ffe${tail14}`;
 }
 
 function getFromHeadersObject(headers: Headers, key: string): string | undefined {

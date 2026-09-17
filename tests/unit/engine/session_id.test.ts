@@ -9,9 +9,9 @@ import { mergeOutboundHeaders } from "../../../src/engine/dispatch";
 
 describe("src/engine/session_id.ts", () => {
   describe("generateOpenCodeSessionId", () => {
-    it("generates a session ID with ses_ prefix and 26 alphanumeric base62 characters", () => {
+    it("generates a session ID with ses_ prefix, 8-hex timestamp, 8ffe marker, and 14 base62 chars", () => {
       const id = generateOpenCodeSessionId();
-      expect(id).toMatch(/^ses_[0-9a-zA-Z]{26}$/);
+      expect(id).toMatch(/^ses_[0-9a-f]{8}8ffe[0-9a-zA-Z]{14}$/);
       expect(id.length).toBe(30);
     });
 

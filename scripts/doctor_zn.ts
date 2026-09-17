@@ -1,4 +1,5 @@
 import { maskKey } from "../src/config/keys";
+import { generateOpenCodeSessionId } from "../src/engine/session_id";
 
 export interface ZenProbeResult {
   readonly provider: string;
@@ -8,16 +9,8 @@ export interface ZenProbeResult {
   readonly statusCode?: number;
 }
 
-const BASE62 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-
 export function generateZenSessionId(): string {
-  const bytes = new Uint8Array(26);
-  crypto.getRandomValues(bytes);
-  let tail = "";
-  for (const b of bytes) {
-    tail += BASE62[b % 62];
-  }
-  return `ses_${tail}`;
+  return generateOpenCodeSessionId();
 }
 
 export function buildZenSessionHeaders(sessionId: string): Record<string, string> {

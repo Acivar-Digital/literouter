@@ -63,7 +63,7 @@ import {
   isContextLengthError,
   pruneOpenAIPayload,
 } from "../transformers/context_pruner";
-import { ensureSessionHeaders, extractClientSessionId } from "../engine/session_id";
+import { ensureSessionHeaders, extractClientSessionId, generateOpenCodeSessionId } from "../engine/session_id";
 
 export interface ProviderEndpointConfig extends Omit<ProviderConfigEntry, "conserve_rules"> {
   readonly conserve_rules?: readonly ConserveRule[];
@@ -82,15 +82,7 @@ export function getProviderEndpointConfig(providerCode: string): ProviderEndpoin
 export { overrideProviderUrl, resolveUpstreamEndpoint, ensureSessionHeaders, extractClientSessionId };
 
 function generateZenSessionId(): string {
-  const chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-  let id = "ses_";
-  const bytes = new Uint8Array(20);
-  crypto.getRandomValues(bytes);
-  for (let i = 0; i < 20; i++) {
-    const byte = bytes[i] ?? 0;
-    id += chars.charAt(byte % chars.length);
-  }
-  return id;
+  return generateOpenCodeSessionId();
 }
 
 export function buildAuthHeaders(

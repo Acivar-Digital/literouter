@@ -5,6 +5,7 @@ All notable changes to LiteRouter will be documented in this file.
 ## [Unreleased] — 2026-09-17
 
 ### Fixed
+- Fixed Zen upstream identity gating for Anthropic Messages wire: aligned session ID generation with OpenCode's canonical format (`ses_${hex8}8ffe${tail14}`), forwarded client headers into `mergeOutboundHeaders`, and ensured attribution headers (`Referer`, `User-Agent`) and session tracking prevent upstream 403 `OpenCode's free tier can only be used from within OpenCode` (literouter-butp).
 - Non-streaming dispatch now returns a diagnostic 502 for malformed/non-JSON successful upstream responses instead of retrying JSON parse failures into an opaque 500. Diagnostics include upstream status and bounded media type, never the response body; transport retries remain unchanged. Added HTML, malformed JSON, and valid-JSON regression coverage (literouter-39gf).
 - Added Zen's `ms: /v1/messages` endpoint mapping. Union Alpha uses the Anthropic Messages protocol (`lr-zn-cl-ms-no`), not Chat Completions or Responses. Verified live streaming and non-streaming gateway requests return HTTP 200; added a routing regression test (literouter-wrto).
 
