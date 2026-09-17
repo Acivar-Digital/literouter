@@ -40,7 +40,14 @@ node_modules/
 .nvm*
 
 # Data
-data/
+data/*
+!data/docs/
+!data/PLAN.md
+!data/reviews/
+data/credentials/
+data/raw/
+data/processed/
+data/reports/
 
 # Opencode internal
 .opencode/*
