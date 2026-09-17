@@ -281,3 +281,23 @@ async function syncGoogleStudioKeys(keys: string[]) {
 | `HTTP 400 Bad Request: Invalid provider` | The `provider` slug has a typo or prefix (e.g. `google` instead of `google-ai-studio`). | Check §2 table above or `docs/openrouter/byok-02.md`. |
 | Response shows `"is_byok": false` and charges credits | Request routed to a different provider offering the same model (e.g. `google-vertex` instead of `google-ai-studio`). | Pass `"provider": { "order": ["google-ai-studio"] }` in the chat completion payload, or set `"is_byok_only": true` on the BYOK key. |
 | Key not failing over to backup on 429 | Backup key has `disabled: true` or is placed in the `Fallback` section with `allow_fallbacks: false`. | Keep both keys in the `Prioritized` section (`is_fallback: false`). |
+
+---
+
+## §7. Repository Diagnostic Tool (`scripts/check_openrouter_byok.ts`)
+
+A permanent, zero-hardcoded-secret audit utility is available in the repository:
+
+```bash
+# Audit all registered BYOK credentials, sort orders, and "Never use shared capacity" flags
+bun scripts/check_openrouter_byok.ts
+
+# Audit AND run a live, zero-cost streaming inference probe
+bun scripts/check_openrouter_byok.ts --probe
+```
+
+This utility dynamically reads `OPENROUTER_MGMT_KEYS` and `OPENROUTER_BYOK_KEYS` from `.env.local` / environment, displays an ASCII table of all credentials and their bindings, and confirms that:
+1. `is_byok_only` and `is_required` are `true` (enforcing zero fallback to OpenRouter shared capacity).
+2. Credentials are bound strictly to your BYOK completion key hash.
+3. Live streaming calls return HTTP 200 with `is_byok: true` and $0 cost.
+
