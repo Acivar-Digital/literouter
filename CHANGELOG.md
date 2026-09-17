@@ -4,6 +4,9 @@ All notable changes to LiteRouter will be documented in this file.
 
 ## [Unreleased] — 2026-09-17
 
+### Added
+- **BigQuery Analytics Pipeline (S1–S6)** (`literouter-7yyk`, `literouter-98cp`, `literouter-fc8q`, `literouter-v46o`, `literouter-pxi6`, `literouter-smiu`): 6 new files in `data/src/` (`contracts.py`, `ingest.py`, `transform.py`, `report.py`, `__init__.py`), `data/run_analytics.py`, `data/tests/test_analytics.py`. Features: watermark/Polars + Parquet; hybrid informational-only output; dual-output (terminal + markdown); canonical BQ queries mapped to docs §9–§11 (§9 query patterns, §10 JSON access, §11 troubleshooting); 56 pytest tests green; probe verified 10 rows at 100% OK; `--dry-run` exits 0 with no billing/network.
+
 ### Fixed
 - **Empty Bearer Header Extraction & Fallback Resilience** (`literouter-ww95`):
   - Hardened `extractFromAuthHeader` in `src/directive/validator.ts` so that literal `"Bearer"` or whitespace-only Bearer headers return `null` instead of the string `"Bearer"`.
