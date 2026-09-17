@@ -116,8 +116,9 @@ Once the raw records are downloaded, the pipeline executes the following determi
 ```
 
 ### Key Transformation Steps:
-1. **JSON Unnesting (`metadata`, `attributes`, `model_parameters`)**:
-   * Extract business keys from `metadata`: `ticker`, `strategy`, `trade_id`, `environment`, `run_id`.
+1. **Resilient Hybrid Metadata Unnesting (`metadata`, `attributes`, `model_parameters`)**:
+   * Promote core business keys into dedicated typed columns: `ticker`, `strategy`, `trade_id`, `environment`, `run_id`.
+   * Preserve any dynamic or unmodeled keys in an unnested dictionary/struct without failing or dropping records when schema variations occur.
    * Extract operational settings from `model_parameters`: `temperature`, `top_p`, `max_tokens`.
 2. **Categorical Normalization**:
    * Normalize `status` into clean enum values: `SUCCESS`, `ERROR`, `RATE_LIMIT` (429), `TIMEOUT`, `CANCELLED`.
@@ -140,10 +141,10 @@ In accordance with repository engineering standards:
 |---|---|---|
 | **Runtime & Package Manager** | `uv run python` (Python 3.12+) | Repository-standard deterministic virtual environment management; fast execution without global dependency pollution. |
 | **Cloud Client** | `google-cloud-bigquery`, `db-dtypes` | Official Google Cloud SDK for secure BigQuery querying and credential handling. |
-| **Data Processing & Analytics** | `polars` / `pandas` | High-performance, columnar DataFrame processing. Polars provides sub-second vectorized JSON parsing and zero-copy Arrow integration. |
+| **Data Processing & Analytics** | `polars` (v1.0+) | High-performance, columnar DataFrame processing. Polars provides sub-second vectorized JSON parsing, zero-copy Arrow integration, and native Parquet serialization. |
 | **Data Validation Contract** | `pydantic` (v2) | Enforces strict validation of schema fields, ensuring missing columns or upstream type shifts fail loudly and early. |
 | **Local Storage Format** | Apache Parquet (`pyarrow`) | Columnar format with Snappy compression; preserves rich schemas, fast read/write, and small disk footprint. |
-| **Reporting & Formatting** | Markdown + Rich / Tabulate | Generates human-readable, versionable QA audit summaries with clean ASCII tables. |
+| **Reporting & Formatting** | Markdown + Rich / Tabulate | Dual output: immediate formatted terminal ASCII tables + persistent dated Markdown reports. |
 
 ---
 
@@ -175,11 +176,9 @@ The generated report (`data/reports/QA_REPORT_YYYYMMDD.md` and terminal summary)
 * Cache hit efficiency percentage per model.
 * Breakdown of thinking/reasoning token consumption for reasoning-enabled models.
 
-### F. Actionable QA Recommendations
-* Automated alerts based on established thresholds:
-  * ⚠️ *Warning*: Model X failure rate exceeds 2.0%.
-  * ⚠️ *Latency Alert*: Upstream provider Y experienced a 40% increase in $p_{95}$ latency.
-  * 💡 *Optimization*: Model Z cache hit rate is below 15%—review prompt prefix stability.
+### F. Informational QA Summary & Distributions
+* Strictly **Informational Only**: Clean, un-skewed distributions of latency percentiles ($p_{50}, p_{90}, p_{99}$), error breakdowns, and token efficiencies without arbitrary failure thresholds or noisy false-positive alarms.
+* High-visibility summary of top flaking models and rate-limited providers to guide routing adjustments.
 
 ---
 
