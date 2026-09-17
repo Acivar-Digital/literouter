@@ -208,6 +208,46 @@ export const RESPONSES_PATHS: ReadonlySet<string> = new Set([
   "/responses",
   "/api/v1/responses",
   "/v1/responses/responses",
+  "/responses/responses",
+  "/v1/response",
+  "/response",
+  "/api/v1/response",
+  "/v1/response/response",
+  "/response/response",
+  "/v1/responses/response",
+  "/v1/response/responses",
+  "/responses/response",
+  "/response/responses",
+]);
+
+export const ANTHROPIC_PATHS: ReadonlySet<string> = new Set([
+  "/v1/messages",
+  "/messages",
+  "/api/v1/messages",
+  "/v1/messages/messages",
+  "/messages/messages",
+  "/v1/message",
+  "/message",
+  "/api/v1/message",
+  "/v1/message/message",
+  "/message/message",
+  "/v1/messages/message",
+  "/v1/message/messages",
+  "/messages/message",
+  "/message/messages",
+]);
+
+export const ANTHROPIC_COUNT_TOKENS_PATHS: ReadonlySet<string> = new Set([
+  "/v1/messages/count_tokens",
+  "/messages/count_tokens",
+  "/api/v1/messages/count_tokens",
+  "/v1/messages/messages/count_tokens",
+  "/messages/messages/count_tokens",
+  "/v1/message/count_tokens",
+  "/message/count_tokens",
+  "/api/v1/message/count_tokens",
+  "/v1/message/message/count_tokens",
+  "/message/message/count_tokens",
 ]);
 
 export const MODELS_PATHS: ReadonlySet<string> = new Set([
@@ -228,10 +268,25 @@ const ROUTE_MAP: Readonly<Record<string, RouteHandler>> = {
   "/api/v1/messages": handleAnthropicCompat,
   "/v1/messages/messages": handleAnthropicCompat,
   "/messages/messages": handleAnthropicCompat,
+  "/v1/message": handleAnthropicCompat,
+  "/message": handleAnthropicCompat,
+  "/api/v1/message": handleAnthropicCompat,
+  "/v1/message/message": handleAnthropicCompat,
+  "/message/message": handleAnthropicCompat,
+  "/v1/messages/message": handleAnthropicCompat,
+  "/v1/message/messages": handleAnthropicCompat,
+  "/messages/message": handleAnthropicCompat,
+  "/message/messages": handleAnthropicCompat,
   "/v1/messages/count_tokens": handleAnthropicCountTokens,
   "/messages/count_tokens": handleAnthropicCountTokens,
   "/api/v1/messages/count_tokens": handleAnthropicCountTokens,
   "/v1/messages/messages/count_tokens": handleAnthropicCountTokens,
+  "/messages/messages/count_tokens": handleAnthropicCountTokens,
+  "/v1/message/count_tokens": handleAnthropicCountTokens,
+  "/message/count_tokens": handleAnthropicCountTokens,
+  "/api/v1/message/count_tokens": handleAnthropicCountTokens,
+  "/v1/message/message/count_tokens": handleAnthropicCountTokens,
+  "/message/message/count_tokens": handleAnthropicCountTokens,
 };
 
 const SYSTEM_MAP: Readonly<Record<string, () => Response>> = {

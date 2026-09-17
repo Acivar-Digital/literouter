@@ -177,6 +177,15 @@ const ANTHROPIC_PATHS: ReadonlySet<string> = new Set([
   "/api/v1/messages",
   "/v1/messages/messages",
   "/messages/messages",
+  "/v1/message",
+  "/message",
+  "/api/v1/message",
+  "/v1/message/message",
+  "/message/message",
+  "/v1/messages/message",
+  "/v1/message/messages",
+  "/messages/message",
+  "/message/messages",
 ]);
 
 const RESPONSES_PATHS: ReadonlySet<string> = new Set([
@@ -184,6 +193,16 @@ const RESPONSES_PATHS: ReadonlySet<string> = new Set([
   "/responses",
   "/api/v1/responses",
   "/v1/responses/responses",
+  "/responses/responses",
+  "/v1/response",
+  "/response",
+  "/api/v1/response",
+  "/v1/response/response",
+  "/response/response",
+  "/v1/responses/response",
+  "/v1/response/responses",
+  "/responses/response",
+  "/response/responses",
 ]);
 
 function isGoogleNativePath(path: string): boolean {

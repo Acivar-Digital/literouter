@@ -65,6 +65,15 @@ describe("v4 router dispatcher", () => {
         "/api/v1/messages",
         "/v1/messages/messages",
         "/messages/messages",
+        "/v1/message",
+        "/message",
+        "/api/v1/message",
+        "/v1/message/message",
+        "/message/message",
+        "/v1/messages/message",
+        "/v1/message/messages",
+        "/messages/message",
+        "/message/messages",
       ];
       for (const p of paths) {
         const req = new Request(`http://localhost:7766${p}`, {
@@ -77,14 +86,28 @@ describe("v4 router dispatcher", () => {
     });
 
     it("dispatches POST /v1/responses to openai_responses handler", async () => {
-      const req = new Request("http://localhost:7766/v1/responses", {
-        method: "POST",
-        body: "{malformed-json",
-      });
-      const res = await dispatchV4(req, "lr-zn-oo-rs-no", "req-resp-1");
-      expect(res.status).toBe(400);
-      const json = await res.json();
-      expect(json.error.message).toContain("Invalid JSON");
+      const paths = [
+        "/v1/responses",
+        "/responses",
+        "/api/v1/responses",
+        "/v1/responses/responses",
+        "/responses/responses",
+        "/v1/response",
+        "/response",
+        "/api/v1/response",
+        "/v1/response/response",
+        "/response/response",
+      ];
+      for (const p of paths) {
+        const req = new Request(`http://localhost:7766${p}`, {
+          method: "POST",
+          body: "{malformed-json",
+        });
+        const res = await dispatchV4(req, "lr-zn-oo-rs-no", "req-resp-1");
+        expect(res.status).toBe(400);
+        const json = await res.json();
+        expect(json.error.message).toContain("Invalid JSON");
+      }
     });
 
     it("dispatches POST /v1beta/models/*:generateContent and stream to google_native handler", async () => {

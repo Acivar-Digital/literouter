@@ -1,7 +1,10 @@
 import { describe, expect, it } from "bun:test";
 import {
+  ANTHROPIC_COUNT_TOKENS_PATHS,
+  ANTHROPIC_PATHS,
   dispatchRoute,
   handleAppRequest,
+  RESPONSES_PATHS,
   validateEndpointMatch,
 } from "../../src/index";
 
@@ -172,11 +175,64 @@ describe("Endpoint Fail-Fast Guards & Route Dispatch (literouter-52gt)", () => {
         "/responses",
         "/api/v1/responses",
         "/v1/responses/responses",
+        "/v1/response",
+        "/response",
+        "/v1/response/response",
+        "/responses/responses",
       ];
       for (const path of aliases) {
         const res = validateEndpointMatch(path, { endpoint: "ch" });
         expect(res).not.toBeNull();
         expect(res!.status).toBe(400);
+      }
+    });
+
+    it("allows -rs- directives on all RESPONSES_PATHS variants and rejects -ch-", async () => {
+      for (const path of RESPONSES_PATHS) {
+        expect(validateEndpointMatch(path, { endpoint: "rs" })).toBeNull();
+        const res = validateEndpointMatch(path, { endpoint: "ch" });
+        expect(res).not.toBeNull();
+        expect(res!.status).toBe(400);
+        const body = await res!.json();
+        expect(body.error.message).toBe(
+          "Endpoint mismatch: Directive specifies Chat Completions (-ch-). Use /v1/chat/completions."
+        );
+      }
+    });
+
+    it("routes all ANTHROPIC_PATHS without 404", async () => {
+      for (const path of ANTHROPIC_PATHS) {
+        const req = new Request(`http://localhost:7766${path}`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: "Bearer lr-an-cl-ms-no",
+          },
+          body: "invalid-json",
+        });
+        const res = await dispatchRoute(req, "lr-an-cl-ms-no", "req_test_anthropic_alias");
+        expect(res.status).not.toBe(404);
+        expect(res.status).toBe(400);
+        const data = await res.json();
+        expect(data.error.message).toBe("Malformed JSON");
+      }
+    });
+
+    it("routes all ANTHROPIC_COUNT_TOKENS_PATHS without 404", async () => {
+      for (const path of ANTHROPIC_COUNT_TOKENS_PATHS) {
+        const req = new Request(`http://localhost:7766${path}`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: "Bearer lr-an-cl-ms-no",
+          },
+          body: "invalid-json",
+        });
+        const res = await dispatchRoute(req, "lr-an-cl-ms-no", "req_test_count_tokens_alias");
+        expect(res.status).not.toBe(404);
+        expect(res.status).toBe(400);
+        const data = await res.json();
+        expect(data.error.message).toBe("Malformed JSON");
       }
     });
 
