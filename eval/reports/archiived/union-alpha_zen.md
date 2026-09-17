@@ -1,13 +1,13 @@
 # 🏛️ Model Evaluation Report Card: `union-alpha`
 
-> **Verification caveat (post-run):** Actual network protocol was Anthropic Messages at `/v1/messages`, translated by the experimental eval bridge into OpenAI-shaped grader inputs. The generated `CHAT` labels below describe internal grader format, not the network protocol. **The speed suite is INVALID:** both runs extracted no usable token stream and the estimator reported a fallback of 1 token / 1000 tok/s. Do not use its TTFT, throughput, derived statistics, or speed-based recommendations. The bridge can discard streaming error events; the cause of the empty streams has not been established. Code scores below are observed harness results, not general production certification. Web stages 2, 4, and 5 timed out at 180 seconds; stage 3 returned content but failed all four state/interactivity checks. OpenRouter used fail-fast while this run continued on failure, so web composites are not directly comparable.
+> **Verified run limitations — Zen:** This run used LiteRouter's `/v1/messages` endpoint with an experimental Anthropic-to-OpenAI eval adapter. Generated `CHAT` labels describe grader format, not the main network protocol. **Speed results are INVALID:** both samples recorded the minimum fallback of 1 token, equal TTFT/duration, and an artificial 1000 tok/s. Do not use speed-derived statistics or recommendations. The adapter can discard SSE error events; the underlying cause of the empty streams is unconfirmed. Stage 1's native subtest selects `lr-zn-cl-ch-no`, so its aggregate is not a pure Messages-protocol certification. All five code stages passed the harness, not a general production-readiness assessment. Web stages 2, 4, and 5 timed out at 180 seconds; stage 3 failed its checks. Both provider runs used two requested iterations, all suites, and continue-on-failure. These results compare the full provider/gateway/adapter paths, not isolated model quality.
 
-> **Generated:** `2026-09-16T22:35:50.168Z`  
+> **Generated:** `2026-09-17T00:24:51.195Z`  
 > **Directive Key:** `lr-zn-cl-ms-ts`  
 > **Wire Protocol:** `CHAT`  
 > **Gateway Target:** `http://10.32.34.172:7766/v1/messages`  
 > **Evaluated Suites:** `speed, code, web`  
-> **Pipeline Avg Speed:** `19.3 tok/s`  
+> **Pipeline Avg Speed:** `38.9 tok/s`  
 
 ---
 
@@ -26,7 +26,7 @@ Excels in structured output generation, durable multi-turn context retention, an
 - ✅ High Streaming Throughput (1000 tok/s)
 
 **Operational Caveats & Boundaries:**
-- ⚠️ Elevated TTFT (32095ms) due to inference queueing or heavy thinking tokens
+- ⚠️ Elevated TTFT (31246ms) due to inference queueing or heavy thinking tokens
 - ⚠️ Sub-optimal web frontend or accessibility compliance
 
 ---
@@ -35,9 +35,9 @@ Excels in structured output generation, durable multi-turn context retention, an
 
 | Metric | Measured Value | Standard Target | Status |
 |---|---|---|---|
-| **Time to First Token (TTFT)** | `32095 ms` (min: `32049 ms`, max: `32140 ms`) | `< 2,000 ms` | 🔴 High Latency |
+| **Time to First Token (TTFT)** | `31246 ms` (min: `29412 ms`, max: `33080 ms`) | `< 2,000 ms` | 🔴 High Latency |
 | **Streaming Throughput** | `1000 tok/s` | `> 30 tok/s` | 🟢 High |
-| **Average Duration** | `32095 ms` | - | ℹ️ |
+| **Average Duration** | `31246 ms` | - | ℹ️ |
 | **Average Output Tokens** | `1 tokens` | - | ℹ️ |
 | **Successful Benchmark Runs** | `2` | `>= 2` | 🟢 Complete |
 
@@ -61,13 +61,13 @@ Excels in structured output generation, durable multi-turn context retention, an
 
 | Stage # | Stage Name | Score | Status | Duration | Sub-Check Pass Rate |
 |---|---|---|---|---|---|
-| **1** | Stage 1: DOM Structure & Layout Fidelity | `94/100` | 🟢 PASSED | `160184 ms` | `3/3` checks |
-| **2** | Stage 2: Responsive Design & Mobile Scaling | `0/100` | 🔴 FAILED | `180004 ms` | `0/1` checks |
-| **3** | Stage 3: Interactive State & Event Architecture | `0/100` | 🔴 FAILED | `130293 ms` | `0/4` checks |
-| **4** | Stage 4: Code Hygiene & Anti-Hallucination Guardrails | `0/100` | 🔴 FAILED | `180017 ms` | `0/1` checks |
-| **5** | Stage 5: Semantic Accessibility & ARIA Compliance | `0/100` | 🔴 FAILED | `180023 ms` | `0/1` checks |
+| **1** | Stage 1: DOM Structure & Layout Fidelity | `90/100` | 🟢 PASSED | `170802 ms` | `3/3` checks |
+| **2** | Stage 2: Responsive Design & Mobile Scaling | `0/100` | 🔴 FAILED | `180025 ms` | `0/1` checks |
+| **3** | Stage 3: Interactive State & Event Architecture | `0/100` | 🔴 FAILED | `154758 ms` | `0/4` checks |
+| **4** | Stage 4: Code Hygiene & Anti-Hallucination Guardrails | `0/100` | 🔴 FAILED | `180005 ms` | `0/1` checks |
+| **5** | Stage 5: Semantic Accessibility & ARIA Compliance | `0/100` | 🔴 FAILED | `180005 ms` | `0/1` checks |
 
-**Web Composite Score:** `19/100`  
+**Web Composite Score:** `18/100`  
 **Web Suite Verdict:** 🔴 **NEEDS REFINEMENT**
 
 ---
@@ -76,17 +76,17 @@ Excels in structured output generation, durable multi-turn context retention, an
 
 | Stage / Test | Duration | Tokens | Speed (tok/s) | Status |
 |---|:---:|:---:|:---:|:---:|
-| 1. Wire Protocol & Long Context Hydration | 15555 ms | 15 | 1.0 tok/s | ✅ Passed |
-| 2. Pydantic AI 2.0 Schema & Self-Correction Retry | 5769 ms | 69 | 12.0 tok/s | ✅ Passed |
-| 3. Dynamic State, Agentic Loop & Speed | 10723 ms | 697 | 65.0 tok/s | ✅ Passed |
-| 4. Surgical Coding & Patch Fidelity (str_replace) | 14325 ms | 352 | 24.6 tok/s | ✅ Passed |
-| 5. Security & Indirect Prompt Injection Resilience | 17895 ms | 109 | 6.1 tok/s | ✅ Passed |
-| Web 1. Stage 1: DOM Structure & Layout Fidelity | 160184 ms | - | - | ✅ Passed |
-| Web 2. Stage 2: Responsive Design & Mobile Scaling | 180004 ms | - | - | ❌ Failed |
-| Web 3. Stage 3: Interactive State & Event Architecture | 130293 ms | - | - | ❌ Failed |
-| Web 4. Stage 4: Code Hygiene & Anti-Hallucination Guardrails | 180017 ms | - | - | ❌ Failed |
-| Web 5. Stage 5: Semantic Accessibility & ARIA Compliance | 180023 ms | - | - | ❌ Failed |
-| **Pipeline Aggregate** | **894788 ms** | **1242** | **19.3 tok/s (avg)** | ❌ Failed |
+| 1. Wire Protocol & Long Context Hydration | 2505 ms | 34 | 13.6 tok/s | ✅ Passed |
+| 2. Pydantic AI 2.0 Schema & Self-Correction Retry | 5084 ms | 73 | 14.4 tok/s | ✅ Passed |
+| 3. Dynamic State, Agentic Loop & Speed | 29659 ms | 1051 | 35.4 tok/s | ✅ Passed |
+| 4. Surgical Coding & Patch Fidelity (str_replace) | 7000 ms | 616 | 88.0 tok/s | ✅ Passed |
+| 5. Security & Indirect Prompt Injection Resilience | 8884 ms | 291 | 32.8 tok/s | ✅ Passed |
+| Web 1. Stage 1: DOM Structure & Layout Fidelity | 170802 ms | - | - | ✅ Passed |
+| Web 2. Stage 2: Responsive Design & Mobile Scaling | 180025 ms | - | - | ❌ Failed |
+| Web 3. Stage 3: Interactive State & Event Architecture | 154758 ms | - | - | ❌ Failed |
+| Web 4. Stage 4: Code Hygiene & Anti-Hallucination Guardrails | 180005 ms | - | - | ❌ Failed |
+| Web 5. Stage 5: Semantic Accessibility & ARIA Compliance | 180005 ms | - | - | ❌ Failed |
+| **Pipeline Aggregate** | **918727 ms** | **2065** | **38.9 tok/s (avg)** | ❌ Failed |
 
 ---
 
@@ -96,10 +96,10 @@ Excels in structured output generation, durable multi-turn context retention, an
 |---|---|---|
 | pass@1 (Sample Mean) | 50.0% | Single-attempt pass probability |
 | pass@k | 100.0% | Success probability over k attempts |
-| Median TTFT | 32094.5 ms | 50th percentile time-to-first-token |
-| p95 Latency | 32135.5 ms | Tail latency bound |
-| Std Deviation | ±64.3 ms | Output consistency |
-| 95% Confidence Interval | [32005.3 ms, 32183.7 ms] | Expected true mean range |
+| Median TTFT | 31246.0 ms | 50th percentile time-to-first-token |
+| p95 Latency | 32896.6 ms | Tail latency bound |
+| Std Deviation | ±2593.7 ms | Output consistency |
+| 95% Confidence Interval | [27651.4 ms, 34840.6 ms] | Expected true mean range |
 
 ---
 
