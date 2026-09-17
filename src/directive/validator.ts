@@ -28,8 +28,12 @@ function extractFromAuthHeader(header: string | null): string | null {
     return null;
   }
   const trimmed = header.trim();
+  if (!trimmed || trimmed.toLowerCase() === "bearer") {
+    return null;
+  }
   if (trimmed.toLowerCase().startsWith("bearer ")) {
-    return trimmed.slice(7).trim();
+    const token = trimmed.slice(7).trim();
+    return token.length > 0 ? token : null;
   }
   return trimmed;
 }

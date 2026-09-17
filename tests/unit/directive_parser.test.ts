@@ -9,6 +9,7 @@ import {
 import {
   DIRECTIVE_ERROR_CODE,
   DIRECTIVE_ERROR_TYPE,
+  extractDirectiveToken,
   validateDirective,
 } from "../../src/directive/validator";
 
@@ -233,5 +234,31 @@ describe("Directive Validator — Zero-Fallback Strict 401 Rejections", () => {
     if (result.valid === false) {
       expect(result.error).toContain("Invalid API key directive");
     }
+  });
+
+  it("extracts directive token from valid Bearer authorization header", () => {
+    const req = new Request("http://localhost:7766/v1/chat/completions", {
+      headers: { authorization: "Bearer lr-or-oa-ch-no" },
+    });
+    expect(extractDirectiveToken(req)).toBe("lr-or-oa-ch-no");
+  });
+
+  it("returns null for empty Bearer authorization header", () => {
+    const req1 = new Request("http://localhost:7766/v1/chat/completions", {
+      headers: { authorization: "Bearer" },
+    });
+    expect(extractDirectiveToken(req1)).toBeNull();
+
+    const req2 = new Request("http://localhost:7766/v1/chat/completions", {
+      headers: { authorization: "Bearer   " },
+    });
+    expect(extractDirectiveToken(req2)).toBeNull();
+  });
+
+  it("falls back to URL query parameter if Bearer header is empty", () => {
+    const req = new Request("http://localhost:7766/v1/chat/completions?key=lr-or-oa-ch-no", {
+      headers: { authorization: "Bearer" },
+    });
+    expect(extractDirectiveToken(req)).toBe("lr-or-oa-ch-no");
   });
 });
