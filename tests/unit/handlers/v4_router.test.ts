@@ -39,30 +39,41 @@ describe("v4 router dispatcher", () => {
 
   describe("thin handler routing", () => {
     it("dispatches POST /v1/chat/completions to openai_chat handler", async () => {
-      const req = new Request("http://localhost:7766/v1/chat/completions", {
-        method: "POST",
-        body: "{malformed-json",
-      });
-      const res = await dispatchV4(req, "lr-or-oa-ch-no", "req-chat-1");
-      expect(res.status).toBe(400);
-      const json = await res.json();
-      expect(json.error.message).toContain("Invalid JSON");
+      const paths = [
+        "/v1/chat/completions",
+        "/chat/completions",
+        "/api/v1/chat/completions",
+        "/v1/chat/completions/chat/completions",
+        "/v1/chat/completions/",
+      ];
+      for (const p of paths) {
+        const req = new Request(`http://localhost:7766${p}`, {
+          method: "POST",
+          body: "{malformed-json",
+        });
+        const res = await dispatchV4(req, "lr-or-oa-ch-no", "req-chat-1");
+        expect(res.status).toBe(400);
+        const json = await res.json();
+        expect(json.error.message).toContain("Invalid JSON");
+      }
     });
 
-    it("dispatches POST /v1/messages and /messages to anthropic_messages handler", async () => {
-      const req1 = new Request("http://localhost:7766/v1/messages", {
-        method: "POST",
-        body: "{malformed-json",
-      });
-      const res1 = await dispatchV4(req1, "lr-an-cl-ms-no", "req-msg-1");
-      expect(res1.status).toBe(400);
-
-      const req2 = new Request("http://localhost:7766/messages", {
-        method: "POST",
-        body: "{malformed-json",
-      });
-      const res2 = await dispatchV4(req2, "lr-an-cl-ms-no", "req-msg-2");
-      expect(res2.status).toBe(400);
+    it("dispatches POST /v1/messages and aliases to anthropic_messages handler", async () => {
+      const paths = [
+        "/v1/messages",
+        "/messages",
+        "/api/v1/messages",
+        "/v1/messages/messages",
+        "/messages/messages",
+      ];
+      for (const p of paths) {
+        const req = new Request(`http://localhost:7766${p}`, {
+          method: "POST",
+          body: "{malformed-json",
+        });
+        const res = await dispatchV4(req, "lr-an-cl-ms-no", "req-msg-alias");
+        expect(res.status).toBe(400);
+      }
     });
 
     it("dispatches POST /v1/responses to openai_responses handler", async () => {

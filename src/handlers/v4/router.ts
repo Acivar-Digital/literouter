@@ -163,6 +163,29 @@ function handleTraceEndpoints(url: URL, path: string, rawKey: string): Response 
   return handleTraceList(url);
 }
 
+const CHAT_PATHS: ReadonlySet<string> = new Set([
+  "/v1/chat/completions",
+  "/chat/completions",
+  "/api/v1/chat/completions",
+  "/v1/chat/completions/chat/completions",
+  "/chat/completions/chat/completions",
+]);
+
+const ANTHROPIC_PATHS: ReadonlySet<string> = new Set([
+  "/v1/messages",
+  "/messages",
+  "/api/v1/messages",
+  "/v1/messages/messages",
+  "/messages/messages",
+]);
+
+const RESPONSES_PATHS: ReadonlySet<string> = new Set([
+  "/v1/responses",
+  "/responses",
+  "/api/v1/responses",
+  "/v1/responses/responses",
+]);
+
 function isGoogleNativePath(path: string): boolean {
   if (!path.startsWith("/v1beta/models/") && !path.startsWith("/v1/models/")) {
     return false;
@@ -180,13 +203,13 @@ function dispatchPostRoute(
   rawKey: string,
   reqId: string
 ): Promise<Response> | null {
-  if (path === "/v1/chat/completions") {
+  if (CHAT_PATHS.has(path)) {
     return handleV4OpenAIChat(req, rawKey, reqId);
   }
-  if (path === "/v1/messages" || path === "/messages") {
+  if (ANTHROPIC_PATHS.has(path)) {
     return handleV4AnthropicMessages(req, rawKey, reqId);
   }
-  if (path === "/v1/responses") {
+  if (RESPONSES_PATHS.has(path)) {
     return handleV4OpenAIResponses(req, rawKey, reqId);
   }
   if (isGoogleNativePath(path)) {
@@ -204,7 +227,8 @@ export async function dispatchV4(
   reqId: string
 ): Promise<Response> {
   const url = new URL(req.url);
-  const path = url.pathname;
+  const rawPath = url.pathname;
+  const path = rawPath.length > 1 && rawPath.endsWith("/") ? rawPath.slice(0, -1) : rawPath;
 
   if (isTracePath(path)) {
     return handleTraceEndpoints(url, path, rawKey);

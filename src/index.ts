@@ -195,14 +195,43 @@ function handleHealthCheck(): Response {
 
 type RouteHandler = (req: Request, rawKey: string, reqId: string) => Promise<Response>;
 
+export const CHAT_PATHS: ReadonlySet<string> = new Set([
+  "/v1/chat/completions",
+  "/chat/completions",
+  "/api/v1/chat/completions",
+  "/v1/chat/completions/chat/completions",
+  "/chat/completions/chat/completions",
+]);
+
+export const RESPONSES_PATHS: ReadonlySet<string> = new Set([
+  "/v1/responses",
+  "/responses",
+  "/api/v1/responses",
+  "/v1/responses/responses",
+]);
+
+export const MODELS_PATHS: ReadonlySet<string> = new Set([
+  "/v1/models",
+  "/v1beta/models",
+  "/models",
+  "/api/v1/models",
+]);
+
 const ROUTE_MAP: Readonly<Record<string, RouteHandler>> = {
   "/v1/chat/completions": handleOpenAICompat,
+  "/chat/completions": handleOpenAICompat,
+  "/api/v1/chat/completions": handleOpenAICompat,
+  "/v1/chat/completions/chat/completions": handleOpenAICompat,
+  "/chat/completions/chat/completions": handleOpenAICompat,
   "/v1/messages": handleAnthropicCompat,
   "/messages": handleAnthropicCompat,
   "/api/v1/messages": handleAnthropicCompat,
+  "/v1/messages/messages": handleAnthropicCompat,
+  "/messages/messages": handleAnthropicCompat,
   "/v1/messages/count_tokens": handleAnthropicCountTokens,
   "/messages/count_tokens": handleAnthropicCountTokens,
   "/api/v1/messages/count_tokens": handleAnthropicCountTokens,
+  "/v1/messages/messages/count_tokens": handleAnthropicCountTokens,
 };
 
 const SYSTEM_MAP: Readonly<Record<string, () => Response>> = {
@@ -212,7 +241,7 @@ const SYSTEM_MAP: Readonly<Record<string, () => Response>> = {
 };
 
 function dispatchModelsRoute(path: string, req: Request, rawKey: string): Promise<Response> | null {
-  if (path === "/v1/models" || path === "/v1beta/models") {
+  if (MODELS_PATHS.has(path)) {
     if (!rawKey) {
       return Promise.resolve(
         Response.json(
@@ -280,7 +309,7 @@ export function validateEndpointMatch(
   pathname: string,
   directive?: { readonly endpoint?: string } | null
 ): Response | null {
-  if (pathname === "/v1/chat/completions" && directive?.endpoint === "rs") {
+  if (CHAT_PATHS.has(pathname) && directive?.endpoint === "rs") {
     return new Response(
       JSON.stringify({
         error: {
@@ -291,7 +320,7 @@ export function validateEndpointMatch(
       { status: 400, headers: { "Content-Type": "application/json" } }
     );
   }
-  if (pathname === "/v1/responses" && directive?.endpoint === "ch") {
+  if (RESPONSES_PATHS.has(pathname) && directive?.endpoint === "ch") {
     return new Response(
       JSON.stringify({
         error: {
@@ -322,7 +351,7 @@ function dispatchGcpRoute(
   if (!isGcpRequest(rawKey, parsed)) {
     return null;
   }
-  if (path === "/v1/chat/completions" || path.startsWith("/v1beta/openai/")) {
+  if (CHAT_PATHS.has(path) || path.startsWith("/v1beta/openai/")) {
     return handleGcpCompat(req, rawKey, reqId);
   }
   return null;
@@ -334,7 +363,7 @@ function dispatchResponsesRoute(
   directive: Directive,
   state?: GatewayState
 ): Promise<Response> | null {
-  if (req.method === "POST" && path === "/v1/responses") {
+  if (req.method === "POST" && RESPONSES_PATHS.has(path)) {
     return handleOpenAiOriginal(req, directive, state);
   }
   return null;
@@ -348,7 +377,8 @@ export async function dispatchRoute(
   reqId: string,
   state?: GatewayState
 ): Promise<Response> {
-  const path = new URL(req.url).pathname;
+  const rawPath = new URL(req.url).pathname;
+  const path = rawPath.length > 1 && rawPath.endsWith("/") ? rawPath.slice(0, -1) : rawPath;
 
   if (path === "/admin/pool/reset") {
     return handleAdminPoolReset(req, rawKey);

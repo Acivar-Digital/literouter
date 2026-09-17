@@ -151,4 +151,81 @@ describe("Endpoint Fail-Fast Guards & Route Dispatch (literouter-52gt)", () => {
       expect(data.error.message).toContain("Responses API (-rs-). Use /v1/responses.");
     });
   });
+
+  describe("completions path aliases and trailing slash support", () => {
+    it("validates endpoint mismatch on chat aliases", () => {
+      const aliases = [
+        "/chat/completions",
+        "/api/v1/chat/completions",
+        "/v1/chat/completions/chat/completions",
+        "/chat/completions/chat/completions",
+      ];
+      for (const path of aliases) {
+        const res = validateEndpointMatch(path, { endpoint: "rs" });
+        expect(res).not.toBeNull();
+        expect(res!.status).toBe(400);
+      }
+    });
+
+    it("validates endpoint mismatch on responses aliases", () => {
+      const aliases = [
+        "/responses",
+        "/api/v1/responses",
+        "/v1/responses/responses",
+      ];
+      for (const path of aliases) {
+        const res = validateEndpointMatch(path, { endpoint: "ch" });
+        expect(res).not.toBeNull();
+        expect(res!.status).toBe(400);
+      }
+    });
+
+    it("does not 404 for chat completions path aliases", async () => {
+      const paths = [
+        "http://localhost:7766/chat/completions",
+        "http://localhost:7766/api/v1/chat/completions",
+        "http://localhost:7766/v1/chat/completions/chat/completions",
+        "http://localhost:7766/v1/chat/completions/",
+      ];
+
+      for (const url of paths) {
+        // Send a request with invalid JSON body - if the route is matched, it parses body and returns 400 "Malformed JSON body", NOT 404 "Not Found"
+        const req = new Request(url, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: "Bearer lr-or-oa-ch-no",
+          },
+          body: "invalid-json",
+        });
+
+        const res = await dispatchRoute(req, "lr-or-oa-ch-no", "req_test_alias");
+        expect(res.status).toBe(400);
+        const data = await res.json();
+        expect(data.error.message).toBe("Malformed JSON body");
+      }
+    });
+
+    it("routes /models and /api/v1/models without 404", async () => {
+      const paths = [
+        "http://localhost:7766/models",
+        "http://localhost:7766/api/v1/models",
+      ];
+
+      for (const url of paths) {
+        const req = new Request(url, {
+          method: "GET",
+          headers: {
+            Authorization: "Bearer lr-or-oa-ch-no",
+          },
+        });
+
+        const res = await dispatchRoute(req, "lr-or-oa-ch-no", "req_test_models_alias");
+        expect(res.status).toBe(200);
+        const data = await res.json();
+        expect(data.object).toBe("list");
+        expect(Array.isArray(data.data)).toBe(true);
+      }
+    });
+  });
 });
