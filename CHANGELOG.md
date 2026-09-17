@@ -5,6 +5,7 @@ All notable changes to LiteRouter will be documented in this file.
 ## [Unreleased] — 2026-09-17
 
 ### Fixed
+- Enforced strict positional CLI argument validation for evaluation scripts (`eval/eval.ts`, `eval/code.ts`, `eval/web.ts`): requires `<model_name>`, `<provider>`, and `<api_key>` in exact positional order. Validates provider against `config/providers.json` and fails fast with detailed diagnostics if any argument is missing or unrecognized (literouter-6ep6).
 - Added placeholder rows and explicit reasons (`⏭️ SKIPPED`) for unexecuted or aborted benchmark stages in Markdown report generation (`eval/eval.ts`). Aborted stages now clearly show fail-fast upstream stage failure or CLI filter isolation, preventing missing stages from appearing ambiguous (literouter-bmpc).
 - Fixed Zen upstream identity gating for Anthropic Messages wire: aligned session ID generation with OpenCode's canonical format (`ses_${hex8}8ffe${tail14}`), forwarded client headers into `mergeOutboundHeaders`, and ensured attribution headers (`Referer`, `User-Agent`) and session tracking prevent upstream 403 `OpenCode's free tier can only be used from within OpenCode` (literouter-butp).
 - Non-streaming dispatch now returns a diagnostic 502 for malformed/non-JSON successful upstream responses instead of retrying JSON parse failures into an opaque 500. Diagnostics include upstream status and bounded media type, never the response body; transport retries remain unchanged. Added HTML, malformed JSON, and valid-JSON regression coverage (literouter-39gf).

@@ -39,6 +39,7 @@ import { runStage2Responsive } from "./stages_web/stage2_responsive";
 import { runStage3State } from "./stages_web/stage3_state";
 import { runStage4Hygiene } from "./stages_web/stage4_hygiene";
 import { runStage5A11y } from "./stages_web/stage5_a11y";
+import { validateStrictEvalArgs } from "./validate_cli";
 
 export {
   DEFAULT_DASHBOARD_MOCKUP,
@@ -457,8 +458,8 @@ export async function runWebEvaluation(options: WebEvalOptions = {}): Promise<We
   };
 }
 
-export async function main(): Promise<void> {
-  const options = parseArgs();
+export async function main(providedOpts?: WebEvalOptions): Promise<void> {
+  const options = providedOpts ?? parseArgs();
   const result = await runWebEvaluation(options);
   if (!result.isProductionReady) {
     process.exit(1);
@@ -466,8 +467,17 @@ export async function main(): Promise<void> {
 }
 
 if (import.meta.main) {
-  main().catch((err) => {
-    console.error("\x1b[31mExecution error in web eval:\x1b[0m", err);
+  try {
+    const validated = validateStrictEvalArgs(process.argv.slice(2), "eval/web.ts");
+    const options = parseArgs(process.argv.slice(2));
+    options.model = validated.model;
+    options.directiveKey = validated.directiveKey;
+    main(options).catch((err) => {
+      console.error("\x1b[31mExecution error in web eval:\x1b[0m", err);
+      process.exit(1);
+    });
+  } catch (err) {
+    console.error((err as Error).message);
     process.exit(1);
-  });
+  }
 }

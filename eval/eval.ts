@@ -41,12 +41,17 @@ import {
 import type { StageResult as CodeStageResult } from "./stages/types";
 import { REASONING_TRANSCRIPT_KEY } from "./stages/types";
 import type { StageResult as WebStageResult } from "./stages_web/types";
+import {
+  validateStrictEvalArgs,
+  extractPositionalAndNamed,
+} from "./validate_cli";
 
 export type SuiteType = "speed" | "code" | "web";
 export type ArchitecturalRole = "Orchestrator" | "General Coder" | "Explorer";
 
 export interface EvalOrchestratorOptions {
   model?: string;
+  provider?: string;
   suites?: SuiteType[];
   directiveKey?: string;
   gatewayUrl?: string;
@@ -990,38 +995,110 @@ export function printHelp(): void {
   console.log(`
 \x1b[1m\x1b[36mLiteRouter Master Evaluation Orchestrator (eval/eval.ts)\x1b[0m
 
-\x1b[1mUSAGE:\x1b[0m
-  bun run eval/eval.ts [model_name] [options]
+\x1b[1mUSAGE (ARGUMENTS IN EXACT ORDER):\x1b[0m
+  bun run eval/eval.ts <model_name> <provider> <api_key> [options]
+
+\x1b[1mARGUMENTS:\x1b[0m
+  1. <model_name>        Target model identifier (e.g. google/gemini-3.5-flash-lite, stealth/union-alpha)
+  2. <provider>          Provider in config/providers.json (openrouter, nvidia, google, zen, gcp / or, nv, gg, zn, gc)
+  3. <api_key>           LiteRouter directive key (e.g. lr-gg-gg-gc-no, lr-or-oa-ch-no, lr-zn-cl-ms-no)
 
 \x1b[1mEXAMPLES:\x1b[0m
-  bun run eval/eval.ts nex-agi/nex-n2.5-pro:free
-  bun run eval/eval.ts inclusionai/ling-3.0-flash-vl:free --suites speed,web
-  bun run eval/eval.ts muse-spark-1.3-contributor-free --wire rs --key lr-zn-oo-rs-no
-  bun run eval/eval.ts <model> --suites code --stage 4 --continue
+  bun run eval/eval.ts google/gemini-3.5-flash-lite google lr-gg-gg-gc-no
+  bun run eval/eval.ts stealth/union-alpha openrouter lr-or-oa-ch-no --suites speed,code
+  bun run eval/eval.ts union-alpha zen lr-zn-cl-ms-no --wire messages --continue
 
 \x1b[1mOPTIONS:\x1b[0m
-  --suites <list>       Comma-separated benchmark suites to execute:
-                        speed, code, web (default: speed,code,web)
-  --key, --directive <k> LiteRouter directive key (default: lr-or-oa-ch-no)
-  --url <url>           LiteRouter gateway endpoint URL
-  --wire <chat|rs>      Wire protocol ('chat' or 'rs'/'responses', auto-detected)
-  --stage <n>           Run ONLY a specific stage (1-5) for code / web suites
-  --reasoning <effort>  Reasoning effort for thinking models: none, medium, high
-  --reasoning-transcript  Preserve upstream thinking (ts-nuance key) and append
-                          transcripts to the report (default: ON, code suite only)
+  --suites <list>        Comma-separated benchmark suites to execute:
+                         speed, code, web (default: speed,code,web)
+  --url <url>            LiteRouter gateway endpoint URL
+  --wire <chat|rs|ms>    Wire protocol ('chat', 'rs'/'responses', 'messages'/'ms')
+  --stage <n>            Run ONLY a specific stage (1-5) for code / web suites
+  --reasoning <effort>   Reasoning effort for thinking models: none, medium, high
+  --reasoning-transcript Preserve upstream thinking (ts-nuance key) and append transcripts
   --no-reasoning-transcript Scrub thinking, no transcript appendix
-  --runs <n>            Number of benchmark iterations per test (default: 2)
-  --continue            Continue suite execution on stage failure (Diagnostic Mode)
-  --skip-report         Do not write Markdown report card to eval/reports/
-  --image <path_or_url> Custom image input for web vision-language evaluation
-  -h, --help            Show this help manual and exit
+  --runs <n>             Number of benchmark iterations per test (default: 2)
+  --continue             Continue suite execution on stage failure (Diagnostic Mode)
+  --skip-report          Do not write Markdown report card to eval/reports/
+  --image <path_or_url>  Custom image input for web vision-language evaluation
+  -h, --help             Show this help manual and exit
 
 \x1b[1mREPORT OUTPUT:\x1b[0m
   Saved automatically to \x1b[33meval/reports/<sanitized_model_name>.md\x1b[0m
 `);
 }
 
-export function parseCliArgs(argv: string[] = process.argv.slice(2)): EvalOrchestratorOptions {
+export function parseCliArgs(
+  argv: string[] = process.argv.slice(2),
+  config: { strict?: boolean } = {}
+): EvalOrchestratorOptions {
+  for (const arg of argv) {
+    if (arg === "-h" || arg === "--help") {
+      printHelp();
+      process.exit(0);
+    }
+  }
+
+  if (config.strict) {
+    const validated = validateStrictEvalArgs(argv, "eval/eval.ts");
+    const { named } = extractPositionalAndNamed(argv);
+
+    const opts: EvalOrchestratorOptions = {
+      model: validated.model,
+      provider: validated.provider,
+      directiveKey: validated.directiveKey,
+      suites: ["speed", "code", "web"],
+      runs: 2,
+      continueOnFailure: false,
+      skipReport: false,
+      reasoningTranscript: true,
+    };
+
+    if (typeof named["--url"] === "string") opts.gatewayUrl = named["--url"];
+    if (typeof named["--wire"] === "string") {
+      const val = named["--wire"].toLowerCase();
+      opts.wire =
+        val === "rs" || val === "responses"
+          ? "responses"
+          : val === "chat"
+            ? "chat"
+            : val === "messages" || val === "ms" || val === "anthropic"
+              ? "messages"
+              : "auto";
+    }
+    if (typeof named["--suites"] === "string") {
+      const parts = named["--suites"].split(",").map((s) => s.trim().toLowerCase());
+      const validSuites: SuiteType[] = [];
+      for (const p of parts) {
+        if (p === "speed" || p === "code" || p === "web") validSuites.push(p);
+      }
+      if (validSuites.length > 0) opts.suites = validSuites;
+    }
+    if (typeof named["--stage"] === "string") {
+      const val = Number.parseInt(named["--stage"], 10);
+      if (!Number.isNaN(val) && val >= 1 && val <= 5) opts.stage = val;
+    }
+    if (typeof named["--reasoning"] === "string") {
+      const effort = named["--reasoning"];
+      if (effort === "high" || effort === "medium" || effort === "none") {
+        opts.reasoningEffort = effort as "high" | "medium" | "none";
+      }
+    }
+    if (typeof named["--runs"] === "string") {
+      const r = Number.parseInt(named["--runs"], 10);
+      if (!Number.isNaN(r) && r > 0) opts.runs = r;
+    }
+    if (typeof named["--image"] === "string") opts.image = named["--image"];
+    if (named["--continue"] || named["--no-fail-fast"]) opts.continueOnFailure = true;
+    if (named["--reasoning-transcript"]) opts.reasoningTranscript = true;
+    if (named["--no-reasoning-transcript"]) opts.reasoningTranscript = false;
+    if (named["--skip-report"]) opts.skipReport = true;
+
+    return opts;
+  }
+
+  // Non-strict fallback for tests and programmatic usage
+  const { positionals, named } = extractPositionalAndNamed(argv);
   const opts: EvalOrchestratorOptions = {
     suites: ["speed", "code", "web"],
     runs: 2,
@@ -1030,68 +1107,53 @@ export function parseCliArgs(argv: string[] = process.argv.slice(2)): EvalOrches
     reasoningTranscript: true,
   };
 
-  for (let i = 0; i < argv.length; i++) {
-    const arg = argv[i];
-    if (!arg) continue;
+  if (positionals[0]) opts.model = positionals[0];
+  if (positionals[1]) opts.provider = positionals[1];
+  if (positionals[2]) opts.directiveKey = positionals[2];
 
-    if (arg === "-h" || arg === "--help") {
-      printHelp();
-      process.exit(0);
-    }
-    if ((arg === "--key" || arg === "--directive") && i + 1 < argv.length) {
-      opts.directiveKey = argv[++i];
-    } else if (arg === "--url" && i + 1 < argv.length) {
-      opts.gatewayUrl = argv[++i];
-    } else if (arg === "--wire" && i + 1 < argv.length) {
-      const val = argv[++i]?.toLowerCase();
-      opts.wire = val === "rs" || val === "responses"
+  if (typeof named["--model"] === "string") opts.model = named["--model"];
+  if (typeof named["--provider"] === "string") opts.provider = named["--provider"];
+  if (typeof named["--key"] === "string") opts.directiveKey = named["--key"];
+  if (typeof named["--directive"] === "string") opts.directiveKey = named["--directive"];
+  if (typeof named["--url"] === "string") opts.gatewayUrl = named["--url"];
+  if (typeof named["--wire"] === "string") {
+    const val = named["--wire"].toLowerCase();
+    opts.wire =
+      val === "rs" || val === "responses"
         ? "responses"
         : val === "chat"
           ? "chat"
-          : (val === "messages" || val === "ms" || val === "anthropic")
+          : val === "messages" || val === "ms" || val === "anthropic"
             ? "messages"
             : "auto";
-    } else if (arg === "--suites" && i + 1 < argv.length) {
-      const raw = argv[++i];
-      if (raw) {
-        const parts = raw.split(",").map((s) => s.trim().toLowerCase());
-        const validSuites: SuiteType[] = [];
-        for (const p of parts) {
-          if (p === "speed" || p === "code" || p === "web") {
-            validSuites.push(p);
-          }
-        }
-        if (validSuites.length > 0) {
-          opts.suites = validSuites;
-        }
-      }
-    } else if (arg === "--stage" && i + 1 < argv.length) {
-      const val = Number.parseInt(argv[++i] ?? "", 10);
-      if (!Number.isNaN(val) && val >= 1 && val <= 5) {
-        opts.stage = val;
-      }
-    } else if (arg === "--reasoning" && i + 1 < argv.length) {
-      const effort = argv[++i];
-      if (effort === "high" || effort === "medium" || effort === "none") {
-        opts.reasoningEffort = effort;
-      }
-    } else if (arg === "--runs" && i + 1 < argv.length) {
-      const r = Number.parseInt(argv[++i] ?? "", 10);
-      if (!Number.isNaN(r) && r > 0) opts.runs = r;
-    } else if (arg === "--image" && i + 1 < argv.length) {
-      opts.image = argv[++i];
-    } else if (arg === "--continue" || arg === "--no-fail-fast") {
-      opts.continueOnFailure = true;
-    } else if (arg === "--reasoning-transcript") {
-      opts.reasoningTranscript = true;
-    } else if (arg === "--no-reasoning-transcript") {
-      opts.reasoningTranscript = false;
-    } else if (arg === "--skip-report") {
-      opts.skipReport = true;
-    } else if (!arg.startsWith("-")) {
-      opts.model = arg;
+  }
+  if (typeof named["--suites"] === "string") {
+    const parts = named["--suites"].split(",").map((s) => s.trim().toLowerCase());
+    const validSuites: SuiteType[] = [];
+    for (const p of parts) {
+      if (p === "speed" || p === "code" || p === "web") validSuites.push(p);
+    }
+    if (validSuites.length > 0) opts.suites = validSuites;
+  }
+  if (typeof named["--stage"] === "string") {
+    const val = Number.parseInt(named["--stage"], 10);
+    if (!Number.isNaN(val) && val >= 1 && val <= 5) opts.stage = val;
+  }
+  if (typeof named["--reasoning"] === "string") {
+    const effort = named["--reasoning"];
+    if (effort === "high" || effort === "medium" || effort === "none") {
+      opts.reasoningEffort = effort as "high" | "medium" | "none";
     }
   }
+  if (typeof named["--runs"] === "string") {
+    const r = Number.parseInt(named["--runs"], 10);
+    if (!Number.isNaN(r) && r > 0) opts.runs = r;
+  }
+  if (typeof named["--image"] === "string") opts.image = named["--image"];
+  if (named["--continue"] || named["--no-fail-fast"]) opts.continueOnFailure = true;
+  if (named["--reasoning-transcript"]) opts.reasoningTranscript = true;
+  if (named["--no-reasoning-transcript"]) opts.reasoningTranscript = false;
+  if (named["--skip-report"]) opts.skipReport = true;
 
   return opts;
 }
@@ -1247,21 +1309,26 @@ export async function runMasterEvaluation(
 }
 
 if (import.meta.main) {
-  const options = parseCliArgs();
-  if (options.wire === "messages") {
-    // Anthropic Messages wire: bridge OpenAI-shaped stage traffic for the
-    // whole process (idempotent). Native x-api-key callers pass through.
-    const { installAnthropicBridge } = await import("./anthropic_bridge");
-    installAnthropicBridge();
-  }
-  runMasterEvaluation(options)
-    .then((summary) => {
-      if (!summary.allSuitesPassed && !options.continueOnFailure) {
+  try {
+    const options = parseCliArgs(process.argv.slice(2), { strict: true });
+    if (options.wire === "messages") {
+      // Anthropic Messages wire: bridge OpenAI-shaped stage traffic for the
+      // whole process (idempotent). Native x-api-key callers pass through.
+      const { installAnthropicBridge } = await import("./anthropic_bridge");
+      installAnthropicBridge();
+    }
+    runMasterEvaluation(options)
+      .then((summary) => {
+        if (!summary.allSuitesPassed && !options.continueOnFailure) {
+          process.exit(1);
+        }
+      })
+      .catch((err) => {
+        console.error("\x1b[31mFatal error in master evaluation orchestrator:\x1b[0m", err);
         process.exit(1);
-      }
-    })
-    .catch((err) => {
-      console.error("\x1b[31mFatal error in master evaluation orchestrator:\x1b[0m", err);
-      process.exit(1);
-    });
+      });
+  } catch (err) {
+    console.error((err as Error).message);
+    process.exit(1);
+  }
 }

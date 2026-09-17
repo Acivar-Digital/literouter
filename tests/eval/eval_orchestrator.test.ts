@@ -19,6 +19,10 @@ import {
   buildStatisticalAnalysisSection,
   type EvalOrchestratorSummary,
 } from "../../eval/eval";
+import {
+  validateStrictEvalArgs,
+  loadRegisteredProviders,
+} from "../../eval/validate_cli";
 
 describe("eval/eval.ts Master Orchestrator Unit Tests", () => {
   describe("sanitizeModelName", () => {
@@ -64,6 +68,62 @@ describe("eval/eval.ts Master Orchestrator Unit Tests", () => {
       expect(opts.continueOnFailure).toBe(true);
       expect(opts.skipReport).toBe(true);
       expect(opts.runs).toBe(5);
+    });
+
+    it("should strictly enforce <model> <provider> <api_key> order and validate provider in strict mode", () => {
+      const opts = parseCliArgs(
+        ["google/gemini-3.5-flash-lite", "google", "lr-gg-gg-gc-no", "--suites", "speed,code"],
+        { strict: true }
+      );
+      expect(opts.model).toBe("google/gemini-3.5-flash-lite");
+      expect(opts.provider).toBe("google");
+      expect(opts.directiveKey).toBe("lr-gg-gg-gc-no");
+      expect(opts.suites).toEqual(["speed", "code"]);
+    });
+
+    it("should fail loudly when model is missing in strict mode", () => {
+      expect(() => parseCliArgs([], { strict: true })).toThrow(/Missing required argument #1: <model_name>/);
+    });
+
+    it("should fail loudly when provider is missing in strict mode", () => {
+      expect(() => parseCliArgs(["my-model"], { strict: true })).toThrow(/Missing required argument #2: <provider>/);
+    });
+
+    it("should fail loudly when provider is not in config/providers.json in strict mode", () => {
+      expect(() => parseCliArgs(["my-model", "bogus-provider", "lr-key"], { strict: true })).toThrow(/Unrecognized provider 'bogus-provider'/);
+    });
+
+    it("should fail loudly when api_key is missing in strict mode", () => {
+      expect(() => parseCliArgs(["my-model", "google"], { strict: true })).toThrow(/Missing required argument #3: <api_key>/);
+    });
+  });
+
+  describe("eval/validate_cli.ts Strict Provider Validation", () => {
+    it("should load valid providers from config/providers.json", () => {
+      const providers = loadRegisteredProviders();
+      expect(providers.has("openrouter")).toBe(true);
+      expect(providers.has("or")).toBe(true);
+      expect(providers.has("google")).toBe(true);
+      expect(providers.has("gg")).toBe(true);
+      expect(providers.has("zen")).toBe(true);
+      expect(providers.has("zn")).toBe(true);
+      expect(providers.has("nvidia")).toBe(true);
+      expect(providers.has("nv")).toBe(true);
+      expect(providers.has("gcp")).toBe(true);
+      expect(providers.has("gc")).toBe(true);
+    });
+
+    it("should validate and normalize full provider name and short code", () => {
+      const r1 = validateStrictEvalArgs(["test/model", "openrouter", "lr-or-oa-ch-no"]);
+      expect(r1.model).toBe("test/model");
+      expect(r1.provider).toBe("openrouter");
+      expect(r1.providerCode).toBe("or");
+      expect(r1.directiveKey).toBe("lr-or-oa-ch-no");
+
+      const r2 = validateStrictEvalArgs(["test/model", "zn", "lr-zn-cl-ms-no"]);
+      expect(r2.provider).toBe("zen");
+      expect(r2.providerCode).toBe("zn");
+      expect(r2.directiveKey).toBe("lr-zn-cl-ms-no");
     });
   });
 

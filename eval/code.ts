@@ -23,6 +23,7 @@ import { runStage2Pydantic as runStage2PydanticRs } from "./stages_rs/stage2_pyd
 import { runStage3Agentic as runStage3AgenticRs } from "./stages_rs/stage3_agentic";
 import { runStage4Patch as runStage4PatchRs } from "./stages_rs/stage4_patch";
 import { runStage5Security as runStage5SecurityRs } from "./stages_rs/stage5_security";
+import { validateStrictEvalArgs } from "./validate_cli";
 
 export interface CodeEvalOptions {
   model?: string;
@@ -335,15 +336,23 @@ export async function runCodeEvaluation(options: CodeEvalOptions = {}): Promise<
 export const runCodeEvalSuite = runCodeEvaluation;
 
 if (import.meta.main) {
-  const options = parseCliArgs();
-  runCodeEvaluation(options)
-    .then((summary) => {
-      if (!summary.allPassed) {
+  try {
+    const validated = validateStrictEvalArgs(process.argv.slice(2), "eval/code.ts");
+    const options = parseCliArgs(process.argv.slice(2));
+    options.model = validated.model;
+    options.directiveKey = validated.directiveKey;
+    runCodeEvaluation(options)
+      .then((summary) => {
+        if (!summary.allPassed) {
+          process.exit(1);
+        }
+      })
+      .catch((err) => {
+        console.error("Harness error:", err);
         process.exit(1);
-      }
-    })
-    .catch((err) => {
-      console.error("Harness error:", err);
-      process.exit(1);
-    });
+      });
+  } catch (err) {
+    console.error((err as Error).message);
+    process.exit(1);
+  }
 }
