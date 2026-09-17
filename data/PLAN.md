@@ -24,7 +24,7 @@ The primary goal is to provide a single-command, reproducible analytics process 
 As Senior QA overseeing gateway operations, model routing, and automated agent workflows, we are investigating five critical dimensions of system behavior:
 
 ### A. Reliability, Fault Tolerance & Error Topology
-* **Upstream Error Rates**: What percentage of inference calls fail (`status != 'SUCCESS'` or HTTP status $\ge 400$)?
+* **Upstream Error Rates**: What percentage of inference calls fail (raw `status = 'error'` — canonical values are lowercase `'ok'`/`'error'`, not `SUCCESS` — or HTTP status $\ge 400$)?
 * **Failure Categorization**: What is the breakdown of `finish_reason` (`stop`, `length`, `content_filter`, `error`, `tool_calls`)? Specifically:
   * How frequently do prompts hit context limits (`finish_reason == 'length'`)?
   * How frequently do tool calls terminate abnormally?
@@ -121,7 +121,7 @@ Once the raw records are downloaded, the pipeline executes the following determi
    * Preserve any dynamic or unmodeled keys in an unnested dictionary/struct without failing or dropping records when schema variations occur.
    * Extract operational settings from `model_parameters`: `temperature`, `top_p`, `max_tokens`.
 2. **Categorical Normalization**:
-   * Normalize `status` into clean enum values: `SUCCESS`, `ERROR`, `RATE_LIMIT` (429), `TIMEOUT`, `CANCELLED`.
+   * Normalize raw `status` (canonical raw values are lowercase `'ok'`/`'error'` per `data/docs/Google_BigQuery.md`) into clean derived enum values: `SUCCESS`, `ERROR`, `RATE_LIMIT` (429), `TIMEOUT`, `CANCELLED`.
    * Classify `finish_reason`: `NORMAL_STOP`, `MAX_TOKENS`, `TOOL_CALL`, `FILTERED`, `ERROR`.
 3. **Derived Analytical Metrics**:
    * **Throughput Proxy**: $\text{Tokens per Second} = \frac{\text{completion\_tokens}}{(\text{duration\_ms} / 1000)}$
@@ -214,3 +214,138 @@ Once this plan is reviewed and approved, implementation will proceed in four dis
    * Implement Polars/Pandas transformations to unnest `metadata`, calculate percentiles ($p_{50}, p_{90}, p_{99}$), and compute cache/reasoning metrics into `data/processed/`.
 4. **Report Generator**:
    * Implement the automated Markdown QA report builder outputting into `data/reports/`.
+
+---
+
+## 9. Canonical BigQuery Query Patterns (Appendix)
+
+> Source: `data/docs/Google_BigQuery.md`. All queries below target the real table
+> `project-7b250e67-6e23-4c02-ab5.openrouter.openrouter_traces`
+> (doc placeholder `my-gcp-project.openrouter.openrouter_traces` replaced).
+> **Status convention:** raw `status` values are lowercase `'ok'` / `'error'` — do NOT use `SUCCESS`.
+
+### 9.1 Cost analysis by model (30d, `status = 'ok'`)
+
+```sql
+SELECT
+  DATE(timestamp) AS day,
+  model,
+  SUM(total_cost) AS total_cost,
+  SUM(total_tokens) AS total_tokens,
+  COUNT(*) AS request_count
+FROM `project-7b250e67-6e23-4c02-ab5.openrouter.openrouter_traces`
+WHERE timestamp >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 30 DAY)
+  AND status = 'ok'
+GROUP BY day, model
+ORDER BY day DESC, total_cost DESC;
+```
+
+### 9.2 User activity analysis (7d)
+
+```sql
+SELECT
+  user_id,
+  COUNT(DISTINCT trace_id) AS trace_count,
+  COUNT(DISTINCT session_id) AS session_count,
+  SUM(total_tokens) AS total_tokens,
+  SUM(total_cost) AS total_cost,
+  AVG(duration_ms) AS avg_duration_ms
+FROM `project-7b250e67-6e23-4c02-ab5.openrouter.openrouter_traces`
+WHERE timestamp >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 7 DAY)
+GROUP BY user_id
+ORDER BY total_cost DESC;
+```
+
+### 9.3 Error analysis (1h, `status = 'error'`)
+
+```sql
+SELECT
+  trace_id,
+  timestamp,
+  model,
+  level,
+  finish_reason,
+  metadata,
+  input,
+  output
+FROM `project-7b250e67-6e23-4c02-ab5.openrouter.openrouter_traces`
+WHERE status = 'error'
+  AND timestamp >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 1 HOUR)
+ORDER BY timestamp DESC;
+```
+
+### 9.4 Provider performance comparison (p50/p95 via `APPROX_QUANTILES`)
+
+```sql
+SELECT
+  provider_name,
+  model,
+  AVG(duration_ms) AS avg_duration_ms,
+  APPROX_QUANTILES(duration_ms, 100)[OFFSET(50)] AS p50_duration_ms,
+  APPROX_QUANTILES(duration_ms, 100)[OFFSET(95)] AS p95_duration_ms,
+  COUNT(*) AS request_count
+FROM `project-7b250e67-6e23-4c02-ab5.openrouter.openrouter_traces`
+WHERE timestamp >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 7 DAY)
+  AND status = 'ok'
+GROUP BY provider_name, model
+HAVING request_count >= 10
+ORDER BY avg_duration_ms;
+```
+
+### 9.5 Usage by API key (30d)
+
+```sql
+SELECT
+  api_key_name,
+  COUNT(DISTINCT trace_id) AS trace_count,
+  SUM(total_cost) AS total_cost,
+  SUM(prompt_tokens) AS prompt_tokens,
+  SUM(completion_tokens) AS completion_tokens
+FROM `project-7b250e67-6e23-4c02-ab5.openrouter.openrouter_traces`
+WHERE timestamp >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 30 DAY)
+GROUP BY api_key_name
+ORDER BY total_cost DESC;
+```
+
+---
+
+## 10. JSON Column Access & Custom Metadata (Appendix)
+
+* **JSON-typed columns** (per `data/docs/schema.md` DDL): `attributes`, `input`, `output`, `metadata`, `model_parameters`, `resource_attributes`. Query with `JSON_VALUE` (scalar) / `JSON_QUERY` (object/array).
+* **`tags` is `ARRAY<STRING>`** (repeated STRING), not JSON. Use `UNNEST(tags)`.
+* **Custom metadata keys** (request `trace` object → `metadata` JSON column): reserved `trace_name`, `span_name`, `generation_name` + arbitrary keys (e.g. `department`, `quarter`, `model_version`). Request `user` → typed `user_id` column; request `session_id` → typed `session_id` column.
+
+```sql
+-- Scalar extraction + nested attribute + custom metadata filter
+SELECT
+  trace_id,
+  JSON_VALUE(metadata, '$.custom_field') AS custom_value,
+  JSON_VALUE(attributes, '$."gen_ai.request.model"') AS requested_model,
+  JSON_VALUE(metadata, '$.department') AS department,
+  JSON_VALUE(metadata, '$.quarter') AS quarter,
+  JSON_VALUE(metadata, '$.model_version') AS model_version,
+  total_cost,
+  total_tokens
+FROM `project-7b250e67-6e23-4c02-ab5.openrouter.openrouter_traces`
+WHERE JSON_VALUE(metadata, '$.department') IS NOT NULL
+ORDER BY timestamp DESC;
+
+-- First input message (variable message structure)
+SELECT
+  trace_id,
+  JSON_VALUE(input, '$.messages[0].role') AS first_message_role,
+  JSON_VALUE(input, '$.messages[0].content') AS first_message_content
+FROM `project-7b250e67-6e23-4c02-ab5.openrouter.openrouter_traces`
+LIMIT 10;
+```
+
+---
+
+## 11. Troubleshooting & Privacy Mode (Appendix)
+
+> Source: `data/docs/Google_BigQuery.md` §§ Troubleshooting, Privacy Mode.
+
+* **403 permission denied** — grant the service account **BigQuery Data Editor** on the dataset. Project-level access may be blocked by org policy; verify the dataset-level grant directly.
+* **404 / table not found** — confirm dataset + table IDs and that the table was created in the configured dataset location; confirm the project ID is the one containing the dataset and the SA belongs to the expected project.
+* **400 invalid / schema mismatch** — diff the live table against `data/docs/schema.md` DDL: timestamps must be `TIMESTAMP`, trace-detail fields (`attributes`, `input`, `output`, `metadata`, `model_parameters`, `resource_attributes`) must be `JSON`, `tags` must be `ARRAY<STRING>`.
+* **Privacy Mode** — when enabled on the broadcast destination, **prompt and completion content is excluded** from traces (`input`/`output` empty). All other telemetry — token usage, costs, timing, model info, custom metadata — still streams normally.
