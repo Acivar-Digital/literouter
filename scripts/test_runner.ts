@@ -312,7 +312,11 @@ export async function runTests(options: RunTestsOptions = {}): Promise<RunTestsR
           stderr: "No matching test files found.",
         };
       }
-      spawnArgs = ["bun", "test", ...target.files];
+      if (target.domain === "eval") {
+        spawnArgs = ["bun", "test", "--cwd", "tests/eval"];
+      } else {
+        spawnArgs = ["bun", "test", ...target.files];
+      }
     }
 
     const proc = Bun.spawn(spawnArgs, {

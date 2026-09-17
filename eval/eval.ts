@@ -237,6 +237,39 @@ export interface PipelineTelemetry {
   pipelineAvgSpeed: number;
 }
 
+export interface CanonicalStageInfo {
+  stageNumber: number;
+  stageName: string;
+}
+
+export const CANONICAL_CODE_STAGES: CanonicalStageInfo[] = [
+  { stageNumber: 1, stageName: "Stage 1: Wire Protocol & Long Context Hydration" },
+  { stageNumber: 2, stageName: "Stage 2: Pydantic AI 2.0 Schema & Self-Correction Retry" },
+  { stageNumber: 3, stageName: "Stage 3: Dynamic State, Agentic Loop & Speed" },
+  { stageNumber: 4, stageName: "Stage 4: Surgical Coding & Patch Fidelity (str_replace)" },
+  { stageNumber: 5, stageName: "Stage 5: Security & Indirect Prompt Injection Resilience" },
+];
+
+export const CANONICAL_WEB_STAGES: CanonicalStageInfo[] = [
+  { stageNumber: 1, stageName: "Stage 1: DOM Structure & Layout Fidelity" },
+  { stageNumber: 2, stageName: "Stage 2: Responsive Design & Mobile Scaling" },
+  { stageNumber: 3, stageName: "Stage 3: Interactive State & Event Architecture" },
+  { stageNumber: 4, stageName: "Stage 4: Code Hygiene & Anti-Hallucination Guardrails" },
+  { stageNumber: 5, stageName: "Stage 5: Semantic Accessibility & ARIA Compliance" },
+];
+
+/**
+ * Extracts a 1-based stage number from a code stage result name.
+ */
+export function extractCodeStageNumber(rawName: string, fallbackIndex: number): number {
+  const match = rawName.match(/^(?:Stage\s*)?(\d+)/i);
+  if (match && match[1]) {
+    const parsed = Number.parseInt(match[1], 10);
+    if (!Number.isNaN(parsed) && parsed > 0) return parsed;
+  }
+  return fallbackIndex + 1;
+}
+
 /**
  * Normalizes stage names (e.g., "Stage 1: Wire Protocol" -> "1. Wire Protocol").
  */
@@ -536,28 +569,89 @@ export function buildPerStageProfileSection(
   lines.push("| Stage / Test | Duration | Tokens | Speed (tok/s) | Status |");
   lines.push("|---|:---:|:---:|:---:|:---:|");
 
-  for (let i = 0; i < codeResults.length; i++) {
-    const r = codeResults[i]!;
-    const stageLabel = formatStageName(r.stageName, i);
-    const durStr = typeof r.durationMs === "number" ? `${r.durationMs} ms` : "-";
-    const tokStr = typeof r.completionTokens === "number" ? `${r.completionTokens}` : "-";
-    let spdStr = "-";
-    if (typeof r.tokensPerSec === "number") {
-      spdStr = `${r.tokensPerSec.toFixed(1)} tok/s`;
-    } else if (typeof r.completionTokens === "number" && typeof r.durationMs === "number" && r.durationMs > 0) {
-      spdStr = `${((r.completionTokens / r.durationMs) * 1000).toFixed(1)} tok/s`;
-    }
-    const statusStr = r.passed ? "✅ Passed" : "❌ Failed";
-    lines.push(`| ${stageLabel} | ${durStr} | ${tokStr} | ${spdStr} | ${statusStr} |`);
+  // Code rows
+  const executedCodeMap = new Map<number, CodeStageResult>();
+  codeResults.forEach((r, idx) => {
+    const stageNum = extractCodeStageNumber(r.stageName, idx);
+    executedCodeMap.set(stageNum, r);
+  });
+  const firstFailedCode = codeResults.find((r) => !r.passed);
+  let firstFailedCodeNum: number | null = null;
+  if (firstFailedCode) {
+    const fIdx = codeResults.indexOf(firstFailedCode);
+    firstFailedCodeNum = extractCodeStageNumber(firstFailedCode.stageName, fIdx);
   }
 
-  for (const s of webStages) {
-    const stageLabel = `Web ${s.stageNumber}. ${s.stageName}`;
-    const durStr = typeof s.durationMs === "number" ? `${s.durationMs} ms` : "-";
-    const tokStr = "-";
-    const spdStr = "-";
-    const statusStr = s.passed ? "✅ Passed" : "❌ Failed";
-    lines.push(`| ${stageLabel} | ${durStr} | ${tokStr} | ${spdStr} | ${statusStr} |`);
+  if (codeResults.length > 0) {
+    for (const canonical of CANONICAL_CODE_STAGES) {
+      const r = executedCodeMap.get(canonical.stageNumber);
+      if (r) {
+        const stageLabel = formatStageName(r.stageName, canonical.stageNumber - 1);
+        const durStr = typeof r.durationMs === "number" ? `${r.durationMs} ms` : "-";
+        const tokStr = typeof r.completionTokens === "number" ? `${r.completionTokens}` : "-";
+        let spdStr = "-";
+        if (typeof r.tokensPerSec === "number") {
+          spdStr = `${r.tokensPerSec.toFixed(1)} tok/s`;
+        } else if (typeof r.completionTokens === "number" && typeof r.durationMs === "number" && r.durationMs > 0) {
+          spdStr = `${((r.completionTokens / r.durationMs) * 1000).toFixed(1)} tok/s`;
+        }
+        const statusStr = r.passed ? "✅ Passed" : "❌ Failed";
+        lines.push(`| ${stageLabel} | ${durStr} | ${tokStr} | ${spdStr} | ${statusStr} |`);
+      } else {
+        const stageLabel = formatStageName(canonical.stageName, canonical.stageNumber - 1);
+        let statusReason = "⏭️ Skipped (CLI filter)";
+        if (firstFailedCodeNum !== null && canonical.stageNumber > firstFailedCodeNum) {
+          statusReason = `⏭️ Skipped (Fail-Fast: Stage ${firstFailedCodeNum})`;
+        }
+        lines.push(`| ${stageLabel} | - | - | - | ${statusReason} |`);
+      }
+    }
+    for (const [stageNum, r] of executedCodeMap) {
+      if (stageNum > 5 || stageNum < 1) {
+        const stageLabel = formatStageName(r.stageName, stageNum - 1);
+        const durStr = typeof r.durationMs === "number" ? `${r.durationMs} ms` : "-";
+        const tokStr = typeof r.completionTokens === "number" ? `${r.completionTokens}` : "-";
+        const statusStr = r.passed ? "✅ Passed" : "❌ Failed";
+        lines.push(`| ${stageLabel} | ${durStr} | ${tokStr} | - | ${statusStr} |`);
+      }
+    }
+  }
+
+  // Web rows
+  const executedWebMap = new Map<number, WebStageResult>();
+  webStages.forEach((s) => {
+    executedWebMap.set(s.stageNumber, s);
+  });
+  const firstFailedWeb = webStages.find((s) => !s.passed);
+  const firstFailedWebNum = firstFailedWeb ? firstFailedWeb.stageNumber : null;
+
+  if (webStages.length > 0) {
+    for (const canonical of CANONICAL_WEB_STAGES) {
+      const s = executedWebMap.get(canonical.stageNumber);
+      if (s) {
+        const stageLabel = `Web ${s.stageNumber}. ${s.stageName}`;
+        const durStr = typeof s.durationMs === "number" ? `${s.durationMs} ms` : "-";
+        const tokStr = "-";
+        const spdStr = "-";
+        const statusStr = s.passed ? "✅ Passed" : "❌ Failed";
+        lines.push(`| ${stageLabel} | ${durStr} | ${tokStr} | ${spdStr} | ${statusStr} |`);
+      } else {
+        const stageLabel = `Web ${canonical.stageNumber}. ${canonical.stageName}`;
+        let statusReason = "⏭️ Skipped (CLI filter)";
+        if (firstFailedWebNum !== null && canonical.stageNumber > firstFailedWebNum) {
+          statusReason = `⏭️ Skipped (Fail-Fast: Stage ${firstFailedWebNum})`;
+        }
+        lines.push(`| ${stageLabel} | - | - | - | ${statusReason} |`);
+      }
+    }
+    for (const [stageNum, s] of executedWebMap) {
+      if (stageNum > 5 || stageNum < 1) {
+        const stageLabel = `Web ${s.stageNumber}. ${s.stageName}`;
+        const durStr = typeof s.durationMs === "number" ? `${s.durationMs} ms` : "-";
+        const statusStr = s.passed ? "✅ Passed" : "❌ Failed";
+        lines.push(`| ${stageLabel} | ${durStr} | - | - | ${statusStr} |`);
+      }
+    }
   }
 
   const { totalDurationMs, totalTokens, pipelineAvgSpeed } = telemetry;
@@ -708,12 +802,41 @@ export function generateMarkdownReport(summary: EvalOrchestratorSummary): string
     lines.push("| Stage # | Stage Name | Score | Status | Notes & Observations |");
     lines.push("|---|---|---|---|---|");
 
-    for (let i = 0; i < summary.codeSummary.results.length; i++) {
-      const r = summary.codeSummary.results[i] as CodeStageResult;
-      const stageIdx = i + 1;
-      const statusIcon = r.passed ? "🟢 PASSED" : "🔴 FAILED";
-      const notes = r.notes && r.notes.length > 0 ? r.notes.join("; ") : (r.passed ? "Passed verification" : "Criteria unmet");
-      lines.push(`| **${stageIdx}** | ${r.stageName} | \`${r.score}/100\` | ${statusIcon} | ${notes} |`);
+    const executedCodeMap = new Map<number, CodeStageResult>();
+    const executedResults = (summary.codeSummary.results ?? []) as CodeStageResult[];
+    executedResults.forEach((r, idx) => {
+      const stageNum = extractCodeStageNumber(r.stageName, idx);
+      executedCodeMap.set(stageNum, r);
+    });
+
+    const firstFailedCode = executedResults.find((r) => !r.passed);
+    let firstFailedCodeNum: number | null = null;
+    if (firstFailedCode) {
+      const fIdx = executedResults.indexOf(firstFailedCode);
+      firstFailedCodeNum = extractCodeStageNumber(firstFailedCode.stageName, fIdx);
+    }
+
+    for (const canonical of CANONICAL_CODE_STAGES) {
+      const r = executedCodeMap.get(canonical.stageNumber);
+      if (r) {
+        const statusIcon = r.passed ? "🟢 PASSED" : "🔴 FAILED";
+        const notes = r.notes && r.notes.length > 0 ? r.notes.join("; ") : (r.passed ? "Passed verification" : "Criteria unmet");
+        lines.push(`| **${canonical.stageNumber}** | ${r.stageName} | \`${r.score}/100\` | ${statusIcon} | ${notes} |`);
+      } else {
+        let reason = "Intentionally excluded (CLI filter / not scheduled)";
+        if (firstFailedCodeNum !== null && canonical.stageNumber > firstFailedCodeNum) {
+          reason = `Aborted: Stage ${firstFailedCodeNum} failed in fail-fast mode`;
+        }
+        lines.push(`| **${canonical.stageNumber}** | ${canonical.stageName} | \`—\` | ⏭️ SKIPPED | ${reason} |`);
+      }
+    }
+
+    for (const [stageNum, r] of executedCodeMap) {
+      if (stageNum > 5 || stageNum < 1) {
+        const statusIcon = r.passed ? "🟢 PASSED" : "🔴 FAILED";
+        const notes = r.notes && r.notes.length > 0 ? r.notes.join("; ") : (r.passed ? "Passed verification" : "Criteria unmet");
+        lines.push(`| **${stageNum}** | ${r.stageName} | \`${r.score}/100\` | ${statusIcon} | ${notes} |`);
+      }
     }
     lines.push("");
 
@@ -742,13 +865,40 @@ export function generateMarkdownReport(summary: EvalOrchestratorSummary): string
     lines.push("| Stage # | Stage Name | Score | Status | Duration | Sub-Check Pass Rate |");
     lines.push("|---|---|---|---|---|---|");
 
-    for (const stage of summary.webResult.stages) {
-      const statusIcon = stage.passed ? "🟢 PASSED" : "🔴 FAILED";
-      const totalChecks = stage.checks.length;
-      const passedChecks = stage.checks.filter((c) => c.passed).length;
-      const checkRate = totalChecks > 0 ? `\`${passedChecks}/${totalChecks}\` checks` : `N/A`;
+    const executedWebMap = new Map<number, WebStageResult>();
+    const executedWebStages = summary.webResult.stages ?? [];
+    for (const stage of executedWebStages) {
+      executedWebMap.set(stage.stageNumber, stage);
+    }
 
-      lines.push(`| **${stage.stageNumber}** | ${stage.stageName} | \`${stage.score}/100\` | ${statusIcon} | \`${stage.durationMs} ms\` | ${checkRate} |`);
+    const failedWeb = executedWebStages.find((s) => !s.passed);
+    const failedWebNum = failedWeb ? failedWeb.stageNumber : null;
+
+    for (const canonical of CANONICAL_WEB_STAGES) {
+      const stage = executedWebMap.get(canonical.stageNumber);
+      if (stage) {
+        const statusIcon = stage.passed ? "🟢 PASSED" : "🔴 FAILED";
+        const totalChecks = stage.checks.length;
+        const passedChecks = stage.checks.filter((c) => c.passed).length;
+        const checkRate = totalChecks > 0 ? `\`${passedChecks}/${totalChecks}\` checks` : `N/A`;
+        lines.push(`| **${stage.stageNumber}** | ${stage.stageName} | \`${stage.score}/100\` | ${statusIcon} | \`${stage.durationMs} ms\` | ${checkRate} |`);
+      } else {
+        let reason = "Intentionally excluded (CLI filter / not scheduled)";
+        if (failedWebNum !== null && canonical.stageNumber > failedWebNum) {
+          reason = `Aborted: Stage ${failedWebNum} failed in fail-fast mode`;
+        }
+        lines.push(`| **${canonical.stageNumber}** | ${canonical.stageName} | \`—\` | ⏭️ SKIPPED | \`—\` | ${reason} |`);
+      }
+    }
+
+    for (const [stageNum, stage] of executedWebMap) {
+      if (stageNum > 5 || stageNum < 1) {
+        const statusIcon = stage.passed ? "🟢 PASSED" : "🔴 FAILED";
+        const totalChecks = stage.checks.length;
+        const passedChecks = stage.checks.filter((c) => c.passed).length;
+        const checkRate = totalChecks > 0 ? `\`${passedChecks}/${totalChecks}\` checks` : `N/A`;
+        lines.push(`| **${stage.stageNumber}** | ${stage.stageName} | \`${stage.score}/100\` | ${statusIcon} | \`${stage.durationMs} ms\` | ${checkRate} |`);
+      }
     }
     lines.push("");
 

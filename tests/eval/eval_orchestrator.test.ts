@@ -611,6 +611,93 @@ describe("eval/eval.ts Master Orchestrator Unit Tests", () => {
         expect(md).toContain("| Web 1. Responsive Design | 1500 ms | - | - | ✅ Passed |");
         expect(md).toContain("| **Pipeline Aggregate** | **8000 ms** | **1260** | **193.8 tok/s (avg)** | ✅ Passed |");
       });
+
+      it("should render placeholder rows in web and code scorecards when downstream stages are aborted due to fail-fast", () => {
+        const summary: EvalOrchestratorSummary = {
+          model: "openrouter/test-model",
+          sanitizedModelName: "openrouter_test-model",
+          timestamp: "2026-09-17T00:00:00.000Z",
+          directiveKey: "lr-or-oa-ch-no",
+          gatewayUrl: "https://localhost:7766/v1/chat/completions",
+          wire: "chat",
+          suitesRun: ["web"],
+          runs: 1,
+          webResult: {
+            model: "openrouter/test-model",
+            directiveKey: "lr-or-oa-ch-no",
+            gatewayUrl: "https://localhost:7766/v1/chat/completions",
+            allPassed: false,
+            compositeScore: 50,
+            totalDurationMs: 299867,
+            isProductionReady: false,
+            stages: [
+              { stageNumber: 1, stageName: "Stage 1: DOM Structure & Layout Fidelity", passed: true, score: 100, durationMs: 119864, checks: [{ name: "c1", passed: true }] },
+              { stageNumber: 2, stageName: "Stage 2: Responsive Design & Mobile Scaling", passed: false, score: 0, durationMs: 180003, checks: [{ name: "c2", passed: false }] },
+            ],
+          },
+          roleRecommendation: {
+            role: "General Coder",
+            badge: "💻 GENERAL CODER",
+            rationale: "Basic web layout passed but responsiveness timed out.",
+            strengths: [],
+            caveats: ["Web responsiveness failure"],
+          },
+          allSuitesPassed: false,
+        };
+
+        const md = generateMarkdownReport(summary);
+
+        // Web Scorecard checks
+        expect(md).toContain("| **1** | Stage 1: DOM Structure & Layout Fidelity | `100/100` | 🟢 PASSED | `119864 ms` | `1/1` checks |");
+        expect(md).toContain("| **2** | Stage 2: Responsive Design & Mobile Scaling | `0/100` | 🔴 FAILED | `180003 ms` | `0/1` checks |");
+        expect(md).toContain("| **3** | Stage 3: Interactive State & Event Architecture | `—` | ⏭️ SKIPPED | `—` | Aborted: Stage 2 failed in fail-fast mode |");
+        expect(md).toContain("| **4** | Stage 4: Code Hygiene & Anti-Hallucination Guardrails | `—` | ⏭️ SKIPPED | `—` | Aborted: Stage 2 failed in fail-fast mode |");
+        expect(md).toContain("| **5** | Stage 5: Semantic Accessibility & ARIA Compliance | `—` | ⏭️ SKIPPED | `—` | Aborted: Stage 2 failed in fail-fast mode |");
+
+        // Per-stage profile checks
+        expect(md).toContain("| Web 3. Stage 3: Interactive State & Event Architecture | - | - | - | ⏭️ Skipped (Fail-Fast: Stage 2) |");
+        expect(md).toContain("| Web 4. Stage 4: Code Hygiene & Anti-Hallucination Guardrails | - | - | - | ⏭️ Skipped (Fail-Fast: Stage 2) |");
+        expect(md).toContain("| Web 5. Stage 5: Semantic Accessibility & ARIA Compliance | - | - | - | ⏭️ Skipped (Fail-Fast: Stage 2) |");
+      });
+
+      it("should render placeholder rows with CLI filter reason when stages are intentionally excluded", () => {
+        const summary: EvalOrchestratorSummary = {
+          model: "google/gemini-3.5-flash-lite",
+          sanitizedModelName: "google_gemini-3.5-flash-lite",
+          timestamp: "2026-09-17T00:00:00.000Z",
+          directiveKey: "lr-gg-gg-gc-no",
+          gatewayUrl: "https://localhost:7766/v1/chat/completions",
+          wire: "chat",
+          suitesRun: ["web"],
+          runs: 1,
+          webResult: {
+            model: "google/gemini-3.5-flash-lite",
+            directiveKey: "lr-gg-gg-gc-no",
+            gatewayUrl: "https://localhost:7766/v1/chat/completions",
+            allPassed: true,
+            compositeScore: 100,
+            totalDurationMs: 1200,
+            isProductionReady: true,
+            stages: [
+              { stageNumber: 1, stageName: "Stage 1: DOM Structure & Layout Fidelity", passed: true, score: 100, durationMs: 1200, checks: [{ name: "c1", passed: true }] },
+            ],
+          },
+          roleRecommendation: {
+            role: "General Coder",
+            badge: "💻 GENERAL CODER",
+            rationale: "Stage 1 passed.",
+            strengths: [],
+            caveats: [],
+          },
+          allSuitesPassed: true,
+        };
+
+        const md = generateMarkdownReport(summary);
+
+        expect(md).toContain("| **2** | Stage 2: Responsive Design & Mobile Scaling | `—` | ⏭️ SKIPPED | `—` | Intentionally excluded (CLI filter / not scheduled) |");
+        expect(md).toContain("| **3** | Stage 3: Interactive State & Event Architecture | `—` | ⏭️ SKIPPED | `—` | Intentionally excluded (CLI filter / not scheduled) |");
+        expect(md).toContain("| Web 2. Stage 2: Responsive Design & Mobile Scaling | - | - | - | ⏭️ Skipped (CLI filter) |");
+      });
     });
   });
 });
