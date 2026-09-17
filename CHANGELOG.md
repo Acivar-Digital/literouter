@@ -5,6 +5,11 @@ All notable changes to LiteRouter will be documented in this file.
 ## [Unreleased] — 2026-09-17
 
 ### Fixed
+- **Empty Bearer Header Extraction & Fallback Resilience** (`literouter-ww95`):
+  - Hardened `extractFromAuthHeader` in `src/directive/validator.ts` so that literal `"Bearer"` or whitespace-only Bearer headers return `null` instead of the string `"Bearer"`.
+  - Fixes edge case where clients (such as VS Code Copilot BYOK CustomEndpoint) passing empty `Authorization: Bearer ` caused `parseDirectiveKey("Bearer")` to fail with `400 {"error":{"message":"Invalid directive: Bearer"}}`.
+  - Empty Bearer headers now gracefully fall back to subsequent token extraction pathways (such as URL query parameter `?key=...`) or cleanly report missing API key directives without treating the auth scheme keyword as a token.
+  - Added comprehensive test coverage in `tests/unit/directive_parser.test.ts` verifying null extraction and URL query fallback.
 - **OpenRouter & Standard Streaming Error Framing & Resilience** (`literouter-pf7e`, `literouter-ju98`, `literouter-acig`, `literouter-dwea`):
   - Standardized `formatMidstreamErrorFrame` in `src/network/fetcher.ts` to emit OpenAI/OpenRouter compliant chunks with `choices: [{ index: 0, delta: { content: "" }, finish_reason: "error" }]` alongside top-level `error: { message, code, type }`, preventing downstream SDK crashes (`TypeError: Cannot read properties of undefined (reading '0')`).
   - Removed raw `":"` from `TOKEN_SIGNATURES` in `src/network/fetcher.ts`, and filtered `:`-prefixed comment lines and `[DONE]` markers from `hasContentToken()` so keep-alive comments like `: OPENROUTER PROCESSING` or `: keep-alive` are never falsely counted as model content tokens before generation starts.

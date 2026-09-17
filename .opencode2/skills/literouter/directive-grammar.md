@@ -184,6 +184,17 @@ provider), `lr-nv-oa-ch-` (empty nuance, `src/directive/parser.ts:97-99`),
 `src/directive/parser.ts:201-204`), `sk-anything` (no `lr-` prefix,
 `src/directive/parser.ts:194-196`).
 
+### 10.1. Token Extraction & Bearer Scheme Normalization (`src/directive/validator.ts`)
+The gateway extracts directive tokens from incoming requests in hierarchical order:
+1. `Authorization` header (`extractFromAuthHeader`):
+   - Strips `Bearer ` prefix (case-insensitive) if a valid non-empty token follows.
+   - Empty Bearer headers (e.g. `Bearer`, `Bearer `, `bearer`) return `null` instead of the literal word `"Bearer"`. This prevents clients that omit or fail to resolve tokens (e.g. VS Code Copilot BYOK CustomEndpoint) from generating bogus `Invalid directive: Bearer` parsing errors.
+2. `x-api-key` header
+3. `x-goog-api-key` header
+4. URL query parameters (`?key=...`, `?api_key=...`, `?token=...`)
+
+If `Authorization: Bearer ` is empty, token resolution cleanly falls through to `x-api-key`, `x-goog-api-key`, or URL query parameters before rejecting with a descriptive missing-key error.
+
 ## 11. Engine selection & v4-only routes
 
 Production engine default is `v4.1`: `LITEROUTER_ENGINE: "v4.1"` (`src/config/env.ts:51`). Legacy engine remains available as an escape hatch (`LITEROUTER_ENGINE=legacy`).
