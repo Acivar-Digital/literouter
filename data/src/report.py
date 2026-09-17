@@ -41,6 +41,16 @@ class ModelLatency:
 
 
 @dataclass
+class ProviderPerf:
+    provider: str
+    model: str
+    count: int
+    p50_ms: float
+    p95_ms: float
+    avg_tokens_per_sec: float
+
+
+@dataclass
 class ReportData:
     total_traces: int = 0
     total_sessions: int = 0
@@ -64,6 +74,20 @@ class ReportData:
     strategy_rows: list[tuple[str, int, float, float]] = field(default_factory=list)
     ticker_rows: list[tuple[str, int, float, float]] = field(default_factory=list)
     reasoning_rows: list[tuple[str, float, float]] = field(default_factory=list)
+    provider_perf_rows: list[ProviderPerf] = field(default_factory=list)
+    total_chains: int = 0
+    chains_with_429: int = 0
+    chains_recovered: int = 0
+    recovery_rate_pct: float = 0.0
+    example_chains: list[str] = field(default_factory=list)
+    user_rows: list[tuple[str, int, int, int, float, float]] = field(default_factory=list)
+    apikey_rows: list[tuple[str, int, int, float]] = field(default_factory=list)
+    turn_hist: list[tuple[int, int]] = field(default_factory=list)
+    turn_stats: list[tuple[int, int, float, float, float]] = field(default_factory=list)
+    byok_derived_count: int = 0
+    byok_derived_cost: float = 0.0
+    paid_count: int = 0
+    paid_cost: float = 0.0
     empty: bool = True
 
 
@@ -215,6 +239,205 @@ def _domain_section(df: pl.DataFrame, rep: ReportData) -> None:
         rep.reasoning_rows = rows2[:20]
 
 
+def _mask_trace(tid: object) -> str:
+    return str(tid or "unknown")[:12]
+
+
+def _tps_work(df: pl.DataFrame) -> pl.DataFrame:
+    if not _has(df, "completion_tokens"):
+        return df
+    return df.with_columns(
+        (pl.col("completion_tokens").fill_null(0) / (pl.col("duration_ms") / 1000.0).clip(1e-9)).alias("_tps")
+    )
+
+
+def _is_429(status: object, finish: object) -> bool:
+    s = str(status or "").lower()
+    f = str(finish or "").lower()
+    return "429" in s or "rate_limit" in s or "resource_exhausted" in s or f in ("rate_limit", "rate-limit", "429")
+
+
+def _is_ok(status: object, finish: object) -> bool:
+    s = str(status or "").lower()
+    if s == "ok":
+        return True
+    return s == "success" and str(finish or "").lower() not in ("error", "failed")
+
+
+def _provider_perf_section(df: pl.DataFrame, rep: ReportData) -> None:
+    if rep.empty or not _has(df, "duration_ms"):
+        return
+    work = _tps_work(df)
+    prov_col = "provider_name" if _has(df, "provider_name") else None
+    model_col = "model" if _has(df, "model") else None
+    if prov_col is None and model_col is None:
+        rep.provider_perf_rows.append(
+            ProviderPerf("all", "all", df.height, 0.0, 0.0, 0.0)
+        )
+        return
+    keys = [c for c in (prov_col, model_col) if c]
+    for key_vals, group in work.group_by(keys, maintain_order=False):
+        vals = list(key_vals) if isinstance(key_vals, tuple) else [key_vals]
+        by: dict[str, str] = dict(zip(keys, [str(v) for v in vals]))
+        dur = group.get_column("duration_ms").drop_nulls()
+        tps = group.get_column("_tps").drop_nulls() if "_tps" in group.columns else pl.Series([], dtype=pl.Float64)
+        rep.provider_perf_rows.append(
+            ProviderPerf(
+                provider=by.get(prov_col or "", "unknown") if prov_col else "unknown",
+                model=by.get(model_col or "", "unknown") if model_col else "unknown",
+                count=group.height,
+                p50_ms=round(_quantile(dur, 0.50), 1),
+                p95_ms=round(_quantile(dur, 0.95), 1),
+                avg_tokens_per_sec=round(float(tps.mean()) if len(tps) else 0.0, 1),
+            )
+        )
+    rep.provider_perf_rows.sort(key=lambda r: r.count, reverse=True)
+    rep.provider_perf_rows = rep.provider_perf_rows[:20]
+
+
+def _chain_status_col(df: pl.DataFrame) -> str | None:
+    if _has(df, "status_enum"):
+        return "status_enum"
+    return "status" if _has(df, "status") else None
+
+
+def _chain_finish_col(df: pl.DataFrame) -> str | None:
+    if _has(df, "finish_reason_enum"):
+        return "finish_reason_enum"
+    return "finish_reason" if _has(df, "finish_reason") else None
+
+
+def _chain_flags(df: pl.DataFrame) -> list[tuple[str, bool, bool]]:
+    status_col = _chain_status_col(df)
+    finish_col = _chain_finish_col(df)
+    if not _has(df, "trace_id") or status_col is None:
+        return []
+    out: list[tuple[str, bool, bool]] = []
+    for key_vals, group in df.group_by("trace_id", maintain_order=False):
+        tid = str(key_vals[0]) if isinstance(key_vals, tuple) else str(key_vals)
+        sts = group.get_column(status_col).to_list()
+        fns = group.get_column(finish_col).to_list() if finish_col else [None] * group.height
+        had_429 = any(_is_429(s, f) for s, f in zip(sts, fns))
+        recovered = had_429 and any(_is_ok(s, f) for s, f in zip(sts, fns))
+        out.append((tid, had_429, recovered))
+    return out
+
+
+def _recovery_section(df: pl.DataFrame, rep: ReportData) -> None:
+    if rep.empty:
+        return
+    try:
+        from data.src import transform as _tf
+
+        helper = getattr(_tf, "chain_recovery_stats", None)
+        if callable(helper):
+            stats = helper(df)
+            rep.total_chains = int(stats.get("total_chains", 0))
+            rep.chains_with_429 = int(stats.get("chains_with_429", 0))
+            rep.chains_recovered = int(stats.get("chains_recovered", 0))
+            rep.example_chains = [_mask_trace(t) for t in stats.get("example_chains", [])][:3]
+            base = rep.chains_with_429
+            rep.recovery_rate_pct = round(100.0 * rep.chains_recovered / base, 2) if base else 0.0
+            return
+    except Exception:
+        pass
+    flags = _chain_flags(df)
+    rep.total_chains = len(flags)
+    rep.chains_with_429 = sum(1 for _, h, _ in flags if h)
+    rep.chains_recovered = sum(1 for _, h, r in flags if h and r)
+    base = rep.chains_with_429
+    rep.recovery_rate_pct = round(100.0 * rep.chains_recovered / base, 2) if base else 0.0
+    rep.example_chains = [_mask_trace(t) for t, h, _ in flags if h][:3]
+
+
+def _user_section(df: pl.DataFrame, rep: ReportData) -> None:
+    if rep.empty or not _has(df, "user_id"):
+        return
+    for key_vals, group in df.group_by(pl.col("user_id").fill_null("unknown"), maintain_order=False):
+        user = str(key_vals[0]) if isinstance(key_vals, tuple) else str(key_vals)
+        n = group.height
+        sess = group.get_column("session_id").drop_nulls().n_unique() if _has(group, "session_id") else n
+        toks = int(group.get_column("total_tokens").fill_null(0).sum()) if _has(group, "total_tokens") else 0
+        cost = float(group.get_column("total_cost").fill_null(0).sum()) if _has(group, "total_cost") else 0.0
+        avg = float(group.get_column("duration_ms").drop_nulls().mean() or 0.0) if _has(group, "duration_ms") else 0.0
+        rep.user_rows.append((user, n, int(sess), toks, round(cost, 6), round(avg, 1)))
+    rep.user_rows.sort(key=lambda r: r[4], reverse=True)
+    rep.user_rows = rep.user_rows[:20]
+
+
+def _apikey_section(df: pl.DataFrame, rep: ReportData) -> None:
+    if rep.empty or not _has(df, "api_key_name"):
+        return
+    for key_vals, group in df.group_by(pl.col("api_key_name").fill_null("unknown"), maintain_order=False):
+        key = str(key_vals[0]) if isinstance(key_vals, tuple) else str(key_vals)
+        toks = int(group.get_column("total_tokens").fill_null(0).sum()) if _has(group, "total_tokens") else 0
+        cost = float(group.get_column("total_cost").fill_null(0).sum()) if _has(group, "total_cost") else 0.0
+        prompt = int(group.get_column("prompt_tokens").fill_null(0).sum()) if _has(group, "prompt_tokens") else 0
+        comp = int(group.get_column("completion_tokens").fill_null(0).sum()) if _has(group, "completion_tokens") else 0
+        if toks == 0 and (prompt or comp):
+            toks = prompt + comp
+        rep.apikey_rows.append((key, group.height, toks, round(cost, 6)))
+    rep.apikey_rows.sort(key=lambda r: r[3], reverse=True)
+    rep.apikey_rows = rep.apikey_rows[:20]
+
+
+def _session_frame(df: pl.DataFrame) -> pl.DataFrame:
+    if not _has(df, "session_id"):
+        return df.with_columns(pl.lit("unknown").alias("session_id"))
+    return df.with_columns(pl.col("session_id").fill_null("__null_session__"))
+
+
+def _turndepth_section(df: pl.DataFrame, rep: ReportData) -> None:
+    if rep.empty:
+        return
+    work = _session_frame(df)
+    per: list[tuple[int, float, float, bool]] = []
+    for _, group in work.group_by("session_id", maintain_order=False):
+        turns = group.height
+        cost = float(group.get_column("total_cost").fill_null(0).sum()) if _has(group, "total_cost") else 0.0
+        lat = float(group.get_column("duration_ms").fill_null(0).sum()) if _has(group, "duration_ms") else 0.0
+        failed = _session_failed(group)
+        per.append((turns, cost, lat, failed))
+    if not per:
+        return
+    hist: dict[int, int] = {}
+    for turns, _, _, _ in per:
+        hist[turns] = hist.get(turns, 0) + 1
+    rep.turn_hist = sorted(hist.items())[:20]
+    agg: dict[int, list[tuple[float, float, bool]]] = {}
+    for turns, cost, lat, failed in per:
+        agg.setdefault(turns, []).append((cost, lat, failed))
+    rows: list[tuple[int, int, float, float, float]] = []
+    for turns in sorted(agg):
+        items = agg[turns]
+        n = len(items)
+        avg_cost = round(sum(c for c, _, _ in items) / n, 6)
+        avg_lat = round(sum(v for _, v, _ in items) / n, 1)
+        fail_rate = round(100.0 * sum(1 for _, _, f in items if f) / n, 2)
+        rows.append((turns, n, avg_cost, avg_lat, fail_rate))
+    rep.turn_stats = rows[:20]
+
+
+def _session_failed(group: pl.DataFrame) -> bool:
+    if _has(group, "status_enum"):
+        return bool((group.get_column("status_enum") != "SUCCESS").any())
+    if _has(group, "status"):
+        st = group.get_column("status").cast(pl.String).str.to_lowercase()
+        return bool((st != "ok").any())
+    return False
+
+
+def _byok_section(df: pl.DataFrame, rep: ReportData) -> None:
+    if rep.empty or not _has(df, "total_cost"):
+        return
+    derived = df.filter(pl.col("total_cost").fill_null(0) == 0)
+    rep.byok_derived_count = derived.height
+    rep.byok_derived_cost = round(float(derived.get_column("total_cost").fill_null(0).sum()), 6)
+    paid = df.filter(pl.col("total_cost").fill_null(0) != 0)
+    rep.paid_count = paid.height
+    rep.paid_cost = round(float(paid.get_column("total_cost").fill_null(0).sum()), 6)
+
+
 def build_report_data(df: pl.DataFrame) -> ReportData:
     """Aggregate processed trace frames into report facts. Empty-safe."""
     rep = ReportData()
@@ -223,6 +446,12 @@ def build_report_data(df: pl.DataFrame) -> ReportData:
     _latency_section(df, rep)
     _error_section(df, rep)
     _domain_section(df, rep)
+    _provider_perf_section(df, rep)
+    _recovery_section(df, rep)
+    _user_section(df, rep)
+    _apikey_section(df, rep)
+    _turndepth_section(df, rep)
+    _byok_section(df, rep)
     return rep
 
 
@@ -239,6 +468,54 @@ def _table(headers: list[str], rows: list[tuple[object, ...]]) -> str:
         lines.append("| " + " | ".join(c.ljust(w) for c, w in zip(r, widths)) + " |")
     lines.append(bar)
     return "\n".join(lines)
+
+
+def _term_provider(rep: ReportData) -> list[str]:
+    if not rep.provider_perf_rows:
+        return []
+    rows = [(r.provider, r.model, r.count, r.p50_ms, r.p95_ms, r.avg_tokens_per_sec) for r in rep.provider_perf_rows]
+    headers = ["provider", "model", "n", "p50", "p95", "tok/s"]
+    return ["", "Provider performance (informational):", _table(headers, rows)]
+
+
+def _term_recovery(rep: ReportData) -> list[str]:
+    if rep.total_chains == 0:
+        return []
+    lines = [
+        "",
+        f"429 & recovery chains: {rep.total_chains} chains | had_429={rep.chains_with_429} "
+        f"| recovered={rep.chains_recovered} ({rep.recovery_rate_pct}%)",
+    ]
+    if rep.example_chains:
+        lines.append(f"Example 429 chains (masked): {', '.join(rep.example_chains)}")
+    return lines
+
+
+def _term_userkey(rep: ReportData) -> list[str]:
+    lines: list[str] = []
+    if rep.user_rows:
+        rows = [(u, n, s, t, c, a) for u, n, s, t, c, a in rep.user_rows]
+        headers = ["user_id", "traces", "sessions", "tokens", "cost", "avg_ms"]
+        lines += ["", "User activity (informational):", _table(headers, rows)]
+    if rep.apikey_rows:
+        rows2 = [(k, n, t, c) for k, n, t, c in rep.apikey_rows]
+        lines += ["", "Usage by API key (informational):", _table(["api_key", "traces", "tokens", "cost"], rows2)]
+    return lines
+
+
+def _term_turnbyok(rep: ReportData) -> list[str]:
+    lines: list[str] = []
+    if rep.turn_hist:
+        lines += ["", "Turn depth histogram (turns per session):", _table(["turns", "sessions"], rep.turn_hist)]
+    if rep.turn_stats:
+        lines += ["", "Cost/latency vs depth (informational):"]
+        lines.append(_table(["turns", "sessions", "avg_cost", "avg_lat_ms", "fail_%"], rep.turn_stats))
+    lines += [
+        "",
+        f"BYOK derived rule (total_cost==0 -> BYOK): {rep.byok_derived_count} reqs "
+        f"(${rep.byok_derived_cost}) | paid: {rep.paid_count} reqs (${rep.paid_cost})",
+    ]
+    return lines
 
 
 def format_terminal(rep: ReportData) -> str:
@@ -270,7 +547,55 @@ def format_terminal(rep: ReportData) -> str:
         lines += ["", "Rate limits by provider:", _table(["provider", "count"], rep.rate_limit_by_provider)]
     if rep.slow_models:
         lines += ["", f"Note: p99 > 10s (informational): {', '.join(rep.slow_models)}"]
+    lines += _term_provider(rep)
+    lines += _term_recovery(rep)
+    lines += _term_userkey(rep)
+    lines += _term_turnbyok(rep)
     return "\n".join(lines)
+
+
+def _md_provider(body: list[str], rep: ReportData) -> None:
+    if not rep.provider_perf_rows:
+        return
+    body += ["", "### G. Provider Performance (Informational)", ""]
+    body += ["| Provider | Model | Reqs | p50 (ms) | p95 (ms) | Avg tok/s |", "|---|---|---|---|---|---|"]
+    for r in rep.provider_perf_rows:
+        body.append(f"| {r.provider} | {r.model} | {r.count} | {r.p50_ms} | {r.p95_ms} | {r.avg_tokens_per_sec} |")
+
+
+def _md_recovery(body: list[str], rep: ReportData) -> None:
+    if rep.total_chains == 0:
+        return
+    body += ["", "### H. 429 & Recovery Chains (Informational)", ""]
+    body.append(f"- Total chains: **{rep.total_chains}** | had_429: **{rep.chains_with_429}**")
+    body.append(f"- Recovered: **{rep.chains_recovered}** ({rep.recovery_rate_pct}%)")
+    if rep.example_chains:
+        body.append(f"- Example 429 chains (trace_id masked to 12 chars): `{', '.join(rep.example_chains)}`")
+
+
+def _md_userkey(body: list[str], rep: ReportData) -> None:
+    if rep.user_rows:
+        body += ["", "### I1. User Activity (Informational, §9.2)", ""]
+        body += ["| user_id | Traces | Sessions | Tokens | Cost | Avg duration (ms) |", "|---|---|---|---|---|---|"]
+        body += [f"| {u} | {n} | {s} | {t} | ${c} | {a} |" for u, n, s, t, c, a in rep.user_rows]
+    if rep.apikey_rows:
+        body += ["", "### I2. Usage by API Key (Informational, §9.5)", ""]
+        body += ["| api_key_name | Traces | Tokens | Cost |", "|---|---|---|---|"]
+        body += [f"| {k} | {n} | {t} | ${c} |" for k, n, t, c in rep.apikey_rows]
+
+
+def _md_turnbyok(body: list[str], rep: ReportData) -> None:
+    if rep.turn_hist:
+        body += ["", "### J. Turn Depth (Informational)", ""]
+        body += ["| Turns per session | Sessions |", "|---|---|"]
+        body += [f"| {t} | {n} |" for t, n in rep.turn_hist]
+    if rep.turn_stats:
+        body += ["", "| Depth | Sessions | Avg cost | Avg latency (ms) | Failure rate % |", "|---|---|---|---|---|"]
+        body += [f"| {t} | {n} | ${c} | {v} | {f} |" for t, n, c, v, f in rep.turn_stats]
+    body += ["", "### K. BYOK vs Paid (Informational)", ""]
+    body.append("- Derived rule: `total_cost == 0` → BYOK (explicit `is_byok` kept separately above).")
+    body.append(f"- BYOK (derived): **{rep.byok_derived_count}** reqs (${rep.byok_derived_cost})")
+    body.append(f"- Paid: **{rep.paid_count}** reqs (${rep.paid_cost})")
 
 
 def format_markdown(rep: ReportData, generated_at: str) -> str:
@@ -327,6 +652,10 @@ def format_markdown(rep: ReportData, generated_at: str) -> str:
         body += [f"| {m} | {r} | {c} |" for m, r, c in rep.reasoning_rows]
     body += ["", "## F. QA Summary (Informational Only)", ""]
     body += ["Distributions above are objective; no failure thresholds or exits applied.", ""]
+    _md_provider(body, rep)
+    _md_recovery(body, rep)
+    _md_userkey(body, rep)
+    _md_turnbyok(body, rep)
     return "\n".join(head + body)
 
 

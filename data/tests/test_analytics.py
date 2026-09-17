@@ -600,3 +600,252 @@ def test_sessions_null_counting_edge_cases() -> None:
     missing = pl.DataFrame({"trace_id": ["a", "b"], "status": ["ok", "ok"]})
     assert build_report_data(missing).total_sessions == 1
     assert transform_mod.session_rollups(transform(missing)).height == 1
+
+
+# ---------------------------------------------------------------------------
+# literouter-6ptn (Slice D): new-metrics regression (additive, mocked, no net)
+# ---------------------------------------------------------------------------
+
+
+def _provider_frame() -> pl.DataFrame:
+    return pl.DataFrame(
+        {
+            "provider_slug": ["openai", None, ""],
+            "provider_name": ["Other", "anthropic", "x-model-gw"],
+            "model": ["m1", "m1", "m2"],
+            "duration_ms": [100.0, 200.0, 300.0],
+            "throughput_tps": [10.0, 20.0, 30.0],
+            "total_cost": [0.001, 0.002, 0.003],
+        },
+    )
+
+
+def test_provider_rollups_slug_preferred_over_name() -> None:
+    rollups = transform_mod.provider_rollups(_provider_frame())
+    by_model = {(r["provider"], r["model"]): r for r in rollups.to_dicts()}
+    assert by_model[("openai", "m1")]["n"] == 1
+    assert by_model[("anthropic", "m1")]["n"] == 1
+
+
+def test_provider_rollups_empty_slug_falls_back_to_name() -> None:
+    rollups = transform_mod.provider_rollups(_provider_frame())
+    providers = {r["provider"] for r in rollups.to_dicts()}
+    assert "x-model-gw" in providers
+    assert "Other" not in providers
+
+
+def test_provider_rollups_p50_p95_uniform_math() -> None:
+    df = pl.DataFrame(
+        {
+            "provider_slug": ["openai"] * 5,
+            "provider_name": ["openai"] * 5,
+            "model": ["m1"] * 5,
+            "duration_ms": [200.0] * 5,
+            "throughput_tps": [50.0] * 5,
+            "total_cost": [0.001] * 5,
+        },
+    )
+    rollups = transform_mod.provider_rollups(df)
+    assert rollups.height == 1
+    row = rollups.to_dicts()[0]
+    assert row["n"] == 5
+    assert row["p50_ms"] == pytest.approx(200.0)
+    assert row["p95_ms"] == pytest.approx(200.0)
+    assert row["total_cost"] == pytest.approx(0.005)
+
+
+def test_provider_rollups_empty_safe() -> None:
+    rollups = transform_mod.provider_rollups(pl.DataFrame(schema={"trace_id": pl.String}))
+    assert rollups.height == 0
+    assert {"provider", "model", "n", "p50_ms", "p95_ms"}.issubset(set(rollups.columns))
+
+
+def test_cache_delta_cached_vs_cold_split_and_saving() -> None:
+    df = pl.DataFrame(
+        {
+            "cached_tokens": [10, 0, 20, 0],
+            "prompt_tokens": [100, 100, 100, 100],
+            "duration_ms": [100.0, 200.0, 100.0, 200.0],
+            "throughput_tps": [10.0, 20.0, 10.0, 20.0],
+            "total_cost": [0.001, 0.003, 0.001, 0.003],
+        },
+    )
+    delta = transform_mod.cache_delta(df)
+    assert delta["cached_n"] == 2
+    assert delta["cold_n"] == 2
+    assert delta["cached_avg_duration_ms"] == pytest.approx(100.0)
+    assert delta["cold_avg_duration_ms"] == pytest.approx(200.0)
+    assert delta["cache_saving_usd"] == pytest.approx((0.003 - 0.001) * 2)
+
+
+def test_cache_delta_null_cached_counts_as_cold() -> None:
+    df = pl.DataFrame(
+        {
+            "cached_tokens": [10, None, None],
+            "prompt_tokens": [100, 100, 100],
+            "duration_ms": [100.0, 200.0, 300.0],
+            "throughput_tps": [10.0, 20.0, 30.0],
+            "total_cost": [0.001, 0.002, 0.003],
+        },
+    )
+    delta = transform_mod.cache_delta(df)
+    assert delta["cached_n"] == 1
+    assert delta["cold_n"] == 2
+
+
+def test_depth_analysis_buckets_and_failure_rate() -> None:
+    sessions = pl.DataFrame(
+        {
+            "session_id": ["a", "b", "c", "d"],
+            "turns": [1, 3, 7, 2],
+            "session_cost": [0.001, 0.002, 0.003, 0.004],
+            "session_duration_ms": [100.0, 200.0, 300.0, 400.0],
+            "had_failure": [False, True, False, False],
+        },
+    )
+    depth = transform_mod.depth_analysis(sessions)
+    buckets = {r["depth_bucket"]: r for r in depth.to_dicts()}
+    assert set(buckets) == {"1", "2-5", "6+"}
+    assert buckets["1"]["n_sessions"] == 1
+    assert buckets["6+"]["n_sessions"] == 1
+    assert buckets["2-5"]["n_sessions"] == 2
+    assert buckets["2-5"]["failure_rate"] == pytest.approx(0.5)
+
+
+def test_depth_analysis_empty_safe() -> None:
+    depth = transform_mod.depth_analysis(pl.DataFrame(schema={"turns": pl.Int64}))
+    assert depth.height == 0
+    assert {"depth_bucket", "n_sessions", "failure_rate"}.issubset(set(depth.columns))
+
+
+def test_byok_flag_zero_true_null_null_paid_false() -> None:
+    df = pl.DataFrame({"total_cost": [0.0, None, 0.005]})
+    out = transform_mod.add_byok_flag(df)
+    assert out.get_column("is_byok").to_list() == [True, None, False]
+
+
+def test_byok_summary_counts() -> None:
+    df = pl.DataFrame({"total_cost": [0.0, 0.0, 0.005, None]})
+    summary = transform_mod.byok_summary(df)
+    assert summary["byok_n"] == 2
+    assert summary["paid_n"] == 1
+    assert summary["total_n"] == 4
+    assert summary["paid_cost"] == pytest.approx(0.005)
+
+
+def test_trace_chains_429_to_ok_recovered_rate_one() -> None:
+    df = pl.DataFrame(
+        {
+            "trace_id": ["chain1", "chain1"],
+            "status_enum": ["RATE_LIMIT", "SUCCESS"],
+            "status": ["error", "ok"],
+            "finish_reason": ["rate_limit", "stop"],
+        },
+    )
+    chains = transform_mod.trace_chains(df)
+    assert chains.height == 1
+    row = chains.to_dicts()[0]
+    assert row["had_429"] is True
+    assert row["ends_ok"] is True
+    assert row["recovered"] is True
+    stats = transform_mod.recovery_rate(chains)
+    assert stats["n_429_chains"] == 1
+    assert stats["n_recovered"] == 1
+    assert stats["recovery_rate"] == pytest.approx(1.0)
+
+
+def test_recovery_rate_all_ok_no_429_zero_safe() -> None:
+    df = pl.DataFrame(
+        {
+            "trace_id": ["x", "y"],
+            "status_enum": ["SUCCESS", "SUCCESS"],
+            "status": ["ok", "ok"],
+            "finish_reason": ["stop", "stop"],
+        },
+    )
+    stats = transform_mod.recovery_rate(df)
+    assert stats["n_429_chains"] == 0
+    assert stats["n_recovered"] == 0
+    assert stats["recovery_rate"] is None
+
+
+def _report_synthetic_df() -> pl.DataFrame:
+    return pl.DataFrame(
+        {
+            "trace_id": ["t1", "t2", "t3", "t4"],
+            "session_id": ["s1", "s1", "s2", "s2"],
+            "status": ["ok", "error", "ok", "ok"],
+            "finish_reason": ["stop", "rate_limit", "stop", "stop"],
+            "duration_ms": [100.0, 200.0, 300.0, 400.0],
+            "model": ["m1", "m1", "m1", "m2"],
+            "provider_name": ["openai", "openai", "anthropic", "anthropic"],
+            "user_id": ["u1", "u1", "u2", "u2"],
+            "api_key_name": ["k1", "k1", "k2", "k2"],
+            "total_cost": [0.0, 0.002, 0.003, 0.004],
+            "total_tokens": [10, 20, 30, 40],
+            "prompt_tokens": [5, 10, 15, 20],
+            "cached_tokens": [5, 0, 0, 0],
+            "completion_tokens": [5, 10, 15, 20],
+        },
+    )
+
+
+def test_report_new_sections_present_on_synthetic() -> None:
+    rep = build_report_data(_report_synthetic_df())
+    assert rep.empty is False
+    assert len(rep.provider_perf_rows) > 0
+    assert rep.total_chains > 0
+    assert rep.chains_with_429 >= 1
+    assert len(rep.user_rows) == 2
+    assert len(rep.apikey_rows) == 2
+    assert len(rep.turn_hist) > 0
+    assert len(rep.turn_stats) > 0
+    assert rep.byok_derived_count == 1
+    assert rep.paid_count == 3
+    md = format_markdown(rep, "2026-09-17T00:00:00+00:00")
+    for section in ("### G.", "### H.", "### I1.", "### I2.", "### J.", "### K."):
+        assert section in md
+    term = format_terminal(rep)
+    for snippet in (
+        "Provider performance",
+        "429 & recovery",
+        "User activity",
+        "Usage by API key",
+        "Turn depth",
+        "BYOK derived",
+    ):
+        assert snippet in term
+
+
+def test_report_new_sections_empty_safe() -> None:
+    rep = build_report_data(pl.DataFrame(schema={"trace_id": pl.String, "status": pl.String}))
+    assert rep.empty is True
+    assert rep.provider_perf_rows == []
+    assert rep.total_chains == 0
+    assert rep.chains_with_429 == 0
+    assert rep.user_rows == []
+    assert rep.apikey_rows == []
+    assert rep.turn_hist == []
+    assert rep.byok_derived_count == 0
+    assert NO_DATA_MSG in format_terminal(rep)
+
+
+def test_transform_pipeline_adds_is_byok_flag() -> None:
+    df = pl.DataFrame({"trace_id": ["a", "b"], "status": ["ok", "ok"], "total_cost": [0.0, 0.01]})
+    out = transform(df)
+    assert "is_byok" in out.columns
+    assert out.get_column("is_byok").to_list() == [True, False]
+
+
+def test_transform_new_fns_no_apply_rowwise_calls() -> None:
+    funcs = [
+        transform_mod.provider_rollups,
+        transform_mod.cache_delta,
+        transform_mod.depth_analysis,
+        transform_mod.add_byok_flag,
+        transform_mod.byok_summary,
+        transform_mod.trace_chains,
+        transform_mod.recovery_rate,
+    ]
+    for fn in funcs:
+        assert ".apply(" not in inspect.getsource(fn), f"{fn.__name__} uses .apply()"
