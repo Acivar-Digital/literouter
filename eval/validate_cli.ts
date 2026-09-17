@@ -24,6 +24,100 @@ export interface ValidatedEvalArgs {
   providerCode: string;
   providerName: string;
   directiveKey: string;
+  batchTargets?: ValidatedEvalArgs[];
+  sourceFile?: string;
+}
+
+/**
+ * Parses a single line from a model targets file into ValidatedEvalArgs.
+ */
+export function parseModelLine(
+  line: string,
+  providersMap: Map<string, RegisteredProvider>,
+  lineNum: number = 1
+): ValidatedEvalArgs {
+  const parts = line.includes(",")
+    ? line.split(",").map((p) => p.trim())
+    : line.split(/\s+/).map((p) => p.trim());
+  const positionals = parts.filter(Boolean);
+
+  if (positionals.length === 0) {
+    throw new Error(`Line ${lineNum} is empty`);
+  }
+
+  let rawModel = positionals[0]!;
+  let rawProvider = "";
+  let rawKey = "";
+  let providerInfo: RegisteredProvider | undefined;
+
+  if (positionals.length >= 3) {
+    rawProvider = positionals[1]!;
+    rawKey = positionals[2]!;
+  } else if (positionals.length === 2) {
+    const second = positionals[1]!;
+    if (second.startsWith("lr-")) {
+      rawKey = second;
+      const keyParts = second.split("-");
+      const codeCandidate = keyParts[1]?.toLowerCase();
+      if (codeCandidate && providersMap.has(codeCandidate)) {
+        providerInfo = providersMap.get(codeCandidate);
+        rawProvider = providerInfo!.key;
+      } else if (codeCandidate) {
+        rawProvider = codeCandidate;
+      }
+    } else if (providersMap.has(second.toLowerCase())) {
+      rawProvider = second;
+    } else {
+      rawProvider = second;
+    }
+  } else {
+    throw new Error(
+      `Line ${lineNum} ('${line}'): Each entry must contain at least <model> and <directive_key> (e.g. '${rawModel}, lr-zn-cl-ms-no')`
+    );
+  }
+
+  if (!rawProvider) {
+    throw new Error(
+      `Line ${lineNum} ('${line}'): Unable to determine provider for model '${rawModel}'. Provide an 'lr-<provider>-...' key or specify provider.`
+    );
+  }
+
+  if (!providerInfo) {
+    providerInfo = providersMap.get(rawProvider.toLowerCase());
+    if (!providerInfo) {
+      throw new Error(
+        `Line ${lineNum} ('${line}'): Unrecognized provider '${rawProvider}' in config/providers.json.`
+      );
+    }
+  }
+
+  if (!rawKey) {
+    throw new Error(
+      `Line ${lineNum} ('${line}'): Missing directive key for model '${rawModel}'.`
+    );
+  }
+
+  return {
+    model: rawModel.trim(),
+    provider: providerInfo.key,
+    providerCode: providerInfo.code,
+    providerName: providerInfo.name,
+    directiveKey: rawKey.trim(),
+  };
+}
+
+/**
+ * Resolves the default gateway base URL:
+ * 1. Explicit env override (LITEROUTER_URL / GATEWAY_URL)
+ * 2. Primary Intranet: http://192.168.50.10:7766 (ASUS RT-BE92U LAN)
+ * 3. ZeroTier Backup: http://10.32.34.243:7766
+ */
+export function getDefaultGatewayBaseUrl(): string {
+  if (process.env.LITEROUTER_URL) return process.env.LITEROUTER_URL.replace(/\/+$/, "");
+  if (process.env.GATEWAY_URL) return process.env.GATEWAY_URL.replace(/\/+$/, "");
+
+  // Primary intranet gateway endpoint
+  return "http://192.168.50.10:7766";
 }
 
 /**
@@ -112,6 +206,7 @@ export function extractPositionalAndNamed(argv: string[]): {
     "--timeout",
     "--max-tokens",
     "--image",
+    "--file",
   ]);
 
   for (let i = 0; i < argv.length; i++) {
@@ -153,10 +248,72 @@ export function extractPositionalAndNamed(argv: string[]): {
  */
 export function validateStrictEvalArgs(
   argv: string[],
-  scriptName: string = "eval/eval.ts"
+  scriptName: string = "eval/eval.ts",
+  options: { allowDefaultFile?: boolean } = {}
 ): ValidatedEvalArgs {
   const { positionals, named } = extractPositionalAndNamed(argv);
   const providersMap = loadRegisteredProviders();
+  const allowDefaultFile = options.allowDefaultFile ?? true;
+
+  const resolveCandidateFile = (p: string): string | undefined => {
+    if (existsSync(p)) return p;
+    const fromCwd = join(process.cwd(), p);
+    if (existsSync(fromCwd)) return fromCwd;
+    const fromMeta = join(import.meta.dir, "..", p);
+    if (existsSync(fromMeta)) return fromMeta;
+    return undefined;
+  };
+
+  let effectivePositionals = [...positionals];
+  let rawFilePath = typeof named["--file"] === "string" ? named["--file"] : undefined;
+  if (
+    !rawFilePath &&
+    positionals.length === 1 &&
+    (positionals[0]!.endsWith(".txt") || positionals[0]!.endsWith(".csv"))
+  ) {
+    rawFilePath = positionals[0]!;
+    effectivePositionals = [];
+  } else if (!rawFilePath && positionals.length === 0 && !named["--model"] && allowDefaultFile) {
+    // Default to eval/reports/test-models.txt if no arguments provided and allowed
+    const defaultTestFile = "eval/reports/test-models.txt";
+    if (resolveCandidateFile(defaultTestFile)) {
+      rawFilePath = defaultTestFile;
+    }
+  }
+
+  let loadedFromDefaultFile = false;
+  if (rawFilePath) {
+    const resolvedPath = resolveCandidateFile(rawFilePath);
+    if (!resolvedPath) {
+      throw new Error(`\x1b[1m\x1b[31m❌ EVAL RUNNER FATAL ERROR: Specified file does not exist: ${rawFilePath}\x1b[0m`);
+    }
+    const content = readFileSync(resolvedPath, "utf-8");
+    const lines = content
+      .split("\n")
+      .map((l) => l.trim())
+      .filter((l) => l.length > 0 && !l.startsWith("#"));
+
+    if (lines.length === 0) {
+      throw new Error(`\x1b[1m\x1b[31m❌ EVAL RUNNER FATAL ERROR: Target models file is empty: ${resolvedPath}\x1b[0m`);
+    }
+
+    const batchTargets: ValidatedEvalArgs[] = lines.map((line, idx) =>
+      parseModelLine(line, providersMap, idx + 1)
+    );
+
+    const primary = batchTargets[0]!;
+    loadedFromDefaultFile = true;
+    console.log(
+      `\x1b[34mℹ️  Loaded ${batchTargets.length} model test target(s) from:\x1b[0m \x1b[1m${resolvedPath}\x1b[0m` +
+      (batchTargets.length > 1 ? ` (${batchTargets.map((t) => t.model).join(", ")})` : "")
+    );
+
+    return {
+      ...primary,
+      batchTargets,
+      sourceFile: resolvedPath,
+    };
+  }
 
   const validEntries = Array.from(
     new Map(Array.from(providersMap.values()).map((p) => [p.key, p])).values()
@@ -167,59 +324,108 @@ export function validateStrictEvalArgs(
 
   const usageBanner =
     `\x1b[1m\x1b[33mREQUIRED USAGE ORDER:\x1b[0m\n` +
-    `  bun run ${scriptName} <model_name> <provider> <api_key> [options]\n\n` +
-    `\x1b[1mARGUMENTS (IN EXACT ORDER):\x1b[0m\n` +
-    `  1. <model_name> : Model identifier (e.g. google/gemini-3.5-flash-lite, stealth/union-alpha)\n` +
-    `  2. <provider>   : Provider registered in config/providers.json\n` +
-    `  3. <api_key>    : LiteRouter directive key (e.g. lr-gg-gg-gc-no, lr-or-oa-ch-no)\n\n` +
+    `  bun run ${scriptName} <model_name> <api_key> [options]         (Provider auto-inferred from key)\n` +
+    `  bun run ${scriptName} <model_name> <provider> <api_key> [options]\n` +
+    `  bun run ${scriptName} <file.txt> [options]\n\n` +
+    `\x1b[1mARGUMENTS:\x1b[0m\n` +
+    `  1. <model_name> : Model identifier (e.g. union-alpha, google/gemini-3.5-flash-lite)\n` +
+    `  2. <provider>   : (Optional if using lr-<provider>-* key) Provider registered in config/providers.json\n` +
+    `  3. <api_key>    : LiteRouter directive key (e.g. lr-zn-cl-ms-no, lr-or-oa-ch-no, lr-gg-gg-gc-no)\n\n` +
     `\x1b[1mREGISTERED PROVIDERS (config/providers.json):\x1b[0m\n` +
     `${validListFormatted}\n\n` +
-    `\x1b[1mEXAMPLES:\x1b[0m\n` +
+    `\x1b[1mSTREAMLINED EXAMPLES (No provider needed):\x1b[0m\n` +
+    `  bun run ${scriptName} union-alpha lr-zn-cl-ms-no --continue\n` +
+    `  bun run ${scriptName} stealth/union-alpha lr-or-oa-ch-no --suites speed,code\n` +
+    `  bun run ${scriptName} eval/reports/test-models.txt\n\n` +
+    `\x1b[1mEXPLICIT EXAMPLES:\x1b[0m\n` +
     `  bun run ${scriptName} google/gemini-3.5-flash-lite google lr-gg-gg-gc-no\n` +
-    `  bun run ${scriptName} stealth/union-alpha openrouter lr-or-oa-ch-no --suites speed,code\n` +
     `  bun run ${scriptName} union-alpha zen lr-zn-cl-ms-no --continue`;
 
+  let rawModel = "";
+  let rawProvider = "";
+  let rawKey = "";
+  let providerInfo: RegisteredProvider | undefined;
+
+  // Check named options first
+  if (typeof named["--model"] === "string") rawModel = named["--model"];
+  if (typeof named["--provider"] === "string") rawProvider = named["--provider"];
+  if (typeof named["--key"] === "string") rawKey = named["--key"];
+  else if (typeof named["--directive"] === "string") rawKey = named["--directive"];
+
+  // Positional parsing
+  if (effectivePositionals.length >= 3) {
+    // 3 positionals: <model> <provider> <api_key>
+    rawModel = effectivePositionals[0]!;
+    rawProvider = effectivePositionals[1]!;
+    rawKey = effectivePositionals[2]!;
+  } else if (effectivePositionals.length === 2) {
+    rawModel = effectivePositionals[0]!;
+    const second = effectivePositionals[1]!;
+
+    if (second.startsWith("lr-")) {
+      // Streamlined 2-positional form: <model> <directive_key> (infer provider from key)
+      rawKey = second;
+      const keyParts = second.split("-");
+      const codeCandidate = keyParts[1]?.toLowerCase();
+      if (codeCandidate && providersMap.has(codeCandidate)) {
+        providerInfo = providersMap.get(codeCandidate);
+        rawProvider = providerInfo!.key;
+      } else if (codeCandidate) {
+        rawProvider = codeCandidate;
+      }
+    } else if (providersMap.has(second.toLowerCase())) {
+      // 2 positionals: <model> <provider> (key missing or in named flag)
+      rawProvider = second;
+    } else {
+      rawProvider = second;
+    }
+  } else if (effectivePositionals.length === 1) {
+    rawModel = effectivePositionals[0]!;
+  }
+
+  // If key was provided via flag and provider wasn't specified, attempt auto-inference
+  if (rawKey.startsWith("lr-") && !rawProvider) {
+    const keyParts = rawKey.split("-");
+    const codeCandidate = keyParts[1]?.toLowerCase();
+    if (codeCandidate && providersMap.has(codeCandidate)) {
+      providerInfo = providersMap.get(codeCandidate);
+      rawProvider = providerInfo!.key;
+    }
+  }
+
   // 1. Validate model_name
-  const rawModel = positionals[0] ?? (typeof named["--model"] === "string" ? named["--model"] : "");
   if (!rawModel || rawModel.trim() === "") {
     throw new Error(
       `\x1b[1m\x1b[31m❌ EVAL RUNNER FATAL ERROR: Missing required argument #1: <model_name>\x1b[0m\n\n` +
-      `You must specify the target model name as the FIRST argument.\n\n` +
+      `You must specify the target model name as the FIRST argument (or pass a file containing <model>, <key>).\n\n` +
       `${usageBanner}`
     );
   }
 
   // 2. Validate provider
-  const rawProvider = positionals[1] ?? (typeof named["--provider"] === "string" ? named["--provider"] : "");
   if (!rawProvider || rawProvider.trim() === "") {
     throw new Error(
       `\x1b[1m\x1b[31m❌ EVAL RUNNER FATAL ERROR: Missing required argument #2: <provider>\x1b[0m\n\n` +
-      `You must specify the provider as the SECOND argument (after model '${rawModel}').\n\n` +
+      `You must specify the provider as the SECOND argument (or pass an 'lr-<provider>-...' directive key directly).\n\n` +
       `${usageBanner}`
     );
   }
 
-  const normalizedProvider = rawProvider.trim().toLowerCase();
-  const providerInfo = providersMap.get(normalizedProvider);
   if (!providerInfo) {
-    throw new Error(
-      `\x1b[1m\x1b[31m❌ EVAL RUNNER FATAL ERROR: Unrecognized provider '${rawProvider}'\x1b[0m\n\n` +
-      `Provider '${rawProvider}' is NOT registered in config/providers.json!\n\n` +
-      `\x1b[1mVALID PROVIDERS FOUND IN config/providers.json:\x1b[0m\n` +
-      `${validListFormatted}\n\n` +
-      `${usageBanner}`
-    );
+    const normalizedProvider = rawProvider.trim().toLowerCase();
+    providerInfo = providersMap.get(normalizedProvider);
+    if (!providerInfo) {
+      throw new Error(
+        `\x1b[1m\x1b[31m❌ EVAL RUNNER FATAL ERROR: Unrecognized provider '${rawProvider}'\x1b[0m\n\n` +
+        `Provider '${rawProvider}' is NOT registered in config/providers.json!\n\n` +
+        `\x1b[1mVALID PROVIDERS FOUND IN config/providers.json:\x1b[0m\n` +
+        `${validListFormatted}\n\n` +
+        `${usageBanner}`
+      );
+    }
   }
 
   // 3. Validate api_key (directive key)
-  const rawKey =
-    positionals[2] ??
-    (typeof named["--key"] === "string"
-      ? named["--key"]
-      : typeof named["--directive"] === "string"
-        ? named["--directive"]
-        : "");
-
   if (!rawKey || rawKey.trim() === "") {
     throw new Error(
       `\x1b[1m\x1b[31m❌ EVAL RUNNER FATAL ERROR: Missing required argument #3: <api_key>\x1b[0m\n\n` +
@@ -228,11 +434,16 @@ export function validateStrictEvalArgs(
     );
   }
 
-  return {
+  const singleTarget: ValidatedEvalArgs = {
     model: rawModel.trim(),
     provider: providerInfo.key,
     providerCode: providerInfo.code,
     providerName: providerInfo.name,
     directiveKey: rawKey.trim(),
+  };
+
+  return {
+    ...singleTarget,
+    batchTargets: [singleTarget],
   };
 }

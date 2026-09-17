@@ -39,7 +39,7 @@ import { runStage2Responsive } from "./stages_web/stage2_responsive";
 import { runStage3State } from "./stages_web/stage3_state";
 import { runStage4Hygiene } from "./stages_web/stage4_hygiene";
 import { runStage5A11y } from "./stages_web/stage5_a11y";
-import { validateStrictEvalArgs } from "./validate_cli";
+import { validateStrictEvalArgs, getDefaultGatewayBaseUrl } from "./validate_cli";
 
 export {
   DEFAULT_DASHBOARD_MOCKUP,
@@ -217,9 +217,10 @@ export function normalizeWebOptions(opts: WebEvalOptions = {}): Required<Omit<We
   stage?: number;
   reasoningEffort?: "high" | "medium" | "none";
 } {
+  const baseUrl = getDefaultGatewayBaseUrl();
   let model = opts.model ?? "inclusionai/ling-3.0-flash-vl:free";
   let directiveKey = opts.directiveKey ?? "lr-or-oa-ch-no";
-  let gatewayUrl = opts.gatewayUrl ?? "https://localhost:7766/v1/chat/completions";
+  let gatewayUrl = opts.gatewayUrl ?? `${baseUrl}/v1/chat/completions`;
   const continueOnFailure = opts.continueOnFailure ?? false;
   const cooldownMs = opts.cooldownMs ?? 2000;
   const runs = opts.runs ?? 2;
@@ -231,11 +232,11 @@ export function normalizeWebOptions(opts: WebEvalOptions = {}): Required<Omit<We
     if (directiveKey === "lr-or-oa-ch-no") {
       directiveKey = "lr-zn-oo-rs-no";
     }
-    if (gatewayUrl === "https://localhost:7766/v1/chat/completions") {
-      gatewayUrl = "https://localhost:7766/v1/responses";
+    if (gatewayUrl.endsWith("/chat/completions")) {
+      gatewayUrl = `${baseUrl}/v1/responses`;
     }
-  } else if (directiveKey.includes("-rs-") && gatewayUrl === "https://localhost:7766/v1/chat/completions") {
-    gatewayUrl = "https://localhost:7766/v1/responses";
+  } else if (directiveKey.includes("-rs-") && gatewayUrl.endsWith("/chat/completions")) {
+    gatewayUrl = `${baseUrl}/v1/responses`;
   }
 
   return {

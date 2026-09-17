@@ -269,6 +269,66 @@ describe("Error Classifier — classifyUpstreamError & classifyTransportError", 
       expect(result.quarantineTtlSec).toBe(604800);
       expect(result.isRetryable).toBe(true);
     });
+
+    it("classifies 429 with 'credits exhausted' as retry_rotate with 7-day quarantine", () => {
+      const result = classifyUpstreamError({
+        provider: "or",
+        status: 429,
+        headers: {},
+        bodyText: JSON.stringify({ error: { message: "Credits exhausted: please top up your account" } }),
+      });
+      expect(result.action).toBe("retry_rotate");
+      expect(result.quarantineTtlSec).toBe(604800);
+      expect(result.isRetryable).toBe(true);
+    });
+
+    it("classifies 429 with 'out of credits' as retry_rotate with 7-day quarantine", () => {
+      const result = classifyUpstreamError({
+        provider: "or",
+        status: 429,
+        headers: new Headers(),
+        bodyText: JSON.stringify({ error: { message: "You are out of credits. Please add funds." } }),
+      });
+      expect(result.action).toBe("retry_rotate");
+      expect(result.quarantineTtlSec).toBe(604800);
+      expect(result.isRetryable).toBe(true);
+    });
+
+    it("classifies 429 with 'insufficient credits' as retry_rotate with 7-day quarantine", () => {
+      const result = classifyUpstreamError({
+        provider: "or",
+        status: 429,
+        headers: {},
+        bodyText: JSON.stringify({ error: { message: "Insufficient credits for this request" } }),
+      });
+      expect(result.action).toBe("retry_rotate");
+      expect(result.quarantineTtlSec).toBe(604800);
+      expect(result.isRetryable).toBe(true);
+    });
+
+    it("classifies 429 with 'free limit exceeded' as retry_rotate with 7-day quarantine", () => {
+      const result = classifyUpstreamError({
+        provider: "or",
+        status: 429,
+        headers: {},
+        bodyText: JSON.stringify({ error: { message: "Free limit exceeded: daily quota reached" } }),
+      });
+      expect(result.action).toBe("retry_rotate");
+      expect(result.quarantineTtlSec).toBe(604800);
+      expect(result.isRetryable).toBe(true);
+    });
+
+    it("classifies 429 with 'account has no balance' as retry_rotate with 7-day quarantine", () => {
+      const result = classifyUpstreamError({
+        provider: "or",
+        status: 429,
+        headers: {},
+        bodyText: JSON.stringify({ error: { message: "Your account has no balance. Please recharge." } }),
+      });
+      expect(result.action).toBe("retry_rotate");
+      expect(result.quarantineTtlSec).toBe(604800);
+      expect(result.isRetryable).toBe(true);
+    });
   });
 
   describe("HTTP 401 & 403 - classifier key-treatment vs engine fail_fast downstream contract", () => {
@@ -447,6 +507,49 @@ describe("Error Classifier — classifyUpstreamError & classifyTransportError", 
       expect(result.action).toBe("fail_fast");
       expect(result.quarantineTtlSec).toBe(0);
       expect(result.isRetryable).toBe(false);
+    });
+  });
+
+  describe("HTTP 402 - Payment Required", () => {
+    it("classifies 402 with insufficient credits body as fail_fast with 0s quarantine", () => {
+      const result = classifyUpstreamError({
+        provider: "or",
+        status: 402,
+        headers: {},
+        bodyText: JSON.stringify({ error: { message: "Insufficient credits: account balance is zero" } }),
+      });
+      expect(result.action).toBe("fail_fast");
+      expect(result.quarantineTtlSec).toBe(0);
+      expect(result.reason).toBe("Payment required (402) - insufficient credits");
+      expect(result.isRetryable).toBe(false);
+    });
+
+    it("classifies bare 402 with empty body as fail_fast with 0s quarantine", () => {
+      const result = classifyUpstreamError({
+        provider: "or",
+        status: 402,
+        headers: new Headers(),
+        bodyText: "",
+      });
+      expect(result.action).toBe("fail_fast");
+      expect(result.quarantineTtlSec).toBe(0);
+      expect(result.reason).toBe("Payment required (402) - insufficient credits");
+      expect(result.isRetryable).toBe(false);
+    });
+
+    it("classifies 402 with typed payment_required error_type as fail_fast with 0s quarantine", () => {
+      const result = classifyUpstreamError({
+        provider: "or",
+        status: 402,
+        headers: {},
+        bodyText: JSON.stringify({
+          error: { message: "Payment required", error_type: "payment_required" },
+        }),
+      });
+      expect(result.action).toBe("fail_fast");
+      expect(result.quarantineTtlSec).toBe(0);
+      expect(result.isRetryable).toBe(false);
+      expect(result.errorType).toBe("payment_required");
     });
   });
 

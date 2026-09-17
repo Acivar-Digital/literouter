@@ -98,3 +98,25 @@ LITEROUTER_STREAM_FILTER_REASONING=false
 ```
 When set to `false` (default), SSE chunks stream directly through with zero delay or line-buffering latency.
 
+---
+
+## 5. Upstream Provider Streaming Error & SSE Framing Compliance
+
+### 5.1 Spec-Compliant Mid-Stream Error Framing
+When an upstream provider fails mid-stream after HTTP 200 headers have been committed and all retries are exhausted, LiteRouter synthesizes an SSE error frame before emitting `data: [DONE]`.
+
+To ensure compatibility with strict OpenAI SDK and OpenRouter client stream parsers (preventing `TypeError: Cannot read properties of undefined (reading '0')`), the error frame strictly conforms to standard chunk shapes:
+```json
+data: {"id":"err-<timestamp>","object":"chat.completion.chunk","created":1234567890,"model":"error","error":{"message":"...","code":"server_error","type":"server_error"},"choices":[{"index":0,"delta":{"content":""},"finish_reason":"error"}]}
+
+data: [DONE]
+```
+
+### 5.2 SSE Keep-Alive Comments vs. Content Tokens
+Providers like OpenRouter emit SSE comment lines (e.g. `: OPENROUTER PROCESSING` or `: keep-alive`) to maintain TCP connections before token generation begins.
+- `src/network/fetcher.ts` filters lines beginning with `:` so keep-alive comments are never falsely identified as model content tokens in `hasContentToken()`.
+- `isInBandErrorChunk()` skips comment lines immediately, ensuring keep-alives never trigger false-positive error classifications.
+
+### 5.3 Credit & Quota Exhaustion Detection
+`src/network/classifier.ts` classifies credit exhaustion patterns across providers (including OpenRouter's `"out of credits"`, `"credits exhausted"`, `"insufficient credits"`, `"free limit exceeded"`, and `"account has no balance"`) into long-term quota quarantine (7 days or midnight UTC per provider conserve rules) rather than treating them as transient rate limits. Status 402 ("Payment Required") fails fast with 0s quarantine to prevent burning request budgets.
+

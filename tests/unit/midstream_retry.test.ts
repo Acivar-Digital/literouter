@@ -63,7 +63,9 @@ describe("formatMidstreamErrorFrame", () => {
     const frame = formatMidstreamErrorFrame("openai", "Connection terminated mid-stream");
     const decoded = decoder.decode(frame);
 
-    expect(decoded).toContain('data: {"error":{"message":"Connection terminated mid-stream","type":"server_error"}}\n\n');
+    expect(decoded).toContain('"object":"chat.completion.chunk"');
+    expect(decoded).toContain('"message":"Connection terminated mid-stream"');
+    expect(decoded).toContain('"finish_reason":"error"');
     expect(decoded).toContain("data: [DONE]\n\n");
   });
 
@@ -554,7 +556,9 @@ describe("createResilientStream — Mid-Stream Error Recovery", () => {
     const { text } = await readAllChunks(stream);
 
     expect(retryCalled).toBe(true);
-    expect(text).toContain('data: {"error":{"message":"Connection reset by peer","type":"server_error"}}\n\ndata: [DONE]\n\n');
+    expect(text).toContain('"message":"Connection reset by peer"');
+    expect(text).toContain('"finish_reason":"error"');
+    expect(text).toContain("data: [DONE]\n\n");
   });
 
   it("retryProvider exhaustion before tokens formats downstream Anthropic error frame and terminates cleanly", async () => {
@@ -682,7 +686,9 @@ describe("createResilientStream — Mid-Stream Error Recovery", () => {
     const { text } = await readAllChunks(stream);
 
     expect(text).toContain("Hello world");
-    expect(text).toContain('data: {"error":{"message":"Upstream stream dropped mid-generation","type":"stream_error"}}\n\ndata: [DONE]\n\n');
+    expect(text).toContain('"message":"Upstream stream dropped mid-generation"');
+    expect(text).toContain('"finish_reason":"error"');
+    expect(text).toContain("data: [DONE]\n\n");
   });
 
   it("midstream stall after tokens outputs clean SSE error block and closes cleanly without throwing", async () => {

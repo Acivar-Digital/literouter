@@ -44,6 +44,8 @@ import type { StageResult as WebStageResult } from "./stages_web/types";
 import {
   validateStrictEvalArgs,
   extractPositionalAndNamed,
+  getDefaultGatewayBaseUrl,
+  type ValidatedEvalArgs,
 } from "./validate_cli";
 
 export type SuiteType = "speed" | "code" | "web";
@@ -64,6 +66,7 @@ export interface EvalOrchestratorOptions {
   runs?: number;
   image?: string;
   reportsDir?: string;
+  batchTargets?: ValidatedEvalArgs[];
 }
 
 export interface RoleRecommendation {
@@ -1030,7 +1033,7 @@ export function printHelp(): void {
 
 export function parseCliArgs(
   argv: string[] = process.argv.slice(2),
-  config: { strict?: boolean } = {}
+  config: { strict?: boolean; allowDefaultFile?: boolean } = {}
 ): EvalOrchestratorOptions {
   for (const arg of argv) {
     if (arg === "-h" || arg === "--help") {
@@ -1040,7 +1043,9 @@ export function parseCliArgs(
   }
 
   if (config.strict) {
-    const validated = validateStrictEvalArgs(argv, "eval/eval.ts");
+    const validated = validateStrictEvalArgs(argv, "eval/eval.ts", {
+      allowDefaultFile: config.allowDefaultFile ?? true,
+    });
     const { named } = extractPositionalAndNamed(argv);
 
     const opts: EvalOrchestratorOptions = {
@@ -1052,6 +1057,7 @@ export function parseCliArgs(
       continueOnFailure: false,
       skipReport: false,
       reasoningTranscript: true,
+      batchTargets: validated.batchTargets,
     };
 
     if (typeof named["--url"] === "string") opts.gatewayUrl = named["--url"];
@@ -1065,6 +1071,8 @@ export function parseCliArgs(
             : val === "messages" || val === "ms" || val === "anthropic"
               ? "messages"
               : "auto";
+    } else if (validated.directiveKey.includes("-ms-") || validated.directiveKey.includes("-cl-")) {
+      opts.wire = "messages";
     }
     if (typeof named["--suites"] === "string") {
       const parts = named["--suites"].split(",").map((s) => s.trim().toLowerCase());
@@ -1177,15 +1185,20 @@ export async function runMasterEvaluation(
     model.toLowerCase().includes("muse") ||
     options.directiveKey?.includes("-rs-") ||
     options.gatewayUrl?.includes("/responses");
-  const isMessages = options.wire === "messages" || options.gatewayUrl?.includes("/messages");
+  const isMessages =
+    options.wire === "messages" ||
+    options.directiveKey?.includes("-ms-") ||
+    options.directiveKey?.includes("-cl-") ||
+    options.gatewayUrl?.includes("/messages");
 
   const wire: "chat" | "responses" = isMessages ? "chat" : isResponses ? "responses" : "chat";
   const directiveKey = options.directiveKey ?? (isMessages ? "lr-zn-cl-ms-no" : isResponses ? "lr-zn-oo-rs-no" : "lr-or-oa-ch-no");
+  const baseUrl = getDefaultGatewayBaseUrl();
   const defaultUrl = isMessages
-    ? "http://10.32.34.172:7766/v1/messages"
+    ? `${baseUrl}/v1/messages`
     : isResponses
-      ? "https://localhost:7766/v1/responses"
-      : "https://localhost:7766/v1/chat/completions";
+      ? `${baseUrl}/v1/responses`
+      : `${baseUrl}/v1/chat/completions`;
   const gatewayUrl = options.gatewayUrl ?? defaultUrl;
 
   console.log(`\n========================================================================`);
@@ -1308,25 +1321,156 @@ export async function runMasterEvaluation(
   return summary;
 }
 
-if (import.meta.main) {
-  try {
-    const options = parseCliArgs(process.argv.slice(2), { strict: true });
-    if (options.wire === "messages") {
-      // Anthropic Messages wire: bridge OpenAI-shaped stage traffic for the
-      // whole process (idempotent). Native x-api-key callers pass through.
+/**
+ * Executes evaluation suites across multiple model targets sequentially,
+ * generating independent report cards and printing a consolidated batch summary.
+ */
+export async function runBatchEvaluation(
+  targets: ValidatedEvalArgs[],
+  baseOptions: EvalOrchestratorOptions
+): Promise<boolean> {
+  console.log(`\n========================================================================`);
+  console.log(`🚀 \x1b[1m\x1b[36mLITEROUTER BATCH MULTI-MODEL EVALUATION\x1b[0m`);
+  console.log(`========================================================================`);
+  console.log(`📋 Total Targets : \x1b[1m${targets.length}\x1b[0m models in queue`);
+  targets.forEach((t, i) => {
+    console.log(`   ${i + 1}. \x1b[36m${t.model}\x1b[0m (\x1b[33m${t.provider}\x1b[0m | \x1b[35m${t.directiveKey}\x1b[0m)`);
+  });
+  console.log(`⚙️  Continue On Failure: ${baseOptions.continueOnFailure ? "YES (--continue)" : "NO (Fail-Fast)"}`);
+  console.log(`========================================================================\n`);
+
+  const results: Array<{
+    target: ValidatedEvalArgs;
+    summary?: EvalOrchestratorSummary;
+    error?: string;
+    passed: boolean;
+  }> = [];
+
+  for (let i = 0; i < targets.length; i++) {
+    const target = targets[i]!;
+    console.log(`\n>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>`);
+    console.log(`▶ \x1b[1m\x1b[32m[BATCH ${i + 1}/${targets.length}]\x1b[0m Evaluating: \x1b[1m\x1b[36m${target.model}\x1b[0m (\x1b[33m${target.provider}\x1b[0m)`);
+    console.log(`>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>\n`);
+
+    const isTargetMessages =
+      target.directiveKey.includes("-ms-") ||
+      target.directiveKey.includes("-cl-") ||
+      baseOptions.wire === "messages" ||
+      baseOptions.gatewayUrl?.includes("/messages");
+
+    if (isTargetMessages) {
       const { installAnthropicBridge } = await import("./anthropic_bridge");
       installAnthropicBridge();
     }
-    runMasterEvaluation(options)
-      .then((summary) => {
-        if (!summary.allSuitesPassed && !options.continueOnFailure) {
-          process.exit(1);
-        }
-      })
-      .catch((err) => {
-        console.error("\x1b[31mFatal error in master evaluation orchestrator:\x1b[0m", err);
-        process.exit(1);
+
+    const targetOpts: EvalOrchestratorOptions = {
+      ...baseOptions,
+      model: target.model,
+      provider: target.provider,
+      directiveKey: target.directiveKey,
+      wire: isTargetMessages ? "messages" : baseOptions.wire,
+      batchTargets: undefined,
+    };
+
+    try {
+      const summary = await runMasterEvaluation(targetOpts);
+      results.push({
+        target,
+        summary,
+        passed: summary.allSuitesPassed,
       });
+
+      if (!summary.allSuitesPassed && !baseOptions.continueOnFailure) {
+        console.log(`\n🛑 Batch stopped after failure on ${target.model} (use --continue to evaluate remaining models).`);
+        break;
+      }
+    } catch (err) {
+      const errMsg = (err as Error).message;
+      console.error(`\n❌ Error evaluating model ${target.model}:`, errMsg);
+      results.push({
+        target,
+        error: errMsg,
+        passed: false,
+      });
+
+      if (!baseOptions.continueOnFailure) {
+        console.log(`\n🛑 Batch stopped after unhandled error on ${target.model} (use --continue to evaluate remaining models).`);
+        break;
+      }
+    }
+  }
+
+  // Print Batch Summary Table
+  console.log(`\n========================================================================================================================`);
+  console.log(`🏁 \x1b[1m\x1b[36mCONSOLIDATED BATCH EVALUATION SUMMARY REPORT\x1b[0m`);
+  console.log(`========================================================================================================================`);
+  console.log(`| # | Model Identifier                   | Provider     | Status   | Role Recommendation          | Report Card`);
+  console.log(`|---|------------------------------------|--------------|----------|------------------------------|-----------------------------------------`);
+
+  for (let idx = 0; idx < results.length; idx++) {
+    const r = results[idx]!;
+    const num = String(idx + 1).padEnd(2);
+    const m = r.target.model.padEnd(34).slice(0, 34);
+    const p = r.target.provider.padEnd(12).slice(0, 12);
+    const st = r.passed ? "\x1b[32mPASSED\x1b[0m  " : "\x1b[31mFAILED\x1b[0m  ";
+    const role = (r.summary?.roleRecommendation.role ?? (r.error ? "ERROR" : "FAILED")).padEnd(28).slice(0, 28);
+    const rep = (r.summary?.reportPath ?? `eval/reports/${r.target.model.replace(/[^a-zA-Z0-9._-]/g, "_")}.md`).padEnd(39).slice(0, 39);
+    console.log(`| ${num}| ${m} | ${p} | ${st} | ${role} | ${rep}`);
+  }
+  console.log(`========================================================================================================================\n`);
+
+  return results.every((r) => r.passed);
+}
+
+if (import.meta.main) {
+  try {
+    const options = parseCliArgs(process.argv.slice(2), { strict: true });
+    const targets = options.batchTargets && options.batchTargets.length > 0
+      ? options.batchTargets
+      : [{
+          model: options.model ?? "unknown",
+          provider: options.provider ?? "unknown",
+          providerCode: "xx",
+          providerName: options.provider ?? "unknown",
+          directiveKey: options.directiveKey ?? "lr-or-oa-ch-no",
+        }];
+
+    if (targets.length > 1) {
+      // Multi-model batch mode
+      runBatchEvaluation(targets, options)
+        .then((allPassed) => {
+          if (!allPassed && !options.continueOnFailure) {
+            process.exit(1);
+          }
+        })
+        .catch((err) => {
+          console.error("\x1b[31mFatal error in batch evaluation orchestrator:\x1b[0m", err);
+          process.exit(1);
+        });
+    } else {
+      // Single-model mode
+      if (
+        options.wire === "messages" ||
+        options.directiveKey?.includes("-ms-") ||
+        options.directiveKey?.includes("-cl-") ||
+        options.gatewayUrl?.includes("/messages")
+      ) {
+        // Anthropic Messages wire: bridge OpenAI-shaped stage traffic for the
+        // whole process (idempotent). Native x-api-key callers pass through.
+        const { installAnthropicBridge } = await import("./anthropic_bridge");
+        installAnthropicBridge();
+      }
+      runMasterEvaluation(options)
+        .then((summary) => {
+          if (!summary.allSuitesPassed && !options.continueOnFailure) {
+            process.exit(1);
+          }
+        })
+        .catch((err) => {
+          console.error("\x1b[31mFatal error in master evaluation orchestrator:\x1b[0m", err);
+          process.exit(1);
+        });
+    }
   } catch (err) {
     console.error((err as Error).message);
     process.exit(1);

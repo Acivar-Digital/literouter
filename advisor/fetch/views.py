@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """advisor/fetch/views.py — scrapling wrapper for clean agent-targeted HTML.
 No secrets; temp files + cleanup; ruff/test hygiene noted."""
-import tempfile
 import os
+import tempfile
 
 SELECTORS = os.environ.get("ADVISOR_SELECTORS", "body")
 

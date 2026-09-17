@@ -16,6 +16,8 @@
  *   bun run eval/speed.ts --runs 3
  */
 
+import { getDefaultGatewayBaseUrl } from "./validate_cli";
+
 export interface BenchResult {
   model: string;
   run: number;
@@ -258,7 +260,7 @@ export async function runSpeedBenchmark(
   models: string[] = DEFAULT_MODELS,
   runs: number = 2,
   key: string = "lr-or-oa-ch-no",
-  endpoint: string = "https://localhost:7766/v1/chat/completions",
+  endpoint: string = `${getDefaultGatewayBaseUrl()}/v1/chat/completions`,
   verbose: boolean = false
 ): Promise<SpeedBenchmarkResult> {
   const allResults: Record<string, BenchResult[]> = {};
@@ -358,7 +360,7 @@ export async function runBenchmarkCLI() {
   let models: string[] = [];
   let runsCount = 2;
   let directiveKey = "lr-or-oa-ch-no";
-  let endpoint = "https://localhost:7766/v1/chat/completions";
+  let endpoint = `${getDefaultGatewayBaseUrl()}/v1/chat/completions`;
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];

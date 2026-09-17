@@ -294,6 +294,21 @@ function createCutoffResilientStream(
         onMidStreamError(streamErr);
         if (!emittedDone) {
           emittedDone = true;
+          const errorChunk = new TextEncoder().encode(
+            `data: ${JSON.stringify({
+              id: `err-${Date.now()}`,
+              object: "chat.completion.chunk",
+              created: Math.floor(Date.now() / 1000),
+              model: "error",
+              error: {
+                message: streamErr instanceof Error ? streamErr.message : "Mid-stream connection error",
+                type: "server_error",
+                code: "mid_stream_error",
+              },
+              choices: [{ index: 0, delta: { content: "" }, finish_reason: "error" }],
+            })}\n\n`
+          );
+          safeEnqueue(controller, errorChunk);
           safeEnqueue(controller, DONE_CHUNK);
         }
         safeClose(controller);

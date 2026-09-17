@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { existsSync, readFileSync, unlinkSync } from "node:fs";
+import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   sanitizeModelName,
@@ -22,6 +22,7 @@ import {
 import {
   validateStrictEvalArgs,
   loadRegisteredProviders,
+  parseModelLine,
 } from "../../eval/validate_cli";
 
 describe("eval/eval.ts Master Orchestrator Unit Tests", () => {
@@ -82,7 +83,7 @@ describe("eval/eval.ts Master Orchestrator Unit Tests", () => {
     });
 
     it("should fail loudly when model is missing in strict mode", () => {
-      expect(() => parseCliArgs([], { strict: true })).toThrow(/Missing required argument #1: <model_name>/);
+      expect(() => parseCliArgs([], { strict: true, allowDefaultFile: false })).toThrow(/Missing required argument #1: <model_name>/);
     });
 
     it("should fail loudly when provider is missing in strict mode", () => {
@@ -124,6 +125,64 @@ describe("eval/eval.ts Master Orchestrator Unit Tests", () => {
       expect(r2.provider).toBe("zen");
       expect(r2.providerCode).toBe("zn");
       expect(r2.directiveKey).toBe("lr-zn-cl-ms-no");
+    });
+
+    it("should auto-infer provider from directive key when only model and key are passed", () => {
+      const r1 = validateStrictEvalArgs(["union-alpha", "lr-zn-cl-ms-no"]);
+      expect(r1.model).toBe("union-alpha");
+      expect(r1.provider).toBe("zen");
+      expect(r1.providerCode).toBe("zn");
+      expect(r1.directiveKey).toBe("lr-zn-cl-ms-no");
+
+      const r2 = validateStrictEvalArgs(["test/model", "lr-or-oa-ch-no"]);
+      expect(r2.model).toBe("test/model");
+      expect(r2.provider).toBe("openrouter");
+      expect(r2.providerCode).toBe("or");
+      expect(r2.directiveKey).toBe("lr-or-oa-ch-no");
+    });
+
+    it("should parse individual model lines in streamlined and legacy format", () => {
+      const providers = loadRegisteredProviders();
+      const t1 = parseModelLine("union-alpha, lr-zn-cl-ms-no", providers);
+      expect(t1.model).toBe("union-alpha");
+      expect(t1.provider).toBe("zen");
+      expect(t1.providerCode).toBe("zn");
+      expect(t1.directiveKey).toBe("lr-zn-cl-ms-no");
+
+      const t2 = parseModelLine("google/gemini-3.5-flash-lite, google, lr-gg-gg-gc-no", providers);
+      expect(t2.model).toBe("google/gemini-3.5-flash-lite");
+      expect(t2.provider).toBe("google");
+      expect(t2.providerCode).toBe("gg");
+      expect(t2.directiveKey).toBe("lr-gg-gg-gc-no");
+    });
+
+    it("should load model, provider, and directiveKey from a text file", () => {
+      const r = validateStrictEvalArgs(["eval/reports/test-models.txt"]);
+      expect(r.model).toBe("union-alpha");
+      expect(r.provider).toBe("zen");
+      expect(r.providerCode).toBe("zn");
+      expect(r.directiveKey).toBe("lr-zn-cl-ms-no");
+      expect(r.batchTargets).toBeDefined();
+      expect(r.batchTargets!.length).toBeGreaterThanOrEqual(1);
+    });
+
+    it("should parse multiple model targets from a multi-line batch file", () => {
+      const tempPath = join(import.meta.dir, "temp-multi-models.txt");
+      writeFileSync(
+        tempPath,
+        "# Comment line\nunion-alpha, lr-zn-cl-ms-no\n\n# Second model\ngoogle/gemini-3.5-flash-lite, google, lr-gg-gg-gc-no\n"
+      );
+      try {
+        const r = validateStrictEvalArgs([tempPath]);
+        expect(r.batchTargets).toBeDefined();
+        expect(r.batchTargets!.length).toBe(2);
+        expect(r.batchTargets![0]!.model).toBe("union-alpha");
+        expect(r.batchTargets![0]!.provider).toBe("zen");
+        expect(r.batchTargets![1]!.model).toBe("google/gemini-3.5-flash-lite");
+        expect(r.batchTargets![1]!.provider).toBe("google");
+      } finally {
+        if (existsSync(tempPath)) unlinkSync(tempPath);
+      }
     });
   });
 

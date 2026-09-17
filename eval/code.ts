@@ -23,7 +23,7 @@ import { runStage2Pydantic as runStage2PydanticRs } from "./stages_rs/stage2_pyd
 import { runStage3Agentic as runStage3AgenticRs } from "./stages_rs/stage3_agentic";
 import { runStage4Patch as runStage4PatchRs } from "./stages_rs/stage4_patch";
 import { runStage5Security as runStage5SecurityRs } from "./stages_rs/stage5_security";
-import { validateStrictEvalArgs } from "./validate_cli";
+import { validateStrictEvalArgs, getDefaultGatewayBaseUrl } from "./validate_cli";
 
 export interface CodeEvalOptions {
   model?: string;
@@ -97,20 +97,21 @@ export function resolveWireAndDefaults(options: CodeEvalOptions): {
   directiveKey: string;
   gatewayUrl: string;
 } {
+  const baseUrl = getDefaultGatewayBaseUrl();
   const isRs = detectIsResponses(options);
   if (isRs) {
     return {
       wire: "responses",
       model: options.model ?? "muse-spark-1.3-contributor-free",
       directiveKey: options.directiveKey ?? "lr-zn-oo-rs-no",
-      gatewayUrl: options.gatewayUrl ?? "https://localhost:7766/v1/responses",
+      gatewayUrl: options.gatewayUrl ?? `${baseUrl}/v1/responses`,
     };
   }
   return {
     wire: "chat",
     model: options.model ?? "nex-agi/nex-n2.5-pro:free",
     directiveKey: options.directiveKey ?? "lr-or-oa-ch-no",
-    gatewayUrl: options.gatewayUrl ?? "https://localhost:7766/v1/chat/completions",
+    gatewayUrl: options.gatewayUrl ?? `${baseUrl}/v1/chat/completions`,
   };
 }
 

@@ -5,6 +5,13 @@ All notable changes to LiteRouter will be documented in this file.
 ## [Unreleased] — 2026-09-17
 
 ### Fixed
+- **OpenRouter & Standard Streaming Error Framing & Resilience** (`literouter-pf7e`, `literouter-ju98`, `literouter-acig`, `literouter-dwea`):
+  - Standardized `formatMidstreamErrorFrame` in `src/network/fetcher.ts` to emit OpenAI/OpenRouter compliant chunks with `choices: [{ index: 0, delta: { content: "" }, finish_reason: "error" }]` alongside top-level `error: { message, code, type }`, preventing downstream SDK crashes (`TypeError: Cannot read properties of undefined (reading '0')`).
+  - Removed raw `":"` from `TOKEN_SIGNATURES` in `src/network/fetcher.ts`, and filtered `:`-prefixed comment lines and `[DONE]` markers from `hasContentToken()` so keep-alive comments like `: OPENROUTER PROCESSING` or `: keep-alive` are never falsely counted as model content tokens before generation starts.
+  - Updated `isInBandErrorChunk()` to skip all `:`-prefixed SSE comment lines cleanly.
+  - Expanded `isQuotaExhausted429` in `src/network/classifier.ts` to recognize OpenRouter and provider credit exhaustion phrases (`out of credits`, `credits exhausted`, `insufficient credits`, `free limit exceeded`, `account has no balance`), routing them to long-term quota quarantine (7 days or midnight UTC).
+  - Added explicit HTTP 402 ("Payment Required") handling in `classifyUpstreamError` to fail fast without burning request retry budgets.
+  - Aligned v4 engine stream cutoff handling (`createCutoffResilientStream` in `src/engine/dispatch.ts`) to emit spec-compliant OpenAI error chunks on midstream socket drops.
 - Enforced strict positional CLI argument validation for evaluation scripts (`eval/eval.ts`, `eval/code.ts`, `eval/web.ts`): requires `<model_name>`, `<provider>`, and `<api_key>` in exact positional order. Validates provider against `config/providers.json` and fails fast with detailed diagnostics if any argument is missing or unrecognized (literouter-6ep6).
 - Added placeholder rows and explicit reasons (`⏭️ SKIPPED`) for unexecuted or aborted benchmark stages in Markdown report generation (`eval/eval.ts`). Aborted stages now clearly show fail-fast upstream stage failure or CLI filter isolation, preventing missing stages from appearing ambiguous (literouter-bmpc).
 - Fixed Zen upstream identity gating for Anthropic Messages wire: aligned session ID generation with OpenCode's canonical format (`ses_${hex8}8ffe${tail14}`), forwarded client headers into `mergeOutboundHeaders`, and ensured attribution headers (`Referer`, `User-Agent`) and session tracking prevent upstream 403 `OpenCode's free tier can only be used from within OpenCode` (literouter-butp).

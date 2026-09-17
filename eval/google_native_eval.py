@@ -920,7 +920,7 @@ def generate_master_report(
 
 def main() -> None:
     model = sys.argv[1] if len(sys.argv) > 1 else "gemini-3.5-flash-lite"
-    gateway_url = os.environ.get("LITEROUTER_BASE_URL", "https://localhost:7766")
+    gateway_url = os.environ.get("LITEROUTER_BASE_URL", "http://192.168.50.10:7766")
     directive_key = os.environ.get("LITEROUTER_DIRECTIVE_KEY", "lr-gg-gg-gc-no")
 
     print("=" * 72)

@@ -78,22 +78,30 @@ const TOKEN_SIGNATURES: readonly string[] = Object.freeze([
   "message",
   "id",
   "object",
-  "data:",
-  ":",
   "{",
 ]);
 
 export function hasContentToken(text: string): boolean {
-  const trimmed = text.trim();
-  if (trimmed.length === 0) {
+  const lines = text.split("\n");
+  const nonComment = lines
+    .map((line) => line.trim())
+    .filter(
+      (line) =>
+        line.length > 0 &&
+        !line.startsWith(":") &&
+        line !== "data: [DONE]" &&
+        line !== "[DONE]"
+    );
+  if (nonComment.length === 0) {
     return false;
   }
+  const joined = nonComment.join("\n");
   for (const sig of TOKEN_SIGNATURES) {
-    if (trimmed.includes(sig)) {
+    if (joined.includes(sig)) {
       return true;
     }
   }
-  return trimmed.length > 0;
+  return false;
 }
 
 function mergeSignals(client?: AbortSignal, timeoutMs: number = MAX_HTTP_TIMEOUT_MS): AbortSignal {
@@ -224,7 +232,15 @@ export function formatMidstreamErrorFrame(
   if (protocol === "anthropic" || protocol === "cl") {
     return encoder.encode(`event: error\ndata: ${JSON.stringify({ type: "error", error: { type: "api_error", message } })}\n\n`);
   }
-  return encoder.encode(`data: ${JSON.stringify({ error: { message, type: errorType } })}\n\ndata: [DONE]\n\n`);
+  const payload = {
+    id: `err-${Date.now()}`,
+    object: "chat.completion.chunk",
+    created: Math.floor(Date.now() / 1000),
+    model: "error",
+    error: { message, code: errorType, type: errorType },
+    choices: [{ index: 0, delta: { content: "" }, finish_reason: "error" }],
+  };
+  return encoder.encode(`data: ${JSON.stringify(payload)}\n\ndata: [DONE]\n\n`);
 }
 
 export async function readFirstChunkWithTimeout(
@@ -702,6 +718,7 @@ export function isInBandErrorChunk(chunk: Uint8Array | string): { isError: boole
   const lines = text.split("\n");
   for (const line of lines) {
     const trimmed = line.trim();
+    if (trimmed.startsWith(":")) continue;
     if (!trimmed || trimmed === ": keep-alive" || trimmed === "data: [DONE]") {
       continue;
     }

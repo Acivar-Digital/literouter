@@ -5,6 +5,8 @@ import {
   extractFinishReasonFromChunk,
   fetchWithTtftGuard,
   formatMidstreamErrorFrame,
+  hasContentToken,
+  isInBandErrorChunk,
   readFirstChunkWithTimeout,
   readFirstContentChunkWithTimeout,
   resolveTtftTimeout,
@@ -137,15 +139,60 @@ describe("Wire-Compliant Midstream Error Frame (`formatMidstreamErrorFrame`)", (
 
     const openaiBytes = formatMidstreamErrorFrame("openai", message);
     const openaiText = decoder.decode(openaiBytes);
-    expect(openaiText).toBe(
-      `data: ${JSON.stringify({ error: { message, type: "server_error" } })}\n\ndata: [DONE]\n\n`
-    );
+    const openaiPayload = JSON.parse(openaiText.split("\n")[0]?.slice("data: ".length) ?? "{}") as Record<
+      string,
+      unknown
+    >;
+    expect(openaiPayload.object).toBe("chat.completion.chunk");
+    expect(String(openaiPayload.id)).toMatch(/^err-/);
+    expect(openaiPayload.model).toBe("error");
+    expect(typeof openaiPayload.created).toBe("number");
+    const openaiErr = openaiPayload.error as Record<string, unknown>;
+    expect(openaiErr.message).toBe(message);
+    expect(openaiErr.code).toBe("server_error");
+    expect(openaiErr.type).toBe("server_error");
+    const openaiChoices = openaiPayload.choices as Array<Record<string, unknown>>;
+    expect(Array.isArray(openaiChoices)).toBe(true);
+    expect(openaiChoices.length).toBe(1);
+    expect(openaiChoices[0]?.finish_reason).toBe("error");
+    expect(openaiText).toContain("\n\ndata: [DONE]\n\n");
 
     const defaultBytes = formatMidstreamErrorFrame("other-protocol", message);
     const defaultText = decoder.decode(defaultBytes);
-    expect(defaultText).toBe(
-      `data: ${JSON.stringify({ error: { message, type: "server_error" } })}\n\ndata: [DONE]\n\n`
-    );
+    const defaultPayload = JSON.parse(
+      defaultText.split("\n")[0]?.slice("data: ".length) ?? "{}"
+    ) as Record<string, unknown>;
+    expect(defaultPayload.object).toBe("chat.completion.chunk");
+    const defaultChoices = defaultPayload.choices as Array<Record<string, unknown>>;
+    expect(Array.isArray(defaultChoices)).toBe(true);
+    expect(defaultChoices[0]?.finish_reason).toBe("error");
+    expect(defaultText).toContain("\n\ndata: [DONE]\n\n");
+  });
+
+  it("includes choices array with finish_reason error in midstream error frame", () => {
+    const text = decoder.decode(formatMidstreamErrorFrame("openai", "boom", "stream_error"));
+    const payload = JSON.parse(text.split("\n")[0]?.slice("data: ".length) ?? "{}") as Record<
+      string,
+      unknown
+    >;
+    const choices = payload.choices as Array<Record<string, unknown>>;
+    expect(Array.isArray(choices)).toBe(true);
+    expect(choices[0]?.finish_reason).toBe("error");
+    const err = payload.error as Record<string, unknown>;
+    expect(err.code).toBe("stream_error");
+    expect(err.type).toBe("stream_error");
+  });
+
+  it("does not treat ': OPENROUTER PROCESSING' as a content token", () => {
+    expect(hasContentToken(": OPENROUTER PROCESSING")).toBe(false);
+    expect(hasContentToken(": keep-alive")).toBe(false);
+    expect(hasContentToken(": OPENROUTER PROCESSING\ndata: [DONE]")).toBe(false);
+  });
+
+  it("ignores ': OPENROUTER PROCESSING' in isInBandErrorChunk", () => {
+    expect(isInBandErrorChunk(": OPENROUTER PROCESSING").isError).toBe(false);
+    expect(isInBandErrorChunk(": OPENROUTER PROCESSING\n\n").isError).toBe(false);
+    expect(isInBandErrorChunk(": OPENROUTER PROCESSING\ndata: [DONE]\n\n").isError).toBe(false);
   });
 });
 

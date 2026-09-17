@@ -35,8 +35,13 @@ function isRetryable400(text: string): boolean {
 function isQuotaExhausted429(text: string): boolean {
   return (
     text.includes("insufficient_quota") ||
+    text.includes("insufficient credits") ||
     text.includes("credit_limit") ||
-    text.includes("out of balance")
+    text.includes("out of balance") ||
+    text.includes("credits exhausted") ||
+    text.includes("out of credits") ||
+    text.includes("free limit exceeded") ||
+    text.includes("account has no balance")
   );
 }
 
@@ -349,6 +354,17 @@ export function classifyUpstreamError(input: UpstreamErrorInfo): ErrorDispositio
       quarantineTtlSec: 0,
       reason: "Resource or model not found (404)",
       isRetryable: false,
+    };
+  }
+
+  // 6b. Status 402: Payment required — insufficient credits (fail fast, never park the key).
+  if (status === 402) {
+    return {
+      action: "fail_fast",
+      quarantineTtlSec: 0,
+      reason: "Payment required (402) - insufficient credits",
+      isRetryable: false,
+      errorType,
     };
   }
 
