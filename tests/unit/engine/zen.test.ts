@@ -141,10 +141,12 @@ describe("src/engine/zen.ts", () => {
       expect(p2.adaptedBody.tools).toHaveLength(6);
     });
 
-    it("preserves existing tools when provided", () => {
+    it("preserves existing tools while merging required probe tools", () => {
       const customTools = [{ type: "function", function: { name: "my_tool" } }];
-      const adapted = adaptZenPayload({ model: "test-model", tools: customTools });
-      expect(adapted.adaptedBody.tools).toEqual(customTools);
+      const adapted = adaptZenPayload({ model: "test-model", tools: customTools, tool_choice: "none" });
+      expect(adapted.adaptedBody.tools).toHaveLength(7);
+      expect(adapted.adaptedBody.tools[0]).toEqual(customTools[0]);
+      expect(adapted.adaptedBody.tool_choice).toBe("auto");
     });
 
     it("sets stream: true and requiresAccumulation: true when body.stream is falsy", () => {

@@ -290,7 +290,9 @@ export function getZenResponsesProbeTools(): Array<Record<string, unknown>> {
 
 /**
  * Adapts payload for Zen upstream requirements (Chat Completions wire):
- * Injects probe tools if body.tools is empty or missing.
+ * Ensures authentic OpenCode probe tools (bash, read, write, edit, glob, grep) are present,
+ * preserving any custom client/subagent tools while satisfying Zen anti-abuse gates.
+ * Normalizes tool_choice (replaces "none" with "auto" to prevent FreeTierError).
  * If !body.stream, sets body.stream = true and flags requiresAccumulation = true.
  */
 export function adaptZenPayload(body: Record<string, any>): {
@@ -300,15 +302,17 @@ export function adaptZenPayload(body: Record<string, any>): {
   const adaptedBody: Record<string, any> = { ...body };
   let requiresAccumulation = false;
 
-  if (
-    !adaptedBody.tools ||
-    !Array.isArray(adaptedBody.tools) ||
-    adaptedBody.tools.length === 0
-  ) {
-    adaptedBody.tools = getZenProbeTools();
-  }
+  const existingTools = Array.isArray(adaptedBody.tools) ? [...adaptedBody.tools] : [];
+  const probeTools = getZenProbeTools();
+  const existingNames = new Set(
+    existingTools.map((t: any) => t?.function?.name || t?.name).filter(Boolean)
+  );
+  const missingProbes = probeTools.filter(
+    (t: any) => !existingNames.has(t?.function?.name)
+  );
+  adaptedBody.tools = [...existingTools, ...missingProbes];
 
-  if (!adaptedBody.tool_choice) {
+  if (!adaptedBody.tool_choice || adaptedBody.tool_choice === "none") {
     adaptedBody.tool_choice = "auto";
   }
 
@@ -322,7 +326,9 @@ export function adaptZenPayload(body: Record<string, any>): {
 
 /**
  * Adapts payload for Zen upstream requirements (Responses API wire):
- * Injects probe tools if body.tools is empty or missing.
+ * Ensures authentic OpenCode Responses probe tools are present,
+ * preserving any custom client/subagent tools while satisfying Zen anti-abuse gates.
+ * Normalizes tool_choice (replaces "none" with "auto" to prevent FreeTierError).
  * If !body.stream, sets body.stream = true and flags requiresAccumulation = true.
  */
 export function adaptZenResponsesPayload(body: Record<string, any>): {
@@ -332,15 +338,17 @@ export function adaptZenResponsesPayload(body: Record<string, any>): {
   const adaptedBody: Record<string, any> = { ...body };
   let requiresAccumulation = false;
 
-  if (
-    !adaptedBody.tools ||
-    !Array.isArray(adaptedBody.tools) ||
-    adaptedBody.tools.length === 0
-  ) {
-    adaptedBody.tools = getZenResponsesProbeTools();
-  }
+  const existingTools = Array.isArray(adaptedBody.tools) ? [...adaptedBody.tools] : [];
+  const probeTools = getZenResponsesProbeTools();
+  const existingNames = new Set(
+    existingTools.map((t: any) => t?.name || t?.function?.name).filter(Boolean)
+  );
+  const missingProbes = probeTools.filter(
+    (t: any) => !existingNames.has(t?.name)
+  );
+  adaptedBody.tools = [...existingTools, ...missingProbes];
 
-  if (!adaptedBody.tool_choice) {
+  if (!adaptedBody.tool_choice || adaptedBody.tool_choice === "none") {
     adaptedBody.tool_choice = "auto";
   }
 
