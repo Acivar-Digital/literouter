@@ -100,6 +100,12 @@ export function buildUpstreamHeaders(
       }
     }
   }
+  const strategyIsZen = isRegisteredProvider(provider) && getProviderConfig(provider)?.strategy === "zen";
+  if (strategyIsZen) {
+    const { scrubZenHeaders, buildZenHeaders } = require("../engine/zen");
+    scrubZenHeaders(headers);
+    Object.assign(headers, buildZenHeaders(incomingHeaders));
+  }
   return headers;
 }
 
@@ -1113,6 +1119,15 @@ export async function handleOpenAiOriginal(
   }
 
   const { bodyText, clientStream, body } = await parseRequestBody(req);
+  let activeBodyText = bodyText;
+  let zenRequiresAccumulation = false;
+  const strategyIsZen = isRegisteredProvider(route.provider) && getProviderConfig(route.provider)?.strategy === "zen";
+  if (strategyIsZen) {
+    const { adaptZenResponsesPayload } = require("../engine/zen");
+    const adapted = adaptZenResponsesPayload(body);
+    zenRequiresAccumulation = adapted.requiresAccumulation;
+    activeBodyText = JSON.stringify(adapted.adaptedBody);
+  }
   const directiveStr = resolveDirectiveString(directiveOrRawKey, route.provider);
   const method = req.method;
   const path = new URL(req.url, "http://localhost").pathname;
@@ -1142,7 +1157,7 @@ export async function handleOpenAiOriginal(
     referrer,
   });
 
-  logPrepLine(reqId, body.model, bodyText.length, extractReasoningEffort(body), clientStream);
+  logPrepLine(reqId, body.model, activeBodyText.length, extractReasoningEffort(body), clientStream);
 
   const abortController = new AbortController();
   const cleanup = bindAbortSignal(req.signal, abortController);
@@ -1150,7 +1165,7 @@ export async function handleOpenAiOriginal(
   const startTime = Date.now();
   const fetchResult = await dispatchUpstreamFetch(
     route,
-    bodyText,
+    activeBodyText,
     req.headers,
     abortController.signal,
     reqId,
@@ -1191,6 +1206,18 @@ export async function handleOpenAiOriginal(
     cleanup();
     fetchResult.pacerRelease?.();
     return upstreamRes;
+  }
+
+  const isEventStream = (upstreamRes.headers.get("content-type") ?? "").includes("text/event-stream");
+  if (zenRequiresAccumulation && isEventStream && upstreamRes.body) {
+    cleanup();
+    fetchResult.pacerRelease?.();
+    const { accumulateZenResponsesStream } = require("../engine/zen");
+    const accumulated = await accumulateZenResponsesStream(upstreamRes.body);
+    return Response.json(accumulated, {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
   }
 
   if (isStream) {

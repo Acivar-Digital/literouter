@@ -290,7 +290,7 @@ describe("Session Forwarding & Header Normalization (tests/unit/handlers/session
         "X-Client-Version": "3.0.0-beta",
         "X-Client-Name": "AntigravityIDE",
       };
-      const headers = buildAuthHeaders("Bearer", "test-key", "zn", incoming);
+      const headers = buildAuthHeaders("Bearer", "test-key", "oa", incoming);
 
       // The original key casing passed in incoming is preserved in headers
       const versionKey = Object.keys(headers).find((k) => k.toLowerCase() === "x-client-version");
@@ -308,7 +308,7 @@ describe("Session Forwarding & Header Normalization (tests/unit/handlers/session
         "x-client-name": "OpenCode-CLI",
         "opencode-session-id": "ses_upstream_meta_01",
       };
-      const headers = buildUpstreamHeaders("test-key", "zn", incoming);
+      const headers = buildUpstreamHeaders("test-key", "oa", incoming);
 
       expect(headers["x-client-version"]).toBe("0.9.11");
       expect(headers["x-client-name"]).toBe("OpenCode-CLI");
@@ -321,7 +321,7 @@ describe("Session Forwarding & Header Normalization (tests/unit/handlers/session
         "x-client-name": "CustomAgent",
         "opencode-session": "ses_upstream_meta_02",
       });
-      const headers = buildUpstreamHeaders("test-key", "zn", incoming);
+      const headers = buildUpstreamHeaders("test-key", "oa", incoming);
 
       expect(headers["x-client-version"]).toBe("1.0.0");
       expect(headers["x-client-name"]).toBe("CustomAgent");
@@ -349,14 +349,14 @@ describe("Session Forwarding & Header Normalization (tests/unit/handlers/session
       incomingHeaders.set("x-client-name", "OpenCodeTestRunner");
       incomingHeaders.set("x-client-version", "1.0.0");
 
-      const authHeaders = buildAuthHeaders("Bearer", "key-abc", "zn", incomingHeaders);
+      const authHeaders = buildAuthHeaders("Bearer", "key-abc", "oa", incomingHeaders);
       expect(authHeaders["session-id"]).toBe("ses_mixed_headers_obj");
       expect(authHeaders["x-client-name"]).toBe("OpenCodeTestRunner");
       expect(authHeaders["x-client-version"]).toBe("1.0.0");
       expect(authHeaders["Authorization"]).toBe("Bearer key-abc");
       expect(authHeaders["Content-Type"]).toBe("application/json");
 
-      const upstreamHeaders = buildUpstreamHeaders("key-xyz", "zn", incomingHeaders);
+      const upstreamHeaders = buildUpstreamHeaders("key-xyz", "oa", incomingHeaders);
       expect(upstreamHeaders["session-id"]).toBe("ses_mixed_headers_obj");
       expect(upstreamHeaders["x-client-name"]).toBe("OpenCodeTestRunner");
       expect(upstreamHeaders["x-client-version"]).toBe("1.0.0");
@@ -371,12 +371,12 @@ describe("Session Forwarding & Header Normalization (tests/unit/handlers/session
         "x-client-version": "2.0.0",
       };
 
-      const authHeaders = buildAuthHeaders("Bearer", "key-123", "zn", incomingRecord);
+      const authHeaders = buildAuthHeaders("Bearer", "key-123", "oa", incomingRecord);
       expect(authHeaders["session-id"]).toBe("ses_mixed_record_obj");
       expect(authHeaders["x-client-name"]).toBe("RecordTestRunner");
       expect(authHeaders["x-client-version"]).toBe("2.0.0");
 
-      const upstreamHeaders = buildUpstreamHeaders("key-456", "zn", incomingRecord);
+      const upstreamHeaders = buildUpstreamHeaders("key-456", "oa", incomingRecord);
       expect(upstreamHeaders["session-id"]).toBe("ses_mixed_record_obj");
       expect(upstreamHeaders["x-client-name"]).toBe("RecordTestRunner");
       expect(upstreamHeaders["x-client-version"]).toBe("2.0.0");

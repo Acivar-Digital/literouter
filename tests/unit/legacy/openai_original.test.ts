@@ -87,20 +87,33 @@ describe("OpenAI Original Responses Handler (src/handlers/openai_original.ts)", 
 
     it("forwards incoming Accept header when present", () => {
       const incoming = new Headers({ accept: "text/event-stream" });
-      const headers = buildUpstreamHeaders("test-key-123", "zn", incoming);
+      const headers = buildUpstreamHeaders("test-key-123", "oa", incoming);
       expect(headers["Accept"]).toBe("text/event-stream");
     });
 
-    it("normalizes incoming session headers into upstream session-id and forwards client metadata", () => {
+    it("normalizes incoming session headers into upstream session-id and forwards client metadata for standard providers", () => {
       const incoming = new Headers({
         "x-opencode-session": "ses_orig_456",
         "x-client-version": "2.0.0",
         "x-client-name": "ClaudeCode",
       });
-      const headers = buildUpstreamHeaders("test-key-123", "zn", incoming);
+      const headers = buildUpstreamHeaders("test-key-123", "oa", incoming);
       expect(headers["session-id"]).toBe("ses_orig_456");
       expect(headers["x-client-version"]).toBe("2.0.0");
       expect(headers["x-client-name"]).toBe("ClaudeCode");
+    });
+
+    it("scrubs client metadata and injects authentic OpenCode headers for Zen provider", () => {
+      const incoming = new Headers({
+        "x-opencode-session": "ses_f4b412707ffeHkBmbE0s0Obdo2",
+        "x-client-version": "2.0.0",
+        "x-client-name": "ClaudeCode",
+      });
+      const headers = buildUpstreamHeaders("test-key-123", "zn", incoming);
+      expect(headers["x-client-version"]).toBeUndefined();
+      expect(headers["x-client-name"]).toBeUndefined();
+      expect(headers["User-Agent"]).toContain("opencode/");
+      expect(headers["Referer"]).toBe("https://opencode.ai");
     });
   });
 
@@ -399,7 +412,8 @@ describe("OpenAI Original Responses Handler (src/handlers/openai_original.ts)", 
           expect(receivedAuth).toBe("Bearer zen-test-key-ns");
           expect(receivedBody.model).toBe("muse-spark-1.3");
           expect(receivedBody.input).toEqual([{ role: "user", content: "Translate hello to German" }]);
-          expect(receivedBody.stream).toBe(false);
+          expect(receivedBody.stream).toBe(true);
+          expect(Array.isArray(receivedBody.tools)).toBe(true);
 
           const data = (await res.json()) as {
             id: string;
