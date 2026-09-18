@@ -48,6 +48,7 @@ description: LiteRouter API Gateway operational guide for Bun/TypeScript proxy o
 | Model probe & onboarding | `bun run scripts/probe_model.ts <model_name>` (validates OpenCode 2, Claude Code CLI & Pydantic AI) |
 | Model speed & throughput | `bun run eval/speed.ts` (measures TTFT, duration, tokens/sec; alias: `scripts/bench_speed.ts`) |
 | OpenCode2 Auto-Patch | `bash scripts/opencode2_autopatch.sh` (fast <5ms self-heal & binary verification) |
+| Sync LiteRouter to VPS | `bash scripts/sync_literouter_to_vps.sh` (strictly unidirectional mirror of LiteRouter code, .env, and .env.local from WSL golden truth to VPS) |
 | Typecheck & lint | `bun run typecheck` && `uv run ruff check .` |
 
 > **Accelerated Test Runner & Subcommands (`bun run test` / `bun test:lr`)**:

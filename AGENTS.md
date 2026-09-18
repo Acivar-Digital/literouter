@@ -82,6 +82,7 @@ I understand you want: [one sentence restatement in your own words]
 | Unit Test Suite | `bun run test` (or `bun test:lr`) | Accelerated domain-partitioned runner (runs 7 domains in parallel subprocesses, silent on success, outputs only isolated failures), exit code 0 | Local |
 | Targeted Domain Test | `bun run test <domain>` (or `bun test:lr <domain>`) | Rapid iteration on slice (e.g. `bun run test handlers`, `bun run test network`, `bun run test stream`, `bun run test engine`, `bun run test telemetry`, `bun run test core`, `bun run test eval`) | Local |
 | Sync OpenCode Nodes | `uv run python scripts/sync_opencode_nodes.py` | Syncs OpenCode 2 settings from WSL2 (source of truth) to Mac Mini & VPS | Cluster |
+| Sync LiteRouter to VPS | `bash scripts/sync_literouter_to_vps.sh` | One-way sync of LiteRouter code, .env, and .env.local from WSL (golden truth) to VPS | Cluster |
 | Failure-Only Test | `bun run test:failures` | `bun test --only-failures` (outputs only failing tests) | Local |
 | Eval Grader Tests | `bun run test:eval` | All pass (182 benchmark eval grader tests in `tests/eval`) | Local |
 | Raw Unbuffered Tests | `bun run test:raw` | Verbose fallback for debugging | Local |
