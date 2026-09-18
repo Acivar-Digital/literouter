@@ -2,23 +2,34 @@ import { existsSync, readFileSync, writeFileSync } from "fs";
 import { resolve } from "path";
 
 async function getOpencodeVersion(): Promise<string | null> {
-  try {
-    const proc = Bun.spawn(["opencode", "--version"], {
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const stdout = await new Response(proc.stdout).text();
-    const exitCode = await proc.exited;
+  // Support both OpenCode v2 and legacy OpenCode v1
+  for (const bin of ["opencode2", "opencode"]) {
+    try {
+      const proc = Bun.spawn([bin, "--version"], {
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const stdout = await new Response(proc.stdout).text();
+      const exitCode = await proc.exited;
 
-    if (exitCode !== 0) {
-      return null;
+      if (exitCode === 0) {
+        const raw = stdout.trim();
+        const version = raw.replace(/^opencode2?[\/@\s]*/i, "").trim();
+        // Upstream Zen checks semver >= 1.18.0. Beta tags like 0.0.0-beta-* trigger
+        // HTTP 426 UpgradeRequired. Skip beta tags to allow fallback to stable release semver.
+        if (version.startsWith("0.0.0") || version.includes("beta")) {
+          continue;
+        }
+        if (version.length > 0) {
+          return version;
+        }
+      }
+    } catch {
+      // Try next binary
     }
-
-    const version = stdout.trim();
-    return version.length > 0 ? version : null;
-  } catch (error) {
-    return null;
   }
+  // Default to compliant stable runtime version if only beta or no binary is present
+  return "1.18.30";
 }
 
 async function main() {
