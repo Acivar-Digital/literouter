@@ -113,7 +113,7 @@ if [ "$READY" -eq 1 ]; then
     t_pad=$(( 70 - 1 - t_len ))
     printf "║%s%*s║\n" "$title" "$t_pad" ""
     printf "║%*s║\n" 70 ""
-    format_box_line "Parent Dir:" "$PARENT_DIR"
+    format_box_line "Parent Dir:" "$FULL_PARENT"
     format_box_line "Working Folder:" "$WORKING_FOLDER"
     format_box_line "Endpoint:" "${PROTOCOL}://${HOST}:${PORT}"
     if [ -n "$LAN_IP" ] && [ "$HOST" != "$LAN_IP" ]; then
