@@ -132,6 +132,7 @@ export function buildAuthHeaders(
   }
   ensureSessionHeaders(headers, incomingHeaders);
   if (provider === "zn" || provider === "zen") {
+    const { buildZenHeaders } = require("../engine/zen");
     const zenHeaders = buildZenHeaders(incomingHeaders, headers["session-id"]);
     Object.assign(headers, zenHeaders);
   }
@@ -245,6 +246,11 @@ async function executeDirectCall(
     ? clientOptions.headers
     : (clientOptions?.headers ? new Headers(clientOptions.headers as Record<string, string>) : undefined);
   const headers = buildAuthHeaders(endpoint.authHeader, selected.key, directive.provider, clientHdrs);
+  if (directive.provider === "zn" || (directive.provider as string) === "zen") {
+    const { scrubZenHeaders, buildZenHeaders } = require("../engine/zen");
+    scrubZenHeaders(headers);
+    Object.assign(headers, buildZenHeaders(clientHdrs));
+  }
   const isResponses = directive.completion === "rs";
   const outboundBody = isResponses
     ? JSON.stringify(transformOpenAiToResponses(activePayload))

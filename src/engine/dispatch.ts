@@ -124,7 +124,8 @@ export function mergeOutboundHeaders(
   provHeaders?: Record<string, string>,
   targetExtraHeaders?: Record<string, string>,
   payloadHeaders?: Record<string, string>,
-  clientHeaders?: Headers | Record<string, string>
+  clientHeaders?: Headers | Record<string, string>,
+  isZen?: boolean
 ): Record<string, string> {
   const merged: Record<string, string> = {};
   setHeaderCaseInsensitive(merged, "content-type", "application/json");
@@ -136,6 +137,15 @@ export function mergeOutboundHeaders(
   mergeHeaderSource(merged, provHeaders);
 
   ensureSessionHeaders(merged, clientHeaders ?? payloadHeaders);
+
+  if (isZen) {
+    const { scrubZenHeaders, buildZenHeaders } = require("./zen");
+    scrubZenHeaders(merged);
+    const zenHeaders = buildZenHeaders();
+    for (const [k, v] of Object.entries(zenHeaders)) {
+      setHeaderCaseInsensitive(merged, k, String(v));
+    }
+  }
 
   return merged;
 }
@@ -532,13 +542,18 @@ export async function executeDispatchPipeline(
     }
     const authHeaders = strategy.buildAuthHeaders?.(key.key, req.clientHeaders) ?? defaultAuthHeaders(provConfig, key.key);
     const injectedHeaders = strategy.injectHeaders?.(currentCtx, authHeaders) ?? authHeaders;
+    const isZen =
+      provConfig.code === "zn" ||
+      provConfig.name?.toLowerCase() === "zen" ||
+      provConfig.strategy === "zen";
     const finalHeaders = mergeOutboundHeaders(
       authHeaders,
       injectedHeaders,
       provConfig.headers,
       target.extraHeaders,
       req.outboundPayload.headers,
-      req.clientHeaders
+      req.clientHeaders,
+      isZen
     );
 
     try {
@@ -599,10 +614,13 @@ export async function executeDispatchPipeline(
         }
 
         // If the upstream responded with an event stream but client requested non-streaming (e.g. Zen adaptation),
-        // accumulate SSE events into a chat.completion JSON object
+        // accumulate SSE events into a chat.completion or responses JSON object
         if (upstreamResponse.headers.get("content-type")?.includes("text/event-stream") && upstreamResponse.body) {
-          const { accumulateZenStreamToCompletion } = require("./zen");
-          const accumulated = await accumulateZenStreamToCompletion(upstreamResponse.body, String(req.outboundPayload.body?.model ?? ""));
+          const { accumulateZenStreamToCompletion, accumulateZenResponsesStream } = require("./zen");
+          const isResponses = req.outboundPayload.endpointKey === "rs";
+          const accumulated = isResponses
+            ? await accumulateZenResponsesStream(upstreamResponse.body, String(req.outboundPayload.body?.model ?? ""))
+            : await accumulateZenStreamToCompletion(upstreamResponse.body, String(req.outboundPayload.body?.model ?? ""));
           const clientJson = req.transformer.transformWireToClient(accumulated, req.directive);
           telemetry.recordUsage(extractUsage(accumulated));
           telemetry.served(upstreamResponse.status, attempt, maxAttempts);

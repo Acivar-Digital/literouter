@@ -3,9 +3,13 @@ import {
   OPENCODE_SESSION_REGEX,
   isValidOpenCodeSessionId,
   buildZenHeaders,
+  scrubZenHeaders,
   getZenProbeTools,
+  getZenResponsesProbeTools,
   adaptZenPayload,
+  adaptZenResponsesPayload,
   accumulateZenStreamToCompletion,
+  accumulateZenResponsesStream,
 } from "../../../src/engine/zen";
 import { generateOpenCodeSessionId } from "../../../src/engine/session_id";
 import { getProviderConfig, initProviderRegistry } from "../../../src/config/providers";
@@ -264,6 +268,99 @@ describe("src/engine/zen.ts", () => {
         completion_tokens: 0,
         total_tokens: 0,
       });
+    });
+  });
+
+  describe("scrubZenHeaders", () => {
+    it("removes client identity, application, and tracking headers", () => {
+      const headers: Record<string, string> = {
+        "content-type": "application/json",
+        "authorization": "Bearer token",
+        "user-agent": "OpenCode/1.17.0",
+        "x-client-name": "muse",
+        "x-client-version": "1.0.0",
+        "x-opencode-version": "1.17.0",
+        "x-opencode-client": "muse",
+        "x-application-name": "build",
+        "sec-ch-ua": '"Chromium";v="120"',
+        "origin": "http://localhost:3000",
+        "referer": "http://localhost:3000/chat",
+        "x-title": "MyClient",
+        "custom-safe-header": "safe-value",
+      };
+
+      scrubZenHeaders(headers);
+
+      expect(headers["content-type"]).toBe("application/json");
+      expect(headers["authorization"]).toBe("Bearer token");
+      expect(headers["custom-safe-header"]).toBe("safe-value");
+
+      expect(headers["user-agent"]).toBeUndefined();
+      expect(headers["x-client-name"]).toBeUndefined();
+      expect(headers["x-client-version"]).toBeUndefined();
+      expect(headers["x-opencode-version"]).toBeUndefined();
+      expect(headers["x-opencode-client"]).toBeUndefined();
+      expect(headers["x-application-name"]).toBeUndefined();
+      expect(headers["sec-ch-ua"]).toBeUndefined();
+      expect(headers["origin"]).toBeUndefined();
+      expect(headers["referer"]).toBeUndefined();
+      expect(headers["x-title"]).toBeUndefined();
+    });
+  });
+
+  describe("getZenResponsesProbeTools & adaptZenResponsesPayload", () => {
+    it("returns top-level function tool schemas compatible with Responses API", () => {
+      const tools = getZenResponsesProbeTools();
+      expect(tools.length).toBe(6);
+      for (const tool of tools) {
+        expect(tool.type).toBe("function");
+        expect(typeof tool.name).toBe("string");
+        expect(typeof tool.description).toBe("string");
+        expect(tool.parameters).toBeDefined();
+        // Responses API should NOT have tool.function
+        expect(tool.function).toBeUndefined();
+      }
+    });
+
+    it("injects Responses probe tools and sets stream: true", () => {
+      const adapted = adaptZenResponsesPayload({
+        model: "muse-spark-1.3-contributor-free",
+        input: [{ role: "user", content: "hi" }],
+      });
+
+      expect(adapted.requiresAccumulation).toBe(true);
+      expect(adapted.adaptedBody.stream).toBe(true);
+      expect(adapted.adaptedBody.tool_choice).toBe("auto");
+      expect(adapted.adaptedBody.tools).toHaveLength(6);
+      expect(adapted.adaptedBody.tools[0].name).toBe("bash");
+    });
+  });
+
+  describe("accumulateZenResponsesStream", () => {
+    function createMockStream(chunks: string[]): ReadableStream<Uint8Array> {
+      const encoder = new TextEncoder();
+      return new ReadableStream<Uint8Array>({
+        start(controller) {
+          for (const chunk of chunks) {
+            controller.enqueue(encoder.encode(chunk));
+          }
+          controller.close();
+        },
+      });
+    }
+
+    it("extracts completed response from response.completed SSE event", async () => {
+      const sse = [
+        `event: response.created\ndata: {"type":"response.created","response":{"id":"resp_123","model":"muse-spark-1.3"}}\n\n`,
+        `event: response.completed\ndata: {"type":"response.completed","response":{"id":"resp_123","model":"muse-spark-1.3","status":"completed","output":[{"type":"message","content":[{"type":"output_text","text":"Hello!"}]}]}}\n\n`,
+      ];
+
+      const stream = createMockStream(sse);
+      const res = await accumulateZenResponsesStream(stream, "muse-spark-1.3");
+
+      expect(res.id).toBe("resp_123");
+      expect(res.status).toBe("completed");
+      expect(res.output[0].content[0].text).toBe("Hello!");
     });
   });
 });

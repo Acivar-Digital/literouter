@@ -11,8 +11,8 @@ import type { RequestTelemetry, UsageRecord } from "../../../src/telemetry/sessi
 
 const dummyDirective: ParsedDirective = {
   type: "direct",
-  raw: "lr-zn-oo-rs-no",
-  provider: "zn",
+  raw: "lr-or-oo-rs-no",
+  provider: "or",
   payload: "oo",
   wire: "oo",
   completion: "rs",
@@ -110,6 +110,35 @@ describe("OpenAI Responses Transformer (src/transformers/openai_responses.ts)", 
       expect(outbound.method).toBe("POST");
       expect(outbound.isStreaming).toBe(true);
       expect(outbound.body).toEqual(inboundBody);
+    });
+
+    it("adapts payload for Zen provider by injecting probe tools and forcing stream: true", () => {
+      const transformer = new OpenAIResponsesTransformer();
+      const zenDirective: ParsedDirective = {
+        type: "direct",
+        raw: "lr-zn-oo-rs-no",
+        provider: "zn",
+        payload: "oo",
+        wire: "oo",
+        completion: "rs",
+        endpoint: "rs",
+        nuances: ["no"],
+      };
+
+      const outbound = transformer.transformClientToWire(
+        { model: "muse-spark-1.3", input: "Hello", stream: false },
+        zenDirective,
+        new Headers({ "user-agent": "CustomClient", "x-client-name": "muse" })
+      );
+
+      expect(outbound.endpointKey).toBe("rs");
+      expect(outbound.method).toBe("POST");
+      expect(outbound.isStreaming).toBe(false);
+      const body = outbound.body as Record<string, any>;
+      expect(body.stream).toBe(true);
+      expect(body.tools).toHaveLength(6);
+      expect(outbound.headers["user-agent"]).toBeUndefined();
+      expect(outbound.headers["x-client-name"]).toBeUndefined();
     });
   });
 

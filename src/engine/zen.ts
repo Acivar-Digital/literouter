@@ -47,6 +47,42 @@ export function isAcceptableSessionId(sessionId: string): boolean {
   return false;
 }
 
+export const ZEN_SCRUB_HEADER_PREFIXES: ReadonlyArray<string> = [
+  "x-client-",
+  "client-",
+  "x-opencode-",
+  "opencode-",
+  "x-application-",
+  "application-",
+  "sec-ch-ua",
+];
+
+export const ZEN_SCRUB_EXACT_HEADERS: ReadonlySet<string> = new Set([
+  "user-agent",
+  "origin",
+  "referer",
+  "http-referer",
+  "x-title",
+  "x-requested-with",
+  "session-id",
+  "x-session-id",
+]);
+
+/**
+ * Removes any client-specific identity or application headers from outbound request headers.
+ */
+export function scrubZenHeaders(headers: Record<string, string>): void {
+  for (const key of Object.keys(headers)) {
+    const lower = key.toLowerCase();
+    if (
+      ZEN_SCRUB_EXACT_HEADERS.has(lower) ||
+      ZEN_SCRUB_HEADER_PREFIXES.some((p) => lower.startsWith(p))
+    ) {
+      delete headers[key];
+    }
+  }
+}
+
 /**
  * Retrieves configured headers for the Zen provider ("zn") from config/providers.json
  * as the single source of truth.
@@ -62,9 +98,8 @@ function getZenConfiguredHeaders(): Record<string, string> {
 
 /**
  * Builds Zen upstream attribution and session headers.
- * Extracts incoming session ID. If not valid via strict regex, generates a fresh OpenCode session ID.
- * Injects x-opencode-session, x-opencode-request (msg_<tail>), session-id, x-session-id,
- * and merges all configured provider headers.
+ * Unconditionally overwrites User-Agent, Referer, HTTP-Referer, X-Title, and session headers
+ * with authentic OpenCode runtime identity.
  */
 export function buildZenHeaders(
   incomingHeaders?: Headers | Record<string, string>,
@@ -82,9 +117,17 @@ export function buildZenHeaders(
   const requestId = `msg_${tail}`;
 
   const configured = getZenConfiguredHeaders();
+  const configuredUa =
+    configured["User-Agent"] ||
+    configured["user-agent"] ||
+    "opencode/1.18.30 ai-sdk/provider-utils/4.0.23 runtime/bun/1.4.2";
 
   return {
     ...configured,
+    "User-Agent": configuredUa,
+    "HTTP-Referer": "https://opencode.ai",
+    "Referer": "https://opencode.ai",
+    "X-Title": "OpenCode",
     "x-opencode-session": activeSessionId,
     "x-opencode-request": requestId,
     "session-id": activeSessionId,
@@ -223,14 +266,30 @@ const ZEN_PROBE_TOOLS: ReadonlyArray<Record<string, unknown>> = [
 ];
 
 /**
- * Returns fresh clones of standard OpenCode probe tools.
+ * Returns fresh clones of standard OpenCode probe tools formatted for OpenAI Chat Completions.
  */
 export function getZenProbeTools(): Array<Record<string, unknown>> {
   return JSON.parse(JSON.stringify(ZEN_PROBE_TOOLS));
 }
 
 /**
- * Adapts payload for Zen upstream requirements:
+ * Returns fresh clones of standard OpenCode probe tools formatted for OpenAI Responses API.
+ * In Responses API, tools have name, description, parameters at top-level.
+ */
+export function getZenResponsesProbeTools(): Array<Record<string, unknown>> {
+  return ZEN_PROBE_TOOLS.map((t) => {
+    const fn = t.function as { name: string; description: string; parameters: unknown };
+    return {
+      type: "function",
+      name: fn.name,
+      description: fn.description,
+      parameters: JSON.parse(JSON.stringify(fn.parameters)),
+    };
+  });
+}
+
+/**
+ * Adapts payload for Zen upstream requirements (Chat Completions wire):
  * Injects probe tools if body.tools is empty or missing.
  * If !body.stream, sets body.stream = true and flags requiresAccumulation = true.
  */
@@ -247,6 +306,42 @@ export function adaptZenPayload(body: Record<string, any>): {
     adaptedBody.tools.length === 0
   ) {
     adaptedBody.tools = getZenProbeTools();
+  }
+
+  if (!adaptedBody.tool_choice) {
+    adaptedBody.tool_choice = "auto";
+  }
+
+  if (!adaptedBody.stream) {
+    adaptedBody.stream = true;
+    requiresAccumulation = true;
+  }
+
+  return { adaptedBody, requiresAccumulation };
+}
+
+/**
+ * Adapts payload for Zen upstream requirements (Responses API wire):
+ * Injects probe tools if body.tools is empty or missing.
+ * If !body.stream, sets body.stream = true and flags requiresAccumulation = true.
+ */
+export function adaptZenResponsesPayload(body: Record<string, any>): {
+  adaptedBody: Record<string, any>;
+  requiresAccumulation: boolean;
+} {
+  const adaptedBody: Record<string, any> = { ...body };
+  let requiresAccumulation = false;
+
+  if (
+    !adaptedBody.tools ||
+    !Array.isArray(adaptedBody.tools) ||
+    adaptedBody.tools.length === 0
+  ) {
+    adaptedBody.tools = getZenResponsesProbeTools();
+  }
+
+  if (!adaptedBody.tool_choice) {
+    adaptedBody.tool_choice = "auto";
   }
 
   if (!adaptedBody.stream) {
@@ -467,4 +562,124 @@ export async function accumulateZenStreamToCompletion(
   }
 
   return response;
+}
+
+/**
+ * Accumulates an upstream SSE event stream from Zen /v1/responses into a standard
+ * Responses API response object for clients that requested non-streaming (stream: false).
+ */
+export async function accumulateZenResponsesStream(
+  stream: ReadableStream<Uint8Array>,
+  model: string
+): Promise<Record<string, any>> {
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let completedResponse: Record<string, any> | null = null;
+  let createdResponse: Record<string, any> | null = null;
+  let accumulatedText = "";
+
+  const processLine = (line: string) => {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith(":")) return;
+
+    let payload = "";
+    if (trimmed.startsWith("data: ")) {
+      payload = trimmed.slice(6).trim();
+    } else if (trimmed.startsWith("data:")) {
+      payload = trimmed.slice(5).trim();
+    }
+
+    if (!payload || payload === "[DONE]") return;
+
+    try {
+      const parsed = JSON.parse(payload);
+      if (parsed && typeof parsed === "object") {
+        if (parsed.type === "response.completed" && parsed.response) {
+          completedResponse = parsed.response;
+        } else if (parsed.type === "response.created" && parsed.response) {
+          createdResponse = parsed.response;
+        } else if (parsed.type === "response.output_text.delta" && typeof parsed.delta === "string") {
+          accumulatedText += parsed.delta;
+        }
+      }
+    } catch (_err) {
+      void _err;
+    }
+  };
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() ?? "";
+      for (const line of lines) {
+        processLine(line);
+      }
+    }
+
+    buffer += decoder.decode();
+    if (buffer.length > 0) {
+      const lines = buffer.split("\n");
+      for (const line of lines) {
+        processLine(line);
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  if (completedResponse) {
+    return completedResponse;
+  }
+
+  if (createdResponse) {
+    const fallback: Record<string, any> = Object.assign({}, createdResponse);
+    fallback.status = "completed";
+    if (accumulatedText) {
+      fallback.output = [
+        {
+          id: `msg_${crypto.randomUUID().replace(/-/g, "").slice(0, 24)}`,
+          type: "message",
+          status: "completed",
+          role: "assistant",
+          content: [
+            {
+              type: "output_text",
+              text: accumulatedText,
+              annotations: [],
+              logprobs: [],
+            },
+          ],
+        },
+      ];
+    }
+    return fallback;
+  }
+
+  return {
+    id: `resp_${crypto.randomUUID().replace(/-/g, "").slice(0, 24)}`,
+    object: "response",
+    created_at: Math.floor(Date.now() / 1000),
+    status: "completed",
+    model,
+    output: [
+      {
+        id: `msg_${crypto.randomUUID().replace(/-/g, "").slice(0, 24)}`,
+        type: "message",
+        status: "completed",
+        role: "assistant",
+        content: [
+          {
+            type: "output_text",
+            text: accumulatedText,
+            annotations: [],
+            logprobs: [],
+          },
+        ],
+      },
+    ],
+  };
 }

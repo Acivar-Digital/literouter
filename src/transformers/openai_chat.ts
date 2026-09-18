@@ -236,7 +236,8 @@ export class OpenAIChatTransformer implements PayloadTransformerContract {
 
     const providerCode = directive.type === "direct" ? String(directive.provider) : "";
     if (providerCode === "zn" || providerCode === "zen") {
-      const { adaptZenPayload } = require("../engine/zen");
+      const { adaptZenPayload, scrubZenHeaders } = require("../engine/zen");
+      scrubZenHeaders(wireHeaders);
       const adapted = adaptZenPayload(transformedBody);
       transformedBody = adapted.adaptedBody;
     }

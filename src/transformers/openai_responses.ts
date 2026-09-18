@@ -153,15 +153,35 @@ export class OpenAIResponsesTransformer implements PayloadTransformerContract {
   /** Pure: converts client request body to upstream Responses wire format */
   transformClientToWire(
     inboundBody: Record<string, unknown>,
-    _directive: ParsedDirective,
-    _headers: Headers
+    directive: ParsedDirective,
+    headers: Headers
   ): OutboundWirePayload {
+    const isStreaming = Boolean(inboundBody.stream);
+    const wireHeaders: Record<string, string> = {
+      "Content-Type": "application/json",
+    };
+
+    if (headers && typeof headers.forEach === "function") {
+      headers.forEach((value, key) => {
+        wireHeaders[key.toLowerCase()] = value;
+      });
+    }
+
+    let transformedBody = { ...inboundBody };
+    const providerCode = directive.type === "direct" ? String(directive.provider) : "";
+    if (providerCode === "zn" || providerCode === "zen") {
+      const { adaptZenResponsesPayload, scrubZenHeaders } = require("../engine/zen");
+      scrubZenHeaders(wireHeaders);
+      const adapted = adaptZenResponsesPayload(transformedBody);
+      transformedBody = adapted.adaptedBody;
+    }
+
     return {
       endpointKey: "rs",
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: inboundBody,
-      isStreaming: Boolean(inboundBody.stream),
+      headers: wireHeaders,
+      body: transformedBody,
+      isStreaming,
     };
   }
 

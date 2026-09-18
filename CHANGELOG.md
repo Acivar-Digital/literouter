@@ -2,6 +2,15 @@
 
 All notable changes to LiteRouter will be documented in this file.
 
+## [Unreleased] — 2026-09-19
+
+### Fixed
+- **Client Application Scrubbing & Unconditional Attribution Overwrite for Zen (`zn`)** (`literouter-djgx`):
+  - **Unconditional Application Header Scrubbing (`src/engine/zen.ts:scrubZenHeaders`)**: Implemented case-insensitive deletion of client application identity headers (`x-client-*`, `client-*`, `x-opencode-client`, `x-opencode-version`, `x-application-*`, `sec-ch-ua*`, `origin`, etc.) across all outbound Zen calls, preventing client application signatures from leaking upstream.
+  - **Unconditional Header Overwrite (`buildZenHeaders`)**: Enforces authentic OpenCode headers (`User-Agent`, `Referer`, `HTTP-Referer`, `X-Title`, `session-id`, `x-session-id`, `x-opencode-session`, `x-opencode-request`) without relying on client-supplied values.
+  - **OpenAI Responses Wire Adaptation (`src/transformers/openai_responses.ts`, `src/engine/zen.ts:adaptZenResponsesPayload`)**: Added top-level Responses API probe tool injection (`getZenResponsesProbeTools`) and upstream `stream: true` forcing with automatic stream accumulation (`accumulateZenResponsesStream`) for non-streaming callers, enabling models like `muse-spark-1.3-contributor-free` to execute cleanly via `opencode2 run` without 403 `FreeTierError`.
+  - **Comprehensive Regression Tests (`tests/unit/engine/zen.test.ts`, `tests/unit/transformers/openai_responses.test.ts`)**: Added coverage for header scrubbing, Responses probe tool schemas, payload adaptation, and SSE accumulation. All 1,382 unit tests pass green.
+
 ## [Unreleased] — 2026-09-18
 
 ### Added
