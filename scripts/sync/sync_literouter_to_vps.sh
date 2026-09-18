@@ -18,7 +18,7 @@ cd "$PROJECT_ROOT"
 
 VPS_HOST="${LITEROUTER_VPS_HOST:-vps466a}"
 VPS_TARGET_DIR="${LITEROUTER_VPS_DIR:-/home/vps466a/services/literouter}"
-VPS_ZT_IP="${LITEROUTER_VPS_ZT_IP:-10.32.34.243}"
+VPS_INTRANET_IP="${LITEROUTER_VPS_IP:-192.168.50.10}"
 VPS_PORT="${LITEROUTER_VPS_PORT:-7766}"
 
 SSH_OPTS=(-o ConnectTimeout=5 -o BatchMode=yes)
@@ -86,10 +86,10 @@ log_info "Restarting LiteRouter service on VPS..."
 ssh "${SSH_OPTS[@]}" "$VPS_HOST" "export PATH=\"/usr/bin:/usr/local/bin:/home/linuxbrew/.linuxbrew/bin:\$PATH\"; cd ${VPS_TARGET_DIR} && bash scripts/gateway/stop.sh >/dev/null 2>&1 || true; sleep 1; bash scripts/gateway/start.sh"
 
 # 8. Verify remote health and key counts
-log_info "Awaiting healthy probe from http://${VPS_ZT_IP}:${VPS_PORT}/health..."
+log_info "Awaiting healthy probe from http://${VPS_INTRANET_IP}:${VPS_PORT}/health..."
 HEALTHY=0
 for i in {1..15}; do
-    if curl -sk -m 2 "http://${VPS_ZT_IP}:${VPS_PORT}/health" | grep -q '"status":"healthy"'; then
+    if curl -sk -m 2 "http://${VPS_INTRANET_IP}:${VPS_PORT}/health" | grep -q '"status":"healthy"'; then
         HEALTHY=1
         break
     fi
