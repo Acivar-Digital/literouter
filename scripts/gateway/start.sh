@@ -20,25 +20,11 @@ HOST=$(jq -r '.host' "$LOCATION_FILE")
 PORT=$(jq -r '.port' "$LOCATION_FILE")
 TLS_ENABLED=$(jq -r '.tls_enabled' "$LOCATION_FILE")
 
-PARENT_DIR=$(jq -r '.parent_dir // empty' "$LOCATION_FILE")
-WORKING_FOLDER=$(jq -r '.working_folder // empty' "$LOCATION_FILE")
+ROOT_DIR="$DEFAULT_ROOT"
+FULL_PARENT="$(dirname "$ROOT_DIR")"
+WORKING_FOLDER="$(basename "$ROOT_DIR")"
 
-if [ -n "$PARENT_DIR" ] && [ -n "$WORKING_FOLDER" ]; then
-    if [[ "$PARENT_DIR" = /* ]]; then
-        FULL_PARENT="$PARENT_DIR"
-    else
-        FULL_PARENT="$HOME/$PARENT_DIR"
-    fi
-    ROOT_DIR="$FULL_PARENT/$WORKING_FOLDER"
-else
-    STORED_PATH=$(jq -r '.path // empty' "$LOCATION_FILE")
-    ROOT_DIR="${STORED_PATH:-$DEFAULT_ROOT}"
-    FULL_PARENT="$(dirname "$ROOT_DIR")"
-    WORKING_FOLDER="$(basename "$ROOT_DIR")"
-fi
-
-cd "$FULL_PARENT"
-cd "$WORKING_FOLDER"
+cd "$ROOT_DIR"
 
 PROTOCOL="http"
 if [ "$TLS_ENABLED" = "true" ]; then PROTOCOL="https"; fi
