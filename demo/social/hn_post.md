@@ -85,7 +85,7 @@ Returns per-provider stats: key counts, health scores, active cooldowns, rotatio
 
 - GitHub: https://github.com/Acivar-Digital/literouter
 - Docs: https://github.com/Acivar-Digital/literouter/blob/main/demo/POSITIONING.md
-- Quick start: https://github.com/Acivar-Digital/literouter/blob/main/docs/INSTALL.md
+- Quick start: https://github.com/Acivar-Digital/literouter/blob/main/INSTALL.md
 
 ---
 

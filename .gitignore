@@ -48,6 +48,7 @@ data/credentials/
 data/raw/
 data/processed/
 data/reports/
+protect.sh
 
 # Opencode internal
 .opencode/*
@@ -80,3 +81,6 @@ memories.md
 .beads/embeddeddolt/
 docs/asus_vpn/
 usage/
+config/location.json
+tests/test_results.md
+data/reviews/
