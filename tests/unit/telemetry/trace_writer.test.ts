@@ -11,7 +11,7 @@ import {
   RETENTION_DAYS,
 } from "../../../src/telemetry/trace_writer";
 import type { SanitizedTrace } from "../../../src/telemetry/ring_buffer";
-import { fetchTraceById, queryTraces } from "../../../scripts/trace";
+import { fetchTraceById, queryTraces } from "../../../scripts/diagnose/trace";
 
 const TEST_DIR = join(tmpdir(), "trace_writer_tests");
 

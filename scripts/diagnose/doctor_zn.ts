@@ -1,5 +1,5 @@
-import { maskKey } from "../src/config/keys";
-import { generateOpenCodeSessionId } from "../src/engine/session_id";
+import { maskKey } from "../../src/config/keys";
+import { generateOpenCodeSessionId } from "../../src/engine/session_id";
 
 export interface ZenProbeResult {
   readonly provider: string;

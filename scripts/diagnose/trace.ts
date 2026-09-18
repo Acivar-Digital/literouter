@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 import { existsSync } from "node:fs";
-import { type SanitizedTrace, traceBuffer } from "../src/telemetry/ring_buffer";
+import { type SanitizedTrace, traceBuffer } from "../../src/telemetry/ring_buffer";
 
 export interface TraceSummary {
   reqId: string;
@@ -146,7 +146,7 @@ export function fetchTraceById(
       db.close();
     }
   } catch (err) {
-    console.error(`[scripts/trace.ts] Failed to query SQLite: ${err}`);
+    console.error(`[scripts/diagnose/trace.ts] Failed to query SQLite: ${err}`);
     return null;
   }
 }
@@ -218,7 +218,7 @@ function querySqliteSummaries(
       db.close();
     }
   } catch (err) {
-    console.error(`[scripts/trace.ts] Failed to query SQLite traces: ${err}`);
+    console.error(`[scripts/diagnose/trace.ts] Failed to query SQLite traces: ${err}`);
     return [];
   }
 }
@@ -356,8 +356,8 @@ function printHelp(): void {
 LiteRouter Trace Inspector
 
 Usage:
-  bun run scripts/trace.ts <req_id>              Inspect all 4 legs of a request
-  bun run scripts/trace.ts [options]             Query and list recent traces
+  bun run scripts/diagnose/trace.ts <req_id>              Inspect all 4 legs of a request
+  bun run scripts/diagnose/trace.ts [options]             Query and list recent traces
 
 Options:
   <req_id>            Request ID to inspect

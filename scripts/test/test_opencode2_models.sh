@@ -9,7 +9,7 @@ set -euo pipefail
 # ==============================================================================
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
 GREEN="\033[0;32m"
 RED="\033[0;31m"
@@ -25,7 +25,7 @@ echo -e "${BOLD}${CYAN}=========================================================
 # Check gateway health
 if ! curl -sk https://localhost:7766/health >/dev/null 2>&1; then
   echo -e "${RED}❌ LiteRouter gateway is not responding at https://localhost:7766/health${NC}"
-  echo -e "${YELLOW}Please start it using: bash scripts/start.sh${NC}"
+  echo -e "${YELLOW}Please start it using: bash scripts/gateway/start.sh${NC}"
   exit 1
 fi
 echo -e "${GREEN}✓ LiteRouter Gateway is healthy on port 7766${NC}\n"

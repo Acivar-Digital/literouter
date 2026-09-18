@@ -7,18 +7,18 @@
   "scripts": {
     "start": "bun run src/index.ts",
     "dev": "bun --watch src/index.ts",
-    "test": "bun run scripts/test_runner.ts",
-    "test:lr": "bun run scripts/test_runner.ts",
-    "test:gateway": "bun run scripts/test_runner.ts",
-    "test:unit": "bun run scripts/test_runner.ts",
+    "test": "bun run scripts/test/test_runner.ts",
+    "test:lr": "bun run scripts/test/test_runner.ts",
+    "test:gateway": "bun run scripts/test/test_runner.ts",
+    "test:unit": "bun run scripts/test/test_runner.ts",
     "test:raw": "bun test",
-    "test:eval": "bun run scripts/test_runner.ts eval",
+    "test:eval": "bun run scripts/test/test_runner.ts eval",
     "test:failures": "bun test --only-failures",
     "typecheck": "tsc --noEmit",
-    "doctor": "bun run scripts/doctor.ts",
-    "doctor:full": "bun run scripts/doctor_full.ts",
-    "flush": "bun run scripts/flush.ts",
-    "guardrail": "bun run scripts/guardrail.ts"
+    "doctor": "bun run scripts/diagnose/doctor.ts",
+    "doctor:full": "bun run scripts/diagnose/doctor_full.ts",
+    "flush": "bun run scripts/gateway/flush.ts",
+    "guardrail": "bun run scripts/hooks/guardrail.ts"
   },
   "dependencies": {
     "zod": "^3.23.8"

@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 /**
- * scripts/probe_model.ts
+ * scripts/probe/probe_model.ts
  *
  * Universal Production Readiness & Stress Testing Probe for LiteRouter,
  * OpenCode 2 Agentic Loops, and Pydantic AI V2.
@@ -21,7 +21,7 @@
  *      Tests complex schema extraction when native structured outputs are unsupported.
  *
  * Usage:
- *   bun run scripts/probe_model.ts <model_name> [--directive <key>] [--url <gateway_url>]
+ *   bun run scripts/probe/probe_model.ts <model_name> [--directive <key>] [--url <gateway_url>]
  */
 
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";

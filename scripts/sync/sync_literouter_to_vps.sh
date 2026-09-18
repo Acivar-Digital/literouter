@@ -7,13 +7,13 @@
 # Flow is strictly unidirectional (WSL -> VPS). Never bidirectional.
 #
 # Usage:
-#   bash scripts/sync_literouter_to_vps.sh [--skip-git] [--restart-only]
+#   bash scripts/sync/sync_literouter_to_vps.sh [--skip-git] [--restart-only]
 # ==============================================================================
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
-PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd -P)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd -P)"
 cd "$PROJECT_ROOT"
 
 VPS_HOST="${LITEROUTER_VPS_HOST:-vps466a}"
@@ -83,7 +83,7 @@ log_ok "Stale tmux exports purged."
 
 # 7. Restart LiteRouter on VPS
 log_info "Restarting LiteRouter service on VPS..."
-ssh "${SSH_OPTS[@]}" "$VPS_HOST" "export PATH=\"/usr/bin:/usr/local/bin:/home/linuxbrew/.linuxbrew/bin:\$PATH\"; cd ${VPS_TARGET_DIR} && bash scripts/stop.sh >/dev/null 2>&1 || true; sleep 1; bash scripts/start.sh"
+ssh "${SSH_OPTS[@]}" "$VPS_HOST" "export PATH=\"/usr/bin:/usr/local/bin:/home/linuxbrew/.linuxbrew/bin:\$PATH\"; cd ${VPS_TARGET_DIR} && bash scripts/gateway/stop.sh >/dev/null 2>&1 || true; sleep 1; bash scripts/gateway/start.sh"
 
 # 8. Verify remote health and key counts
 log_info "Awaiting healthy probe from http://${VPS_ZT_IP}:${VPS_PORT}/health..."

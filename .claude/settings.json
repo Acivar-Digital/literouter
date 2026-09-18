@@ -15,7 +15,7 @@
       {
         "hooks": [
           {
-            "command": "bash scripts/cc_slop_guard.sh",
+            "command": "bash scripts/hooks/cc_slop_guard.sh",
             "type": "command"
           }
         ],

@@ -7,8 +7,8 @@ held in memory; the report contains only the masked labels that
 OpenRouter itself returns (e.g. sk-or-v1-f95...730).
 
 Usage:
-    OPENROUTER_API_KEYS=sk-or-v1-a,sk-or-v1-b uv run python scripts/gen-usage.py
-    OPENROUTER_API_KEYS=... uv run python scripts/gen-usage.py --out-dir /tmp/usage
+    OPENROUTER_API_KEYS=sk-or-v1-a,sk-or-v1-b uv run python scripts/report/gen-usage.py
+    OPENROUTER_API_KEYS=... uv run python scripts/report/gen-usage.py --out-dir /tmp/usage
 
 Output:
     usage/OR-YYMMDD-HHMM.md
@@ -36,7 +36,7 @@ def load_dotenv_fallback() -> None:
     """
     if os.environ.get(ENV_VAR):
         return
-    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     for name in (".env.local", ".env"):
         path = os.path.join(root, name)
         try:

@@ -4,7 +4,7 @@ set -euo pipefail
 
 # 1. Resolve project root and read config/location.json
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
-DEFAULT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd -P)"
+DEFAULT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd -P)"
 LOCATION_FILE="$DEFAULT_ROOT/config/location.json"
 
 if [ ! -f "$LOCATION_FILE" ]; then
@@ -65,7 +65,7 @@ set -e
 # Check if already running via tmux
 if tmux has-session -t "$TMUX_SESSION" 2>/dev/null; then
     echo "⚠️ LiteRouter is already running in tmux session '$TMUX_SESSION'."
-    echo "Check status with: bash scripts/status.sh"
+    echo "Check status with: bash scripts/gateway/status.sh"
     echo "Attach with:       tmux attach -t $TMUX_SESSION"
     exit 0
 fi
@@ -74,7 +74,7 @@ fi
 mkdir -p logs
 
 # Prune gateway log to last 30 days (safe no-op when fresh)
-if [ -f logs/gateway.log ]; then bash scripts/prune-logs.sh || true; fi
+if [ -f logs/gateway.log ]; then bash scripts/gateway/prune-logs.sh || true; fi
 
 echo "🚀 Starting LiteRouter v4.0 (Bun) on ${HOST}:${PORT} (${PROTOCOL}) at ${ROOT_DIR}..."
 
@@ -142,6 +142,6 @@ else
         tmux capture-pane -pt "$TMUX_SESSION" | tail -n 20 || true
         echo "--------------------------"
     fi
-    bash scripts/stop.sh >/dev/null 2>&1 || true
+    bash scripts/gateway/stop.sh >/dev/null 2>&1 || true
     exit 1
 fi

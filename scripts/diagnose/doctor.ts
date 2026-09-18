@@ -1,9 +1,9 @@
 import { existsSync, readFileSync } from "node:fs";
 import { resolve, join } from "node:path";
-import { getEnv } from "../src/config/env";
-import { loadKeyPools, maskKey } from "../src/config/keys";
+import { getEnv } from "../../src/config/env";
+import { loadKeyPools, maskKey } from "../../src/config/keys";
 import { probeZenKeyWithFreshSession } from "./doctor_zn";
-import type { ProviderCode } from "../src/config/schema";
+import type { ProviderCode } from "../../src/config/schema";
 
 // Inject mkcert root CA so Bun/Node fetch can verify local/proxy TLS certs
 const caPath =
@@ -136,7 +136,7 @@ async function pingLocalServer(): Promise<void> {
   let port = 7766;
   let tlsEnabled = false;
   try {
-    const { loadLocationConfig } = await import("../src/config/location");
+    const { loadLocationConfig } = await import("../../src/config/location");
     const loc = loadLocationConfig();
     host = loc.host;
     port = loc.port;
@@ -540,7 +540,7 @@ export async function runDoctor(options?: DoctorOptions): Promise<void> {
   }
   if (!isFull) {
     console.log(`- Mode:          Sample mode (max ${sampleLimit} keys/provider).`);
-    console.log("                 For exhaustive audit of all keys, run: bun run scripts/doctor_full.ts (or --full)");
+    console.log("                 For exhaustive audit of all keys, run: bun run scripts/diagnose/doctor_full.ts (or --full)");
   }
   console.log("================================================================================");
 }

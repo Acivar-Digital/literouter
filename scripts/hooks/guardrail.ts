@@ -359,7 +359,7 @@ function main(): void {
   const command = args[0];
   const targetPath = args[1];
   if (!command || !targetPath) {
-    console.log("Usage: bun run scripts/guardrail.ts <checkpoint|validate|sanitize|kill-tries|full> <file>");
+    console.log("Usage: bun run scripts/hooks/guardrail.ts <checkpoint|validate|sanitize|kill-tries|full> <file>");
     process.exit(1);
   }
   const exitCode = handleDispatch(command, targetPath);

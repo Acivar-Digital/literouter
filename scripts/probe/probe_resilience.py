@@ -233,7 +233,7 @@ async def run_probes() -> None:
                 print(f"⚠️ Gateway Health returned HTTP {health_res.status_code}\n")
         except Exception as exc:
             print(f"❌ Gateway is unreachable on {LITEROUTER_BASE_URL}: {exc}")
-            print("   Please start LiteRouter via `bash scripts/start.sh` first.")
+            print("   Please start LiteRouter via `bash scripts/gateway/start.sh` first.")
             sys.exit(1)
 
         # 2. Sequential Probes across all 4 requested providers + Fusion

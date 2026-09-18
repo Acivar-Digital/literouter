@@ -34,7 +34,7 @@ if [ -z "$FILE_PATH" ] || [ ! -f "$FILE_PATH" ]; then
   exit 0
 fi
 
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$ROOT" || exit 0
 
 OUT="$(".venv/bin/python admin/code_hygiene/agent_guardrail.py validate "$FILE_PATH" 2>&1)"

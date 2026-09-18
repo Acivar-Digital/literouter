@@ -4,7 +4,7 @@
 # continuations without [MM-DD-]). Drops only timestamped lines whose
 # MM-DD is older than (today - 30 days). Atomic rewrite via tmp + mv.
 set -euo pipefail
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/../.."
 
 LOG_FILE="${1:-logs/gateway.log}"
 

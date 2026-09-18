@@ -1,5 +1,5 @@
-import { loadLocationConfig } from "../src/config/location";
-import { formatTimestamp } from "../src/ui/logger";
+import { loadLocationConfig } from "../../src/config/location";
+import { formatTimestamp } from "../../src/ui/logger";
 
 async function flushState(): Promise<void> {
   // Single authority: config/location.json. No hardcoded localhost/env fallback.
