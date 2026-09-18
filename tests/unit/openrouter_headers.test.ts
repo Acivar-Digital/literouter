@@ -42,14 +42,14 @@ describe("Declarative Provider Headers & Cache Hot-Reload", () => {
       expect(znHeaders["HTTP-Referer"]).toBe("https://opencode.ai");
       expect(znHeaders["Referer"]).toBe("https://opencode.ai");
       expect(znHeaders["X-Title"]).toBe("OpenCode");
-      expect(znHeaders["User-Agent"]).toBe("OpenCode/1.18.29");
+      expect(znHeaders["User-Agent"]).toContain("opencode/");
 
       const zenHeaders = buildAuthHeaders("Bearer", "sk-mock-zen-key", "zen");
       expect(zenHeaders["Authorization"]).toBe("Bearer sk-mock-zen-key");
       expect(zenHeaders["HTTP-Referer"]).toBe("https://opencode.ai");
       expect(zenHeaders["Referer"]).toBe("https://opencode.ai");
       expect(zenHeaders["X-Title"]).toBe("OpenCode");
-      expect(zenHeaders["User-Agent"]).toBe("OpenCode/1.18.29");
+      expect(zenHeaders["User-Agent"]).toContain("opencode/");
     });
 
     it("does not inject whitelist headers for non-configured providers ('nv', 'nvidia', 'gg', 'google')", () => {
@@ -96,12 +96,10 @@ describe("Declarative Provider Headers & Cache Hot-Reload", () => {
 
     it("returns headers dictionary matching config/providers.json for 'zn'", () => {
       const endpoint = resolveUpstreamEndpoint("zn", "ch", "big-pickle");
-      expect(endpoint.headers).toEqual({
-        "HTTP-Referer": "https://opencode.ai",
-        "Referer": "https://opencode.ai",
-        "X-Title": "OpenCode",
-        "User-Agent": "OpenCode/1.18.29",
-      });
+      expect(endpoint.headers?.["HTTP-Referer"]).toBe("https://opencode.ai");
+      expect(endpoint.headers?.["Referer"]).toBe("https://opencode.ai");
+      expect(endpoint.headers?.["X-Title"]).toBe("OpenCode");
+      expect(endpoint.headers?.["User-Agent"]).toContain("opencode/");
     });
 
     it("returns empty headers dictionary for providers without custom headers ('nv', fallback)", () => {

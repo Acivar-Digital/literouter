@@ -108,6 +108,7 @@ export const ProviderStrategySchema = z
     "native_cascade",
     "gcp_guarded",
     "anthropic_direct",
+    "zen",
   ])
   .default("standard");
 

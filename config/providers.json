@@ -105,14 +105,14 @@
       "code": "zn",
       "name": "Zen",
       "env_key": "ZEN_API_KEYS",
-      "strategy": "standard",
+      "strategy": "zen",
       "base_url": "https://opencode.ai/zen",
       "auth_header": "Bearer",
       "headers": {
         "HTTP-Referer": "https://opencode.ai",
         "Referer": "https://opencode.ai",
         "X-Title": "OpenCode",
-        "User-Agent": "OpenCode/1.18.29"
+        "User-Agent": "opencode/1.18.30 ai-sdk/provider-utils/4.0.23 runtime/bun/1.4.2"
       },
       "endpoints": {
         "ch": "/v1/chat/completions",

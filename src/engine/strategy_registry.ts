@@ -4,6 +4,7 @@ import { AnthropicDirectStrategy } from "./strategies/anthropic_direct";
 import { GcpGuardedStrategy } from "./strategies/gcp_guarded";
 import { NativeCascadeStrategy } from "./strategies/native_cascade";
 import { StandardStrategy } from "./strategies/standard";
+import { ZenStrategy } from "./strategies/zen";
 import type { ProviderExecutionStrategy } from "./strategy";
 
 type StrategyFactory = () => ProviderExecutionStrategy;
@@ -23,6 +24,9 @@ function registerDefaultFactories(): void {
   }
   if (!factories.has("anthropic_direct")) {
     factories.set("anthropic_direct", () => new AnthropicDirectStrategy());
+  }
+  if (!factories.has("zen")) {
+    factories.set("zen", () => new ZenStrategy());
   }
 }
 

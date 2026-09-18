@@ -24,6 +24,7 @@ import {
 } from "../../../src/engine/strategy_registry";
 import { GcpGuardedStrategy } from "../../../src/engine/strategies/gcp_guarded";
 import { NativeCascadeStrategy } from "../../../src/engine/strategies/native_cascade";
+import { ZenStrategy } from "../../../src/engine/strategies/zen";
 import { StandardStrategy } from "../../../src/engine/strategies/standard";
 import { globalKeyPool } from "../../../src/handlers/openai_compat";
 import { handleAppRequest, resetAllState } from "../../../src/index";
@@ -137,7 +138,7 @@ describe("Batch1 Regression — strategy / probe-cap / TTFT / auth-negative", ()
     expect(getStrategy("or")).toBeInstanceOf(StandardStrategy);
     expect(getStrategy("gg")).toBeInstanceOf(NativeCascadeStrategy);
     expect(getStrategy("gc")).toBeInstanceOf(GcpGuardedStrategy);
-    expect(getStrategy("zn")).toBeInstanceOf(StandardStrategy);
+    expect(getStrategy("zn")).toBeInstanceOf(ZenStrategy);
   });
 
   it("B4: TTFT timeout releases slot via retryable path ending 504", async () => {

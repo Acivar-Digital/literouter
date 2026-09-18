@@ -37,17 +37,15 @@ Never send a `zen/` prefix — Zen models accept bare names only.
 
 Static `User-Agent` / `Referer` alone does **not** satisfy free-tier gating.
 
-## 4. Client Session Forwarding (`src/handlers/openai_compat.ts:133-181`)
+## 4. Client Session Forwarding & Transparent Gateway Adaptation (`src/engine/zen.ts`)
 
-`buildAuthHeaders(authHeader, key, provider, incomingHeaders?)` merges registry
-headers (§1) then forwards these inbound client headers verbatim upstream
-(`openai_compat.ts:163-179`; same call on retry path and in
-`openai_original.ts` / `anthropic_compat.ts` direct loops):
-
-`session-id`, `x-session-id`, `x-opencode-session`, `x-opencode-session-id`,
-`opencode-session-id`, `opencode-session`, `x-client-version`, `x-client-name`.
-
-Real OpenCode session IDs match `ses_` + 26 alnum chars
+`buildZenHeaders(incomingHeaders?, sessionId?)` merges provider headers from `config/providers.json` (as the single source of truth) and ensures strict session validation:
+- Validates against OpenCode format: `/^ses_[0-9a-f]{8}8ffe[0-9a-zA-Z]{14}$/`. If invalid or missing, immediately generates a valid session ID via `generateOpenCodeSessionId()`.
+- Automatically injects: `x-opencode-session`, `session-id`, `x-session-id`, and `x-opencode-request: msg_<tail>`.
+- **Option B Transparent Adaptation**:
+  - `adaptZenPayload(body)` automatically injects OpenCode standard core probe tools (`bash`, `read`, `write`, `edit`, `glob`, `grep`) when `body.tools` is missing or empty.
+  - Forces `stream: true` upstream. If the downstream caller requested `stream: false`, LiteRouter transparently accumulates SSE stream chunks into a standard OpenAI-compliant `chat.completion` response via `accumulateZenStreamToCompletion()`.
+- **Startup Version Sync**: Prior to gateway startup, `scripts/gateway/start.sh` invokes `tools/get_opencode_ver.ts`, executing local `opencode --version` and updating `config/providers.json` with the exact runtime `User-Agent`.
 (e.g. `ses_fcd71dd78ffeuRd5wpUekhfwIp`).
 
 ### 4.1 🚨 CRITICAL MANDATE: NEVER DROP OPENCODE SESSION ID INJECTION

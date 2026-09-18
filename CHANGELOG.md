@@ -2,6 +2,16 @@
 
 All notable changes to LiteRouter will be documented in this file.
 
+## [Unreleased] — 2026-09-18
+
+### Added
+- **Zen Provider (`zn`) Transparent Gateway Adaptation & Version Sync** (`literouter-7hx7`, `literouter-mw9j`, `literouter-6ntk`, `literouter-p25y`, `literouter-qtxc`, `literouter-lrgy`):
+  - **Dynamic OpenCode Version Discovery (`tools/get_opencode_ver.ts`)**: Automatically executes local `opencode --version` prior to gateway startup via `scripts/gateway/start.sh`, formatting authentic `User-Agent: opencode/<version> ai-sdk/provider-utils/4.0.23 runtime/bun/<bun_version>` and updating `config/providers.json`.
+  - **Centralized Zen Engine Helper (`src/engine/zen.ts`)**: Strict session ID validation and generation matching `/^ses_[0-9a-f]{8}8ffe[0-9a-zA-Z]{14}$/`, config-driven header injection (`x-opencode-session`, `session-id`, `x-opencode-request: msg_<tail>`), OpenCode standard probe tools injection (`bash`, `read`, `write`, `edit`, `glob`, `grep`), and SSE stream accumulation helper.
+  - **Dedicated Zen Strategy (`src/engine/strategies/zen.ts`) & Transformer Integration**: Added `zen` provider strategy in `config/providers.json` and `src/engine/strategy_registry.ts`. Transparently adapts payloads in both v4.1 runtime engine (`src/engine/dispatch.ts`, `src/transformers/openai_chat.ts`) and legacy handlers (`src/handlers/openai_compat.ts`), injecting tools and accumulating upstream SSE chunks into standard `chat.completion` responses for non-streaming callers (VSCode Copilot, Muse, external SDKs).
+  - **Refactored Diagnostics Doctor (`scripts/diagnose/doctor_zn.ts`)**: Consumes centralized `buildZenHeaders` and `getZenProbeTools` from `src/engine/zen.ts`, eliminating duplicate probe tool definitions and passing upstream health probes with HTTP 200 OK.
+  - **Comprehensive Unit Test Suite (`tests/unit/engine/zen.test.ts`)**: 18 tests verifying session regex validation, tool schema isolation, payload adaptation, and stream-to-JSON accumulation.
+
 ## [Unreleased] — 2026-09-17
 
 ### Added

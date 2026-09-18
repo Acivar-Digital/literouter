@@ -384,7 +384,7 @@ describe("ProviderConfigEntrySchema", () => {
       expect(providers.google?.name).toBe("Google AI Studio");
       expect(providers.google?.strategy).toBe("native_cascade");
       expect(providers.zen?.name).toBe("Zen");
-      expect(providers.zen?.strategy).toBe("standard");
+      expect(providers.zen?.strategy).toBe("zen");
       expect(providers.zen?.request_retry.max_attempts).toBe(5);
       expect(providers.gcp?.name).toBe("Google Cloud (GCP)");
       expect(providers.gcp?.strategy).toBe("gcp_guarded");

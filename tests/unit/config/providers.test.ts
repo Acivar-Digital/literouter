@@ -198,7 +198,7 @@ describe("ProviderRegistry — In-Memory Store", () => {
     expect(getProviderConfig("or").strategy).toBe("standard");
     expect(getProviderConfig("gg").strategy).toBe("native_cascade");
     expect(getProviderConfig("gc").strategy).toBe("gcp_guarded");
-    expect(getProviderConfig("zn").strategy).toBe("standard");
+    expect(getProviderConfig("zn").strategy).toBe("zen");
   });
 
   it("getProviderDisplayName() falls back to the raw key when name is absent", () => {

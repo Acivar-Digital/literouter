@@ -225,7 +225,7 @@ export class OpenAIChatTransformer implements PayloadTransformerContract {
 
     const nuances = extractDirectiveNuances(directive);
     const wire = extractDirectiveWire(directive);
-    const transformedBody = sanitizeAndTransformPayload(
+    let transformedBody = sanitizeAndTransformPayload(
       inboundBody as OpenAIRequestPayload,
       {
         nuances,
@@ -233,6 +233,13 @@ export class OpenAIChatTransformer implements PayloadTransformerContract {
         enableScrubbing: true,
       }
     ) as Record<string, unknown>;
+
+    const providerCode = directive.type === "direct" ? String(directive.provider) : "";
+    if (providerCode === "zn" || providerCode === "zen") {
+      const { adaptZenPayload } = require("../engine/zen");
+      const adapted = adaptZenPayload(transformedBody);
+      transformedBody = adapted.adaptedBody;
+    }
 
     return {
       endpointKey: "ch",

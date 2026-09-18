@@ -598,6 +598,25 @@ export async function executeDispatchPipeline(
           });
         }
 
+        // If the upstream responded with an event stream but client requested non-streaming (e.g. Zen adaptation),
+        // accumulate SSE events into a chat.completion JSON object
+        if (upstreamResponse.headers.get("content-type")?.includes("text/event-stream") && upstreamResponse.body) {
+          const { accumulateZenStreamToCompletion } = require("./zen");
+          const accumulated = await accumulateZenStreamToCompletion(upstreamResponse.body, String(req.outboundPayload.body?.model ?? ""));
+          const clientJson = req.transformer.transformWireToClient(accumulated, req.directive);
+          telemetry.recordUsage(extractUsage(accumulated));
+          telemetry.served(upstreamResponse.status, attempt, maxAttempts);
+          pacerLease?.release();
+          return new Response(JSON.stringify(clientJson), {
+            status: upstreamResponse.status,
+            statusText: upstreamResponse.statusText,
+            headers: {
+              "content-type": "application/json; charset=utf-8",
+              "x-request-id": req.reqId,
+            },
+          });
+        }
+
         // Read outside the parse guard: transport failures retain their retry policy.
         const responseText = await upstreamResponse.text();
         let jsonBody: Record<string, unknown>;

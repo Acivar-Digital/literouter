@@ -64,6 +64,11 @@ import {
   pruneOpenAIPayload,
 } from "../transformers/context_pruner";
 import { ensureSessionHeaders, extractClientSessionId, generateOpenCodeSessionId } from "../engine/session_id";
+import {
+  buildZenHeaders,
+  adaptZenPayload,
+  accumulateZenStreamToCompletion,
+} from "../engine/zen";
 
 export interface ProviderEndpointConfig extends Omit<ProviderConfigEntry, "conserve_rules"> {
   readonly conserve_rules?: readonly ConserveRule[];
@@ -127,9 +132,8 @@ export function buildAuthHeaders(
   }
   ensureSessionHeaders(headers, incomingHeaders);
   if (provider === "zn" || provider === "zen") {
-    if (!headers["session-id"]) {
-      headers["session-id"] = generateZenSessionId();
-    }
+    const zenHeaders = buildZenHeaders(incomingHeaders, headers["session-id"]);
+    Object.assign(headers, zenHeaders);
   }
   return headers;
 }
@@ -224,11 +228,16 @@ async function executeDirectCall(
   const isSingleFlight = !(provConfig?.request_retry?.enabled ?? true);
 
   let activePayload = payload;
+  let zenRequiresAccumulation = false;
   if ((directive.provider === "or" || (directive.provider as string) === "openrouter") && payload.model.startsWith("openrouter/")) {
     activePayload = {
       ...payload,
       model: payload.model.slice("openrouter/".length),
     };
+  } else if (directive.provider === "zn" || (directive.provider as string) === "zen") {
+    const adapted = adaptZenPayload(activePayload);
+    activePayload = adapted.adaptedBody as OpenAIRequestPayload;
+    zenRequiresAccumulation = adapted.requiresAccumulation;
   }
 
   const endpoint = resolveUpstreamEndpoint(directive.provider, directive.completion, activePayload.model);
@@ -399,99 +408,140 @@ async function executeDirectCall(
     Boolean(payload.model && payload.model.toLowerCase().includes("dots"));
 
   if (!isStream) {
-    const fullBody = await collectFullBody(firstChunk, rawReader);
-    let finalBody: Uint8Array = fullBody;
+    let finalBody: Uint8Array;
+    let json: Record<string, unknown> | null = null;
+    if (zenRequiresAccumulation) {
+      let firstChunkYielded = false;
+      const stream = new ReadableStream<Uint8Array>({
+        async pull(controller) {
+          if (!firstChunkYielded) {
+            firstChunkYielded = true;
+            if (firstChunk.byteLength > 0) {
+              controller.enqueue(firstChunk);
+              return;
+            }
+          }
+          try {
+            const { done, value } = await rawReader.read();
+            if (done) {
+              controller.close();
+            } else if (value) {
+              controller.enqueue(value);
+            }
+          } catch (err: unknown) {
+            controller.error(err);
+          }
+        },
+        cancel(reason) {
+          return rawReader.cancel(reason);
+        },
+      });
+      const completion = await accumulateZenStreamToCompletion(stream, activePayload.model);
+      finalBody = new TextEncoder().encode(JSON.stringify(completion));
+      json = completion;
+    } else {
+      const fullBody = await collectFullBody(firstChunk, rawReader);
+      finalBody = fullBody;
+      try {
+        const decoded = new TextDecoder().decode(fullBody);
+        json = JSON.parse(decoded) as Record<string, unknown>;
+      } catch (parseErr) {
+        void parseErr;
+      }
+    }
+
     try {
-      const decoded = new TextDecoder().decode(fullBody);
-      const json = JSON.parse(decoded) as Record<string, unknown>;
-
-      if (isResponses) {
-        const transformedResponse = transformResponsesToOpenAi(json, activePayload.model);
-        finalBody = new TextEncoder().encode(JSON.stringify(transformedResponse));
-      } else {
-        const choice = (json.choices as Array<{ message?: { content?: string | null; reasoning_content?: string | null; thought?: string | null; tool_calls?: unknown }; finish_reason?: string }>)?.[0];
-        if (choice?.message && isLing) {
-          const transformedResponse = transformLingResponse(json);
+      if (json && !zenRequiresAccumulation) {
+        if (isResponses) {
+          const transformedResponse = transformResponsesToOpenAi(json, activePayload.model);
           finalBody = new TextEncoder().encode(JSON.stringify(transformedResponse));
-        } else if (choice?.message && isXmlTranslationActive) {
-          let msgModified = false;
-          if (typeof choice.message.content === "string") {
-            const { cleanText, toolCalls, reasoningContent } = parseDotsXml(choice.message.content);
-            if (toolCalls.length > 0 || cleanText !== choice.message.content || reasoningContent) {
-              choice.message.content = cleanText || null;
-              if (toolCalls.length > 0) {
-                choice.message.tool_calls = toolCalls;
-                choice.finish_reason = "tool_calls";
+        } else {
+          const choice = (json.choices as Array<{ message?: { content?: string | null; reasoning_content?: string | null; thought?: string | null; tool_calls?: unknown }; finish_reason?: string }>)?.[0];
+          if (choice?.message && isLing) {
+            const transformedResponse = transformLingResponse(json);
+            finalBody = new TextEncoder().encode(JSON.stringify(transformedResponse));
+          } else if (choice?.message && isXmlTranslationActive) {
+            let msgModified = false;
+            if (typeof choice.message.content === "string") {
+              const { cleanText, toolCalls, reasoningContent } = parseDotsXml(choice.message.content);
+              if (toolCalls.length > 0 || cleanText !== choice.message.content || reasoningContent) {
+                choice.message.content = cleanText || null;
+                if (toolCalls.length > 0) {
+                  choice.message.tool_calls = toolCalls;
+                  choice.finish_reason = "tool_calls";
+                }
+                if (reasoningContent && !choice.message.reasoning_content) {
+                  choice.message.reasoning_content = reasoningContent;
+                }
+                msgModified = true;
               }
-              if (reasoningContent && !choice.message.reasoning_content) {
-                choice.message.reasoning_content = reasoningContent;
+            }
+            if (typeof choice.message.reasoning_content === "string") {
+              const cleaned = stripLeakedTemplateTags(choice.message.reasoning_content);
+              if (cleaned !== choice.message.reasoning_content) {
+                choice.message.reasoning_content = cleaned || null;
+                msgModified = true;
               }
-              msgModified = true;
             }
-          }
-          if (typeof choice.message.reasoning_content === "string") {
-            const cleaned = stripLeakedTemplateTags(choice.message.reasoning_content);
-            if (cleaned !== choice.message.reasoning_content) {
-              choice.message.reasoning_content = cleaned || null;
-              msgModified = true;
+            if (typeof choice.message.thought === "string") {
+              const cleaned = stripLeakedTemplateTags(choice.message.thought);
+              if (cleaned !== choice.message.thought) {
+                choice.message.thought = cleaned || null;
+                msgModified = true;
+              }
             }
-          }
-          if (typeof choice.message.thought === "string") {
-            const cleaned = stripLeakedTemplateTags(choice.message.thought);
-            if (cleaned !== choice.message.thought) {
-              choice.message.thought = cleaned || null;
-              msgModified = true;
+            if (msgModified) {
+              finalBody = new TextEncoder().encode(JSON.stringify(json));
             }
-          }
-          if (msgModified) {
-            finalBody = new TextEncoder().encode(JSON.stringify(json));
           }
         }
       }
 
-      const choiceForFinish = isResponses
-        ? { finish_reason: "stop" }
-        : (json.choices as Array<{ finish_reason?: string | null }>)?.[0];
-      if (choiceForFinish?.finish_reason) {
-        logFinishReason(reqId, choiceForFinish.finish_reason);
-      }
-
-      if (json.usage && typeof json.usage === "object") {
-        const u = json.usage as Record<string, unknown>;
-        const promptTokens = typeof u.prompt_tokens === "number"
-          ? u.prompt_tokens
-          : typeof u.input_tokens === "number"
-          ? u.input_tokens
-          : 0;
-        const completionTokens = typeof u.completion_tokens === "number"
-          ? u.completion_tokens
-          : typeof u.output_tokens === "number"
-          ? u.output_tokens
-          : 0;
-        const totalTokens = typeof u.total_tokens === "number" ? u.total_tokens : promptTokens + completionTokens;
-        let reasoningTokens: number | undefined;
-        if (u.completion_tokens_details && typeof u.completion_tokens_details === "object") {
-          const details = u.completion_tokens_details as Record<string, unknown>;
-          if (typeof details.reasoning_tokens === "number") {
-            reasoningTokens = details.reasoning_tokens;
-          }
-        } else if (u.output_tokens_details && typeof u.output_tokens_details === "object") {
-          const details = u.output_tokens_details as Record<string, unknown>;
-          if (typeof details.reasoning_tokens === "number") {
-            reasoningTokens = details.reasoning_tokens;
-          }
+      if (json) {
+        const choiceForFinish = isResponses
+          ? { finish_reason: "stop" }
+          : (json.choices as Array<{ finish_reason?: string | null }>)?.[0];
+        if (choiceForFinish?.finish_reason) {
+          logFinishReason(reqId, choiceForFinish.finish_reason);
         }
-        logUsage({
-          reqId,
-          provider: directive.provider,
-          keyIndex: selected.index,
-          totalKeys: selected.totalKeys,
-          promptTokens,
-          reasoningTokens,
-          completionTokens,
-          totalTokens,
-          durationMs: duration,
-        });
+
+        if (json.usage && typeof json.usage === "object") {
+          const u = json.usage as Record<string, unknown>;
+          const promptTokens = typeof u.prompt_tokens === "number"
+            ? u.prompt_tokens
+            : typeof u.input_tokens === "number"
+            ? u.input_tokens
+            : 0;
+          const completionTokens = typeof u.completion_tokens === "number"
+            ? u.completion_tokens
+            : typeof u.output_tokens === "number"
+            ? u.output_tokens
+            : 0;
+          const totalTokens = typeof u.total_tokens === "number" ? u.total_tokens : promptTokens + completionTokens;
+          let reasoningTokens: number | undefined;
+          if (u.completion_tokens_details && typeof u.completion_tokens_details === "object") {
+            const details = u.completion_tokens_details as Record<string, unknown>;
+            if (typeof details.reasoning_tokens === "number") {
+              reasoningTokens = details.reasoning_tokens;
+            }
+          } else if (u.output_tokens_details && typeof u.output_tokens_details === "object") {
+            const details = u.output_tokens_details as Record<string, unknown>;
+            if (typeof details.reasoning_tokens === "number") {
+              reasoningTokens = details.reasoning_tokens;
+            }
+          }
+          logUsage({
+            reqId,
+            provider: directive.provider,
+            keyIndex: selected.index,
+            totalKeys: selected.totalKeys,
+            promptTokens,
+            reasoningTokens,
+            completionTokens,
+            totalTokens,
+            durationMs: duration,
+          });
+        }
       }
     } catch (parseErr) {
       void parseErr;

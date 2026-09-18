@@ -178,6 +178,18 @@ describe("openai_compat handler unit tests", () => {
       expect(headers["session-id"]).toBeDefined();
       expect(headers["session-id"]).toMatch(/^ses_/);
     });
+
+    it("merges buildZenHeaders when provider is zn or zen", () => {
+      const headersZn = buildAuthHeaders("Bearer", "test-token", "zn");
+      expect(headersZn["x-opencode-session"]).toBeDefined();
+      expect(headersZn["x-opencode-request"]).toBeDefined();
+      expect(headersZn["x-opencode-request"]).toMatch(/^msg_/);
+
+      const headersZen = buildAuthHeaders("Bearer", "test-token", "zen");
+      expect(headersZen["x-opencode-session"]).toBeDefined();
+      expect(headersZen["x-opencode-request"]).toBeDefined();
+      expect(headersZen["x-opencode-request"]).toMatch(/^msg_/);
+    });
   });
 
   describe("pacer lease lifecycle", () => {

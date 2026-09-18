@@ -76,6 +76,9 @@ mkdir -p logs
 # Prune gateway log to last 30 days (safe no-op when fresh)
 if [ -f logs/gateway.log ]; then bash scripts/gateway/prune-logs.sh || true; fi
 
+# Discover local OpenCode version and sync User-Agent header (failsafe)
+bun run "$ROOT_DIR/tools/get_opencode_ver.ts" || true
+
 echo "🚀 Starting LiteRouter v4.0 (Bun) on ${HOST}:${PORT} (${PROTOCOL}) at ${ROOT_DIR}..."
 
 # Quiet launch: pane starts directly with gateway output, no typed-command echo.

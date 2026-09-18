@@ -5,7 +5,7 @@ mock.module("../../../src/engine/pacer_adapter", () => ({
   calculatePacerIntervalMs: () => 0,
 }));
 
-import { initProviderRegistry } from "../../../src/config/providers";
+import { getProviderConfig, initProviderRegistry } from "../../../src/config/providers";
 import type { ParsedDirective } from "../../../src/directive/types";
 import { getCircuitBreaker, resetCircuitBreakers } from "../../../src/engine/circuit_breaker";
 import {
@@ -200,7 +200,9 @@ describe("Unified Dispatch Pipeline (Slice 3.5)", () => {
     expect(res.status).toBe(200);
     expect(capturedHeaders).toBeDefined();
     const headersRecord = capturedHeaders as Record<string, string>;
-    expect(headersRecord["User-Agent"]).toBe("OpenCode/1.18.29");
+    expect(headersRecord["User-Agent"]).toBe(
+      getProviderConfig("zn")?.headers?.["User-Agent"] ?? "OpenCode/1.18.29"
+    );
     expect(headersRecord["Referer"]).toBe("https://opencode.ai");
     expect(headersRecord["HTTP-Referer"]).toBe("https://opencode.ai");
     expect(headersRecord["X-Title"]).toBe("OpenCode");
