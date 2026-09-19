@@ -14,6 +14,7 @@
     "test:raw": "bun test",
     "test:eval": "bun run scripts/test/test_runner.ts eval",
     "test:failures": "bun test --only-failures",
+    "test:zen": "bun run scripts/test/test_zen_fixes.ts",
     "typecheck": "tsc --noEmit",
     "doctor": "bun run scripts/diagnose/doctor.ts",
     "doctor:full": "bun run scripts/diagnose/doctor_full.ts",
