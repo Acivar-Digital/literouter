@@ -4,6 +4,18 @@ All notable changes to LiteRouter will be documented in this file.
 
 ## [Unreleased] — 2026-09-19
 
+### Added
+- **Live Zen Gateway Verification Test Suite (`bun run test:zen`)** (`literouter-oiaez`, `literouter-4xdrg`):
+  - Added `scripts/test/test_zen_fixes.ts` and `npm run test:zen` to deterministically verify live wire adaptations against the intranet server gateway (`http://192.168.50.10:7766` or `http://literouter.lan:7766`).
+  - Covers 3 critical live test vectors:
+    1. **Chat Completions (stream: false, no tools)**: Validates transparent probe tool injection and SSE-to-JSON stream accumulation.
+    2. **Subagent Simulation (custom tool + `tool_choice: "none"`)**: Validates that custom subagent tools are preserved alongside merged core probe tools, and `tool_choice` is normalized to `"auto"`.
+    3. **Responses API Wire (`POST /v1/responses`)**: Validates top-level tool injection and SSE completion parsing for models like `muse-spark-1.3-contributor-free`.
+- **Decoupled OpenCode Version Discovery (`tools/get_opencode_ver.ts`)** (`literouter-c08z1`):
+  - Updated to discover `opencode2` (v2) as primary and legacy `opencode` (v1) as fallback.
+  - Automatically filters out prerelease/beta tags (e.g. `0.0.0-beta-*`), falling back to a compliant stable semver (`1.18.30`) so upstream Zen anti-abuse gates never kick back `HTTP 426 UpgradeRequired`.
+  - Ensures LiteRouter gateway boots and functions completely independently if the legacy `opencode` (v1) binary is uninstalled or removed.
+
 ### Fixed
 - **Core Probe Tool Merging & `tool_choice` Normalization for Zen (`zn`)** (`literouter-4m2am`, `literouter-3k33x`):
   - **Tool Set Merging (`src/engine/zen.ts:adaptZenPayload`, `adaptZenResponsesPayload`)**: Rather than only injecting probe tools when `tools` is completely empty, LiteRouter now merges authentic OpenCode core probe tools (`bash`, `read`, `write`, `edit`, `glob`, `grep`) with any existing client or subagent tools without duplicates. This prevents upstream 403 `FreeTierError` when subagents, background agents (such as OpenCode2's `title` agent), or custom plugins pass custom tool definitions without the core OpenCode tools.

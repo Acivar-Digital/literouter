@@ -149,12 +149,12 @@ To register Zen Muse in OpenCode 2, configure `lr-zn-rs` under `providers`:
       "npm": "@ai-sdk/openai",
       "name": "LiteRouter Zen Responses",
       "settings": {
-        "baseURL": "https://localhost:7766/v1",
+        "baseURL": "http://192.168.50.10:7766/v1",
         "apiKey": "lr-zn-oo-rs-no",
         "chunkTimeout": 120000
       },
       "options": {
-        "baseURL": "https://localhost:7766/v1",
+        "baseURL": "http://192.168.50.10:7766/v1",
         "apiKey": "lr-zn-oo-rs-no",
         "chunkTimeout": 120000
       },
@@ -228,11 +228,25 @@ require layer 2, which is why the legacy static-only probe always returned 400.
 | Doctor PASS but gateway FAILs | Doctor bypasses the gateway (direct upstream) | Reproduce via gateway: `curl -sk https://localhost:7766/v1/chat/completions -H "Authorization: Bearer <lr-zn-oa-ch-no>" -H "session-id: <real>"`; check pool loaded at boot and directive parsing |
 | Gateway PASS but doctor FAILs | Legacy static-only probe path | Expected for `probeZenKey`; the wired Zen loop uses `doctor_zn.ts` fresh sessions |
 
-### 9.4 Quick verification commands
+### 10.4 Quick verification commands
+
+> 📌 **Intranet Gateway Host**: The LiteRouter gateway runs on the intranet Linux server at `http://192.168.50.10:7766` (or `http://literouter.lan:7766`), NOT `localhost`.
 
 ```bash
-bun run scripts/doctor.ts --provider=zn   # Zen key health (direct upstream, fresh session per key)
-bun run scripts/doctor.ts                 # full sweep: Google, NVIDIA, OpenRouter, Zen, GCP
-curl -sk https://localhost:7766/health | jq .
-curl -sk -X POST https://localhost:7766/reset   # hot-reload providers.json header edits
+# 1. Deterministic Unit Verification (tests tool merging, choice normalization, and stream accumulation offline)
+bun test tests/unit/engine/zen.test.ts
+
+# 2. Live Gateway Wire Adaptation Test (runs 3 live test vectors against intranet gateway at 192.168.50.10:7766)
+bun run test:zen
+# (or explicitly target a specific URL)
+bun run scripts/test/test_zen_fixes.ts --url http://192.168.50.10:7766
+
+# 3. Zen Upstream Key Health Doctor Probes (direct upstream key check)
+bun run scripts/doctor.ts --provider=zn
+
+# 4. Gateway Health Probe
+curl -s http://192.168.50.10:7766/health | jq .
+
+# 5. Hot-reload providers.json header edits
+curl -s -X POST http://192.168.50.10:7766/reset
 ```

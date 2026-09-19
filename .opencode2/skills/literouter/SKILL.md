@@ -41,6 +41,7 @@ description: LiteRouter API Gateway operational guide for Bun/TypeScript proxy o
 | OpenCode2 test tool | `test_literouter` native tool for zero-bloat programmatic test invocation |
 | Benchmark eval grader tests | `bun run test:eval` (`bun run scripts/test_runner.ts eval`, 182 tests) |
 | Anti-bloat failure runner | `bun run test:failures` (`bun test --only-failures`) |
+| Zen wire adaptation test | `bun run test:zen` (live 3-vector test against intranet gateway `http://192.168.50.10:7766`) |
 | Diagnostics | `bun run scripts/doctor.ts` (JSON schema + live upstream key probes for Google, NVIDIA, OpenRouter, Zen, GCP) |
 | Master Model Evaluation Gauntlet | `bun run eval/eval.ts <model_name>` (orchestrates speed, code & web, outputs markdown report card; reasoning-transcript appendix default-ON via `ts`-nuance key, opt-out `--no-reasoning-transcript`) |
 | Coding & Agentic Benchmark | `bun run eval/code.ts <model_name>` (5-stage wire, pydantic, loop, str_replace & injection audit; dual Chat/Responses) |
