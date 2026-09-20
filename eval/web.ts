@@ -68,6 +68,7 @@ export interface WebEvalOptions {
   maxTokens?: number;
   reasoningEffort?: "high" | "medium" | "none";
   silent?: boolean;
+  extraPayload?: Record<string, unknown>;
 }
 
 export interface WebEvalResult {
@@ -212,10 +213,11 @@ export function parseArgs(argv: string[] = process.argv.slice(2)): WebEvalOption
   return opts;
 }
 
-export function normalizeWebOptions(opts: WebEvalOptions = {}): Required<Omit<WebEvalOptions, "stage" | "image" | "reasoningEffort">> & {
+export function normalizeWebOptions(opts: WebEvalOptions = {}): Required<Omit<WebEvalOptions, "stage" | "image" | "reasoningEffort" | "extraPayload">> & {
   image?: string;
   stage?: number;
   reasoningEffort?: "high" | "medium" | "none";
+  extraPayload?: Record<string, unknown>;
 } {
   const baseUrl = getDefaultGatewayBaseUrl();
   let model = opts.model ?? "inclusionai/ling-3.0-flash-vl:free";
@@ -252,6 +254,7 @@ export function normalizeWebOptions(opts: WebEvalOptions = {}): Required<Omit<We
     maxTokens,
     reasoningEffort: opts.reasoningEffort,
     silent,
+    extraPayload: opts.extraPayload,
   };
 }
 
@@ -386,6 +389,7 @@ export async function runWebEvaluation(options: WebEvalOptions = {}): Promise<We
     timeoutMs: norm.timeoutMs,
     maxTokens: norm.maxTokens,
     reasoningEffort: norm.reasoningEffort,
+    extraPayload: norm.extraPayload,
   };
 
   const stagesToRun = norm.stage

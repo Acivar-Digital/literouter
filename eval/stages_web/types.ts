@@ -14,6 +14,7 @@ export interface StageContext {
   timeoutMs?: number;  // Per-stage HTTP timeout in ms (default: 120000)
   maxTokens?: number;  // Max completion tokens (default: 8192)
   reasoningEffort?: "high" | "medium" | "none"; // Reasoning effort for thinking models
+  extraPayload?: Record<string, unknown>;
 }
 
 export interface SubCheck {

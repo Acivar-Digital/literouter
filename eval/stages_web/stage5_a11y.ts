@@ -249,6 +249,7 @@ export async function runStage5A11y(ctx: StageContext): Promise<StageResult> {
           model: ctx.model,
           stream: false,
           max_output_tokens: ctx.maxTokens ?? 8192,
+          ...(ctx.extraPayload ?? {}),
           input: [
             {
               role: "system",
@@ -271,6 +272,7 @@ export async function runStage5A11y(ctx: StageContext): Promise<StageResult> {
           max_tokens: ctx.maxTokens ?? 8192,
           ...(ctx.reasoningEffort ? { reasoning: { effort: ctx.reasoningEffort } } : {}),
           temperature: 0.1,
+          ...(ctx.extraPayload ?? {}),
         };
 
     const resp = await fetch(ctx.gatewayUrl, {

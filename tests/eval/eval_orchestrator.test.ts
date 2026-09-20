@@ -28,6 +28,7 @@ import {
   validateStrictEvalArgs,
   loadRegisteredProviders,
   parseModelLine,
+  parseExtraPayload,
   getDefaultGatewayBaseUrl,
   deriveWireDirectiveKeys,
 } from "../../eval/validate_cli";
@@ -190,6 +191,58 @@ describe("eval/eval.ts Master Orchestrator Unit Tests", () => {
       } finally {
         if (existsSync(tempPath)) unlinkSync(tempPath);
       }
+    });
+
+    it("should parse liquid/lfm-2.5-2.6b:free with response_format json_object", () => {
+      const providers = loadRegisteredProviders();
+      const line = "liquid/lfm-2.5-2.6b:free, response_format, json_object";
+      const target = parseModelLine(line, providers, 1);
+      expect(target.model).toBe("liquid/lfm-2.5-2.6b:free");
+      expect(target.provider).toBe("openrouter");
+      expect(target.providerCode).toBe("or");
+      expect(target.directiveKey).toBe("lr-or-oa-ch-no");
+      expect(target.extraPayload).toEqual({
+        response_format: { type: "json_object" },
+      });
+    });
+
+    it("should parse model-name with lr- key and trailing temperature and seed flags", () => {
+      const providers = loadRegisteredProviders();
+      const line = "model-name, lr-or-oa-ch-no, temperature, 0.7, seed, 42";
+      const target = parseModelLine(line, providers, 1);
+      expect(target.model).toBe("model-name");
+      expect(target.provider).toBe("openrouter");
+      expect(target.directiveKey).toBe("lr-or-oa-ch-no");
+      expect(target.extraPayload).toEqual({
+        temperature: 0.7,
+        seed: 42,
+      });
+    });
+
+    it("should parse extra payload tokens into numbers, booleans, and JSON objects", () => {
+      const parsed = parseExtraPayload([
+        "temperature", "0.7",
+        "seed", "42",
+        "stream", "true",
+        "verbose", "false",
+        "response_format", "json_object",
+        "custom_json", "{\"key\":\"val\"}",
+        "raw_string", "test-val",
+      ]);
+      expect(parsed).toEqual({
+        temperature: 0.7,
+        seed: 42,
+        stream: true,
+        verbose: false,
+        response_format: { type: "json_object" },
+        custom_json: { key: "val" },
+        raw_string: "test-val",
+      });
+
+      const parsedWithColon = parseExtraPayload(["response_format", "type: json_object"]);
+      expect(parsedWithColon).toEqual({
+        response_format: { type: "json_object" },
+      });
     });
   });
 
@@ -1149,6 +1202,43 @@ describe("eval/eval.ts Master Orchestrator Unit Tests", () => {
           const { rmdirSync } = await import("node:fs");
           if (existsSync(tempDir)) rmdirSync(tempDir);
         }
+      });
+
+      it("should document active tuning parameters in the consolidated report card header", () => {
+        const consolidated: ConsolidatedModelSummary = {
+          model: "liquid/lfm-2.5-2.6b:free",
+          sanitizedModelName: "liquid_lfm-2.5-2.6b_free",
+          timestamp: "2026-09-21T00:00:00.000Z",
+          gatewayHost: "http://literouter.lan:7766",
+          directiveKeys: {
+            chat: "lr-or-oa-ch-no",
+            responses: "lr-or-oo-rs-no",
+            messages: "lr-or-cl-ms-no",
+          },
+          wireResults: {
+            chat: { wire: "chat", wireLabel: "Chat Completions", directiveKey: "lr-or-oa-ch-no", gatewayUrl: "http://literouter.lan:7766/v1/chat/completions", passed: true },
+            responses: { wire: "responses", wireLabel: "Responses API", directiveKey: "lr-or-oo-rs-no", gatewayUrl: "http://literouter.lan:7766/v1/responses", passed: true },
+            messages: { wire: "messages", wireLabel: "Anthropic Messages", directiveKey: "lr-or-cl-ms-no", gatewayUrl: "http://literouter.lan:7766/v1/messages", passed: true },
+          },
+          allWiresPassed: true,
+          unifiedRoleRecommendation: {
+            overallRole: "Explorer",
+            badge: "⚡ EXPLORER",
+            rationale: "Fast and lightweight.",
+            bestWireForOrchestrator: "Chat Completions",
+            bestWireForCoder: "Chat Completions",
+            bestWireForExplorer: "Chat Completions",
+            strengths: [],
+            caveats: [],
+          },
+          extraPayload: {
+            response_format: { type: "json_object" },
+            temperature: 0.7,
+          },
+        };
+
+        const md = generateConsolidatedMarkdownReport(consolidated);
+        expect(md).toContain("> **Active Tuning / Custom Fields:** `{\"response_format\":{\"type\":\"json_object\"},\"temperature\":0.7}`");
       });
     });
   });

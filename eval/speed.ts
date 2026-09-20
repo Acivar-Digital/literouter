@@ -60,7 +60,8 @@ export async function runSingleBenchmark(
   endpoint: string,
   directiveKey: string,
   model: string,
-  runIndex: number
+  runIndex: number,
+  extraPayload?: Record<string, unknown>
 ): Promise<BenchResult> {
   const result: BenchResult = {
     model,
@@ -78,6 +79,7 @@ export async function runSingleBenchmark(
     model,
     stream: true,
     stream_options: { include_usage: true },
+    ...(extraPayload ?? {}),
     messages: [
       {
         role: "user",
@@ -245,6 +247,7 @@ export interface SpeedBenchmarkOptions {
   key?: string;
   endpoint?: string;
   verbose?: boolean;
+  extraPayload?: Record<string, unknown>;
 }
 
 /**
@@ -261,10 +264,12 @@ export async function runSpeedBenchmark(
   runs: number = 2,
   key: string = "lr-or-oa-ch-no",
   endpoint: string = `${getDefaultGatewayBaseUrl()}/v1/chat/completions`,
-  verbose: boolean = false
+  verbose: boolean = false,
+  options?: SpeedBenchmarkOptions
 ): Promise<SpeedBenchmarkResult> {
   const allResults: Record<string, BenchResult[]> = {};
   const targetModels = models.length > 0 ? models : DEFAULT_MODELS;
+  const extraPayload = options?.extraPayload;
 
   for (const model of targetModels) {
     allResults[model] = [];
@@ -276,7 +281,7 @@ export async function runSpeedBenchmark(
       if (verbose) {
         process.stdout.write(`   • Run ${r}/${runs} in progress... `);
       }
-      const res = await runSingleBenchmark(endpoint, key, model, r);
+      const res = await runSingleBenchmark(endpoint, key, model, r, extraPayload);
       allResults[model].push(res);
 
       if (verbose) {

@@ -57,6 +57,10 @@ import {
 export type SuiteType = "speed" | "code" | "web";
 export type ArchitecturalRole = "Orchestrator" | "General Coder" | "Explorer";
 
+export interface MultiWireTarget extends ValidatedEvalArgs {
+  extraPayload?: Record<string, unknown>;
+}
+
 export interface EvalOrchestratorOptions {
   model?: string;
   provider?: string;
@@ -74,6 +78,7 @@ export interface EvalOrchestratorOptions {
   image?: string;
   reportsDir?: string;
   batchTargets?: ValidatedEvalArgs[];
+  extraPayload?: Record<string, unknown>;
 }
 
 export interface RoleRecommendation {
@@ -136,6 +141,7 @@ export interface ConsolidatedModelSummary {
   allWiresPassed: boolean;
   unifiedRoleRecommendation: UnifiedRoleRecommendation;
   reportPath?: string;
+  extraPayload?: Record<string, unknown>;
 }
 
 /**
@@ -1339,6 +1345,9 @@ export function generateConsolidatedMarkdownReport(summary: ConsolidatedModelSum
   lines.push(`> **Responses Directive:** \`${summary.directiveKeys.responses}\`  `);
   lines.push(`> **Anthropic Directive:** \`${summary.directiveKeys.messages}\`  `);
   lines.push(`> **Wires Tested:** \`Chat Completions (/v1/chat/completions)\`, \`Responses API (/v1/responses)\`, \`Anthropic Messages (/v1/messages)\`  `);
+  if (summary.extraPayload && Object.keys(summary.extraPayload).length > 0) {
+    lines.push(`> **Active Tuning / Custom Fields:** \`${JSON.stringify(summary.extraPayload)}\`  `);
+  }
   lines.push("");
   lines.push("---");
   lines.push("");
@@ -1477,11 +1486,12 @@ export function writeConsolidatedMarkdownReport(
 }
 
 export async function runMultiWireModelEvaluation(
-  target: ValidatedEvalArgs,
+  target: MultiWireTarget,
   baseOptions: EvalOrchestratorOptions
 ): Promise<ConsolidatedModelSummary> {
   const wireKeys = deriveWireDirectiveKeys(target.directiveKey, target.providerCode);
   const baseUrl = getDefaultGatewayBaseUrl();
+  const effectiveExtraPayload = target.extraPayload ?? baseOptions.extraPayload;
 
   console.log(`\n========================================================================`);
   console.log(`🚀 \x1b[1m\x1b[36mLITEROUTER MULTI-WIRE MASTER EVALUATION ORCHESTRATOR\x1b[0m`);
@@ -1539,6 +1549,7 @@ export async function runMultiWireModelEvaluation(
       gatewayUrl: `${baseUrl}/v1/chat/completions`,
       wire: "chat",
       skipReport: true,
+      extraPayload: effectiveExtraPayload,
     });
     wireResults.chat.summary = summaryChat;
     wireResults.chat.passed = summaryChat.allSuitesPassed;
@@ -1564,6 +1575,7 @@ export async function runMultiWireModelEvaluation(
       gatewayUrl: `${baseUrl}/v1/responses`,
       wire: "responses",
       skipReport: true,
+      extraPayload: effectiveExtraPayload,
     });
     wireResults.responses.summary = summaryRs;
     wireResults.responses.passed = summaryRs.allSuitesPassed;
@@ -1589,6 +1601,7 @@ export async function runMultiWireModelEvaluation(
       gatewayUrl: `${baseUrl}/v1/messages`,
       wire: "messages",
       skipReport: true,
+      extraPayload: effectiveExtraPayload,
     });
     wireResults.messages.summary = summaryMs;
     wireResults.messages.passed = summaryMs.allSuitesPassed;
@@ -1617,6 +1630,7 @@ export async function runMultiWireModelEvaluation(
     wireResults,
     allWiresPassed,
     unifiedRoleRecommendation,
+    extraPayload: effectiveExtraPayload,
   };
 
   if (!baseOptions.skipReport) {
@@ -1778,6 +1792,7 @@ export function parseCliArgs(
       skipReport: false,
       reasoningTranscript: true,
       batchTargets: validated.batchTargets,
+      extraPayload: validated.extraPayload,
     };
 
     if (named["--all-wires"] || named["--allwires"] || named["--multi-wire"]) {
@@ -1962,7 +1977,9 @@ export async function runMasterEvaluation(
   if (suitesToRun.includes("speed")) {
     console.log(`\n▶ [1/3] EXECUTING SPEED & THROUGHPUT BENCHMARK...`);
     try {
-      speedResult = await runSpeedBenchmark([model], runs, directiveKey, gatewayUrl, true);
+      speedResult = await runSpeedBenchmark([model], runs, directiveKey, gatewayUrl, true, {
+        extraPayload: options.extraPayload,
+      });
     } catch (err) {
       console.error(`\x1b[31mError during speed benchmark execution:\x1b[0m`, err);
       allSuitesPassed = false;
@@ -1982,6 +1999,7 @@ export async function runMasterEvaluation(
         runs,
         continueOnFailure,
         reasoningTranscript: options.reasoningTranscript ?? true,
+        extraPayload: options.extraPayload,
       };
       codeSummary = await runCodeEvaluation(codeOpts);
       if (!codeSummary.allPassed) {
@@ -2007,6 +2025,7 @@ export async function runMasterEvaluation(
         runs,
         reasoningEffort: options.reasoningEffort,
         silent: false,
+        extraPayload: options.extraPayload,
       };
       webResult = await runWebEvaluation(webOpts);
       if (!webResult.allPassed) {
@@ -2110,6 +2129,7 @@ export async function runBatchEvaluation(
       directiveKey: target.directiveKey,
       wire: isTargetMessages ? "messages" : baseOptions.wire,
       batchTargets: undefined,
+      extraPayload: target.extraPayload ?? baseOptions.extraPayload,
     };
 
     try {
@@ -2173,6 +2193,7 @@ if (import.meta.main) {
           providerCode: "xx",
           providerName: options.provider ?? "unknown",
           directiveKey: options.directiveKey ?? "lr-or-oa-ch-no",
+          extraPayload: options.extraPayload,
         }];
 
     if (options.allWires) {

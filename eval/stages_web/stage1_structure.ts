@@ -239,6 +239,7 @@ export async function runStage1Structure(ctx: StageContext): Promise<StageResult
           model: ctx.model,
           stream: false,
           max_output_tokens: ctx.maxTokens ?? 8192,
+          ...(ctx.extraPayload ?? {}),
           input: [
             {
               role: "user",
@@ -251,6 +252,7 @@ export async function runStage1Structure(ctx: StageContext): Promise<StageResult
           stream: false,
           max_tokens: ctx.maxTokens ?? 8192,
           ...(ctx.reasoningEffort ? { reasoning: { effort: ctx.reasoningEffort } } : {}),
+          ...(ctx.extraPayload ?? {}),
           messages: buildMessages(imageUri),
         };
 

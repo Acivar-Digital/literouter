@@ -1,1 +1,2 @@
-nex-agi/nex-n2.5-mini:free
+liquid/lfm-2.5-2.6b:free, response_format, type: json_object
+dots-studio/dots-3-note-preview:free, response_format, type: json_object

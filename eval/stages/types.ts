@@ -10,6 +10,7 @@ export interface StageContext {
   gatewayUrl: string;
   runs: number;
   timeoutMs?: number;
+  extraPayload?: Record<string, unknown>;
 }
 
 export interface StageResult {

@@ -77,6 +77,7 @@ export async function runStage3Agentic(ctx: StageContext): Promise<StageResult> 
         model: ctx.model,
         stream: true,
         tools: TOOL_PALETTE,
+        ...(ctx.extraPayload ?? {}),
         input: turn1Input,
       }),
     });
@@ -181,6 +182,7 @@ export async function runStage3Agentic(ctx: StageContext): Promise<StageResult> 
         model: ctx.model,
         stream: false,
         tools: TOOL_PALETTE,
+        ...(ctx.extraPayload ?? {}),
         input: turn2Input,
       }),
     });
@@ -232,6 +234,7 @@ export async function runStage3Agentic(ctx: StageContext): Promise<StageResult> 
         model: ctx.model,
         stream: false,
         tools: TOOL_PALETTE,
+        ...(ctx.extraPayload ?? {}),
         input: turn3Input,
       }),
     });

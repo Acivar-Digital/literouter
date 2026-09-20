@@ -26,6 +26,107 @@ export interface ValidatedEvalArgs {
   directiveKey: string;
   batchTargets?: ValidatedEvalArgs[];
   sourceFile?: string;
+  extraPayload?: Record<string, unknown>;
+}
+
+function parseSingleValue(key: string, rawVal: string): unknown {
+  const trimmed = rawVal.trim();
+  if (key === "response_format") {
+    const lower = trimmed.toLowerCase();
+    if (lower === "json_object" || lower === "json") {
+      return { type: "json_object" };
+    }
+    if (lower.startsWith("type:") || lower.startsWith("type :")) {
+      const typeVal = trimmed.slice(trimmed.indexOf(":") + 1).trim();
+      return { type: typeVal };
+    }
+    try {
+      return JSON.parse(trimmed);
+    } catch (parseErr) {
+      void parseErr;
+      return trimmed;
+    }
+  }
+
+  const lower = trimmed.toLowerCase();
+  if (lower === "true") return true;
+  if (lower === "false") return false;
+
+  // Check valid JSON (object or array)
+  if (
+    (trimmed.startsWith("{") && trimmed.endsWith("}")) ||
+    (trimmed.startsWith("[") && trimmed.endsWith("]"))
+  ) {
+    try {
+      return JSON.parse(trimmed);
+    } catch (parseErr) {
+      void parseErr;
+    }
+  }
+
+  // Check numeric
+  if (trimmed !== "" && !isNaN(Number(trimmed))) {
+    return Number(trimmed);
+  }
+
+  // Check quoted JSON string or object fallback
+  try {
+    const parsed = JSON.parse(trimmed);
+    if (typeof parsed === "object" && parsed !== null) {
+      return parsed;
+    }
+  } catch (jsonErr) {
+    void jsonErr;
+  }
+
+  return trimmed;
+}
+
+/**
+ * Parses flat tokens representing <flag>, <value> pairs into a typed Record.
+ */
+export function parseExtraPayload(tokens: string[]): Record<string, unknown> {
+  const payload: Record<string, unknown> = {};
+  for (let i = 0; i < tokens.length; i += 2) {
+    let key = tokens[i]?.trim();
+    if (!key) continue;
+    key = key.replace(/^--?/, "");
+    const rawVal = tokens[i + 1]?.trim();
+    if (rawVal === undefined || rawVal === "") {
+      payload[key] = true;
+      continue;
+    }
+    payload[key] = parseSingleValue(key, rawVal);
+  }
+  return payload;
+}
+
+function autoInferProviderAndKey(
+  rawModel: string,
+  providersMap: Map<string, RegisteredProvider>
+): {
+  rawProvider: string;
+  rawKey: string;
+  providerInfo?: RegisteredProvider;
+} {
+  const lower = rawModel.toLowerCase();
+  let rawProvider = "";
+  let rawKey = "";
+  if (lower.includes("union-alpha") || lower.startsWith("zen")) {
+    rawProvider = "zen";
+    rawKey = "lr-zn-cl-ms-no";
+  } else if (lower.startsWith("nvidia/") || lower.startsWith("meta/")) {
+    rawProvider = "nvidia";
+    rawKey = "lr-nv-oa-ch-no";
+  } else if (lower.startsWith("google/")) {
+    rawProvider = "google";
+    rawKey = "lr-gg-gg-gc-no";
+  } else {
+    rawProvider = "openrouter";
+    rawKey = "lr-or-oa-ch-no";
+  }
+  const providerInfo = providersMap.get(rawProvider);
+  return { rawProvider, rawKey, providerInfo };
 }
 
 /**
@@ -45,15 +146,18 @@ export function parseModelLine(
     throw new Error(`Line ${lineNum} is empty`);
   }
 
-  let rawModel = positionals[0]!;
+  const rawModel = positionals[0]!;
   let rawProvider = "";
   let rawKey = "";
   let providerInfo: RegisteredProvider | undefined;
+  let extraTokens: string[] = [];
 
-  if (positionals.length >= 3) {
-    rawProvider = positionals[1]!;
-    rawKey = positionals[2]!;
-  } else if (positionals.length === 2) {
+  if (positionals.length === 1) {
+    const inferred = autoInferProviderAndKey(rawModel, providersMap);
+    rawProvider = inferred.rawProvider;
+    rawKey = inferred.rawKey;
+    providerInfo = inferred.providerInfo;
+  } else {
     const second = positionals[1]!;
     if (second.startsWith("lr-")) {
       rawKey = second;
@@ -65,30 +169,26 @@ export function parseModelLine(
       } else if (codeCandidate) {
         rawProvider = codeCandidate;
       }
+      extraTokens = positionals.slice(2);
     } else if (providersMap.has(second.toLowerCase())) {
-      rawProvider = second;
-      providerInfo = providersMap.get(second.toLowerCase());
-      rawKey = `lr-${providerInfo!.code}-oa-ch-no`;
+      const candidateProvider = providersMap.get(second.toLowerCase())!;
+      rawProvider = candidateProvider.key;
+      providerInfo = candidateProvider;
+      const third = positionals[2];
+      if (third && third.startsWith("lr-")) {
+        rawKey = third;
+        extraTokens = positionals.slice(3);
+      } else {
+        rawKey = `lr-${candidateProvider.code}-oa-ch-no`;
+        extraTokens = positionals.slice(2);
+      }
     } else {
-      rawProvider = second;
+      const inferred = autoInferProviderAndKey(rawModel, providersMap);
+      rawProvider = inferred.rawProvider;
+      rawKey = inferred.rawKey;
+      providerInfo = inferred.providerInfo;
+      extraTokens = positionals.slice(1);
     }
-  } else {
-    // 1 positional: <model_name> only. Auto-infer provider and default directive key.
-    const lower = rawModel.toLowerCase();
-    if (lower.includes("union-alpha") || lower.startsWith("zen")) {
-      rawProvider = "zen";
-      rawKey = "lr-zn-cl-ms-no";
-    } else if (lower.startsWith("nvidia/") || lower.startsWith("meta/")) {
-      rawProvider = "nvidia";
-      rawKey = "lr-nv-oa-ch-no";
-    } else if (lower.startsWith("google/")) {
-      rawProvider = "google";
-      rawKey = "lr-gg-gg-gc-no";
-    } else {
-      rawProvider = "openrouter";
-      rawKey = "lr-or-oa-ch-no";
-    }
-    providerInfo = providersMap.get(rawProvider);
   }
 
   if (!rawProvider) {
@@ -112,12 +212,15 @@ export function parseModelLine(
     );
   }
 
+  const extraPayload = extraTokens.length > 0 ? parseExtraPayload(extraTokens) : undefined;
+
   return {
     model: rawModel.trim(),
     provider: providerInfo.key,
     providerCode: providerInfo.code,
     providerName: providerInfo.name,
     directiveKey: rawKey.trim(),
+    ...(extraPayload && Object.keys(extraPayload).length > 0 ? { extraPayload } : {}),
   };
 }
 

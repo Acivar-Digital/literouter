@@ -129,6 +129,7 @@ Rules:
       body: JSON.stringify({
         model: ctx.model,
         stream: false,
+        ...(ctx.extraPayload ?? {}),
         tools: [
           {
             type: "function",
@@ -276,6 +277,7 @@ You MUST include enough surrounding context (e.g. 'function handleBeta' or '// S
       body: JSON.stringify({
         model: ctx.model,
         stream: false,
+        ...(ctx.extraPayload ?? {}),
         tools: [
           {
             type: "function",

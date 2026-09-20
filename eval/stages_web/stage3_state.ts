@@ -338,6 +338,7 @@ Return the complete, working TSX code inside a \`\`\`tsx ... \`\`\` block.
           model: ctx.model,
           stream: false,
           max_output_tokens: ctx.maxTokens ?? 8192,
+          ...(ctx.extraPayload ?? {}),
           input: [{ role: "user", content: prompt }],
         }
       : {
@@ -345,6 +346,7 @@ Return the complete, working TSX code inside a \`\`\`tsx ... \`\`\` block.
           stream: false,
           max_tokens: ctx.maxTokens ?? 8192,
           ...(ctx.reasoningEffort ? { reasoning: { effort: ctx.reasoningEffort } } : {}),
+          ...(ctx.extraPayload ?? {}),
           messages: [{ role: "user", content: userMessageContent }],
         };
 

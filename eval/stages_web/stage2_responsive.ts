@@ -235,6 +235,7 @@ export async function runStage2Responsive(ctx: StageContext): Promise<StageResul
           model: ctx.model,
           stream: false,
           max_output_tokens: ctx.maxTokens ?? 8192,
+          ...(ctx.extraPayload ?? {}),
           input: [
             {
               role: "user",
@@ -247,6 +248,7 @@ export async function runStage2Responsive(ctx: StageContext): Promise<StageResul
           stream: false,
           max_tokens: ctx.maxTokens ?? 8192,
           ...(ctx.reasoningEffort ? { reasoning: { effort: ctx.reasoningEffort } } : {}),
+          ...(ctx.extraPayload ?? {}),
           messages: buildMessages(imageUri),
         };
 

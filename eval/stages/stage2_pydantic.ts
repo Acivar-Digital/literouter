@@ -104,6 +104,7 @@ export async function runStage2Pydantic(ctx: StageContext): Promise<StageResult>
       body: JSON.stringify({
         model: ctx.model,
         stream: false,
+        ...(ctx.extraPayload ?? {}),
         messages: [
           { role: "system", content: COMPLEX_SCHEMA_PROMPT },
           {
@@ -189,6 +190,7 @@ export async function runStage2Pydantic(ctx: StageContext): Promise<StageResult>
       body: JSON.stringify({
         model: ctx.model,
         stream: false,
+        ...(ctx.extraPayload ?? {}),
         messages: errorFeedbackPrompt,
       }),
       signal: AbortSignal.timeout(ctx.timeoutMs ?? 120000),
@@ -265,6 +267,7 @@ FAILED tests/test_engine.py::test_payload_ingestion_pipeline - pydantic_core._py
       body: JSON.stringify({
         model: ctx.model,
         stream: false,
+        ...(ctx.extraPayload ?? {}),
         messages: [
           { role: "system", content: COMPLEX_SCHEMA_PROMPT },
           {

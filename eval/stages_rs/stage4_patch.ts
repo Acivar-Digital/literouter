@@ -204,6 +204,7 @@ Rules:
       body: JSON.stringify({
         model: ctx.model,
         stream: false,
+        ...(ctx.extraPayload ?? {}),
         tools: [editFileTool],
         input: [{ role: "user", content: prompt }],
       }),
@@ -307,6 +308,7 @@ You MUST include enough surrounding context (e.g. 'function handleBeta' or '// S
       body: JSON.stringify({
         model: ctx.model,
         stream: false,
+        ...(ctx.extraPayload ?? {}),
         tools: [editFileTool],
         input: [{ role: "user", content: prompt42 }],
       }),

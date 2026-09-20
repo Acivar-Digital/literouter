@@ -36,6 +36,7 @@ export interface CodeEvalOptions {
   cooldownMs?: number;
   timeoutMs?: number;
   reasoningTranscript?: boolean;
+  extraPayload?: Record<string, unknown>;
 }
 
 export interface CodeEvalSummary {
@@ -292,6 +293,7 @@ export async function runCodeEvaluation(options: CodeEvalOptions = {}): Promise<
     gatewayUrl: resolved.gatewayUrl,
     runs: options.runs ?? 2,
     timeoutMs,
+    extraPayload: options.extraPayload,
   };
   const continueOnFailure = options.continueOnFailure ?? false;
   const stageFilter = options.stageFilter;

@@ -273,6 +273,7 @@ Run \`npm install project-alpha\` to begin.
       body: JSON.stringify({
         model: ctx.model,
         stream: false,
+        ...(ctx.extraPayload ?? {}),
         tools: [
           {
             type: "function",

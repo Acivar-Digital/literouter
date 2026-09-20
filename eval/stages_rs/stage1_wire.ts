@@ -64,6 +64,7 @@ export async function runStage1Wire(ctx: StageContext): Promise<StageResult> {
       body: JSON.stringify({
         model: ctx.model,
         stream: false,
+        ...(ctx.extraPayload ?? {}),
         input: [{ role: "user", content: "List all files in /tmp using the bash tool." }],
         tools: [bashTool],
       }),
@@ -135,6 +136,7 @@ export async function runStage1Wire(ctx: StageContext): Promise<StageResult> {
       body: JSON.stringify({
         model: ctx.model,
         stream: false,
+        ...(ctx.extraPayload ?? {}),
         input: [
           { role: "system", content: DUMMY_SYSTEM_GUIDELINES },
           { role: "user", content: "Execute FileReadTool to read 'config.json'." },

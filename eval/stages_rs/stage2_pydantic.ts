@@ -125,6 +125,7 @@ export async function runStage2Pydantic(ctx: StageContext): Promise<StageResult>
       body: JSON.stringify({
         model: ctx.model,
         stream: false,
+        ...(ctx.extraPayload ?? {}),
         input: [
           { role: "system", content: COMPLEX_SCHEMA_PROMPT },
           {
@@ -187,6 +188,7 @@ export async function runStage2Pydantic(ctx: StageContext): Promise<StageResult>
       body: JSON.stringify({
         model: ctx.model,
         stream: false,
+        ...(ctx.extraPayload ?? {}),
         input: [
           { role: "system", content: COMPLEX_SCHEMA_PROMPT },
           {
