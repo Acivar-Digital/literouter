@@ -14,6 +14,11 @@ All notable changes to LiteRouter will be documented in this file.
   - Derives directive keys automatically: `lr-<prov>-oa-ch-*` (Chat), `lr-<prov>-oo-rs-*` (Responses), `lr-<prov>-cl-ms-*` (Anthropic Messages).
 
 ### Added
+- **Live multi-wire evaluation report for `liquid/lfm-2.5-2.6b:free`** (`eval/reports/liquid_lfm-2.5-2.6b_free.md`):
+  - Executed against `http://literouter.lan:7766` across Chat Completions, Responses API, and Anthropic Messages wires with `response_format: {"type":"json_object"}` custom tuning.
+  - Cross-wire comparison matrices, throughput metrics, and role recommendation (`Orchestrator`) documented with observed limitations and wire-specific verdicts.
+
+### Added
 - **Live Zen Gateway Verification Test Suite (`bun run test:zen`)** (`literouter-oiaez`, `literouter-4xdrg`):
   - Added `scripts/test/test_zen_fixes.ts` and `npm run test:zen` to deterministically verify live wire adaptations against the intranet server gateway (`http://192.168.50.10:7766` or `http://literouter.lan:7766`).
   - Covers 3 critical live test vectors:
