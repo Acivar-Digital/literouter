@@ -2,7 +2,16 @@
 
 All notable changes to LiteRouter will be documented in this file.
 
-## [Unreleased] — 2026-09-19
+## [Unreleased] — 2026-09-21
+
+### Added
+- **Sequential multi-wire model evaluation orchestrator (`eval/eval.ts`)** (`literouter-rt6qo`):
+  - Supports three wire protocols in sequential order: Chat Completions (`/v1/chat/completions`), Responses API (`/v1/responses`), Anthropic Messages (`/v1/messages`).
+  - Batch runner iterates over models defined in `eval/reports/test-models.txt`.
+  - Standardized default evaluation gateway host to `http://literouter.lan:7766` (strict, never localhost).
+  - Unified single-report consolidation (`eval/reports/<model>.md`) combining all three wires with cross-wire comparison matrices and role recommendations.
+- **Automated sibling directive key derivation (`eval/validate_cli.ts`)**:
+  - Derives directive keys automatically: `lr-<prov>-oa-ch-*` (Chat), `lr-<prov>-oo-rs-*` (Responses), `lr-<prov>-cl-ms-*` (Anthropic Messages).
 
 ### Added
 - **Live Zen Gateway Verification Test Suite (`bun run test:zen`)** (`literouter-oiaez`, `literouter-4xdrg`):

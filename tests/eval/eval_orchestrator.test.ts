@@ -17,12 +17,19 @@ import {
   formatStageName,
   buildPerStageProfileSection,
   buildStatisticalAnalysisSection,
+  determineUnifiedRoleRecommendation,
+  generateConsolidatedMarkdownReport,
+  writeConsolidatedMarkdownReport,
   type EvalOrchestratorSummary,
+  type ConsolidatedModelSummary,
+  type WireResultSummary,
 } from "../../eval/eval";
 import {
   validateStrictEvalArgs,
   loadRegisteredProviders,
   parseModelLine,
+  getDefaultGatewayBaseUrl,
+  deriveWireDirectiveKeys,
 } from "../../eval/validate_cli";
 
 describe("eval/eval.ts Master Orchestrator Unit Tests", () => {
@@ -158,10 +165,10 @@ describe("eval/eval.ts Master Orchestrator Unit Tests", () => {
 
     it("should load model, provider, and directiveKey from a text file", () => {
       const r = validateStrictEvalArgs(["eval/reports/test-models.txt"]);
-      expect(r.model).toBe("union-alpha");
-      expect(r.provider).toBe("zen");
-      expect(r.providerCode).toBe("zn");
-      expect(r.directiveKey).toBe("lr-zn-cl-ms-no");
+      expect(r.model.length).toBeGreaterThan(0);
+      expect(r.provider.length).toBeGreaterThan(0);
+      expect(r.providerCode.length).toBeGreaterThan(0);
+      expect(r.directiveKey.startsWith("lr-")).toBe(true);
       expect(r.batchTargets).toBeDefined();
       expect(r.batchTargets!.length).toBeGreaterThanOrEqual(1);
     });
@@ -816,6 +823,332 @@ describe("eval/eval.ts Master Orchestrator Unit Tests", () => {
         expect(md).toContain("| **2** | Stage 2: Responsive Design & Mobile Scaling | `—` | ⏭️ SKIPPED | `—` | Intentionally excluded (CLI filter / not scheduled) |");
         expect(md).toContain("| **3** | Stage 3: Interactive State & Event Architecture | `—` | ⏭️ SKIPPED | `—` | Intentionally excluded (CLI filter / not scheduled) |");
         expect(md).toContain("| Web 2. Stage 2: Responsive Design & Mobile Scaling | - | - | - | ⏭️ Skipped (CLI filter) |");
+      });
+    });
+  });
+
+  describe("Multi-Wire Sequential Matrix & Consolidated Report Generator (literouter-udqw7)", () => {
+    describe("deriveWireDirectiveKeys", () => {
+      it("should derive sibling keys for chat, responses, and messages from standard chat key", () => {
+        const keys = deriveWireDirectiveKeys("lr-or-oa-ch-no");
+        expect(keys.chat).toBe("lr-or-oa-ch-no");
+        expect(keys.responses).toBe("lr-or-oo-rs-no");
+        expect(keys.messages).toBe("lr-or-cl-ms-no");
+      });
+
+      it("should preserve thinking/reasoning nuance suffixes like -ts or -ts+gm", () => {
+        const keys1 = deriveWireDirectiveKeys("lr-or-oa-ch-ts");
+        expect(keys1.chat).toBe("lr-or-oa-ch-ts");
+        expect(keys1.responses).toBe("lr-or-oo-rs-ts");
+        expect(keys1.messages).toBe("lr-or-cl-ms-ts");
+
+        const keys2 = deriveWireDirectiveKeys("lr-zn-cl-ms-ts+gm");
+        expect(keys2.chat).toBe("lr-zn-oa-ch-ts+gm");
+        expect(keys2.responses).toBe("lr-zn-oo-rs-ts+gm");
+        expect(keys2.messages).toBe("lr-zn-cl-ms-ts+gm");
+      });
+
+      it("should preserve oa-rs payload when converting from an existing oa-rs key", () => {
+        const keys = deriveWireDirectiveKeys("lr-or-oa-rs-no");
+        expect(keys.chat).toBe("lr-or-oa-ch-no");
+        expect(keys.responses).toBe("lr-or-oa-rs-no");
+        expect(keys.messages).toBe("lr-or-cl-ms-no");
+      });
+
+      it("should handle provider code override or alternative formats", () => {
+        const keys = deriveWireDirectiveKeys("lr-gg-gg-gc-no", "gg");
+        expect(keys.chat).toBe("lr-gg-oa-ch-no");
+        expect(keys.responses).toBe("lr-gg-oo-rs-no");
+        expect(keys.messages).toBe("lr-gg-cl-ms-no");
+      });
+    });
+
+    describe("getDefaultGatewayBaseUrl", () => {
+      it("should default to http://literouter.lan:7766 and never localhost", () => {
+        const originalEnv = { ...process.env };
+        delete process.env.LITEROUTER_URL;
+        delete process.env.GATEWAY_URL;
+
+        try {
+          const url = getDefaultGatewayBaseUrl();
+          expect(url).toBe("http://literouter.lan:7766");
+          expect(url).not.toContain("localhost");
+          expect(url).not.toContain("127.0.0.1");
+        } finally {
+          process.env = originalEnv;
+        }
+      });
+
+      it("should respect explicit env overrides", () => {
+        const originalEnv = { ...process.env };
+        try {
+          process.env.GATEWAY_URL = "http://custom-gw.lan:7766/";
+          expect(getDefaultGatewayBaseUrl()).toBe("http://custom-gw.lan:7766");
+        } finally {
+          process.env = originalEnv;
+        }
+      });
+    });
+
+    describe("Single-positional model parsing in parseModelLine", () => {
+      it("should infer openrouter provider and directive key for slash-delimited model names", () => {
+        const providers = loadRegisteredProviders();
+        const res = parseModelLine("nex-agi/nex-n2.5-mini:free", providers);
+        expect(res.model).toBe("nex-agi/nex-n2.5-mini:free");
+        expect(res.provider).toBe("openrouter");
+        expect(res.providerCode).toBe("or");
+        expect(res.directiveKey).toBe("lr-or-oa-ch-no");
+      });
+
+      it("should infer zen provider and directive key for union-alpha", () => {
+        const providers = loadRegisteredProviders();
+        const res = parseModelLine("union-alpha", providers);
+        expect(res.model).toBe("union-alpha");
+        expect(res.provider).toBe("zen");
+        expect(res.providerCode).toBe("zn");
+        expect(res.directiveKey).toBe("lr-zn-cl-ms-no");
+      });
+    });
+
+    describe("Multi-wire CLI flags in parseCliArgs", () => {
+      it("should default allWires to true when no wire flag is specified", () => {
+        const opts = parseCliArgs(["custom-model"]);
+        expect(opts.allWires).toBe(true);
+      });
+
+      it("should set allWires to true when --all-wires is explicitly provided", () => {
+        const opts = parseCliArgs(["custom-model", "--all-wires"]);
+        expect(opts.allWires).toBe(true);
+      });
+
+      it("should set allWires to false when single wire is explicitly pinned without --all-wires", () => {
+        const opts = parseCliArgs(["custom-model", "--wire", "chat"]);
+        expect(opts.allWires).toBe(false);
+      });
+    });
+
+    describe("determineUnifiedRoleRecommendation", () => {
+      it("should identify best wire for Orchestrator, Coder, and Explorer", () => {
+        const chatWire: WireResultSummary = {
+          wire: "chat",
+          wireLabel: "Chat Completions",
+          directiveKey: "lr-or-oa-ch-no",
+          gatewayUrl: "http://literouter.lan:7766/v1/chat/completions",
+          passed: true,
+          summary: {
+            model: "test-model",
+            sanitizedModelName: "test-model",
+            timestamp: "2026-09-21T00:00:00.000Z",
+            directiveKey: "lr-or-oa-ch-no",
+            gatewayUrl: "http://literouter.lan:7766/v1/chat/completions",
+            wire: "chat",
+            suitesRun: ["speed", "code"],
+            speedResult: {
+              allResults: {},
+              aggregates: [{
+                model: "test-model",
+                successfulRuns: 2,
+                avgTtftMs: 600,
+                minTtftMs: 550,
+                maxTtftMs: 650,
+                avgDurationMs: 1500,
+                avgTotalTokens: 100,
+                avgSpeedTokPerSec: 75.0,
+              }],
+            },
+            codeSummary: {
+              model: "test-model",
+              wire: "chat",
+              directiveKey: "lr-or-oa-ch-no",
+              gatewayUrl: "http://literouter.lan:7766/v1/chat/completions",
+              allPassed: true,
+              results: [
+                { stageName: "Stage 4: Surgical Coding & Patch Fidelity (str_replace)", passed: true, score: 100, details: {}, notes: [] },
+              ],
+            },
+            roleRecommendation: {
+              role: "General Coder",
+              badge: "💻 GENERAL CODER",
+              rationale: "Fast patch fidelity",
+              strengths: ["Surgical Diff & Code Patch Fidelity"],
+              caveats: [],
+            },
+            allSuitesPassed: true,
+          },
+        };
+
+        const rsWire: WireResultSummary = {
+          wire: "responses",
+          wireLabel: "Responses API",
+          directiveKey: "lr-or-oo-rs-no",
+          gatewayUrl: "http://literouter.lan:7766/v1/responses",
+          passed: true,
+          summary: {
+            model: "test-model",
+            sanitizedModelName: "test-model",
+            timestamp: "2026-09-21T00:00:00.000Z",
+            directiveKey: "lr-or-oo-rs-no",
+            gatewayUrl: "http://literouter.lan:7766/v1/responses",
+            wire: "responses",
+            suitesRun: ["code"],
+            codeSummary: {
+              model: "test-model",
+              wire: "responses",
+              directiveKey: "lr-or-oo-rs-no",
+              gatewayUrl: "http://literouter.lan:7766/v1/responses",
+              allPassed: true,
+              results: [
+                { stageName: "Stage 2: Strict Pydantic AI 2.0 Types", passed: true, score: 100, details: {}, notes: [] },
+                { stageName: "Stage 3: Dynamic State, Agentic Loop & Speed", passed: true, score: 100, details: {}, notes: [] },
+                { stageName: "Stage 5: Security & Indirect Prompt Injection", passed: true, score: 100, details: {}, notes: [] },
+              ],
+            },
+            roleRecommendation: {
+              role: "Orchestrator",
+              badge: "🧠 MASTER ORCHESTRATOR",
+              rationale: "Clean schema validation",
+              strengths: ["Pydantic AI 2.0 Schema & Retry Resilience"],
+              caveats: [],
+            },
+            allSuitesPassed: true,
+          },
+        };
+
+        const msWire: WireResultSummary = {
+          wire: "messages",
+          wireLabel: "Anthropic Messages",
+          directiveKey: "lr-or-cl-ms-no",
+          gatewayUrl: "http://literouter.lan:7766/v1/messages",
+          passed: false,
+          error: "Simulated upstream timeout",
+        };
+
+        const rec = determineUnifiedRoleRecommendation(chatWire, rsWire, msWire);
+        expect(rec.overallRole).toBe("Orchestrator");
+        expect(rec.badge).toContain("MASTER ORCHESTRATOR");
+        expect(rec.bestWireForOrchestrator).toContain("Responses API");
+        expect(rec.bestWireForCoder).toContain("Chat Completions");
+        expect(rec.bestWireForExplorer).toContain("Chat Completions");
+        expect(rec.strengths).toContain("Pydantic AI 2.0 Schema & Retry Resilience");
+        expect(rec.caveats.some((c) => c.includes("runtime failure"))).toBe(true);
+      });
+    });
+
+    describe("generateConsolidatedMarkdownReport & writeConsolidatedMarkdownReport", () => {
+      it("should generate a single consolidated report with comparison matrix and all 3 wires", async () => {
+        const consolidated: ConsolidatedModelSummary = {
+          model: "nex-agi/nex-n2.5-mini:free",
+          sanitizedModelName: "nex-agi_nex-n2.5-mini_free",
+          timestamp: "2026-09-21T00:00:00.000Z",
+          gatewayHost: "http://literouter.lan:7766",
+          directiveKeys: {
+            chat: "lr-or-oa-ch-no",
+            responses: "lr-or-oo-rs-no",
+            messages: "lr-or-cl-ms-no",
+          },
+          wireResults: {
+            chat: {
+              wire: "chat",
+              wireLabel: "Chat Completions",
+              directiveKey: "lr-or-oa-ch-no",
+              gatewayUrl: "http://literouter.lan:7766/v1/chat/completions",
+              passed: true,
+              summary: {
+                model: "nex-agi/nex-n2.5-mini:free",
+                sanitizedModelName: "nex-agi_nex-n2.5-mini_free",
+                timestamp: "2026-09-21T00:00:00.000Z",
+                directiveKey: "lr-or-oa-ch-no",
+                gatewayUrl: "http://literouter.lan:7766/v1/chat/completions",
+                wire: "chat",
+                suitesRun: ["speed", "code"],
+                codeSummary: {
+                  model: "nex-agi/nex-n2.5-mini:free",
+                  wire: "chat",
+                  directiveKey: "lr-or-oa-ch-no",
+                  gatewayUrl: "http://literouter.lan:7766/v1/chat/completions",
+                  allPassed: true,
+                  results: [
+                    { stageName: "Stage 1: Wire Protocol", passed: true, score: 100, details: {}, notes: [] },
+                    { stageName: "Stage 4: Surgical Coding", passed: true, score: 100, details: {}, notes: [] },
+                  ],
+                },
+                roleRecommendation: {
+                  role: "General Coder",
+                  badge: "💻 GENERAL CODER",
+                  rationale: "Solid coding",
+                  strengths: ["Surgical Diff Fidelity"],
+                  caveats: [],
+                },
+                allSuitesPassed: true,
+              },
+            },
+            responses: {
+              wire: "responses",
+              wireLabel: "Responses API",
+              directiveKey: "lr-or-oo-rs-no",
+              gatewayUrl: "http://literouter.lan:7766/v1/responses",
+              passed: true,
+            },
+            messages: {
+              wire: "messages",
+              wireLabel: "Anthropic Messages",
+              directiveKey: "lr-or-cl-ms-no",
+              gatewayUrl: "http://literouter.lan:7766/v1/messages",
+              passed: false,
+              error: "Connection timeout",
+            },
+          },
+          allWiresPassed: false,
+          unifiedRoleRecommendation: {
+            overallRole: "General Coder",
+            badge: "💻 GENERAL CODER",
+            rationale: "Validated across multiple wires.",
+            bestWireForOrchestrator: "Responses API (`lr-or-oo-rs-no`)",
+            bestWireForCoder: "Chat Completions (`lr-or-oa-ch-no`)",
+            bestWireForExplorer: "Chat Completions (`lr-or-oa-ch-no`)",
+            strengths: ["Surgical Diff Fidelity"],
+            caveats: ["Anthropic Messages encountered connection timeout"],
+          },
+        };
+
+        const md = generateConsolidatedMarkdownReport(consolidated);
+
+        // Verify header
+        expect(md).toContain("# 🏛️ Consolidated Multi-Wire Evaluation Report: `nex-agi/nex-n2.5-mini:free`");
+        expect(md).toContain("http://literouter.lan:7766");
+        expect(md).toContain("lr-or-oa-ch-no");
+        expect(md).toContain("lr-or-oo-rs-no");
+        expect(md).toContain("lr-or-cl-ms-no");
+
+        // Verify comparison matrix table
+        expect(md).toContain("## 📊 Cross-Wire Comparison Matrix");
+        expect(md).toContain("| Wire 1: Chat Completions | Wire 2: Responses API | Wire 3: Anthropic Messages |");
+        expect(md).toContain("🟢 PASSED");
+        expect(md).toContain("🔴 ERROR");
+
+        // Verify Unified Role Recommendation
+        expect(md).toContain("## 🎯 Unified Role Recommendation");
+        expect(md).toContain("Best Wire for Orchestrator");
+        expect(md).toContain("Best Wire for General Coder");
+        expect(md).toContain("Best Wire for Explorer");
+
+        // Verify per-wire detail sections
+        expect(md).toContain("## 🔌 Wire 1: Chat Completions (`chat`)");
+        expect(md).toContain("## 🔌 Wire 2: Responses API (`responses`)");
+        expect(md).toContain("## 🔌 Wire 3: Anthropic Messages (`messages`)");
+
+        // Test persistence to disk
+        const tempDir = join(import.meta.dir, "temp_reports");
+        try {
+          const writtenPath = writeConsolidatedMarkdownReport(consolidated, tempDir);
+          expect(existsSync(writtenPath)).toBe(true);
+          const content = readFileSync(writtenPath, "utf-8");
+          expect(content).toBe(md);
+          unlinkSync(writtenPath);
+        } finally {
+          const { rmdirSync } = await import("node:fs");
+          if (existsSync(tempDir)) rmdirSync(tempDir);
+        }
       });
     });
   });

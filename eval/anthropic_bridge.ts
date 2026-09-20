@@ -378,16 +378,27 @@ export function anthropicDeltaToOpenAiChunks(
 export function installAnthropicBridge(defaultMaxTokens = 4096): void {
   const g = globalThis as unknown as {
     __anthropicBridgeInstalled?: boolean;
+    __nativeFetch?: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
     fetch: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
   };
   if (g.__anthropicBridgeInstalled) return;
   g.__anthropicBridgeInstalled = true;
   const nativeFetch = g.fetch;
+  g.__nativeFetch = nativeFetch;
 
   g.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined));
-    if (headers.has("x-api-key")) {
-      return nativeFetch(input, init); // native Anthropic caller — leave as-is
+    const rawUrl =
+      typeof input === "string"
+        ? input
+        : input instanceof URL
+          ? input.toString()
+          : input instanceof Request
+            ? input.url
+            : "";
+
+    if (headers.has("x-api-key") || !rawUrl.includes("messages")) {
+      return nativeFetch(input, init); // native Anthropic caller or non-messages wire — leave as-is
     }
     const rawBody = typeof init?.body === "string" ? init.body : "";
     let openAiBody: Record<string, unknown> = {};
@@ -440,8 +451,8 @@ export function installAnthropicBridge(defaultMaxTokens = 4096): void {
               for (const oaChunk of anthropicDeltaToOpenAiChunks(event, sseState)) {
                 controller.enqueue(encoder.encode(`data: ${JSON.stringify(oaChunk)}\n\n`));
               }
-            } catch {
-              // malformed event: drop line, never abort the stream
+            } catch (_err) {
+              void _err;
             }
           }
         },
@@ -454,8 +465,8 @@ export function installAnthropicBridge(defaultMaxTokens = 4096): void {
                 for (const oaChunk of anthropicDeltaToOpenAiChunks(event, sseState)) {
                   controller.enqueue(encoder.encode(`data: ${JSON.stringify(oaChunk)}\n\n`));
                 }
-              } catch {
-                // ignore trailing malformed data
+              } catch (_err) {
+                void _err;
               }
             }
           }
@@ -464,4 +475,21 @@ export function installAnthropicBridge(defaultMaxTokens = 4096): void {
     );
     return new Response(stream, { status: 200, headers: { "Content-Type": "text/event-stream" } });
   };
+}
+
+/**
+ * Restores the global fetch function if the Anthropic bridge was installed.
+ */
+export function uninstallAnthropicBridge(): void {
+  const g = globalThis as unknown as {
+    __anthropicBridgeInstalled?: boolean;
+    __nativeFetch?: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+    fetch: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+  };
+  if (!g.__anthropicBridgeInstalled) return;
+  if (g.__nativeFetch) {
+    g.fetch = g.__nativeFetch;
+    delete g.__nativeFetch;
+  }
+  g.__anthropicBridgeInstalled = false;
 }

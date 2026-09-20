@@ -67,13 +67,28 @@ export function parseModelLine(
       }
     } else if (providersMap.has(second.toLowerCase())) {
       rawProvider = second;
+      providerInfo = providersMap.get(second.toLowerCase());
+      rawKey = `lr-${providerInfo!.code}-oa-ch-no`;
     } else {
       rawProvider = second;
     }
   } else {
-    throw new Error(
-      `Line ${lineNum} ('${line}'): Each entry must contain at least <model> and <directive_key> (e.g. '${rawModel}, lr-zn-cl-ms-no')`
-    );
+    // 1 positional: <model_name> only. Auto-infer provider and default directive key.
+    const lower = rawModel.toLowerCase();
+    if (lower.includes("union-alpha") || lower.startsWith("zen")) {
+      rawProvider = "zen";
+      rawKey = "lr-zn-cl-ms-no";
+    } else if (lower.startsWith("nvidia/") || lower.startsWith("meta/")) {
+      rawProvider = "nvidia";
+      rawKey = "lr-nv-oa-ch-no";
+    } else if (lower.startsWith("google/")) {
+      rawProvider = "google";
+      rawKey = "lr-gg-gg-gc-no";
+    } else {
+      rawProvider = "openrouter";
+      rawKey = "lr-or-oa-ch-no";
+    }
+    providerInfo = providersMap.get(rawProvider);
   }
 
   if (!rawProvider) {
@@ -106,18 +121,55 @@ export function parseModelLine(
   };
 }
 
+export interface WireDirectiveKeys {
+  chat: string;
+  responses: string;
+  messages: string;
+}
+
+/**
+ * Derives sibling directive keys for the three wires (chat, responses, messages)
+ * by substituting the payload and completion codes (-oa-ch- / -oo-rs- / -cl-ms-).
+ */
+export function deriveWireDirectiveKeys(
+  directiveKey: string,
+  providerCode?: string
+): WireDirectiveKeys {
+  const trimmed = directiveKey.trim();
+  const parts = trimmed.split("-");
+
+  // Determine provider code: prefer explicit providerCode, else parse from key, else default 'or'
+  const prov = (providerCode ?? (parts[0] === "lr" && parts[1] ? parts[1] : "or")).toLowerCase();
+
+  // Extract nuance/options (suffix)
+  let nuance = "no";
+  if (parts.length >= 5) {
+    nuance = parts.slice(4).join("-");
+  } else if (parts.length === 4) {
+    nuance = parts[3]!;
+  }
+
+  // Determine responses payload: if incoming key already used oa-rs, preserve it; otherwise oo-rs
+  const rsPayload = trimmed.includes("-oa-rs-") ? "oa" : "oo";
+
+  return {
+    chat: `lr-${prov}-oa-ch-${nuance}`,
+    responses: `lr-${prov}-${rsPayload}-rs-${nuance}`,
+    messages: `lr-${prov}-cl-ms-${nuance}`,
+  };
+}
+
 /**
  * Resolves the default gateway base URL:
  * 1. Explicit env override (LITEROUTER_URL / GATEWAY_URL)
- * 2. Primary Intranet: http://192.168.50.10:7766 (ASUS RT-BE92U LAN)
- * 3. ZeroTier Backup: http://10.32.34.243:7766
+ * 2. Primary Intranet Host: http://literouter.lan:7766
  */
 export function getDefaultGatewayBaseUrl(): string {
   if (process.env.LITEROUTER_URL) return process.env.LITEROUTER_URL.replace(/\/+$/, "");
   if (process.env.GATEWAY_URL) return process.env.GATEWAY_URL.replace(/\/+$/, "");
 
-  // Primary intranet gateway endpoint
-  return "http://192.168.50.10:7766";
+  // Primary gateway endpoint (never localhost)
+  return "http://literouter.lan:7766";
 }
 
 /**

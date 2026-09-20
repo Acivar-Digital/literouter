@@ -45,8 +45,14 @@ import {
   validateStrictEvalArgs,
   extractPositionalAndNamed,
   getDefaultGatewayBaseUrl,
+  deriveWireDirectiveKeys,
   type ValidatedEvalArgs,
+  type WireDirectiveKeys,
 } from "./validate_cli";
+import {
+  installAnthropicBridge,
+  uninstallAnthropicBridge,
+} from "./anthropic_bridge";
 
 export type SuiteType = "speed" | "code" | "web";
 export type ArchitecturalRole = "Orchestrator" | "General Coder" | "Explorer";
@@ -58,6 +64,7 @@ export interface EvalOrchestratorOptions {
   directiveKey?: string;
   gatewayUrl?: string;
   wire?: "chat" | "responses" | "messages" | "auto";
+  allWires?: boolean;
   stage?: number;
   reasoningEffort?: "high" | "medium" | "none";
   reasoningTranscript?: boolean;
@@ -83,7 +90,7 @@ export interface EvalOrchestratorSummary {
   timestamp: string;
   directiveKey: string;
   gatewayUrl: string;
-  wire: "chat" | "responses";
+  wire: "chat" | "responses" | "messages";
   suitesRun: SuiteType[];
   runs?: number;
   speedResult?: SpeedBenchmarkResult;
@@ -92,6 +99,43 @@ export interface EvalOrchestratorSummary {
   roleRecommendation: RoleRecommendation;
   reportPath?: string;
   allSuitesPassed: boolean;
+}
+
+export interface WireResultSummary {
+  wire: "chat" | "responses" | "messages";
+  wireLabel: string;
+  directiveKey: string;
+  gatewayUrl: string;
+  passed: boolean;
+  summary?: EvalOrchestratorSummary;
+  error?: string;
+}
+
+export interface UnifiedRoleRecommendation {
+  overallRole: ArchitecturalRole;
+  badge: string;
+  rationale: string;
+  bestWireForOrchestrator: string;
+  bestWireForCoder: string;
+  bestWireForExplorer: string;
+  strengths: string[];
+  caveats: string[];
+}
+
+export interface ConsolidatedModelSummary {
+  model: string;
+  sanitizedModelName: string;
+  timestamp: string;
+  gatewayHost: string;
+  directiveKeys: WireDirectiveKeys;
+  wireResults: {
+    chat: WireResultSummary;
+    responses: WireResultSummary;
+    messages: WireResultSummary;
+  };
+  allWiresPassed: boolean;
+  unifiedRoleRecommendation: UnifiedRoleRecommendation;
+  reportPath?: string;
 }
 
 /**
@@ -994,12 +1038,685 @@ export function writeMarkdownReport(
   return filePath;
 }
 
+function formatWireSpeed(w?: WireResultSummary): string {
+  if (!w?.summary) return w?.error ? "Error" : "N/A";
+  const speedAgg = w.summary.speedResult?.aggregates?.find(
+    (a) => a.model === w.summary?.model
+  ) ?? w.summary.speedResult?.aggregates?.[0];
+  if (speedAgg && speedAgg.avgSpeedTokPerSec > 0) {
+    return `${speedAgg.avgSpeedTokPerSec.toFixed(1)} tok/s`;
+  }
+  const telemetry = computePipelineAvgSpeed(
+    (w.summary.codeSummary?.results ?? []) as CodeStageResult[],
+    (w.summary.webResult?.stages ?? []) as WebStageResult[]
+  );
+  if (telemetry.pipelineAvgSpeed > 0) {
+    return `${telemetry.pipelineAvgSpeed.toFixed(1)} tok/s`;
+  }
+  return "-";
+}
+
+function formatWireTtft(w?: WireResultSummary): string {
+  if (!w?.summary) return "-";
+  const speedAgg = w.summary.speedResult?.aggregates?.find(
+    (a) => a.model === w.summary?.model
+  ) ?? w.summary.speedResult?.aggregates?.[0];
+  if (speedAgg && speedAgg.avgTtftMs > 0) {
+    return `${Math.round(speedAgg.avgTtftMs)} ms`;
+  }
+  return "-";
+}
+
+function formatWireLatency(w?: WireResultSummary): string {
+  if (!w?.summary) return "-";
+  const speedAgg = w.summary.speedResult?.aggregates?.find(
+    (a) => a.model === w.summary?.model
+  ) ?? w.summary.speedResult?.aggregates?.[0];
+  if (speedAgg && speedAgg.avgDurationMs > 0) {
+    return `${Math.round(speedAgg.avgDurationMs)} ms`;
+  }
+  return "-";
+}
+
+function formatWireCodeRate(w?: WireResultSummary): string {
+  if (!w?.summary?.codeSummary) return w?.error ? "Error" : "N/A";
+  const results = w.summary.codeSummary.results ?? [];
+  if (results.length === 0) return "N/A";
+  const passed = results.filter((r) => r.passed).length;
+  const pct = Math.round((passed / results.length) * 100);
+  return `${passed}/${results.length} (${pct}%)`;
+}
+
+function formatWireWebRate(w?: WireResultSummary): string {
+  if (!w?.summary?.webResult) return w?.error ? "Error" : "N/A";
+  const stages = w.summary.webResult.stages ?? [];
+  if (stages.length === 0) return "N/A";
+  const passed = stages.filter((s) => s.passed).length;
+  return `${passed}/${stages.length} (${w.summary.webResult.compositeScore}/100)`;
+}
+
+function formatWireVerdict(w?: WireResultSummary): string {
+  if (!w) return "⚪ NOT RUN";
+  if (w.error) return "🔴 ERROR";
+  return w.passed ? "🟢 PASSED" : "🔴 FAILED";
+}
+
+function formatWireRole(w?: WireResultSummary): string {
+  if (!w?.summary) return w?.error ? "ERROR" : "N/A";
+  return w.summary.roleRecommendation.role;
+}
+
+function formatWireDetailSection(wireNumber: number, w: WireResultSummary): string[] {
+  const lines: string[] = [];
+  lines.push(`## 🔌 Wire ${wireNumber}: ${w.wireLabel} (\`${w.wire}\`)`);
+  lines.push("");
+  lines.push(`> **Directive Key:** \`${w.directiveKey}\`  `);
+  lines.push(`> **Endpoint Target:** \`${w.gatewayUrl}\`  `);
+  lines.push(`> **Verdict:** ${formatWireVerdict(w)}  `);
+
+  if (w.error) {
+    lines.push("");
+    lines.push(`> ⚠️ **Execution Error:** \`${w.error}\`  `);
+    lines.push("");
+    return lines;
+  }
+
+  if (!w.summary) {
+    lines.push("");
+    lines.push("*(No execution telemetry recorded for this wire)*");
+    lines.push("");
+    return lines;
+  }
+
+  const s = w.summary;
+  const codeResults = (s.codeSummary?.results ?? []) as CodeStageResult[];
+  const webStages = (s.webResult?.stages ?? []) as WebStageResult[];
+  const telemetry = computePipelineAvgSpeed(codeResults, webStages);
+
+  if (telemetry.pipelineAvgSpeed > 0) {
+    lines.push(`> **Pipeline Avg Speed:** \`${telemetry.pipelineAvgSpeed.toFixed(1)} tok/s\`  `);
+  }
+  lines.push("");
+
+  // Speed Benchmark Table
+  if (s.speedResult && s.speedResult.aggregates.length > 0) {
+    lines.push("### ⚡ Speed & Throughput Benchmark");
+    lines.push("");
+    lines.push("| Model | Iterations | TTFT (min / avg / max) | Avg Latency | Tokens | Speed |");
+    lines.push("|---|:---:|:---:|:---:|:---:|:---:|");
+    for (const agg of s.speedResult.aggregates) {
+      const ttftStr = `${Math.round(agg.minTtftMs)} / ${Math.round(agg.avgTtftMs)} / ${Math.round(agg.maxTtftMs)} ms`;
+      const durStr = `${Math.round(agg.avgDurationMs)} ms`;
+      const tokStr = `${Math.round(agg.avgTotalTokens)}`;
+      const spdStr = `${agg.avgSpeedTokPerSec.toFixed(1)} tok/s`;
+      lines.push(`| \`${agg.model}\` | ${agg.successfulRuns} | ${ttftStr} | ${durStr} | ${tokStr} | ${spdStr} |`);
+    }
+    lines.push("");
+  }
+
+  // Code & Agentic Capability Table
+  if (s.codeSummary && s.codeSummary.results.length > 0) {
+    lines.push("### 🛡️ Code & Agentic Capability Scorecard");
+    lines.push("");
+    lines.push("| Stage # | Stage Name | Score | Status | Duration | Completion Tokens |");
+    lines.push("|---|---|:---:|:---:|:---:|:---:|");
+
+    const executedCodeMap = new Map<number, CodeStageResult>();
+    s.codeSummary.results.forEach((r, idx) => {
+      const stageNum = extractCodeStageNumber(r.stageName, idx);
+      executedCodeMap.set(stageNum, r);
+    });
+
+    for (const canonical of CANONICAL_CODE_STAGES) {
+      const r = executedCodeMap.get(canonical.stageNumber);
+      if (r) {
+        const stageLabel = formatStageName(r.stageName, canonical.stageNumber - 1);
+        const durStr = typeof r.durationMs === "number" ? `${r.durationMs} ms` : "-";
+        const tokStr = typeof r.completionTokens === "number" ? `${r.completionTokens}` : "-";
+        const statusStr = r.passed ? "🟢 PASSED" : "🔴 FAILED";
+        lines.push(`| **${canonical.stageNumber}** | ${stageLabel} | \`${r.score ?? 100}/100\` | ${statusStr} | ${durStr} | ${tokStr} |`);
+      } else {
+        const stageLabel = formatStageName(canonical.stageName, canonical.stageNumber - 1);
+        lines.push(`| **${canonical.stageNumber}** | ${stageLabel} | - | ⏭️ SKIPPED | - | - |`);
+      }
+    }
+    lines.push("");
+    const passedCode = s.codeSummary.results.filter((r) => r.passed).length;
+    lines.push(`**Code Suite Verdict:** ${s.codeSummary.allPassed ? "🟢 **CERTIFIED**" : "🔴 **FAILED**"} (\`${passedCode}/${s.codeSummary.results.length}\` stages cleared)`);
+    lines.push("");
+  }
+
+  // Web Frontend Scorecard
+  if (s.webResult && s.webResult.stages.length > 0) {
+    lines.push("### 🌐 Web Frontend Scorecard");
+    lines.push("");
+    lines.push("| Stage # | Stage Name | Score | Status | Duration | Sub-Check Pass Rate |");
+    lines.push("|---|---|:---:|:---:|:---:|:---:|");
+
+    const executedWebMap = new Map<number, WebStageResult>();
+    s.webResult.stages.forEach((st) => executedWebMap.set(st.stageNumber, st));
+
+    for (const canonical of CANONICAL_WEB_STAGES) {
+      const st = executedWebMap.get(canonical.stageNumber);
+      if (st) {
+        const statusStr = st.passed ? "🟢 PASSED" : "🔴 FAILED";
+        const checks = st.checks.length > 0 ? `\`${st.checks.filter((c) => c.passed).length}/${st.checks.length}\`` : "N/A";
+        lines.push(`| **${st.stageNumber}** | ${st.stageName} | \`${st.score}/100\` | ${statusStr} | \`${st.durationMs} ms\` | ${checks} |`);
+      } else {
+        lines.push(`| **${canonical.stageNumber}** | ${canonical.stageName} | - | ⏭️ SKIPPED | - | - |`);
+      }
+    }
+    lines.push("");
+    lines.push(`**Web Composite Score:** \`${s.webResult.compositeScore}/100\` (${s.webResult.isProductionReady ? "🟢 **PRODUCTION READY**" : "🔴 **NEEDS REFINEMENT**"})`);
+    lines.push("");
+  }
+
+  return lines;
+}
+
+export function determineUnifiedRoleRecommendation(
+  chat: WireResultSummary,
+  responses: WireResultSummary,
+  messages: WireResultSummary
+): UnifiedRoleRecommendation {
+  const wires = [chat, responses, messages];
+  const strengthsSet = new Set<string>();
+  const caveatsSet = new Set<string>();
+
+  for (const w of wires) {
+    if (w.summary?.roleRecommendation) {
+      for (const s of w.summary.roleRecommendation.strengths) {
+        strengthsSet.add(s);
+      }
+      for (const c of w.summary.roleRecommendation.caveats) {
+        caveatsSet.add(c);
+      }
+    }
+    if (w.error) {
+      caveatsSet.add(`${w.wireLabel} encountered runtime failure: ${w.error}`);
+    }
+  }
+
+  // 1. Best Wire for Orchestrator
+  let bestWireForOrchestrator = "Responses API (/v1/responses)";
+  let maxOrchScore = -1;
+
+  for (const w of wires) {
+    if (!w.summary?.codeSummary) continue;
+    const stages = w.summary.codeSummary.results ?? [];
+    let orchPoints = 0;
+    for (const r of stages) {
+      const lower = r.stageName.toLowerCase();
+      if ((lower.includes("pydantic") || lower.includes("agentic") || lower.includes("security")) && r.passed) {
+        orchPoints += (r.score ?? 100);
+      }
+    }
+    const wireBonus = w.wire === "responses" ? 5 : 0;
+    if (orchPoints + wireBonus > maxOrchScore) {
+      maxOrchScore = orchPoints + wireBonus;
+      bestWireForOrchestrator = `${w.wireLabel} (\`${w.directiveKey}\`)`;
+    }
+  }
+
+  // 2. Best Wire for Coder
+  let bestWireForCoder = "Chat Completions (/v1/chat/completions)";
+  let maxCoderScore = -1;
+
+  for (const w of wires) {
+    if (!w.summary?.codeSummary) continue;
+    const stages = w.summary.codeSummary.results ?? [];
+    let coderPoints = 0;
+    for (const r of stages) {
+      const lower = r.stageName.toLowerCase();
+      if (lower.includes("patch") || lower.includes("surgical")) {
+        coderPoints += (r.score ?? (r.passed ? 100 : 0));
+      }
+    }
+    const passedCount = stages.filter((r) => r.passed).length;
+    coderPoints += passedCount * 10;
+    if (coderPoints > maxCoderScore) {
+      maxCoderScore = coderPoints;
+      bestWireForCoder = `${w.wireLabel} (\`${w.directiveKey}\`)`;
+    }
+  }
+
+  // 3. Best Wire for Explorer
+  let bestWireForExplorer = "Chat Completions (/v1/chat/completions)";
+  let maxExplorerSpeed = -1;
+
+  for (const w of wires) {
+    if (!w.summary) continue;
+    const speedAgg = w.summary.speedResult?.aggregates?.find(
+      (a) => a.model === w.summary?.model
+    ) ?? w.summary.speedResult?.aggregates?.[0];
+    const tokPerSec = speedAgg?.avgSpeedTokPerSec ?? 0;
+    if (tokPerSec > maxExplorerSpeed) {
+      maxExplorerSpeed = tokPerSec;
+      const ttft = speedAgg?.avgTtftMs ? ` (${Math.round(speedAgg.avgTtftMs)}ms TTFT)` : "";
+      bestWireForExplorer = `${w.wireLabel} (\`${tokPerSec.toFixed(1)} tok/s\`${ttft})`;
+    }
+  }
+
+  // Overall Role
+  const roles = wires.map((w) => w.summary?.roleRecommendation.role).filter(Boolean);
+  let overallRole: ArchitecturalRole = "Explorer";
+  let badge = "⚡ FAST EXPLORER";
+  let rationale = "Recommended for fast browsing, repo exploration, and symbol navigation.";
+
+  if (roles.includes("Orchestrator")) {
+    overallRole = "Orchestrator";
+    badge = "🧠 MASTER ORCHESTRATOR";
+    rationale =
+      "Excels in structured output generation, durable multi-turn context retention, and strict schema validation. Prime candidate for orchestrating multi-agent pipelines, beads tracking, complex tool invocations, and supervisor duties.";
+  } else if (roles.includes("General Coder")) {
+    overallRole = "General Coder";
+    badge = "💻 GENERAL CODER";
+    rationale =
+      "Demonstrates solid surgical code diffing, patch fidelity, and code synthesis across one or more wire protocols. Well-suited for core engineering workflows, writing implementation code, debugging unit tests, and delivering full-stack features.";
+  }
+
+  return {
+    overallRole,
+    badge,
+    rationale,
+    bestWireForOrchestrator,
+    bestWireForCoder,
+    bestWireForExplorer,
+    strengths: Array.from(strengthsSet),
+    caveats: Array.from(caveatsSet),
+  };
+}
+
+export function generateConsolidatedMarkdownReport(summary: ConsolidatedModelSummary): string {
+  const lines: string[] = [];
+  const rec = summary.unifiedRoleRecommendation;
+
+  lines.push(`# 🏛️ Consolidated Multi-Wire Evaluation Report: \`${summary.model}\``);
+  lines.push("");
+  lines.push(`> **Generated:** \`${summary.timestamp}\`  `);
+  lines.push(`> **Target Gateway:** \`${summary.gatewayHost}\`  `);
+  lines.push(`> **Chat Directive:** \`${summary.directiveKeys.chat}\`  `);
+  lines.push(`> **Responses Directive:** \`${summary.directiveKeys.responses}\`  `);
+  lines.push(`> **Anthropic Directive:** \`${summary.directiveKeys.messages}\`  `);
+  lines.push(`> **Wires Tested:** \`Chat Completions (/v1/chat/completions)\`, \`Responses API (/v1/responses)\`, \`Anthropic Messages (/v1/messages)\`  `);
+  lines.push("");
+  lines.push("---");
+  lines.push("");
+
+  // Unified Role Recommendation
+  lines.push("## 🎯 Unified Role Recommendation");
+  lines.push("");
+  lines.push(`### ${rec.badge} — **${rec.overallRole.toUpperCase()}**`);
+  lines.push("");
+  lines.push(`**Executive Rationale:**  `);
+  lines.push(`${rec.rationale}`);
+  lines.push("");
+  lines.push("#### 🏆 Wire Specialization Matrix");
+  lines.push(`- 🧠 **Best Wire for Orchestrator**: ${rec.bestWireForOrchestrator}`);
+  lines.push(`- 💻 **Best Wire for General Coder**: ${rec.bestWireForCoder}`);
+  lines.push(`- ⚡ **Best Wire for Explorer**: ${rec.bestWireForExplorer}`);
+  lines.push("");
+
+  if (rec.strengths.length > 0) {
+    lines.push("#### 🌟 Cross-Wire Strengths");
+    for (const s of rec.strengths) {
+      lines.push(`- ✅ ${s}`);
+    }
+    lines.push("");
+  }
+
+  if (rec.caveats.length > 0) {
+    lines.push("#### ⚠️ Observed Limitations & Caveats");
+    for (const c of rec.caveats) {
+      lines.push(`- ⚠️ ${c}`);
+    }
+    lines.push("");
+  }
+
+  lines.push("---");
+  lines.push("");
+
+  // Cross-Wire Comparison Matrix Table
+  lines.push("## 📊 Cross-Wire Comparison Matrix");
+  lines.push("");
+  lines.push("| Metric / Dimension | Wire 1: Chat Completions | Wire 2: Responses API | Wire 3: Anthropic Messages |");
+  lines.push("|---|:---:|:---:|:---:|");
+  lines.push(`| **Directive Key** | \`${summary.directiveKeys.chat}\` | \`${summary.directiveKeys.responses}\` | \`${summary.directiveKeys.messages}\` |`);
+  lines.push(`| **Endpoint** | \`/v1/chat/completions\` | \`/v1/responses\` | \`/v1/messages\` |`);
+  lines.push(`| **Overall Verdict** | ${formatWireVerdict(summary.wireResults.chat)} | ${formatWireVerdict(summary.wireResults.responses)} | ${formatWireVerdict(summary.wireResults.messages)} |`);
+  lines.push(`| **Throughput Speed** | \`${formatWireSpeed(summary.wireResults.chat)}\` | \`${formatWireSpeed(summary.wireResults.responses)}\` | \`${formatWireSpeed(summary.wireResults.messages)}\` |`);
+  lines.push(`| **Average TTFT** | \`${formatWireTtft(summary.wireResults.chat)}\` | \`${formatWireTtft(summary.wireResults.responses)}\` | \`${formatWireTtft(summary.wireResults.messages)}\` |`);
+  lines.push(`| **Average Latency** | \`${formatWireLatency(summary.wireResults.chat)}\` | \`${formatWireLatency(summary.wireResults.responses)}\` | \`${formatWireLatency(summary.wireResults.messages)}\` |`);
+  lines.push(`| **Code Pass Rate** | \`${formatWireCodeRate(summary.wireResults.chat)}\` | \`${formatWireCodeRate(summary.wireResults.responses)}\` | \`${formatWireCodeRate(summary.wireResults.messages)}\` |`);
+  lines.push(`| **Web Pass Rate** | \`${formatWireWebRate(summary.wireResults.chat)}\` | \`${formatWireWebRate(summary.wireResults.responses)}\` | \`${formatWireWebRate(summary.wireResults.messages)}\` |`);
+  lines.push(`| **Wire Role** | **${formatWireRole(summary.wireResults.chat)}** | **${formatWireRole(summary.wireResults.responses)}** | **${formatWireRole(summary.wireResults.messages)}** |`);
+  lines.push("");
+  lines.push("---");
+  lines.push("");
+
+  // Detailed Per-Wire Sections
+  lines.push(...formatWireDetailSection(1, summary.wireResults.chat));
+  lines.push("---");
+  lines.push("");
+  lines.push(...formatWireDetailSection(2, summary.wireResults.responses));
+  lines.push("---");
+  lines.push("");
+  lines.push(...formatWireDetailSection(3, summary.wireResults.messages));
+  lines.push("---");
+  lines.push("");
+
+  // Reasoning Transcripts (Empirical Audit)
+  const allTranscripts: { wireLabel: string; stageName: string; transcripts: string[] }[] = [];
+  for (const w of [summary.wireResults.chat, summary.wireResults.responses, summary.wireResults.messages]) {
+    if (w.summary) {
+      const codeResults = (w.summary.codeSummary?.results ?? []) as CodeStageResult[];
+      for (const r of codeResults) {
+        const raw = (r as { details?: Record<string, unknown> }).details?.[REASONING_TRANSCRIPT_KEY];
+        const entries = Array.isArray(raw) ? raw.filter((t): t is string => typeof t === "string") : [];
+        if (entries.length > 0) {
+          allTranscripts.push({ wireLabel: w.wireLabel, stageName: r.stageName, transcripts: entries });
+        }
+      }
+    }
+  }
+
+  if (allTranscripts.length > 0) {
+    lines.push("## 🔍 Upstream Reasoning Transcripts (Empirical Audit)");
+    lines.push("");
+    for (const item of allTranscripts) {
+      item.transcripts.forEach((t, i) => {
+        lines.push(`<details><summary>[${item.wireLabel}] ${item.stageName} — transcript ${i + 1} (${t.length} chars)</summary>`);
+        lines.push("");
+        lines.push(t);
+        lines.push("");
+        lines.push("</details>");
+        lines.push("");
+      });
+    }
+    lines.push("---");
+    lines.push("");
+  }
+
+  // Operational Guidance
+  lines.push("## 📝 Operational LiteRouter Deployment Guidance");
+  lines.push("");
+  lines.push("```json");
+  lines.push(
+    JSON.stringify(
+      {
+        model: summary.model,
+        recommendedRole: rec.overallRole,
+        bestWireForOrchestrator: rec.bestWireForOrchestrator,
+        bestWireForCoder: rec.bestWireForCoder,
+        bestWireForExplorer: rec.bestWireForExplorer,
+        allWiresPassed: summary.allWiresPassed,
+        directiveKeys: summary.directiveKeys,
+      },
+      null,
+      2
+    )
+  );
+  lines.push("```");
+  lines.push("");
+
+  return lines.join("\n");
+}
+
+export function writeConsolidatedMarkdownReport(
+  summary: ConsolidatedModelSummary,
+  customDir?: string
+): string {
+  const reportsDir = ensureReportsDirectory(customDir);
+  const fileName = `${summary.sanitizedModelName}.md`;
+  const filePath = join(reportsDir, fileName);
+
+  const markdownContent = generateConsolidatedMarkdownReport(summary);
+  writeFileSync(filePath, markdownContent, "utf-8");
+
+  return filePath;
+}
+
+export async function runMultiWireModelEvaluation(
+  target: ValidatedEvalArgs,
+  baseOptions: EvalOrchestratorOptions
+): Promise<ConsolidatedModelSummary> {
+  const wireKeys = deriveWireDirectiveKeys(target.directiveKey, target.providerCode);
+  const baseUrl = getDefaultGatewayBaseUrl();
+
+  console.log(`\n========================================================================`);
+  console.log(`🚀 \x1b[1m\x1b[36mLITEROUTER MULTI-WIRE MASTER EVALUATION ORCHESTRATOR\x1b[0m`);
+  console.log(`========================================================================`);
+  console.log(`🎯 Target Model    : \x1b[1m\x1b[36m${target.model}\x1b[0m`);
+  console.log(`🏢 Provider        : \x1b[33m${target.provider} (${target.providerCode})\x1b[0m`);
+  console.log(`🌐 Gateway Host    : ${baseUrl}`);
+  console.log(`🔑 Wire 1 (Chat)   : \x1b[35m${wireKeys.chat}\x1b[0m (/v1/chat/completions)`);
+  console.log(`🔑 Wire 2 (Resp)   : \x1b[35m${wireKeys.responses}\x1b[0m (/v1/responses)`);
+  console.log(`🔑 Wire 3 (Msg)    : \x1b[35m${wireKeys.messages}\x1b[0m (/v1/messages)`);
+  console.log(`📦 Suites Scope    : \x1b[33m${(baseOptions.suites ?? ["speed", "code", "web"]).join(", ")}\x1b[0m`);
+  console.log(`🔁 Runs / Test     : ${baseOptions.runs ?? 2}`);
+  console.log(`========================================================================\n`);
+
+  const wireResults: {
+    chat: WireResultSummary;
+    responses: WireResultSummary;
+    messages: WireResultSummary;
+  } = {
+    chat: {
+      wire: "chat",
+      wireLabel: "Chat Completions",
+      directiveKey: wireKeys.chat,
+      gatewayUrl: `${baseUrl}/v1/chat/completions`,
+      passed: false,
+    },
+    responses: {
+      wire: "responses",
+      wireLabel: "Responses API",
+      directiveKey: wireKeys.responses,
+      gatewayUrl: `${baseUrl}/v1/responses`,
+      passed: false,
+    },
+    messages: {
+      wire: "messages",
+      wireLabel: "Anthropic Messages",
+      directiveKey: wireKeys.messages,
+      gatewayUrl: `${baseUrl}/v1/messages`,
+      passed: false,
+    },
+  };
+
+  // Wire 1: Chat Completions
+  console.log(`\n========================================================================`);
+  console.log(`🔌 [1/3] SEQUENTIAL MATRIX: WIRE 1 (Chat Completions: /v1/chat/completions)`);
+  console.log(`🔑 Directive Key : \x1b[33m${wireKeys.chat}\x1b[0m`);
+  console.log(`========================================================================`);
+  uninstallAnthropicBridge();
+  try {
+    const summaryChat = await runMasterEvaluation({
+      ...baseOptions,
+      model: target.model,
+      provider: target.provider,
+      directiveKey: wireKeys.chat,
+      gatewayUrl: `${baseUrl}/v1/chat/completions`,
+      wire: "chat",
+      skipReport: true,
+    });
+    wireResults.chat.summary = summaryChat;
+    wireResults.chat.passed = summaryChat.allSuitesPassed;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`\x1b[31m❌ Wire 1 (Chat Completions) failed:\x1b[0m`, msg);
+    wireResults.chat.error = msg;
+    wireResults.chat.passed = false;
+  }
+
+  // Wire 2: Responses API
+  console.log(`\n========================================================================`);
+  console.log(`🔌 [2/3] SEQUENTIAL MATRIX: WIRE 2 (Responses API: /v1/responses)`);
+  console.log(`🔑 Directive Key : \x1b[33m${wireKeys.responses}\x1b[0m`);
+  console.log(`========================================================================`);
+  uninstallAnthropicBridge();
+  try {
+    const summaryRs = await runMasterEvaluation({
+      ...baseOptions,
+      model: target.model,
+      provider: target.provider,
+      directiveKey: wireKeys.responses,
+      gatewayUrl: `${baseUrl}/v1/responses`,
+      wire: "responses",
+      skipReport: true,
+    });
+    wireResults.responses.summary = summaryRs;
+    wireResults.responses.passed = summaryRs.allSuitesPassed;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`\x1b[31m❌ Wire 2 (Responses API) failed:\x1b[0m`, msg);
+    wireResults.responses.error = msg;
+    wireResults.responses.passed = false;
+  }
+
+  // Wire 3: Anthropic Messages
+  console.log(`\n========================================================================`);
+  console.log(`🔌 [3/3] SEQUENTIAL MATRIX: WIRE 3 (Anthropic Messages: /v1/messages)`);
+  console.log(`🔑 Directive Key : \x1b[33m${wireKeys.messages}\x1b[0m`);
+  console.log(`========================================================================`);
+  installAnthropicBridge();
+  try {
+    const summaryMs = await runMasterEvaluation({
+      ...baseOptions,
+      model: target.model,
+      provider: target.provider,
+      directiveKey: wireKeys.messages,
+      gatewayUrl: `${baseUrl}/v1/messages`,
+      wire: "messages",
+      skipReport: true,
+    });
+    wireResults.messages.summary = summaryMs;
+    wireResults.messages.passed = summaryMs.allSuitesPassed;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`\x1b[31m❌ Wire 3 (Anthropic Messages) failed:\x1b[0m`, msg);
+    wireResults.messages.error = msg;
+    wireResults.messages.passed = false;
+  } finally {
+    uninstallAnthropicBridge();
+  }
+
+  const allWiresPassed = wireResults.chat.passed && wireResults.responses.passed && wireResults.messages.passed;
+  const unifiedRoleRecommendation = determineUnifiedRoleRecommendation(
+    wireResults.chat,
+    wireResults.responses,
+    wireResults.messages
+  );
+
+  const consolidated: ConsolidatedModelSummary = {
+    model: target.model,
+    sanitizedModelName: sanitizeModelName(target.model),
+    timestamp: new Date().toISOString(),
+    gatewayHost: baseUrl,
+    directiveKeys: wireKeys,
+    wireResults,
+    allWiresPassed,
+    unifiedRoleRecommendation,
+  };
+
+  if (!baseOptions.skipReport) {
+    const reportPath = writeConsolidatedMarkdownReport(consolidated, baseOptions.reportsDir);
+    consolidated.reportPath = reportPath;
+    console.log(`\n📄 \x1b[1m\x1b[32mConsolidated Multi-Wire Report saved to: ${reportPath}\x1b[0m\n`);
+  }
+
+  // Console cross-wire summary matrix
+  console.log(`\n========================================================================================================================`);
+  console.log(`🏁 \x1b[1m\x1b[36mCONSOLIDATED 3-WIRE MATRIX: ${target.model}\x1b[0m`);
+  console.log(`========================================================================================================================`);
+  console.log(`| Wire Protocol        | Directive Key    | Status   | Speed     | Avg TTFT | Code (Stages) | Web Score | Role`);
+  console.log(`|----------------------|------------------|----------|-----------|----------|---------------|-----------|------------------`);
+  for (const w of [wireResults.chat, wireResults.responses, wireResults.messages]) {
+    const proto = w.wireLabel.padEnd(20).slice(0, 20);
+    const key = w.directiveKey.padEnd(16).slice(0, 16);
+    const st = (w.passed ? "\x1b[32mPASSED\x1b[0m  " : "\x1b[31mFAILED\x1b[0m  ");
+    const spd = formatWireSpeed(w).padEnd(9).slice(0, 9);
+    const ttft = formatWireTtft(w).padEnd(8).slice(0, 8);
+    const code = formatWireCodeRate(w).padEnd(13).slice(0, 13);
+    const web = formatWireWebRate(w).padEnd(9).slice(0, 9);
+    const role = formatWireRole(w).padEnd(18).slice(0, 18);
+    console.log(`| ${proto} | ${key} | ${st} | ${spd} | ${ttft} | ${code} | ${web} | ${role}`);
+  }
+  console.log(`========================================================================================================================`);
+  console.log(`🏆 \x1b[1mUnified Role: ${unifiedRoleRecommendation.badge} (${unifiedRoleRecommendation.overallRole})\x1b[0m`);
+  console.log(`========================================================================================================================\n`);
+
+  return consolidated;
+}
+
+export async function runBatchMultiWireEvaluation(
+  targets: ValidatedEvalArgs[],
+  baseOptions: EvalOrchestratorOptions
+): Promise<boolean> {
+  console.log(`\n========================================================================================================================`);
+  console.log(`📋 \x1b[1m\x1b[36mSTARTING MULTI-WIRE BATCH EVALUATION (${targets.length} MODELS)\x1b[0m`);
+  console.log(`========================================================================================================================`);
+  for (let i = 0; i < targets.length; i++) {
+    const t = targets[i]!;
+    console.log(`  [${i + 1}/${targets.length}] ${t.model} (${t.provider}) -> ${t.directiveKey}`);
+  }
+  console.log(`========================================================================================================================\n`);
+
+  const results: ConsolidatedModelSummary[] = [];
+  for (let idx = 0; idx < targets.length; idx++) {
+    const target = targets[idx]!;
+    console.log(`\n▶ [${idx + 1}/${targets.length}] Processing Model: \x1b[1m\x1b[36m${target.model}\x1b[0m`);
+    try {
+      const summary = await runMultiWireModelEvaluation(target, baseOptions);
+      results.push(summary);
+      if (!summary.allWiresPassed && !baseOptions.continueOnFailure) {
+        console.log(`\n🛑 Batch stopped after incomplete wire execution on ${target.model} (use --continue to evaluate remaining models).`);
+        break;
+      }
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      console.error(`\n❌ Error evaluating model ${target.model}:`, errMsg);
+      if (!baseOptions.continueOnFailure) {
+        console.log(`\n🛑 Batch stopped after fatal error on ${target.model} (use --continue to evaluate remaining models).`);
+        break;
+      }
+    }
+  }
+
+  // Print Batch Summary Table
+  console.log(`\n========================================================================================================================`);
+  console.log(`🏁 \x1b[1m\x1b[36mCONSOLIDATED MULTI-WIRE BATCH EVALUATION SUMMARY REPORT\x1b[0m`);
+  console.log(`========================================================================================================================`);
+  console.log(`| # | Model Identifier                   | Provider     | Chat | Resp | Msg  | Unified Role Recommendation | Report Card`);
+  console.log(`|---|------------------------------------|--------------|:----:|:----:|:----:|-----------------------------|-----------------------------------------`);
+
+  for (let idx = 0; idx < results.length; idx++) {
+    const r = results[idx]!;
+    const num = String(idx + 1).padEnd(2);
+    const m = r.model.padEnd(34).slice(0, 34);
+    const p = (r.directiveKeys.chat).split("-")[1]?.padEnd(12).slice(0, 12) ?? "unknown".padEnd(12);
+    const chSt = r.wireResults.chat.passed ? "✅" : "❌";
+    const rsSt = r.wireResults.responses.passed ? "✅" : "❌";
+    const msSt = r.wireResults.messages.passed ? "✅" : "❌";
+    const role = (r.unifiedRoleRecommendation.overallRole).padEnd(27).slice(0, 27);
+    const rep = (r.reportPath ?? `eval/reports/${r.sanitizedModelName}.md`).padEnd(39).slice(0, 39);
+    console.log(`| ${num}| ${m} | ${p} |  ${chSt}  |  ${rsSt}  |  ${msSt}  | ${role} | ${rep}`);
+  }
+  console.log(`========================================================================================================================\n`);
+
+  return results.every((r) => r.allWiresPassed);
+}
+
 export function printHelp(): void {
   console.log(`
 \x1b[1m\x1b[36mLiteRouter Master Evaluation Orchestrator (eval/eval.ts)\x1b[0m
 
 \x1b[1mUSAGE (ARGUMENTS IN EXACT ORDER):\x1b[0m
   bun run eval/eval.ts <model_name> <provider> <api_key> [options]
+  bun run eval/eval.ts [file_path] [options]
+
+\x1b[1mDEFAULT HOST:\x1b[0m
+  http://literouter.lan:7766
 
 \x1b[1mARGUMENTS:\x1b[0m
   1. <model_name>        Target model identifier (e.g. google/gemini-3.5-flash-lite, stealth/union-alpha)
@@ -1007,14 +1724,17 @@ export function printHelp(): void {
   3. <api_key>           LiteRouter directive key (e.g. lr-gg-gg-gc-no, lr-or-oa-ch-no, lr-zn-cl-ms-no)
 
 \x1b[1mEXAMPLES:\x1b[0m
-  bun run eval/eval.ts google/gemini-3.5-flash-lite google lr-gg-gg-gc-no
-  bun run eval/eval.ts stealth/union-alpha openrouter lr-or-oa-ch-no --suites speed,code
+  bun run eval/eval.ts                                      (Runs 3-wire matrix for models in eval/reports/test-models.txt)
+  bun run eval/eval.ts --all-wires                          (Explicit 3-wire matrix for default models)
+  bun run eval/eval.ts nex-agi/nex-n2.5-mini:free           (Runs 3-wire sequential matrix for target model)
+  bun run eval/eval.ts stealth/union-alpha openrouter lr-or-oa-ch-no --all-wires
   bun run eval/eval.ts union-alpha zen lr-zn-cl-ms-no --wire messages --continue
 
 \x1b[1mOPTIONS:\x1b[0m
+  --all-wires            Execute full 3-wire sequential matrix (Chat -> Responses -> Messages) (default)
   --suites <list>        Comma-separated benchmark suites to execute:
                          speed, code, web (default: speed,code,web)
-  --url <url>            LiteRouter gateway endpoint URL
+  --url <url>            LiteRouter gateway endpoint URL (default: http://literouter.lan:7766)
   --wire <chat|rs|ms>    Wire protocol ('chat', 'rs'/'responses', 'messages'/'ms')
   --stage <n>            Run ONLY a specific stage (1-5) for code / web suites
   --reasoning <effort>   Reasoning effort for thinking models: none, medium, high
@@ -1059,6 +1779,14 @@ export function parseCliArgs(
       reasoningTranscript: true,
       batchTargets: validated.batchTargets,
     };
+
+    if (named["--all-wires"] || named["--allwires"] || named["--multi-wire"]) {
+      opts.allWires = true;
+    } else if (named["--wire"] && !named["--all-wires"]) {
+      opts.allWires = false;
+    } else {
+      opts.allWires = true;
+    }
 
     if (typeof named["--url"] === "string") opts.gatewayUrl = named["--url"];
     if (typeof named["--wire"] === "string") {
@@ -1114,6 +1842,14 @@ export function parseCliArgs(
     skipReport: false,
     reasoningTranscript: true,
   };
+
+  if (named["--all-wires"] || named["--allwires"] || named["--multi-wire"]) {
+    opts.allWires = true;
+  } else if (named["--wire"] && !named["--all-wires"]) {
+    opts.allWires = false;
+  } else {
+    opts.allWires = true;
+  }
 
   if (positionals[0]) opts.model = positionals[0];
   if (positionals[1]) opts.provider = positionals[1];
@@ -1191,7 +1927,11 @@ export async function runMasterEvaluation(
     options.directiveKey?.includes("-cl-") ||
     options.gatewayUrl?.includes("/messages");
 
-  const wire: "chat" | "responses" = isMessages ? "chat" : isResponses ? "responses" : "chat";
+  const wire: "chat" | "responses" | "messages" = isMessages
+    ? "messages"
+    : isResponses
+      ? "responses"
+      : "chat";
   const directiveKey = options.directiveKey ?? (isMessages ? "lr-zn-cl-ms-no" : isResponses ? "lr-zn-oo-rs-no" : "lr-or-oa-ch-no");
   const baseUrl = getDefaultGatewayBaseUrl();
   const defaultUrl = isMessages
@@ -1204,7 +1944,7 @@ export async function runMasterEvaluation(
   console.log(`\n========================================================================`);
   console.log(`🚀 \x1b[1m\x1b[36mLITEROUTER MASTER EVALUATION ORCHESTRATOR\x1b[0m`);
   console.log(`========================================================================`);
-  console.log(`🎯 Target Model  : \x1b[1m\x1b[36${model}\x1b[0m`);
+  console.log(`🎯 Target Model  : \x1b[1m\x1b[36m${model}\x1b[0m`);
   console.log(`📦 Suites Scope  : \x1b[33m${suitesToRun.join(", ")}\x1b[0m`);
   console.log(`🔌 Wire Protocol : \x1b[35m${wire.toUpperCase()}\x1b[0m`);
   console.log(`🔑 Directive Key : \x1b[33m${directiveKey}\x1b[0m`);
@@ -1237,7 +1977,7 @@ export async function runMasterEvaluation(
         model,
         directiveKey,
         gatewayUrl,
-        wire,
+        wire: wire === "responses" ? "responses" : "chat",
         stageFilter: options.stage,
         runs,
         continueOnFailure,
@@ -1435,8 +2175,20 @@ if (import.meta.main) {
           directiveKey: options.directiveKey ?? "lr-or-oa-ch-no",
         }];
 
-    if (targets.length > 1) {
-      // Multi-model batch mode
+    if (options.allWires) {
+      // Multi-Wire Sequential Matrix Orchestration (Default)
+      runBatchMultiWireEvaluation(targets, options)
+        .then((allPassed) => {
+          if (!allPassed && !options.continueOnFailure) {
+            process.exit(1);
+          }
+        })
+        .catch((err) => {
+          console.error("\x1b[31mFatal error in multi-wire evaluation orchestrator:\x1b[0m", err);
+          process.exit(1);
+        });
+    } else if (targets.length > 1) {
+      // Multi-model single-wire batch mode
       runBatchEvaluation(targets, options)
         .then((allPassed) => {
           if (!allPassed && !options.continueOnFailure) {
@@ -1448,7 +2200,7 @@ if (import.meta.main) {
           process.exit(1);
         });
     } else {
-      // Single-model mode
+      // Single-model single-wire mode
       if (
         options.wire === "messages" ||
         options.directiveKey?.includes("-ms-") ||
@@ -1457,7 +2209,6 @@ if (import.meta.main) {
       ) {
         // Anthropic Messages wire: bridge OpenAI-shaped stage traffic for the
         // whole process (idempotent). Native x-api-key callers pass through.
-        const { installAnthropicBridge } = await import("./anthropic_bridge");
         installAnthropicBridge();
       }
       runMasterEvaluation(options)
