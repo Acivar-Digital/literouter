@@ -1,5 +1,5 @@
 ---
-name: opencode2-playbook
+name: opencode-playbook
 description: OpenCode 2 (Next/Beta) integration, deployment, and declarative provider configuration for LiteRouter.
 ---
 
@@ -15,17 +15,17 @@ OpenCode 1 and OpenCode 2 run side-by-side with complete directory and socket is
 
 | Dimension | OpenCode 1 (Stable) | OpenCode 2 (Next / Beta) |
 |---|---|---|
-| **CLI Command** | `opencode` | `opencode2` |
-| **Global Config Root** | `~/.config/opencode/` | `~/.config/opencode2/` |
-| **XDG Config Root** | `~/.config` | `~/.config/opencode2_xdg` (symlinked to `~/.config/opencode2`) |
-| **XDG Data Root** | `~/.local/share/opencode` | `~/.local/share/opencode2` |
-| **XDG State Root** | `~/.local/state/opencode` | `~/.local/state/opencode2` |
-| **XDG Cache Root** | `~/.cache/opencode` | `~/.cache/opencode2` |
-| **Root CA File** | N/A (plain HTTP) | `~/.local/share/opencode2/mkcert/rootCA.pem` |
+| **CLI Command** | `opencode` | `opencode` |
+| **Global Config Root** | `~/.config/opencode/` | `~/.config/opencode/` |
+| **XDG Config Root** | `~/.config` | `~/.config/opencode_xdg` (symlinked to `~/.config/opencode`) |
+| **XDG Data Root** | `~/.local/share/opencode` | `~/.local/share/opencode` |
+| **XDG State Root** | `~/.local/state/opencode` | `~/.local/state/opencode` |
+| **XDG Cache Root** | `~/.cache/opencode` | `~/.cache/opencode` |
+| **Root CA File** | N/A (plain HTTP) | `~/.local/share/opencode/mkcert/rootCA.pem` |
 
 ---
 
-## 2. Declarative Provider Configuration (`~/.config/opencode2/opencode.json`)
+## 2. Declarative Provider Configuration (`~/.config/opencode/opencode.json`)
 
 OpenCode 2 connects to LiteRouter on `https://localhost:7766/v1` using declarative directive keys:
 
@@ -157,10 +157,10 @@ OpenCode 2 connects to LiteRouter on `https://localhost:7766/v1` using declarati
 
 ## 3. Testing OpenCode 2 Models
 
-Use `scripts/test_opencode2_models.sh` to run non-interactive verification across active models:
+Use `scripts/test_opencode_models.sh` to run non-interactive verification across active models:
 
 ```bash
-bash scripts/test_opencode2_models.sh
+bash scripts/test_opencode_models.sh
 ```
 
 ---
@@ -189,18 +189,18 @@ LiteRouter implements **Option 1B: Gateway-Level Automatic Reasoning Stream Stri
 
 To ensure zero downtime and resilience across `@opencode-ai/cli` package updates in Node/NVM environments, LiteRouter includes a standalone auto-patcher and self-healing hook.
 
-### Patcher Script (`scripts/opencode2_autopatch.sh`)
+### Patcher Script (`scripts/opencode_autopatch.sh`)
 - **Autonomous Location**: Resolves installed `@opencode-ai/cli` across `$OPENCODE_CLI_DIR`, active `PATH` Node prefixes, and standard `$HOME/.nvm/versions/node/*` paths.
-- **Binary Integrity & Symlink Sync**: Verifies existence of `opencode2`, establishes symlinks with `opencode2.exe` where needed for npm bin compatibility, and ensures executable (`chmod +x`) permissions.
+- **Binary Integrity & Symlink Sync**: Verifies existence of `opencode`, establishes symlinks with `opencode.exe` where needed for npm bin compatibility, and ensures executable (`chmod +x`) permissions.
 - **Tool Message Format Normalization**: Verifies that messages with `role: "tool"` having array content `[{type: "text", text: ...}]` are cleanly flattened into strings, ensuring compatibility with strict OpenAI-compatible upstream providers.
 - **Network Error Handling & Anti-Silent Completion**: Prevents subagents from silently completing tasks with empty/successful status on `network_error`, stream stalls, or premature socket drops.
 - **Safety Backups (`.bak`)**: Automatically creates a `.bak` backup copy of the original binary before performing any state modification.
 - **Sub-5ms Execution**: Uses file modification timestamp verification (`.autopatch_verified`) comparing against the target binaries and the patch script itself to exit in under 5ms on subsequent runs, adding zero perceptible latency to CLI startup.
 
-### Launcher Hook (`~/.local/bin/opencode2`)
-The global wrapper script `/home/yapilwsl/.local/bin/opencode2` executes the self-healing check transparently prior to dispatching into the node binary:
+### Launcher Hook (`~/.local/bin/opencode`)
+The global wrapper script `/home/yapilwsl/.local/bin/opencode` executes the self-healing check transparently prior to dispatching into the node binary:
 ```bash
-AUTOPATCH_SCRIPT="${HOME}/arthityap/literouter/scripts/opencode2_autopatch.sh"
+AUTOPATCH_SCRIPT="${HOME}/arthityap/literouter/scripts/opencode_autopatch.sh"
 if [ -x "$AUTOPATCH_SCRIPT" ]; then
   "$AUTOPATCH_SCRIPT" >/dev/null 2>&1 || true
 fi
@@ -210,7 +210,7 @@ fi
 
 ## 6. OpenCode2 Agent Sandboxing & Subagent Configuration
 
-OpenCode 2 natively supports multi-agent workflows. Agents can be customized via Markdown files (`~/.config/opencode2/agents/<name>.md`) or JSON configuration.
+OpenCode 2 natively supports multi-agent workflows. Agents can be customized via Markdown files (`~/.config/opencode/agents/<name>.md`) or JSON configuration.
 
 ### Explorer Subagent Standard (`explore`)
 To configure a read-only codebase explorer routed through LiteRouter without write permissions:

@@ -240,7 +240,7 @@ In multi-turn agentic workflows:
 
 ## 3. Implementation Across the Stack
 
-### A. Context Level (`.opencode2/plugins/collapse-reasoning.ts`)
+### A. Context Level (`.opencode/plugins/collapse-reasoning.ts`)
 Intercepts OpenCode 2's `session.hook("context")` before any request is serialized and dispatched:
 
 ```typescript

@@ -1,6 +1,6 @@
 # Directive Grammar — full `lr-*` matrix
 
-> Canonical location: `.opencode2/skills/literouter/directive-grammar.md`.
+> Canonical location: `.opencode/skills/literouter/directive-grammar.md`.
 > Entry point: `SKILL.md` §§ Directive Key Format / Top 10 — this file **expands**
 > those tables, it does not replace them. Where names differ, code wins.
 

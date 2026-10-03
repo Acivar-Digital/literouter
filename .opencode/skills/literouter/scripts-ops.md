@@ -1,12 +1,12 @@
 # LiteRouter Scripts & Ops: Lifecycle, Health, Reset, Diagnostics
 
-> **Canonical Location:** `.opencode2/skills/literouter/scripts-ops.md`
+> **Canonical Location:** `.opencode/skills/literouter/scripts-ops.md`
 > **Reference Sources:** `scripts/start.sh`, `scripts/status.sh`, `scripts/stop.sh`,
-> `scripts/restart.sh`, `scripts/opencode2_autopatch.sh`, `scripts/doctor.ts`,
+> `scripts/restart.sh`, `scripts/opencode_autopatch.sh`, `scripts/doctor.ts`,
 > `scripts/doctor_zn.ts`, `src/index.ts` (`handleHealthCheck`, `handleHardReset`,
 > `handleAdminPoolReset`, `SYSTEM_MAP`), `src/handlers/openai_compat.ts`
 > (`resetProvidersRegistryCache`, `getProvidersRegistry`).
-> Companion doc: `.opencode2/skills/literouter/doctor.md` (deep dive on probes).
+> Companion doc: `.opencode/skills/literouter/doctor.md` (deep dive on probes).
 
 Every command below is copy-paste runnable against `https://localhost:7766`.
 (`-k` is required because the gateway serves a local mkcert self-signed cert.
@@ -90,11 +90,11 @@ Source is exactly `stop → sleep 1 → start`. Required when `.env` /
 `.env.local` port/host values change — `POST /reset` cannot rebind the
 listener (see §3.3).
 
-### 1.5 `scripts/opencode2_autopatch.sh` — OpenCode2 CLI self-heal (idempotent)
+### 1.5 `scripts/opencode_autopatch.sh` — OpenCode2 CLI self-heal (idempotent)
 
 ```bash
-bash scripts/opencode2_autopatch.sh
-bash scripts/opencode2_autopatch.sh --verbose   # or -v
+bash scripts/opencode_autopatch.sh
+bash scripts/opencode_autopatch.sh --verbose   # or -v
 ```
 
 What it does (verified against source):
@@ -104,18 +104,18 @@ What it does (verified against source):
    (`${NVM_DIR:-$HOME/.nvm}/versions/node/v*/lib/node_modules/@opencode-ai/cli`).
    Exits `0` silently when no installation is found (skip, not failure).
 2. Dummy-binary detection: missing file, `postinstall script was not run`
-   marker, or size `< 1024` bytes. Recovers from `bin/opencode2.exe` or the
-   platform package (`node_modules/@opencode-ai/cli-*/bin/opencode2`).
+   marker, or size `< 1024` bytes. Recovers from `bin/opencode.exe` or the
+   platform package (`node_modules/@opencode-ai/cli-*/bin/opencode`).
 3. Fast path (`< 5 ms`): exits `0` when `.autopatch_verified` stamp is newer
    than both the binary and this script.
-4. One-time `.bak` backup of `bin/opencode2` before any mutation.
+4. One-time `.bak` backup of `bin/opencode` before any mutation.
 5. Three marker-file patch routines (re-run safe):
    - `tool message formatting` (`.patch_tool_format_applied` marker),
    - `network-error anti-silent-completion` (`.patch_network_error_applied`),
    - `collapse-reasoning` scrubber plugin: syncs
-     `.opencode2/plugins/collapse-reasoning.ts` (or generates a fallback) to
-     `~/.config/opencode2/plugins/` and registers
-     `./plugins/collapse-reasoning.ts` in `~/.config/opencode2/config.json`.
+     `.opencode/plugins/collapse-reasoning.ts` (or generates a fallback) to
+     `~/.config/opencode/plugins/` and registers
+     `./plugins/collapse-reasoning.ts` in `~/.config/opencode/config.json`.
 6. `chmod +x` on binaries and itself; `touch .autopatch_verified`.
 
 ---
@@ -246,7 +246,7 @@ falls through to the full `handleHardReset()`.
 
 `doctor.ts` is **strictly informational**: it never gates gateway boot and
 never mutates state. Full probe mechanics live in
-`.opencode2/skills/literouter/doctor.md`; this section is the ops quick
+`.opencode/skills/literouter/doctor.md`; this section is the ops quick
 reference with exact-as-source targets.
 
 ```bash
@@ -473,7 +473,7 @@ bash scripts/restart.sh
 bash scripts/status.sh
 
 # OpenCode2 CLI self-heal after upgrade
-bash scripts/opencode2_autopatch.sh --verbose
+bash scripts/opencode_autopatch.sh --verbose
 ```
 
 Rules: never hand-edit `.env` / `.env.local` key values into docs, tickets,

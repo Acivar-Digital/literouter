@@ -39,18 +39,31 @@ In multi-turn agentic conversations:
 OpenCode 2 natively supports request context mutation via the `session.hook("context")` lifecycle API.
 
 ### File Location:
-- Workspace: `.opencode2/plugins/collapse-reasoning.ts`
-- Global: `~/.config/opencode2/plugins/collapse-reasoning.ts`
+- Workspace: `.opencode/plugins/collapse-reasoning.ts`
+- Global: `~/.config/opencode/plugins/collapse-reasoning.ts`
+- XDG Active: `~/.config/opencode_xdg/opencode/plugins/collapse-reasoning.ts`
 
-### Implementation Logic:
+### Hardened Production Implementation:
 ```typescript
 import { Plugin } from "@opencode-ai/plugin";
+
+/**
+ * OpenCode V2 Native Plugin: collapse-reasoning
+ *
+ * Invariants:
+ * 1. Never produce empty `content: []` or empty text `""` (causes Anthropic/OpenAI HTTP 400).
+ * 2. Handle unclosed `<think>` tags from truncated or interrupted assistant responses.
+ * 3. Preserve valid Effect-TS / AST shape for outbound context dispatch.
+ * 4. Preserve thinking blocks & signatures for assistant turns that called tools (mandated by Anthropic).
+ */
 
 function cleanText(text: string): string {
   if (!text) return "";
   return text
     .replace(/<(?:think|thought|thinking)>[\s\S]*?<\/(?:think|thought|thinking)>/gi, "")
     .replace(/\[(?:think|thought|thinking)\][\s\S]*?\[\/(?:think|thought|thinking)\]/gi, "")
+    .replace(/<(?:think|thought|thinking)>[\s\S]*$/gi, "")
+    .replace(/\[(?:think|thought|thinking)\][\s\S]*$/gi, "")
     .trim();
 }
 
@@ -59,15 +72,17 @@ function cleanPart(part: unknown): unknown {
   const obj = part as Record<string, unknown>;
   if (obj.type === "reasoning") return null;
   if (obj.type === "text" && typeof obj.text === "string") {
-    return { ...obj, text: cleanText(obj.text) };
+    const cleaned = cleanText(obj.text);
+    if (!cleaned) return null;
+    return { ...obj, text: cleaned };
   }
   return part;
 }
 
 function hasToolCalls(msg: Record<string, unknown>): boolean {
-  if (Array.isArray(msg.tool_calls) && msg.tool_calls.length > 0) {
-    return true;
-  }
+  if (Array.isArray(msg.tool_calls) && msg.tool_calls.length > 0) return true;
+  if (Array.isArray(msg.toolCalls) && msg.toolCalls.length > 0) return true;
+  if (msg.function_call) return true;
   if (Array.isArray(msg.content)) {
     return msg.content.some(
       (p: unknown) =>
@@ -102,12 +117,22 @@ function cleanMessage(msg: unknown): unknown {
   // Handle array content (Effect-TS AI schema)
   if (Array.isArray(m.content)) {
     const cleanedParts = m.content.map(cleanPart).filter((p) => p !== null);
-    return { ...m, content: cleanedParts };
+    return {
+      ...m,
+      content:
+        cleanedParts.length > 0
+          ? cleanedParts
+          : [{ type: "text", text: "(thinking collapsed)" }],
+    };
   }
 
   // Handle string content
   if (typeof m.content === "string") {
-    return { ...m, content: cleanText(m.content) };
+    const cleaned = cleanText(m.content);
+    return {
+      ...m,
+      content: cleaned.length > 0 ? cleaned : "(thinking collapsed)",
+    };
   }
 
   return msg;
@@ -131,6 +156,30 @@ export default Plugin.define({
 
 ---
 
+## 4. Anthropic Messages Wire Invariants & Protocol Realities
+
+When routing through Anthropic Messages wire (`/v1/messages`, e.g. Claude 3.7 Sonnet or `lr-zn-ant/*`):
+
+1. **Tool-Use Signature Coupling**:
+   - Anthropic attaches cryptographic `signature` fields to `thinking` blocks.
+   - If an assistant message called a tool, Anthropic **strictly forbids** omitting or modifying the preceding `thinking` block or its signature. Removing reasoning from tool turns triggers HTTP 400 (`Thinking blocks cannot be removed from assistant turns that invoked tools`).
+   - `collapse-reasoning.ts` guarantees this by returning unmutated assistant messages whenever `hasToolCalls(m)` is true.
+
+2. **Non-Empty Content Constraint**:
+   - Anthropic schemas strictly mandate `messages.X.content: Input should have at least 1 item` and `messages.X.content.Y.text: String should have at least 1 character`.
+   - Stripping reasoning from a purely conversational turn that emitted only reasoning would reduce `content` to `[]`.
+   - The plugin injects a fallback placeholder `[{ type: "text", text: "(thinking collapsed)" }]` to preserve valid schema structure.
+
+3. **Role Alternation Invariant**:
+   - In Anthropic protocol, consecutive messages must alternate between `user` and `assistant`.
+   - Dropping the assistant message entirely when reasoning is stripped would cause consecutive `user` (or `user` and `tool_result`) messages to collide, triggering HTTP 400. The placeholder maintains role alternating topology.
+
+4. **Debunking LLM Hallucinations (Senior QA Myths)**:
+   - **Myth 1 (@opencode/plugin)**: Fake package name. OpenCode V2's native plugin package remains `@opencode-ai/plugin` (`@opencode-ai/plugin@next`).
+   - **Myth 2 (Database corruption / Issue #43731)**: Hallucinated issue. In OpenCode V2, `ctx.session.hook("context")` operates exclusively on ephemeral in-memory dispatch payloads; it never writes back to the SQLite session store. Furthermore, `TextPart` and `ReasoningPart` in `@opencode-ai/ai` do not even possess an `id` field. Stripping `id` from tool calls would break RPC response correlation.
+
+---
+
 ## 4. Performance & Execution Characteristics
 
 - **Zero-Latency Execution**: Operates purely in-memory over 10–30 message objects via synchronous regex and array mapping (< 0.1ms).
@@ -140,17 +189,17 @@ export default Plugin.define({
 
 ---
 
-## 5. Self-Healing Auto-Patcher (`scripts/opencode2_autopatch.sh`)
+## 5. Self-Healing Auto-Patcher (`scripts/opencode_autopatch.sh`)
 
 To guarantee persistence across `@opencode-ai/cli` upgrades, the pre-launch auto-patcher enforces plugin integrity:
 
-1. **File Synchronization**: Verifies `~/.config/opencode2/plugins/collapse-reasoning.ts` exists and mirrors the latest repository version.
-2. **Config Registration**: Validates that `~/.config/opencode2/config.json` registers `"./plugins/collapse-reasoning.ts"` in `"plugins": [...]`.
-3. **Execution**: Automatically triggered via `~/.local/bin/opencode2` prior to starting OpenCode.
+1. **File Synchronization**: Verifies `~/.config/opencode/plugins/collapse-reasoning.ts` exists and mirrors the latest repository version.
+2. **Config Registration**: Validates that `~/.config/opencode/config.json` registers `"./plugins/collapse-reasoning.ts"` in `"plugins": [...]`.
+3. **Execution**: Automatically triggered via `~/.local/bin/opencode` prior to starting OpenCode.
 
 Manual test/verification:
 ```bash
-bash scripts/opencode2_autopatch.sh -v
+bash scripts/opencode_autopatch.sh -v
 ```
 
 ---

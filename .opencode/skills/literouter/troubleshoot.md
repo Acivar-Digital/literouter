@@ -50,7 +50,7 @@ bun run scripts/doctor.ts
   - **NVIDIA NIM**: Probes `nvidia/nemotron-3-super-120b-a12b` via `/v1/chat/completions`.
   - **OpenRouter**: Probes `openrouter/free:nitro` via `/api/v1/chat/completions`.
   - **Zen**: Probes bare model `big-pickle` (or `hy3-free`) via `/v1/chat/completions`.
-- **TLS Verification**: Automatically binds `mkcert` root CA (`~/.local/share/opencode2/mkcert/rootCA.pem` or `SSL_CERT_FILE`) into `NODE_EXTRA_CA_CERTS`.
+- **TLS Verification**: Automatically binds `mkcert` root CA (`~/.local/share/opencode/mkcert/rootCA.pem` or `SSL_CERT_FILE`) into `NODE_EXTRA_CA_CERTS`.
 - **Safe 1s Pacing**: Enforces a 1-second sequential delay between probes to prevent triggering upstream rate limits during diagnosis.
 - **Non-Blocking Diagnostics**: Runs purely for operator inspection without altering in-memory quotas, setting cooldowns, or gating gateway boot.
 
@@ -123,22 +123,22 @@ curl -sk -X POST https://localhost:7766/reset
 - **Handling / Solution**: LiteRouter automatically identifies OpenCode (`isOpenCodeClient`) and strips `delta.reasoning` / `delta.reasoning_content` from SSE streams in flight. If thinking chunks are explicitly desired, append the `ts` nuance to the directive (e.g. `lr-or-oa-ch-ts`). For other clients, reasoning chunks are preserved unmodified by default.
 
 ### Pattern 12: OpenCode2 CLI Broken Binary or Missing Executable Post-Update
-- **Symptom**: Running `opencode2` fails with command not found, permission denied, or broken symlink errors after npm install/update.
+- **Symptom**: Running `opencode` fails with command not found, permission denied, or broken symlink errors after npm install/update.
 - **Cause**: Upstream `@opencode-ai/cli` creates platform binaries or Windows `.exe` aliases that may lose executable bits or break symlinks in NVM directories.
-- **Handling / Solution**: Run `bash scripts/opencode2_autopatch.sh` (or invoke `opencode2` directly, as `/home/yapilwsl/.local/bin/opencode2` executes the self-healing check automatically on every launch). The script verifies paths, syncs binary aliases, generates `.bak` backups, ensures tool message string serialization, verifies network error traps, and restores `chmod +x` permissions in <5ms.
+- **Handling / Solution**: Run `bash scripts/opencode_autopatch.sh` (or invoke `opencode` directly, as `/home/yapilwsl/.local/bin/opencode` executes the self-healing check automatically on every launch). The script verifies paths, syncs binary aliases, generates `.bak` backups, ensures tool message string serialization, verifies network error traps, and restores `chmod +x` permissions in <5ms.
 
 ### Pattern 13: Tool Message Array Format Error or Silent Subagent Completion
 - **Symptom**: Upstream model rejects `role: "tool"` turns with HTTP 400 (`content must be string`), or a spawned subagent exits with empty success status upon encountering a network hiccup or empty SSE stream.
 - **Cause**: Array-based tool response payloads in multi-turn agent history or unhandled `network_error` events in streaming sessions.
-- **Handling / Solution**: `scripts/opencode2_autopatch.sh` automatically patches tool message format normalization (ensuring `role: "tool"` content arrays are flattened to strings) and validates network error handling to ensure subagent transport failures fail loudly rather than silently terminating.
+- **Handling / Solution**: `scripts/opencode_autopatch.sh` automatically patches tool message format normalization (ensuring `role: "tool"` content arrays are flattened to strings) and validates network error handling to ensure subagent transport failures fail loudly rather than silently terminating.
 
 ### Pattern 14: `UNKNOWN_CERTIFICATE_VERIFICATION_ERROR` or TLS Alert 120 in Node / OpenCode Clients
 - **Symptom**: Node.js clients, OpenCode2, or Claude Code fail connecting to `https://localhost:7766` with `UNKNOWN_CERTIFICATE_VERIFICATION_ERROR: unknown certificate verification error` or `SSL alert 120: tlsv1 alert no application protocol`.
 - **Cause**: Node's `fetch` (undici) connects with `http/1.1` ALPN by default and requires the local `mkcert` development root CA in its trust store.
 - **Handling / Solution**:
   1. Ensure Bun runtime is on **v1.4.0+** (`bun --version`), which natively supports simultaneous `h2` and `http/1.1` TLS ALPN negotiation on port 7766.
-  2. Ensure `export NODE_EXTRA_CA_CERTS="${HOME}/.local/share/opencode2/mkcert/rootCA.pem"` is set in your shell profile or wrapper launcher (`~/.local/bin/opencode2`).
-  3. If OpenCode was running prior to the TLS/cert refresh, kill any stale background daemon: `pkill -f 'opencode2 serve'`.
+  2. Ensure `export NODE_EXTRA_CA_CERTS="${HOME}/.local/share/opencode/mkcert/rootCA.pem"` is set in your shell profile or wrapper launcher (`~/.local/bin/opencode`).
+  3. If OpenCode was running prior to the TLS/cert refresh, kill any stale background daemon: `pkill -f 'opencode serve'`.
 
 ### Pattern 15: High-Concurrency Stream Cancellation Storm (`The pending stream has been canceled` / Little's Law Ingress Sizing)
 - **Symptom**: Multiple concurrent requests throw `Direct request error - The pending stream has been canceled` or `ERR_HTTP2_STREAM_CANCEL` at the exact same millisecond timestamp during batch scripts (e.g. `generate_hidden.py`), while single-threaded interactive clients (OpenCode2) operate normally without errors.

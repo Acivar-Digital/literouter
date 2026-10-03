@@ -10,7 +10,7 @@ When diagnosing OpenCode2 streaming failures or agent stalls, run these pinpoint
 
 | Target | Instant Command | What It Verifies |
 |---|---|---|
-| **Auto-Patcher & Binary Status** | `bash scripts/opencode2_autopatch.sh -v` | Verifies `@opencode-ai/cli` symlinks, permissions, `.bak` backups, and applied patch markers (`.patch_tool_format_applied`, `.patch_network_error_applied`). (<5ms) |
+| **Auto-Patcher & Binary Status** | `bash scripts/opencode_autopatch.sh -v` | Verifies `@opencode-ai/cli` symlinks, permissions, `.bak` backups, and applied patch markers (`.patch_tool_format_applied`, `.patch_network_error_applied`). (<5ms) |
 | **Reasoning Stream Filter & Nuances** | `bun test tests/unit/opencode_reasoning_filter.test.ts` | Runs unit tests verifying `isOpenCodeClient`, `filterReasoningFromChunk`, `createOpenCodeReasoningFilterStreamTransformer`, `stripReasoningFromResponseBody`, and `ts`/`sb` nuance overrides. (~15ms) |
 | **Inbound History Payload Scrubber** | `bun test tests/unit/inbound_reasoning_scrubber.test.ts` | Tests stripping of reasoning parts and metadata from multi-turn assistant messages (`scrubReasoningFromMessages`). (~10ms) |
 | **Tool Message Stream Regression** | `bun test tests/unit/tool_call_stream_regression.test.ts` | Tests tool message array content normalization, metadata stripping, and incremental tool call delta handling. (~12ms) |

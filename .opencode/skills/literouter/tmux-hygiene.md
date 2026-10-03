@@ -1,6 +1,6 @@
 # LiteRouter Tmux Hygiene — Clear Rubbish From the Pane
 
-> **Canonical Location:** `.opencode2/skills/literouter/tmux-hygiene.md`
+> **Canonical Location:** `.opencode/skills/literouter/tmux-hygiene.md`
 > **Reference Sources:** `scripts/start.sh:81-105`, `scripts/stop.sh`, `scripts/restart.sh`, `src/ui/banner.ts`, `src/index.ts:50-58`, `src/handlers/google_native.ts:93-108`
 > **Lazy-load:** Load this file ONLY when the user asks about tmux rubbish, `getcwd` noise, pane echo, blank fill, or quiet boot. Do not load it for routing, keys, or streaming tasks.
 

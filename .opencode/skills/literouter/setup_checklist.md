@@ -101,7 +101,7 @@ Register model identifiers and capabilities in `config/models.json`:
 }
 ```
 
-### Step 3: OpenCode v2 Client Configuration (`~/.config/opencode2/opencode.json`)
+### Step 3: OpenCode v2 Client Configuration (`~/.config/opencode/opencode.json`)
 Add the model under the corresponding declarative provider block (e.g. `lr-nv` with directive `lr-nv-oa-ch-no`):
 ```json
 "meta/llama-3.1-70b-instruct": {
@@ -127,7 +127,7 @@ bun run typecheck && uv run ruff check .
 bun test
 
 # 3. Live Model Verification via OpenCode v2 CLI
-bash scripts/test_opencode2_models.sh
+bash scripts/test_opencode_models.sh
 
 # 4. Diagnostic Key Pool Health Probe (Local validation + live upstream auth probe for Google, NVIDIA, OpenRouter, Zen, GCP)
 bun run scripts/doctor.ts

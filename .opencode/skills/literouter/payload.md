@@ -57,9 +57,9 @@ byte pump — no `filterReasoningFromChunk`, no
 `function_call_output` all survive. Net effect: **stateful CoT replay
 works, token bloat is the client's problem**.
 
-Client plugin `.opencode2/plugins/collapse-reasoning.ts` hooks
+Client plugin `.opencode/plugins/collapse-reasoning.ts` hooks
 `session.hook("context")` on `messages[]` only — native Responses `input[]`
-bypasses it (see `opencode2-reasoning-scrubber.md` §3).
+bypasses it (see `opencode-reasoning-scrubber.md` §3).
 
 ## 4. Overrides (both wires)
 
@@ -74,7 +74,7 @@ bypasses it (see `opencode2-reasoning-scrubber.md` §3).
 - Inbound live-stream filter (`createOpenCodeReasoningFilterStreamTransformer`,
   `src/transformers/opencode_adapter.ts:277`) is defined but has **zero call
   sites** in current handlers — documented design in
-  `opencode2-streaming-troubleshooting.md` §3, not active code. Do not cite it
+  `opencode-streaming-troubleshooting.md` §3, not active code. Do not cite it
   as runtime behavior.
 
 ## 5. Which Key To Use (Zen)
@@ -85,8 +85,8 @@ bypasses it (see `opencode2-reasoning-scrubber.md` §3).
 | `lr-zn-oo-rs-no` | `oo` → `rs` | agentic harnesses (OpenCode), multi-step tool loops, reasoning models; accept bloat |
 
 Detail: `zen-provider.md` §5. Translation mechanics: SKILL.md items 25–26.
-Bloat rationale: `opencode2-reasoning-scrubber.md` §§1–2.
-Adapter flowchart: `opencode2-streaming-troubleshooting.md` §3.
+Bloat rationale: `opencode-reasoning-scrubber.md` §§1–2.
+Adapter flowchart: `opencode-streaming-troubleshooting.md` §3.
 Env flags: `setup.md` (`LITEROUTER_AO_STRIP_REASONING` row).
 Directive errors: `troubleshoot.md` (format + `scrubUnsupportedParameters`).
 Wire labels in logs: `logger.md:44` (`oa→OpenAI`, `rs→Responses`).

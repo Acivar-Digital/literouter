@@ -1,6 +1,6 @@
 # Google Native Dumb Forwarder — Architecture, HTTP/2 Pooling, Key Rotation & Runbook
 
-> **CANONICAL LOCATION:** `/home/yapilwsl/arthityap/literouter/.opencode2/skills/literouter/google-native.md`  
+> **CANONICAL LOCATION:** `/home/yapilwsl/arthityap/literouter/.opencode/skills/literouter/google-native.md`  
 > **PURPOSE:** Load this reference whenever troubleshooting or configuring the **Google Native Dumb Forwarder** (`gg`), native Gemini API requests (`/v1beta/models/*` and `/v1/models/*`), `@ai-sdk/google` integration, free-tier key pool rotation across `GOOGLE_API_KEYS`, HTTP/2 outbound session pooling, query parameter passthrough (e.g. `?alt=sse`), or related streaming telemetry.  
 > **ZERO GREP MANDATE:** When diagnosing issues, an engineer or LLM does NOT need to grep or glob the repository; all paths, file lines, schemas, headers, and failure modes are documented here.
 
@@ -186,9 +186,9 @@ When running under Engine v4 (`LITEROUTER_ENGINE=v4.1` or header override), Goog
 
 To route OpenCode2 directly through LiteRouter's Google Native forwarder using `@ai-sdk/google`:
 
-### Configuration: `~/.config/opencode2/config.json`
+### Configuration: `~/.config/opencode/config.json`
 
-Add the following provider block to the `"providers"` object in `~/.config/opencode2/config.json`:
+Add the following provider block to the `"providers"` object in `~/.config/opencode/config.json`:
 
 ```json
 {
@@ -262,7 +262,7 @@ Use this matrix to pinpoint and resolve errors immediately without searching the
 | `HTTP 400 Bad Request`<br>`Invalid JSON payload received. Unknown name "store"` or `"stream_options"` | Client is sending OpenAI Chat Completions payload schema to Google's Native endpoint (`/v1beta/models/*` or `/v1/models/*`). | 1. Google Native endpoint expects Gemini payload schema (`contents`, `generationConfig`, etc.).<br>2. If using OpenAI SDK or `@ai-sdk/openai-compatible`, point to `https://localhost:7766/v1beta/openai` or `https://localhost:7766/v1` with `lr-gg-oa-ob-no`.<br>3. If using native Google SDK, ensure the package is `@ai-sdk/google`. |
 | `HTTP 429 Too Many Requests`<br>`RESOURCE_EXHAUSTED` | An individual Google Free Tier API key has reached its 15 RPM or Daily quota. | 1. Check LiteRouter logs: `tmux attach -t literouter`. You will see `⚠️ [LIMIT reqId] gg:keyIndex [429]`.<br>2. Forwarder automatically rotates to key index + 1 up to 3 attempts.<br>3. If all keys fail, response is `503 Google key pool exhausted`. Add more keys to `GOOGLE_API_KEYS` in `.env.local` or wait for quota reset. |
 | `HTTP 400 Bad Request`<br>`Google native requires a Google directive (lr-gg-*)` | Client sent a non-Google directive key (e.g. `lr-or-*` or `lr-nv-*`) to `/v1beta/models/*` or `/v1/models/*`. | Change client `apiKey` in `config.json` to `lr-gg-gg-gc-no` or `lr-gg-gg-g1-no`. |
-| Downstream client streaming timeout or hang | Client chunk timeout is shorter than model response latency. | Ensure `"chunkTimeout": 30000` is present in both `"settings"` and `"options"` in `~/.config/opencode2/config.json`. |
+| Downstream client streaming timeout or hang | Client chunk timeout is shorter than model response latency. | Ensure `"chunkTimeout": 30000` is present in both `"settings"` and `"options"` in `~/.config/opencode/config.json`. |
 | `HTTP 502 Bad Gateway`<br>`Upstream Google request failed` | Network connection timeout or TCP reset connecting to `generativelanguage.googleapis.com`. | Check ZeroTier/WAN connectivity. Test direct curl: `curl -I https://generativelanguage.googleapis.com`. |
 
 ---

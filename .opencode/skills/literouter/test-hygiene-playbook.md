@@ -2,7 +2,7 @@
 
 > **Scope**: Master architectural standard and operational manual for authoring, maintaining, and executing automated tests in LiteRouter (`tests/` and `eval/`).
 > **Target Audience**: AI agents and core engine maintainers.
-> **Location**: `.opencode2/skills/literouter/test-hygiene-playbook.md`
+> **Location**: `.opencode/skills/literouter/test-hygiene-playbook.md`
 
 ---
 

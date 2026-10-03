@@ -6,8 +6,8 @@ description: LiteRouter API Gateway operational guide for Bun/TypeScript proxy o
 # Skill: literouter
 
 > **CANONICAL LOCATION (DO NOT SEARCH DISK):**
-> - Root Skill File: `/home/yapilwsl/arthityap/literouter/.opencode2/skills/literouter/SKILL.md`
-> - Skill Directory: `/home/yapilwsl/arthityap/literouter/.opencode2/skills/literouter/`
+> - Root Skill File: `/home/yapilwsl/arthityap/literouter/.opencode/skills/literouter/SKILL.md`
+> - Skill Directory: `/home/yapilwsl/arthityap/literouter/.opencode/skills/literouter/`
 >
 > **Lazy-load skill.** This SKILL.md is the entry point only. When the user's request matches the skill description, load this file first. For deep dives into specific topics, read the referenced markdown files in this directory.
 
@@ -48,7 +48,7 @@ description: LiteRouter API Gateway operational guide for Bun/TypeScript proxy o
 | Web Frontend Evaluation | `bun run eval/web.ts <model_name>` (5-stage DOM structure, responsive, React state, hygiene & a11y audit) |
 | Model probe & onboarding | `bun run scripts/probe_model.ts <model_name>` (validates OpenCode 2, Claude Code CLI & Pydantic AI) |
 | Model speed & throughput | `bun run eval/speed.ts` (measures TTFT, duration, tokens/sec; alias: `scripts/bench_speed.ts`) |
-| OpenCode2 Auto-Patch | `bash scripts/opencode2_autopatch.sh` (fast <5ms self-heal & binary verification) |
+| OpenCode2 Auto-Patch | `bash scripts/opencode_autopatch.sh` (fast <5ms self-heal & binary verification) |
 | Sync LiteRouter to VPS | `bash scripts/sync_literouter_to_vps.sh` (strictly unidirectional mirror of LiteRouter code, .env, and .env.local from WSL golden truth to VPS) |
 | Typecheck & lint | `bun run typecheck` && `uv run ruff check .` |
 
@@ -97,7 +97,7 @@ description: LiteRouter API Gateway operational guide for Bun/TypeScript proxy o
   - **No circuit breaker**: Fully excised in v4. No circuit breaker concept exists in schema, network layer, engine, or any handler.
   - `key_cooldown` is `.optional()` in Zod schema (`ProviderConfigEntrySchema`) but carries zero runtime behavior in v4. Fine-grained knobs (`initial_cooldown_ms`, `backoff_factor`, `max_consecutive_failures`) and `max_delay_ms` are purged.
 - **Single FIFO Conveyor Pipe**: Every provider has its own dedicated conveyor pipe (`RequestPacer`) with `max_queue_depth: 500`. All inbound requests and retries share the same conveyor belt, spaced strictly by `min_delay_ms`. Downstream client cancellation cleanly dequeues requests via `AbortSignal` without memory leaks.
-- **Fatal Auth Fail-Fast (401/403)**: On HTTP 401 (Unauthorized) or 403 (Forbidden), LiteRouter rejects outright and returns the error directly to the downstream client (`opencode2`, Claude Code, etc.) with ZERO retries and zero 24-hour quarantine.
+- **Fatal Auth Fail-Fast (401/403)**: On HTTP 401 (Unauthorized) or 403 (Forbidden), LiteRouter rejects outright and returns the error directly to the downstream client (`opencode`, Claude Code, etc.) with ZERO retries and zero 24-hour quarantine.
 - **Conservation-Only Benching**: The only mechanism that benches a key is explicit `conserve_rules` in `config/providers.json` (e.g. OpenRouter daily quota exhaustion until midnight UTC). Generic 429 errors do not trigger 65s lockouts.
 - **Strict Boot-Time Validation & Fail-Loud Failure**: Missing or invalid operational blocks in `config/providers.json` are rejected on boot by `validateProviderConfigsFailLoud()` (`src/config/providers.ts` / `src/index.ts`) with `[FATAL] [ProviderRegistry] Provider configuration validation failed loudly refusing to start` and `process.exit(1)`.
 - **Purge of Deprecated Provider Env Vars**: All 17 legacy provider-specific operational env vars (`GCP_*`, `ZEN_*`, `OPENROUTER_*`) have been purged from `src/config/env.ts` and `src/config/schema.ts` and cannot shadow `config/providers.json`. Operational parameters must be edited directly in `config/providers.json` and hot-reloaded via `POST /reset`.
@@ -191,7 +191,7 @@ Fusion presets: `lr-fse-<preset>` where preset is ONLY one of `quad` / `pydn` / 
 | Parameter | Location / Source of Truth | Purpose |
 |---|---|---|
 | **Rate Limit / Benching (429)** | `config/providers.json` -> `conserve_rules` | Conservation-only benching: only explicit `conserve_rules` bench a key (e.g. OpenRouter daily quota exhaustion until midnight UTC). Generic 429 errors do NOT trigger 65s lockouts. |
-| **Auth Errors (401/403)** | Fatal Auth Fail-Fast (`src/network/pool.ts`) | Fatal auth fail-fast: rejected outright to downstream client (`opencode2`, Claude Code) with ZERO retries and zero 24-hour quarantine. |
+| **Auth Errors (401/403)** | Fatal Auth Fail-Fast (`src/network/pool.ts`) | Fatal auth fail-fast: rejected outright to downstream client (`opencode`, Claude Code) with ZERO retries and zero 24-hour quarantine. |
 | **Server Error Cooldown (5xx)** | `config/providers.json` -> `key_cooldown.cooldown_sec` | Quarantine on 500/502/503/504 (default 10s). |
 | **No circuit breaker** | Fully excised in v4 — removed from schema/network/engine | No breaker exists; no 503 tripping mechanism |
 | **Provider Operational Knobs** | `config/providers.json` (`pacer`, `request_retry`) + optional `key_cooldown` (`.optional()` in Zod, zero runtime behavior) | Sole source of truth across all 13 providers. Handlers look up settings directly with zero shadow defaults. All 17 legacy provider env vars purged. |
@@ -210,7 +210,7 @@ Fusion presets: `lr-fse-<preset>` where preset is ONLY one of `quad` / `pydn` / 
   - **Active In-Flight Stream Lease Tracking (`maxConcurrency`)**: Requests hold their concurrency lease until the response stream terminates (EOF `done: true`, reader error, or client `cancel()`), enforcing real concurrency bounds directly at the conveyor (e.g. Zen `max_concurrency: 1`). For non-streaming requests, the lease releases upon upstream completion.
   - **Elimination of Edge Double-Pacing**: Edge gateway pacing (`acquireIngressPacer` in `src/index.ts`) was completely removed. Requests flow directly into handler-level conveyor belts, eliminating redundant edge pauses and latency penalties.
 - **Fatal Auth Fail-Fast (401/403)**:
-  - On HTTP 401 (Unauthorized) or 403 (Forbidden), LiteRouter rejects outright and returns the error directly to the downstream client (`opencode2`, Claude Code, etc.) with ZERO retries and zero 24-hour quarantine.
+  - On HTTP 401 (Unauthorized) or 403 (Forbidden), LiteRouter rejects outright and returns the error directly to the downstream client (`opencode`, Claude Code, etc.) with ZERO retries and zero 24-hour quarantine.
 - **Conservation-Only Benching**:
   - The only mechanism that benches a key is explicit `conserve_rules` in `config/providers.json` (e.g. OpenRouter daily quota exhaustion until midnight UTC). Generic 429 errors do NOT trigger 65s lockouts.
 - **Handler Ground Truth**:
@@ -233,17 +233,17 @@ After editing `.env`: `bash scripts/restart.sh`. After editing `config/providers
 | 11 | H2 staggered pool + anti-pinning aging (`h2_pool.ts`) | Persistent H2 sessions, least-loaded balancing, 180s±15s drain aging, GOAWAY handling | `http2-lifecycle-stream-isolation.md` |
 | 12 | Provider-isolated FIFO conveyor belt & active concurrency pacer (`pacer.ts`) | Dedicated conveyor pipe per provider (`max_queue_depth: 500`), spaced strictly by `min_delay_ms`, shared by initial calls and retries, `AbortSignal` clean dequeue without memory leaks | [error-action-matrix.md §4](error-action-matrix.md#4-env-knob-quick-reference) |
 | 13 | No circuit breaker (v4 excised) | Fully removed; no breaker mechanism in schema/network/engine | [error-action-matrix.md §2](error-action-matrix.md#2-retry-quarantine-call-chain-wiring) |
-| 14 | OpenCode reasoning filter + bloat shield | Strips reasoning deltas for `opencode*` clients; control-char healing; `content: null` delete; throttled empty-delta heartbeats | `opencode2-reasoning-scrubber.md` |
-| 15 | OpenCode2 auto-patcher (`opencode2_autopatch.sh`) | Sub-5ms idempotent CLI self-heal, integrated into `~/.local/bin/opencode2` | [scripts-ops.md §1.5](scripts-ops.md#15-scriptsopencode2_autopatchsh-opencode2-cli-self-heal-idempotent) |
-| 16 | Two-leg streaming (`docs/Fix_Streaming_01.md`) | Zero-cutoff ingress conveyor + resilient replay on upstream drops | `opencode2-streaming-troubleshooting.md` |
+| 14 | OpenCode reasoning filter + bloat shield | Strips reasoning deltas for `opencode*` clients; control-char healing; `content: null` delete; throttled empty-delta heartbeats | `opencode-reasoning-scrubber.md` |
+| 15 | OpenCode2 auto-patcher (`opencode_autopatch.sh`) | Sub-5ms idempotent CLI self-heal, integrated into `~/.local/bin/opencode` | [scripts-ops.md §1.5](scripts-ops.md#15-scriptsopencode_autopatchsh-opencode-cli-self-heal-idempotent) |
+| 16 | Two-leg streaming (`docs/Fix_Streaming_01.md`) | Zero-cutoff ingress conveyor + resilient replay on upstream drops | `opencode-streaming-troubleshooting.md` |
 | 17 | XML tool calling + trapped thinking (`dots.ts`) | Live `<think>` streaming, pre-thinking tool extraction (GLM/Qwen/DeepSeek/JSON-in-XML), tool-history compaction | `architecture.md` |
-| 18 | Tool-reasoning retention + outbound scrubbing | Scrub conversational turns; **preserve reasoning on tool-call turns** (else upstream 500) | `opencode2-reasoning-scrubber.md` |
+| 18 | Tool-reasoning retention + outbound scrubbing | Scrub conversational turns; **preserve reasoning on tool-call turns** (else upstream 500) | `opencode-reasoning-scrubber.md` |
 | 19-21 | GCP operational knobs (`config/providers.json`) | Governed via `gc` operational blocks (`pacer`, `request_retry`, optional `key_cooldown`); legacy env toggles purged | [config-schemas.md §3.6](config-schemas.md#36-operational-governance--zero-hardcoding-request_retry-key_cooldown-pacer-circuit_breaker) |
 | 22 | OpenRouter harness headers | `HTTP-Referer`/`X-Title`/`User-Agent` from `providers.json`, hot-reloaded via `/reset` | `openrouter-handling-spec.md` |
 | 23 | Zen identity gating + bare models | OpenCode identity headers + client session forwarding (`MissingSessionID` fix); never `zen/` prefix | `zen-provider.md` |
 | 24 | NVIDIA NIM EOL catalog | Strict `410 Gone` sunsets; flagship `nemotron-3-super-120b-a12b`; `ts` nuance for `reasoning_content`-only streams | [error-action-matrix.md §1](error-action-matrix.md#1-status-action-matrix) |
 | 25-26 | Responses translation + `oo` native handler | `lr-*-oa-rs-*` bidirectional translation; `lr-*-oo-rs-*` verbatim passthrough (`openai_original.ts`) | `payload.md` |
-| 27 | Client `chunkTimeout: 30000` | Matches `LITEROUTER_STREAM_IDLE_TIMEOUT=30` | `opencode2-streaming-troubleshooting.md` |
+| 27 | Client `chunkTimeout: 30000` | Matches `LITEROUTER_STREAM_IDLE_TIMEOUT=30` | `opencode-streaming-troubleshooting.md` |
 | 28-30 | Zen operational knobs (`config/providers.json`) | Governed via `zn` operational blocks (`strategy: standard`, `max_concurrency: 1`, `pacer`, `request_retry`); legacy env toggles and hardcoded `isZen` checks purged | [config-schemas.md §3.6](config-schemas.md#36-operational-governance--zero-hardcoding-request_retry-key_cooldown-pacer-circuit_breaker) |
 | 31 | v4 boundary: pure handlers + transport reassembly | Handlers orchestrate; `fetcher.ts` owns H2/TTFT/reassembly; `[Upstream: HTTP/2]` tagging | `http2-lifecycle-stream-isolation.md` |
 | 32 | Payload wire matrix (`oa` scrubs / `oo` preserves) | Keyed off payload segment; `ts` keeps / `sb` forces | `payload.md` |
@@ -313,7 +313,7 @@ Canonical config companion — every `config/` file and its validator:
 | `status.sh` (exit-coded) | [scripts-ops.md §1.2](scripts-ops.md#12-scriptsstatussh-status-exit-coded) |
 | `stop.sh` (SIGINT → SIGTERM → SIGKILL) | [scripts-ops.md §1.3](scripts-ops.md#13-scriptsstopsh-stop-sigint-sigterm-sigkill) |
 | `restart.sh` (stop → start) | [scripts-ops.md §1.4](scripts-ops.md#14-scriptsrestartsh-restart-stop-start) |
-| `opencode2_autopatch.sh` (CLI self-heal) | [scripts-ops.md §1.5](scripts-ops.md#15-scriptsopencode2_autopatchsh-opencode2-cli-self-heal-idempotent) |
+| `opencode_autopatch.sh` (CLI self-heal) | [scripts-ops.md §1.5](scripts-ops.md#15-scriptsopencode_autopatchsh-opencode-cli-self-heal-idempotent) |
 | `GET /health` liveness probe (no auth) | [scripts-ops.md §2](scripts-ops.md#2-get-health-liveness-probe-no-auth-any-method) |
 | `POST /reset` hard reset (no auth) + hot-reload scope | [scripts-ops.md §3](scripts-ops.md#3-post-reset-hard-reset-no-auth-any-method-hot-reload-scope) |
 | Reset exact semantics (`SYSTEM_MAP`) | [scripts-ops.md §3.1](scripts-ops.md#31-exact-semantics-srcindexts61-79-system_map) |
@@ -383,9 +383,9 @@ bun run scripts/probe_model.ts <model_name> [--directive <directive_key>] [--url
 | **Fusion setup, Native Google Fusion chains (`gemini-flash`, `gemini-flash-lite`) & virtual presets (`quad`, `pydn`, `fast`, `deep`)** | `fusion.md` | User asks about Fusion multi-tier routing, native cascades, `nativeTierIndices`, sticky fallback caching, `config/fusion.json`, `FusionEngine`, v4 `classifyFailure` mapping, or execution plans |
 | **Doctor diagnostics & health probes (`doctor.ts`, `doctor_zn.ts`)** | `doctor.md` | User asks about key health probes, upstream diagnostics, status codes, or provider probe errors |
 | **Claude Code integration** | `claude-code.md` | User asks about Claude Code, Anthropic Messages API, `ANTHROPIC_BASE_URL`, or routing Claude Code through LiteRouter |
-| **OpenCode2 integration** | `opencode2-playbook.md` | User asks about OpenCode2, V2 plugins, `~/.config/opencode2/`, or V1/V2 isolation |
-| **OpenCode2 streaming troubleshooting** | `opencode2-streaming-troubleshooting.md` | User asks about deep-reasoning streaming hangs, Zod `content: null` breakdown, `network_error` crashes, or streaming diagnostics |
-| **OpenCode2 reasoning scrubber** | `opencode2-reasoning-scrubber.md` | User asks about outbound reasoning scrubbing, token bloat, `<think>` collapsing, or live streaming observability |
+| **OpenCode2 integration** | `opencode-playbook.md` | User asks about OpenCode2, V2 plugins, `~/.config/opencode/`, or V1/V2 isolation |
+| **OpenCode2 streaming troubleshooting** | `opencode-streaming-troubleshooting.md` | User asks about deep-reasoning streaming hangs, Zod `content: null` breakdown, `network_error` crashes, or streaming diagnostics |
+| **OpenCode2 reasoning scrubber** | `opencode-reasoning-scrubber.md` | User asks about outbound reasoning scrubbing, token bloat, `<think>` collapsing, or live streaming observability |
 | **Payload wire & scrubbing matrix (`oa` vs `oo`)** | `payload.md` | User asks about `oa` vs `oo` wire, reasoning scrub vs passthrough, `rs` routing, or which Zen key preserves CoT replay |
 | **Antigravity proxy** | `antigravity.md` | User asks about remote Antigravity services (`agy-gemini`, `agy-claude`), ZeroTier nodes, or Google Native RPC |
 | **Google Native Forwarder (H2 pooling, Free Tier rotation, `@ai-sdk/google`)** | `google-native.md` | User asks about Google Native, `lr-gg-gg-gc-no`, `lr-gg-gg-g1-no`, Google v1 / v1beta endpoints, `@ai-sdk/google`, `/v1beta/models/*`, `/v1/models/*`, or H2 pooling to `generativelanguage.googleapis.com` |
@@ -417,7 +417,7 @@ bun run scripts/probe_model.ts <model_name> [--directive <directive_key>] [--url
 11. **Purged Dead Ballast**: `limits` (`rpm`, `rpd`, `tpm`) has been completely purged from provider schemas and `config/providers.json` (removing the retired Zdist relic). Fine-grained `key_cooldown` knobs (`initial_cooldown_ms`, `backoff_factor`, `max_consecutive_failures`) and `max_delay_ms` are purged.
 12. **No circuit breaker in v4**: Fully excised. No `circuit_breaker` config, no 503 tripping mechanism, no safe pass-through — the concept has been removed from schema, network layer, engine, and all handlers.
 13. **Single Dedicated FIFO Conveyor Pipe**: Every provider has its own dedicated conveyor pipe (`RequestPacer`) with `max_queue_depth: 500`. All inbound requests and retries share the same conveyor belt, spaced strictly by `min_delay_ms`. Downstream client cancellation cleanly dequeues waiting requests via `AbortSignal` without memory leaks.
-14. **Fatal Auth Fail-Fast (401/403)**: On HTTP 401 (Unauthorized) or 403 (Forbidden), LiteRouter rejects outright and returns the error directly to the downstream client (`opencode2`, Claude Code, etc.) with ZERO retries and zero 24-hour quarantine.
+14. **Fatal Auth Fail-Fast (401/403)**: On HTTP 401 (Unauthorized) or 403 (Forbidden), LiteRouter rejects outright and returns the error directly to the downstream client (`opencode`, Claude Code, etc.) with ZERO retries and zero 24-hour quarantine.
 15. **Conservation-Only Benching & Handler Ground Truth**: The only mechanism that benches a key is explicit `conserve_rules` in `config/providers.json` (e.g. OpenRouter daily quota exhaustion until midnight UTC). Generic 429 errors do not trigger 65s lockouts. All handlers (`openai_compat`, `openai_original`, `anthropic_compat`, `google_native`, `gcp_compat`) query `config/providers.json` directly with zero shadow defaults or hardcoded magic constants.
 
 ## §16.5. Bun v1.4.2 Runtime & Optimization Guidelines

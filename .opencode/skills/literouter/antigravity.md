@@ -14,7 +14,7 @@ Antigravity services operate across remote ZeroTier nodes (e.g. `10.32.34.243:80
 
 ## 2. OpenCode Configuration
 
-In `~/.config/opencode2/opencode.json`:
+In `~/.config/opencode/opencode.json`:
 
 ```json
 {

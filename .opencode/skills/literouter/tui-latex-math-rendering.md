@@ -76,7 +76,7 @@ The OpenCode community and core maintainers have addressed math and LaTeX render
 Upstream npm updates (`npm update -g @opencode-ai/cli` or background daemon auto-updates) can overwrite local runtime patches or break CLI binary links.
 
 ### How Self-Healing Works:
-1. **Launch Wrapper**: The entrypoint wrapper at `~/.local/bin/opencode2` executes `scripts/opencode2_autopatch.sh` **on every single launch** before handing execution over to the Node binary.
+1. **Launch Wrapper**: The entrypoint wrapper at `~/.local/bin/opencode` executes `scripts/opencode_autopatch.sh` **on every single launch** before handing execution over to the Node binary.
 2. **Sub-5ms Verification**:
    - Locates active `@opencode-ai/cli` in Node/NVM paths.
    - Detects and replaces dummy placeholder binaries (e.g. unbuilt postinstall stubs).
@@ -86,9 +86,9 @@ Upstream npm updates (`npm update -g @opencode-ai/cli` or background daemon auto
    - Maintains automatic `.bak` safety backups before touching files.
 
 ```
-~/.local/bin/opencode2 (invocation)
+~/.local/bin/opencode (invocation)
       │
-      ├──> scripts/opencode2_autopatch.sh (<5ms check)
+      ├──> scripts/opencode_autopatch.sh (<5ms check)
       │      ├── Verify binary integrity & permissions
       │      ├── Apply runtime hotfixes & backups (.bak)
       │      └── Validate Node module state
@@ -98,7 +98,7 @@ Upstream npm updates (`npm update -g @opencode-ai/cli` or background daemon auto
 
 To run a manual self-heal check at any time:
 ```bash
-bash scripts/opencode2_autopatch.sh -v
+bash scripts/opencode_autopatch.sh -v
 ```
 
 ---
@@ -117,7 +117,7 @@ Instruct LLMs to emit native UTF-8 Unicode characters and plain text arithmetic 
 | Table cells | `$\mathbf{1,350\text{ RPM}}$` | `1,350 RPM` |
 
 ### 2. Local OpenCode2 Plugin Option (Regex Math Normalization)
-For automated client-side scrubbing, a V2 plugin hook can normalize math expressions in streaming deltas or message context inside `.opencode2/plugins/`:
+For automated client-side scrubbing, a V2 plugin hook can normalize math expressions in streaming deltas or message context inside `.opencode/plugins/`:
 
 ```typescript
 // Example snippet for LaTeX to Unicode translation in a plugin hook
@@ -144,5 +144,5 @@ When upstream releases PR #38995 or updated TUI formatting releases:
 npm install -g @opencode-ai/cli@next
 
 # Re-run LiteRouter auto-patcher to guarantee custom guards remain intact
-bash scripts/opencode2_autopatch.sh -v
+bash scripts/opencode_autopatch.sh -v
 ```

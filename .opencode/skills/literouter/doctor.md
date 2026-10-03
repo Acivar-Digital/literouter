@@ -1,6 +1,6 @@
 # LiteRouter Diagnostic Kit: `doctor.ts` & `doctor_zn.ts`
 
-> **Canonical Location:** `.opencode2/skills/literouter/doctor.md`
+> **Canonical Location:** `.opencode/skills/literouter/doctor.md`
 > **Reference Scripts:** `scripts/doctor.ts`, `scripts/doctor_zn.ts`
 
 This document is the sole source of truth for `doctor.ts` and `doctor_zn.ts` diagnostics, upstream key health verification, probing mechanics, error classifications, and known upstream provider behaviors.
