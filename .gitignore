@@ -53,8 +53,8 @@ protect.sh
 # Opencode internal
 .opencode/*
 !.opencode/skills/
-.opencode2/*
-!.opencode2/skills/
+.opencode/*
+!.opencode/skills/
 .agents/
 .ruff_cache/
 
@@ -79,8 +79,10 @@ memories.md
 .env
 .beads/backup/manifest
 .beads/embeddeddolt/
-docs/asus_vpn/
 usage/
 config/location.json
 tests/test_results.md
 data/reviews/
+
+# Beads / Dolt files (added by bd init)
+*.gate.lock*

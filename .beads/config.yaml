@@ -60,3 +60,5 @@ validation:
     on-close: error
 sync:
     remote: "git+ssh://git@github.com/Acivar-Digital/literouter.git"
+
+# [reset 2026-10-04]     remote: "git+ssh://git@github.com/Acivar-Digital/literouter.git"
