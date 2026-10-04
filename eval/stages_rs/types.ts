@@ -23,6 +23,12 @@ export interface StageResult {
   durationMs?: number;
   completionTokens?: number;
   tokensPerSec?: number;
+  /**
+   * Transport/upstream failure (non-2xx, timeout, exception). When set, the
+   * stage never reached the model, so `score` carries NO capability signal
+   * and MUST NOT be read as a model verdict. Absent on genuine model answers.
+   */
+  error?: string;
 }
 
 export interface ResponsesToolFunction {

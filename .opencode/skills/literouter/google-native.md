@@ -65,13 +65,13 @@ No searching or guessing required. These are the definitive components governing
 
 | File | Exact Line / Symbol | Architectural Responsibility |
 |---|---|---|
-| **`src/handlers/google_native.ts`** | `handleGoogleNative` (`:534`)<br>`attemptNativeForward` (`:508`)<br>`createMonitoredStream` (`:355`) | **Legacy Forwarder Engine**: Validates `lr-gg-*` directive, buffers request body upfront for replay, executes attempt loop (up to 3 attempts), sanitizes headers, pacing, dispatches upstream, and wraps the response in a monitored stream. |
+| **`src/handlers/google_native.ts`** | `handleGoogleNative` (`:813`)<br>`attemptNativeForward` (`:608`)<br>`createMonitoredStream` (`:416`) | **Legacy Forwarder Engine**: Validates `lr-gg-*` directive, buffers request body upfront for replay, executes attempt loop, sanitizes headers, pacing, dispatches upstream, and wraps the response in a monitored stream. |
 | **`src/handlers/v4/google_native.ts`** | `handleGoogleNative` (`:5`)<br>`handleV4GoogleNative` (`:55`) | **v4 Thin Route Handler**: Parses directive, extracts model from URL path regex `/\/(?:v1beta|v1)\/models\/([^:]+)/` if absent from body, preserves full inbound path in `DispatchRequest`, and delegates to `executeDispatchPipeline`. |
 | **`src/engine/strategies/native_cascade.ts`** | `NativeCascadeStrategy`<br>`buildGoogleUrl` (`:31`)<br>`resolveTarget` (`:49`) | **v4 Strategy & URL Builder**: Resolves cascade chains (`gemini-flash`), falls back to path model extraction, maps endpoint templates for `gc` (v1beta) and `g1` (v1), preserves `:streamGenerateContent` action when present in `ctx.path`, and merges query parameters (`?alt=sse`). |
-| **`src/index.ts`** | `dispatchRoute` (`:246`) | **Inbound Route Dispatcher**: Intercepts all paths starting with `/v1beta/models/` or `/v1/models/` and routes them directly to `handleGoogleNative(req, rawKey, reqId)`. **Legacy engine only** — default engine is `legacy` (`src/config/env.ts:51`, `src/config/schema.ts:199`); under `LITEROUTER_ENGINE=v4` (or `x-literouter-engine` override header when `LITEROUTER_ENGINE_OVERRIDE` is true, `src/config/env.ts:126-140`) Google native goes via `handleV4GoogleNative` (`src/handlers/v4/router.ts:192-194`) after the `src/index.ts:414-417` branch. Engine selection: `directive-grammar.md` §11. |
-| **`src/network/fetcher.ts`** | `fetchWithTtftGuard` (`:104`)<br>`executeH2Fetch` (`:407`) | **Transport & TTFT Guard**: Executes the fetch via persistent HTTP/2 session pool, monitors Time-To-First-Token (5s TTFT guard), and tags negotiated protocol (`[Upstream: HTTP/2]`). |
-| **`src/network/h2_pool.ts`** | `Http2Pool.acquireSession` (`:61`)<br>`poolKey` calculation (`fetcher.ts:414`) | **HTTP/2 Connection Pooling**: Maintains persistent H2 multiplexed sockets keyed by `https://generativelanguage.googleapis.com#gg:<keyIndex>`. Each key gets its own persistent H2 socket supporting up to 80 concurrent streams with 180s anti-pinning aging. |
-| **`src/network/pacer.ts`** | `acquireNativePacer` (`google_native.ts:140`)<br>`getPacerForProvider("gg")` | **Token-Bucket Rate Pacer**: Enforces 2000ms conveyor pacing with bounded dwell to avoid burst 429s on Google Free Tier. |
+| **`src/index.ts`** | `dispatchRoute` (`:429`) | **Inbound Route Dispatcher**: Intercepts all paths starting with `/v1beta/models/` or `/v1/models/` and routes them directly to `handleGoogleNative(req, rawKey, reqId)`. **Legacy engine only** — default engine is `legacy` (`src/config/env.ts:51`, `src/config/schema.ts:199`); under `LITEROUTER_ENGINE=v4` (or `x-literouter-engine` override header when `LITEROUTER_ENGINE_OVERRIDE` is true, `src/config/env.ts:126-140`) Google native goes via `handleV4GoogleNative` (`src/handlers/v4/router.ts:192-194`) after the `src/index.ts:414-417` branch. Engine selection: `directive-grammar.md` §11. |
+| **`src/network/fetcher.ts`** | `fetchWithTtftGuard` (`:571`)<br>`executeH2Fetch` (`:431`) | **Transport & TTFT Guard**: Executes the fetch via persistent HTTP/2 session pool, monitors Time-To-First-Token, and tags negotiated protocol (`[Upstream: HTTP/2]`). The guard deadline is **120s**, not 5s: `TTFT_TIMEOUT_MS = 120000` (`src/network/fetcher.ts:61`), schema defaults `LITEROUTER_TTFT_TIMEOUT_MS` / `LITEROUTER_NO_RESPONSE_TIMEOUT_MS` to `120000` (`src/config/schema.ts:203-204`), resolved per request at `src/network/fetcher.ts:637-638`; the tracked `.env:14` sets `LITEROUTER_NO_RESPONSE_TIMEOUT=180` s → `180000` ms (`src/config/env.ts:62-65`). |
+| **`src/network/h2_pool.ts`** | `Http2Pool.acquireSession` (`:62`)<br>`poolKey` calculation (`fetcher.ts:437-440`) | **HTTP/2 Connection Pooling**: Maintains persistent H2 multiplexed sockets keyed by `https://generativelanguage.googleapis.com#gg:<keyIndex>` (`fetcher.ts:438-439`). Each key gets its own persistent H2 socket; `maxStreamsPerSession` defaults to `80` (`src/network/h2_pool.ts:35`), with `maxSessionAgeMs = 180000` (180s) anti-pinning aging. |
+| **`src/network/pacer.ts`** | `acquireNativePacer` (`google_native.ts:204`)<br>`getPacerForProvider("gg")` (`pacer.ts:285`, called `google_native.ts:210`) | **Token-Bucket Rate Pacer**: Conveyor pacing for Google Free Tier, driven by `config/providers.json` → `providers.google.pacer` (`min_delay_ms: 200`, `max_delay_ms: 500`, `max_queue_depth: 500`, `max_queue_wait_ms: 15000`) with bounded dwell to avoid burst 429s. |
 | **`src/ui/logger.ts`** | `logInbound` (`:97`), `logTtft` (`:143`),<br>`logFinishReason` (`:372`), `logUsage` (`:170`),<br>`logServed` (`:316`), `logLimit` (`:253`) | **Unified Terminal Telemetry**: Emits timestamped column-0 telemetry for incoming directives, upstream TTFT, model tokens, throughput speed (tok/s), and finish reasons. |
 | **`config/providers.json`** | `"google"` block (`:125-160`) | **Registry Specification**: Maps base URL `https://generativelanguage.googleapis.com`, endpoint templates (`gc` for `/v1beta/models/{model}:generateContent`, `g1` for `/v1/models/{model}:generateContent`), and default RPM/RPD/TPM limits. |
 
@@ -248,7 +248,7 @@ Add the following provider block to the `"providers"` object in `~/.config/openc
   - For Google v1beta: Point to `https://localhost:7766/v1beta` with `apiKey: "lr-gg-gg-gc-no"`. The client SDK appends `/models/{model}:streamGenerateContent?alt=sse`.
   - For Google v1: Point to `https://localhost:7766/v1` with `apiKey: "lr-gg-gg-g1-no"`. The client SDK appends `/models/{model}:streamGenerateContent?alt=sse`.
 - **`apiKey`**: Set to `lr-gg-gg-gc-no` (for v1beta) or `lr-gg-gg-g1-no` (for v1).
-- **`chunkTimeout`**: Set to `30000` (30 seconds) to match LiteRouter's internal streaming keep-alive cadence (`LITEROUTER_STREAM_IDLE_TIMEOUT=30`).
+- **`chunkTimeout`**: Set to `30000` (30 seconds) on the client. NOTE: this was originally justified as matching `LITEROUTER_STREAM_IDLE_TIMEOUT=30`, but the tracked `.env:16` now sets `LITEROUTER_STREAM_IDLE_TIMEOUT=180` s → `180000` ms (`src/config/env.ts:50-53`; schema default `120000`, `src/config/schema.ts:205`). The two are no longer in sync — either raise the client `chunkTimeout` to `180000` or rely on the gateway's `: keep-alive` comment frames (`src/network/fetcher.ts:115-118`, fired every `KEEPALIVE_INTERVAL_MS` = `200` ms per tracked `.env:75`).
 
 ---
 
@@ -295,7 +295,7 @@ A typical Google Native request prints the following sequence:
 📥 [Inbound req_123] POST /v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse [HTTP/1.1]
 🎯 [Inbound req_123] Directive: lr-gg-gg-gc-no (Provider: gg, Format: gg, Nuances: no)
 🤖 [Inbound req_123] Model: gemini-2.5-flash | Provider: gg [Key #1/4]
-🐢 [PACER req_123] Provider: gg | Dwell: 0ms | Depth: 1 | Avg: 0ms | Interval: 2000ms
+🐢 [PACER req_123] gg dwell=0ms depth=1 avg=0ms interval=200ms
 🟢 [TTFT req_123] TTFT = 485ms | Stream established [Upstream: HTTP/2]
 💬 [Finish req_123] finish_reason: stop
 🟣 [USAGE req_123] Google (Key #1/4) | Duration: 1420ms
@@ -311,9 +311,9 @@ A typical Google Native request prints the following sequence:
   ```
 - **Restart gateway process**:
   ```bash
-  bash scripts/restart.sh
+  bash scripts/gateway/restart.sh
   ```
 - **Verify status**:
   ```bash
-  bash scripts/status.sh
+  bash scripts/gateway/status.sh
   ```

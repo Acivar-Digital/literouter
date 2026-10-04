@@ -30,17 +30,17 @@ literouter/
 | Variable | Default Value | Description |
 |---|---|---|
 | `LITEROUTER_PORT` | `7766` | Listening port for the Bun gateway server. |
-| `LITEROUTER_TLS_ENABLED` | `true` | Enables TLS on port 7766 using certificates in `certs/localhost.pem`. |
-| `LITEROUTER_HTTP2` | `true` | Enables dual HTTP/2 (`h2`) ALPN and HTTP/1.1 TLS negotiation on port 7766. |
+| `LITEROUTER_TLS_ENABLED` | `false` (schema) / `true` (`.env`) | Enables TLS on port 7766 using certificates in `certs/localhost.pem`. Schema default is `false` (`src/config/schema.ts:197`); tracked `.env:98` sets `true`. |
+| `LITEROUTER_HTTP2` | `false` (schema) / `true` (`.env`) | Enables dual HTTP/2 (`h2`) ALPN and HTTP/1.1 TLS negotiation on port 7766. Schema default is `false` (`src/config/schema.ts:198`), but `DEFAULT_ENV_RECORD` in `src/config/env.ts:8` and tracked `.env:99` both set `true`. |
 | `LITEROUTER_AUTH_KEY` | `""` (disabled) | Optional master gateway auth key. When omitted, declarative directive keys are used directly. |
-| `LITEROUTER_HTTP_TIMEOUT_MS` | `300000` | Upstream total HTTP request timeout in milliseconds (5 minutes). |
-| `LITEROUTER_NO_RESPONSE_TIMEOUT_MS` | `5000` | First-byte response / TTFT guard timeout (5 seconds). |
-| `LITEROUTER_STREAM_IDLE_TIMEOUT_MS` | `30000` | Max idle time allowed between streamed tokens (30 seconds). |
-| `LITEROUTER_ROTATE_DELAY_MS` | `2000` | Inter-key rotation delay upon rate limits or errors. |
-| `LITEROUTER_STRIP_REASONING` | `true` | Global default to strip upstream reasoning from historical messages (overridden by `ts` nuance). |
-| `LITEROUTER_AO_STRIP_REASONING` | `true` | Standard default for `ao` (Anthropic->OpenAI cross-wire) to strip reasoning parameters and prevent empty compaction responses in Claude Code (overridden by `ts` nuance). |
-| `GCP_ENABLE_RETRIES` | `true` | When `true`, enables in-flight key rotation on 429/5xx for GCP (`gc`). When `false`, enables single-flight pass-through mode, passing errors downstream immediately. |
-| `GCP_ENABLE_QUARANTINE` | `true` | When `true`, enables key quarantine/cooldown on errors for GCP (`gc`). When `false`, bypasses all quarantine and cooldowns, turning LiteRouter into a dumb forwarder for GCP keys. |
+| `LITEROUTER_HTTP_TIMEOUT_MS` | `300000` | Upstream total HTTP request timeout in milliseconds (5 minutes). Schema default `300000` (`src/config/schema.ts:206`); tracked `.env` sets the legacy `LITEROUTER_HTTP_TIMEOUT=300` (seconds), normalized to `300000` by `src/config/env.ts:54-57`. |
+| `LITEROUTER_NO_RESPONSE_TIMEOUT_MS` | `120000` | First-byte response / TTFT guard timeout. Schema default `120000` (`src/config/schema.ts:204`), hardcoded module default `TTFT_TIMEOUT_MS = 120000` (`src/network/fetcher.ts:61`), resolved per-request by `src/engine/dispatch.ts:192-196` and `src/network/fetcher.ts:637-638`. Tracked `.env` sets the non-`_MS` legacy alias `LITEROUTER_NO_RESPONSE_TIMEOUT=180` (seconds), normalized to `180000` by `src/config/env.ts:62-65`; the alias also seeds `LITEROUTER_TTFT_TIMEOUT_MS` when that is unset (`src/config/env.ts:66-71`). |
+| `LITEROUTER_STREAM_IDLE_TIMEOUT_MS` | `120000` | Max idle time allowed between streamed tokens. Schema default `120000` (`src/config/schema.ts:205`), module fallback `STREAM_IDLE_TIMEOUT_MS = 120000` (`src/network/fetcher.ts:62`), consumed at `src/network/fetcher.ts:1034`. Tracked `.env` sets the non-`_MS` legacy alias `LITEROUTER_STREAM_IDLE_TIMEOUT=180` (seconds), normalized to `180000` by `src/config/env.ts:50-53`. |
+| `LITEROUTER_ROTATE_DELAY_MS` | *(no schema default)* | Inter-key rotation delay. Not part of `EnvConfigSchema` (`src/config/schema.ts:193-230`) and **not read anywhere under `src/`** — it is a legacy knob. Tracked `.env` sets it to `100` (env-overridden, not a code default). |
+| `LITEROUTER_STRIP_REASONING` | `false` (schema) / `true` (`.env`) | Global default to strip upstream reasoning from historical messages (overridden by `ts` nuance). Schema default `false` (`src/config/schema.ts:199`); tracked `.env:17` sets `true`. |
+| `LITEROUTER_AO_STRIP_REASONING` | `true` | Standard default for `ao` (Anthropic->OpenAI cross-wire) to strip reasoning parameters and prevent empty compaction responses in Claude Code (overridden by `ts` nuance). Schema default `true` (`src/config/schema.ts:200`). |
+| `GCP_ENABLE_RETRIES` | `true` (legacy) | **Legacy knob — not read anywhere under `src/`.** Provider retry behaviour is governed declaratively by `config/providers.json` → `request_retry` (see `config-schemas.md` §3.6). Tracked `.env:52` sets `false`. |
+| `GCP_ENABLE_QUARANTINE` | `true` (legacy) | **Legacy knob — not read anywhere under `src/`.** Provider quarantine is governed declaratively by `config/providers.json` → `key_cooldown`. Tracked `.env:53` sets `false`. |
 
 ### Secret Upstream Key Pools (`.env.local`)
 

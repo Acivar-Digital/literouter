@@ -8,7 +8,7 @@ import type { ProviderCode } from "../../src/config/schema";
 // Inject mkcert root CA so Bun/Node fetch can verify local/proxy TLS certs
 const caPath =
   process.env.SSL_CERT_FILE ||
-  (process.env.HOME ? join(process.env.HOME, ".local/share/opencode2/mkcert/rootCA.pem") : "");
+  (process.env.HOME ? join(process.env.HOME, ".local/share/mkcert/rootCA.pem") : "");
 if (caPath && existsSync(caPath)) {
   process.env.NODE_EXTRA_CA_CERTS = caPath;
   process.env.SSL_CERT_FILE = caPath;

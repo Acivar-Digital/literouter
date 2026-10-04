@@ -16,14 +16,20 @@ Detach anytime using `Ctrl+B`, then `D`.
 > 📖 Pane rubbish (`shell-init/getcwd` noise, typed-command echo, blank fill): see [`tmux-hygiene.md`](tmux-hygiene.md). Safe wipe without restart: `tmux clear-history -t literouter`. Never `send-keys` into a running gateway pane.
 
 ### Structured Log Markers (`logs/gateway.log`)
-- 🔵 `[INBOUND]` — Inbound downstream HTTP request with detected directive key.
-- 🟢 `[SERVED]` — Successfully proxied response with latency and status code.
-- 🔄 `[ROTATE]` — Key failover advancing to the next active key index.
-- ⚠️ `[LIMIT]` — Upstream provider rate limit (HTTP 429) placing key in cooldown.
-- 🔴 `[EXHAUSTED]` — All configured API keys for a provider are cooling down.
-- 🟡 `[GHOST]` — Upstream first-byte TTFT timeout (5s ghosting guard triggered).
-- 🚀 `[BOOT]` — Gateway startup banner and key pool initialization.
-- 💥 `[ERROR]` — Gateway route dispatch error or unexpected exception.
+Every line is `<emoji> [HH:MM:SS:mmm] [<TAG> <reqId>] <message>` (`src/ui/logger.ts:44-70, 128-513`):
+- 🔵 `Inbound` — Inbound downstream HTTP request; 🎯 `Directive: <key> -> Target: <provider> | Wire: <wire>`; 🤖 `Model: ...` (same reqId).
+- 🟢 `TTFT` — Time to first token in ms.
+- 🟣/💬 `USAGE` — Token accounting (prompt / reasoning / completion / total, plus `Speed=<n> tok/s`).
+- 🟢 `SERVED` — Completed response with HTTP status + duration (⚠️ icon on status ≥ 400).
+- 🔄 `ROTATE` — Key failover advancing to the next active key index.
+- ⚠️ `LIMIT` — Upstream rate limit (HTTP 429), optionally with `Parsed Retry-After` and the upstream error body.
+- 🟠 `RETRY` — In-flight retry attempt on the same provider.
+- 🔴 `EXHAUSTED` — All configured API keys for a provider are cooling down.
+- 🐢 `PACER` — Per-provider pacing dwell/queue stats.
+- 🚀 `BOOT` — Gateway startup line (no reqId).
+- 💥 `ERROR` — Gateway route dispatch error or unexpected exception.
+
+There is **no** `[GHOST]` marker: there is no 5 s ghosting guard (see Pattern 4).
 
 ---
 
@@ -36,31 +42,34 @@ curl -sk https://localhost:7766/health
 # {"status":"healthy","uptime":120.45,"timestamp":"2026-08-17T13:30:00.000Z"}
 ```
 
-### 2. Diagnostic Doctor (`bun run scripts/doctor.ts`)
+### 2. Diagnostic Doctor (`bun run scripts/diagnose/doctor.ts`)
 Run the comprehensive diagnostic suite to inspect local configurations, JSON schemas, server status, and probe live upstream API keys:
 ```bash
-bun run scripts/doctor.ts
+bun run scripts/diagnose/doctor.ts
 ```
 **Doctor Capabilities & Execution Flow:**
-- **Local Files & JSON Schema Validation**: Asserts presence and valid JSON syntax for `config/providers.json`, `config/fusion.json`, and `config/models.json`.
+- **Local Files & JSON Validation**: Asserts presence of `config/providers.json`, `config/fusion.json`, and `config/models.json` (all `required`) and JSON-parses each (`scripts/diagnose/doctor.ts:68-90`, `:423-431`).
 - **Key Pool Audit**: Validates `.env` and `.env.local`, warning on placeholder or corrupted keys (`changeme`, `todo`, `< 5` chars).
-- **Local Server Ping**: Probes local LiteRouter `/health` endpoint (`https` then `http`).
+- **Local Server Ping**: Probes LiteRouter `/health` on the host/port in `config/location.json`, protocol order driven by `tls_enabled`, 1500 ms timeout, WARN-only when down.
 - **Live Upstream Key Authentication Probes (FYI-only)**:
-  - **Google Gemini**: Probes `gemma-4-31b-it` via `generateContent` (key in query string).
+  - **Google**: Probes `gemini-3.5-flash-lite` via `generateContent` (key in query string).
   - **NVIDIA NIM**: Probes `nvidia/nemotron-3-super-120b-a12b` via `/v1/chat/completions`.
   - **OpenRouter**: Probes `openrouter/free:nitro` via `/api/v1/chat/completions`.
-  - **Zen**: Probes bare model `big-pickle` (or `hy3-free`) via `/v1/chat/completions`.
-- **TLS Verification**: Automatically binds `mkcert` root CA (`~/.local/share/opencode/mkcert/rootCA.pem` or `SSL_CERT_FILE`) into `NODE_EXTRA_CA_CERTS`.
+  - **Zen**: Probes bare model `big-pickle` via `/v1/chat/completions` with a fresh `ses_` session via `buildZenHeaders()` (`scripts/diagnose/doctor_zn.ts:21-44`).
+  - **GCP**: Probes `gemma-4-31b-it` via the OpenAI-compat `/v1beta/openai/chat/completions` path.
+- **TLS Trust**: Binds the mkcert root CA (`$SSL_CERT_FILE` or `~/.local/share/mkcert/rootCA.pem`) into `NODE_EXTRA_CA_CERTS` (`scripts/diagnose/doctor.ts:8-15`). Note the doctor uses `~/.local/share/mkcert/`, **not** `~/.local/share/opencode/mkcert/`.
 - **Safe 1s Pacing**: Enforces a 1-second sequential delay between probes to prevent triggering upstream rate limits during diagnosis.
 - **Non-Blocking Diagnostics**: Runs purely for operator inspection without altering in-memory quotas, setting cooldowns, or gating gateway boot.
 
 ### 3. Hard Flush / Key Unfreeze (`POST /reset`)
 To immediately clear all in-memory cooldowns and reload API key pools from disk without restarting the process:
 ```bash
-curl -sk -X POST https://localhost:7766/reset
+curl -sk -X POST https://localhost:7766/reset -H "Authorization: Bearer <LITEROUTER_AUTH_KEY>"
 # Returns HTTP 200 OK:
-# {"status":"ok","message":"Hard reset successful. Cooldowns and key pools reloaded.","timestamp":"..."}
+# {"status":"ok","message":"Hard reset successful. Cooldowns, circuit breakers, pacers, and H2 pools reloaded.","timestamp":"..."}
 ```
+> ⚠️ `/reset` is **auth-gated** (`src/index.ts:81-91`): without a valid
+> `LITEROUTER_AUTH_KEY` or `lr-` directive token it returns HTTP `401`.
 
 ---
 
@@ -73,7 +82,7 @@ curl -sk -X POST https://localhost:7766/reset
 
 ### Pattern 2: `HTTP 429 Too Many Requests: All API keys are cooling down`
 - **Symptom**: All keys for a provider are cooling down after repeated upstream rate limits.
-- **Fix**: Run `curl -sk -X POST https://localhost:7766/reset` to unfreeze keys, or add additional keys to `.env.local`.
+- **Fix**: Run `curl -sk -X POST https://localhost:7766/reset -H "Authorization: Bearer <LITEROUTER_AUTH_KEY>"` to unfreeze keys, or add additional keys to `.env.local`. Unauthenticated `/reset` returns HTTP `401`.
 
 ### Pattern 3: `HTTP 400 Bad Request: Validation: Unsupported parameter(s): prompt_cache_key`
 - **Symptom**: Upstream provider (e.g. NVIDIA NIM) rejects client-specific cache parameters.
@@ -81,7 +90,7 @@ curl -sk -X POST https://localhost:7766/reset
 
 ### Pattern 4: Upstream Ghosting / Silent Hang (`NoResponseError`)
 - **Symptom**: Upstream provider accepts TCP handshake but stalls without emitting tokens.
-- **Fix**: `fetchWithTtftGuard` triggers an abort after 5000ms and immediately rotates to Key #2 with zero cooldown penalty.
+- **Fix**: `fetchWithTtftGuard` aborts on a `NoResponseError("TTFT exceeded <ms>ms")` and the caller rotates to the next pooled key. The default first-byte budget is `TTFT_TIMEOUT_MS = 120000` (**120 s**, `src/network/fetcher.ts:61`), overridable per-request via `LITEROUTER_TTFT_TIMEOUT_MS` / `LITEROUTER_NO_RESPONSE_TIMEOUT_MS` (`src/network/fetcher.ts:637-638`). It is **not** 5 s.
 
 ### Pattern 5: Anthropic Tool Format Errors on OpenRouter (`Unknown server-tool shorthand`)
 - **Symptom**: Calling `/v1/messages` with `@ai-sdk/anthropic` returns 400 on OpenRouter.
@@ -100,12 +109,13 @@ curl -sk -X POST https://localhost:7766/reset
 ### Pattern 8: In-Flight Error Classification & Upstream Key Failover
 - **Symptom**: Upstream provider returns HTTP 400 "Provider returned error", HTTP 429 rate limit/quota error, HTTP 401/403 bad key, or HTTP 5xx server error.
 - **Handling**: Handled automatically in `src/network/classifier.ts` via `classifyUpstreamError`:
-  - **Retryable 400**: Retries in-flight up to 3 times (0s quarantine).
-  - **HTTP 429 Quota / Credit Exhaustion**: Retries next key, quarantines exhausted key for 7 days (`604,800s`).
+  - **Retryable 400**: Retries in-flight with 0s quarantine.
+  - **HTTP 429 Quota / Credit Exhaustion**: Retries next key, quarantines exhausted key for 7 days (`604,800s`), unless provider quarantine is disabled.
   - **HTTP 429 Rate Limit**: Retries next key, quarantines using parsed `Retry-After` / `x-ratelimit-reset`.
-  - **HTTP 401 / 403 Auth Error**: Retries next key, quarantines bad key for 7 days (`604,800s`).
-  - **HTTP 5xx Server Error**: Retries next key, quarantines key for 10s.
-  - **Client Errors (400 Context Length, 404, Safety)**: Fails fast immediately with 0s quarantine to return the actionable error directly to the caller.
+  - **HTTP 401 Auth Error**: Retries next key with **tiered** quarantine — 300s on the 1st failure, 1800s on the 2nd, 86400s on the 3rd+ (`src/network/classifier.ts:91-100, 340-348`).
+  - **HTTP 403 Forbidden**: **Fails fast immediately with 0s quarantine** — the key is never parked (`src/network/classifier.ts:328-337`).
+  - **HTTP 408 / 5xx Server Error**: Retries next key; 5xx quarantines the key for 10s (`src/network/classifier.ts:372-379`).
+  - **Client Errors (400 Context Length, 402, 404, Safety, other 4xx)**: Fails fast immediately with 0s quarantine to return the actionable error directly to the caller.
 
 ### Pattern 9: Network & Transport Layer Failures & HTTP/2 Zombie Session Purge (TCP RST, `ECONNRESET`, GOAWAY, `ConnectTimeout`)
 - **Symptom**: Outbound upstream connection fails prior to or during stream establishment due to network hiccups, TCP reset (`ECONNRESET` / `ReadError`), HTTP/2 GOAWAY frame from edge load balancers (`RemoteProtocolError`), or connect timeouts (`ConnectTimeout` / `ConnectError`).
@@ -125,12 +135,12 @@ curl -sk -X POST https://localhost:7766/reset
 ### Pattern 12: OpenCode2 CLI Broken Binary or Missing Executable Post-Update
 - **Symptom**: Running `opencode` fails with command not found, permission denied, or broken symlink errors after npm install/update.
 - **Cause**: Upstream `@opencode-ai/cli` creates platform binaries or Windows `.exe` aliases that may lose executable bits or break symlinks in NVM directories.
-- **Handling / Solution**: Run `bash scripts/opencode_autopatch.sh` (or invoke `opencode` directly, as `/home/yapilwsl/.local/bin/opencode` executes the self-healing check automatically on every launch). The script verifies paths, syncs binary aliases, generates `.bak` backups, ensures tool message string serialization, verifies network error traps, and restores `chmod +x` permissions in <5ms.
+- **Handling / Solution**: Run `bash scripts/hooks/opencode_autopatch.sh` (or invoke `opencode` directly, as `/home/yapilwsl/.local/bin/opencode` executes the self-healing check automatically on every launch). The script verifies paths, syncs binary aliases, generates `.bak` backups, ensures tool message string serialization, verifies network error traps, and restores `chmod +x` permissions in <5ms.
 
 ### Pattern 13: Tool Message Array Format Error or Silent Subagent Completion
 - **Symptom**: Upstream model rejects `role: "tool"` turns with HTTP 400 (`content must be string`), or a spawned subagent exits with empty success status upon encountering a network hiccup or empty SSE stream.
 - **Cause**: Array-based tool response payloads in multi-turn agent history or unhandled `network_error` events in streaming sessions.
-- **Handling / Solution**: `scripts/opencode_autopatch.sh` automatically patches tool message format normalization (ensuring `role: "tool"` content arrays are flattened to strings) and validates network error handling to ensure subagent transport failures fail loudly rather than silently terminating.
+- **Handling / Solution**: `scripts/hooks/opencode_autopatch.sh` automatically patches tool message format normalization (ensuring `role: "tool"` content arrays are flattened to strings) and validates network error handling to ensure subagent transport failures fail loudly rather than silently terminating.
 
 ### Pattern 14: `UNKNOWN_CERTIFICATE_VERIFICATION_ERROR` or TLS Alert 120 in Node / OpenCode Clients
 - **Symptom**: Node.js clients, OpenCode2, or Claude Code fail connecting to `https://localhost:7766` with `UNKNOWN_CERTIFICATE_VERIFICATION_ERROR: unknown certificate verification error` or `SSL alert 120: tlsv1 alert no application protocol`.
@@ -153,4 +163,4 @@ curl -sk -X POST https://localhost:7766/reset
 ### Pattern 16: Tmux Pane Rubbish (`shell-init/getcwd`, typed-command echo)
 - **Symptom**: Pane top shows `shell-init: getcwd: cannot access parent directories`, `chdir: ...`, or reprinted `export PATH` / `cd` boot commands. Gateway `health` is `healthy`.
 - **Cause**: Stale tmux server cwd (deleted dir) or pre-`524a539` `send-keys` boot. See [`tmux-hygiene.md`](tmux-hygiene.md).
-- **Fix**: `tmux clear-history -t literouter`. Boot only via `bash scripts/restart.sh`. Recurring VPS noise = Aug-16 server holding deleted cwd — maintenance-window server restart.
+- **Fix**: `tmux clear-history -t literouter`. Boot only via `bash scripts/gateway/restart.sh`. Recurring VPS noise = Aug-16 server holding deleted cwd — maintenance-window server restart.

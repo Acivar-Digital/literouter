@@ -258,5 +258,14 @@ export async function runStage1Wire(ctx: StageContext): Promise<StageResult> {
   }
 
   result.passed = result.score >= 60;
+  // A sub-test that never reached the model carries no capability signal.
+  // Surface it as a transport error so report writers do not render a
+  // gateway rejection (403 free-tier, 429 cooldown, timeout) as a 0/100
+  // model failure. Model-level misses (sub-test reached upstream and the
+  // model declined to call the tool) stay scored.
+  if (!result.details["test_1_1"] && !result.details["test_1_2"] && !result.details["test_1_3"]) {
+    result.error =
+      result.notes.join(" | ").slice(0, 500) || "Stage produced no scored sub-test (upstream unreachable)";
+  }
   return result;
 }

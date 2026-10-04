@@ -10,12 +10,12 @@ When diagnosing OpenCode2 streaming failures or agent stalls, run these pinpoint
 
 | Target | Instant Command | What It Verifies |
 |---|---|---|
-| **Auto-Patcher & Binary Status** | `bash scripts/opencode_autopatch.sh -v` | Verifies `@opencode-ai/cli` symlinks, permissions, `.bak` backups, and applied patch markers (`.patch_tool_format_applied`, `.patch_network_error_applied`). (<5ms) |
+| **Auto-Patcher & Binary Status** | `bash scripts/hooks/opencode_autopatch.sh -v` | Verifies `@opencode-ai/cli` symlinks, permissions, `.bak` backups, and applied patch markers (`.patch_tool_format_applied`, `.patch_network_error_applied`). (<5ms) |
 | **Reasoning Stream Filter & Nuances** | `bun test tests/unit/opencode_reasoning_filter.test.ts` | Runs unit tests verifying `isOpenCodeClient`, `filterReasoningFromChunk`, `createOpenCodeReasoningFilterStreamTransformer`, `stripReasoningFromResponseBody`, and `ts`/`sb` nuance overrides. (~15ms) |
-| **Inbound History Payload Scrubber** | `bun test tests/unit/inbound_reasoning_scrubber.test.ts` | Tests stripping of reasoning parts and metadata from multi-turn assistant messages (`scrubReasoningFromMessages`). (~10ms) |
+| **Inbound History Payload Scrubber** | `bun test tests/unit/payload_scrubbing.test.ts` | Tests stripping of reasoning parts and metadata from multi-turn assistant messages (`scrubReasoningFromMessages`). (~10ms) |
 | **Tool Message Stream Regression** | `bun test tests/unit/tool_call_stream_regression.test.ts` | Tests tool message array content normalization, metadata stripping, and incremental tool call delta handling. (~12ms) |
 | **Full Diagnostic Suite** | `python tests/e2e/streaming_kit/run_diagnostics.py` | 4-stage automated diagnostic kit: SQLite turn extractor & replay, strict Vercel Zod validator probe, inter-chunk cadence audit. |
-| **Live Gateway Health & Key Pools** | `bun run scripts/doctor.ts` | Non-blocking live health probe for all provider keys across Google, NVIDIA, OpenRouter, and Zen. |
+| **Live Gateway Health & Key Pools** | `bun run scripts/diagnose/doctor.ts` | Non-blocking live health probe for all provider keys across Google, NVIDIA, OpenRouter, and Zen. |
 
 ---
 

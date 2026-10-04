@@ -90,8 +90,8 @@ Adapter flowchart: `opencode-streaming-troubleshooting.md` §3.
 Env flags: `setup.md` (`LITEROUTER_AO_STRIP_REASONING` row).
 Directive errors: `troubleshoot.md` (format + `scrubUnsupportedParameters`).
 Wire labels in logs: `logger.md:44` (`oa→OpenAI`, `rs→Responses`).
-Architecture boundary: `docs/ARCHITECTURE.md`, `docs/Fix_Streaming_01.md`
-(two-leg streaming), `docs/Routing_Logic_FINAL.md` (routing).
+Architecture boundary: `docs/architecture.md`, `docs/streaming-fix.md`
+(two-leg streaming), `docs/architecture/routing-logic-final.md` (routing).
 Code: `src/transformers/payload.ts`, `src/transformers/opencode_adapter.ts`,
 `src/transformers/thinking.ts`, `src/handlers/openai_compat.ts`,
 `src/handlers/openai_original.ts`, `src/index.ts` (`validateEndpointMatch`,

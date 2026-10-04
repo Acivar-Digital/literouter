@@ -4,7 +4,7 @@
 
 # Errors and Debugging
 
-> LiteRouter S5 addendum (literouter-ky12, docs-only) — see `.opencode2/skills/literouter/error-action-matrix.md` and `CHANGELOG.md` Unreleased S5. 401/403: fail-fast, zero retry, zero quarantine (canonical, legacy+v4 aligned). 403: zero-quarantine all (`key_cooldown.enabled: false`). 408: retry_rotate via `config/providers.json` `request_retry`. Typed `error_type` parser (3 skins: standard/legacy/v4) — `error_type` wins over raw status; conservation-first (`conserve_rules` overrides generic 429). Terminal: condensed `error_type=<t> status=<s> action=<a>`; full trace preserved in telemetry. No `.env*` or `src/` edits in this slice.
+> LiteRouter S5 addendum (literouter-ky12, docs-only) — see `.opencode/skills/literouter/error-action-matrix.md` and `CHANGELOG.md` Unreleased S5. 401/403: fail-fast, zero retry, zero quarantine (canonical, legacy+v4 aligned). 403: zero-quarantine all (`key_cooldown.enabled: false`). 408: retry_rotate via `config/providers.json` `request_retry`. Typed `error_type` parser (3 skins: standard/legacy/v4) — `error_type` wins over raw status; conservation-first (`conserve_rules` overrides generic 429). Terminal: condensed `error_type=<t> status=<s> action=<a>`; full trace preserved in telemetry. No `.env*` or `src/` edits in this slice.
 
 > API Errors and Debugging
 

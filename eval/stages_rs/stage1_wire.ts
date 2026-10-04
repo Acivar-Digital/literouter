@@ -175,5 +175,11 @@ export async function runStage1Wire(ctx: StageContext): Promise<StageResult> {
   }
 
   result.passed = result.score >= 50;
+  // Neither sub-test reached the model: the score is meaningless. Mark it as
+  // a transport failure so the report shows ERROR, not a 0/100 model verdict.
+  if (!result.details["test_1_1"] && !result.details["test_1_2"]) {
+    result.error =
+      result.notes.join(" | ").slice(0, 500) || "Stage produced no scored sub-test (upstream unreachable)";
+  }
   return result;
 }

@@ -112,14 +112,14 @@ async def resilient_call(client: httpx.AsyncClient, url: str, payload: dict, hea
 
 ---
 
-## 4. Multi-Provider Probe Suite: `scripts/probe_resilience.py`
+## 4. Multi-Provider Probe Suite: `scripts/probe/probe_resilience.py`
 
 The repository includes an end-to-end multi-provider probe script that tests key pool routing, latency, and status across all major providers.
 
 ### Execution:
 
 ```bash
-uv run python scripts/probe_resilience.py
+uv run python scripts/probe/probe_resilience.py
 ```
 
 ### Probed Targets:

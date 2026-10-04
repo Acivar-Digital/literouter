@@ -76,7 +76,7 @@ The OpenCode community and core maintainers have addressed math and LaTeX render
 Upstream npm updates (`npm update -g @opencode-ai/cli` or background daemon auto-updates) can overwrite local runtime patches or break CLI binary links.
 
 ### How Self-Healing Works:
-1. **Launch Wrapper**: The entrypoint wrapper at `~/.local/bin/opencode` executes `scripts/opencode_autopatch.sh` **on every single launch** before handing execution over to the Node binary.
+1. **Launch Wrapper**: The entrypoint wrapper at `~/.local/bin/opencode` executes `scripts/hooks/opencode_autopatch.sh` **on every single launch** before handing execution over to the Node binary.
 2. **Sub-5ms Verification**:
    - Locates active `@opencode-ai/cli` in Node/NVM paths.
    - Detects and replaces dummy placeholder binaries (e.g. unbuilt postinstall stubs).
@@ -88,7 +88,7 @@ Upstream npm updates (`npm update -g @opencode-ai/cli` or background daemon auto
 ```
 ~/.local/bin/opencode (invocation)
       │
-      ├──> scripts/opencode_autopatch.sh (<5ms check)
+      ├──> scripts/hooks/opencode_autopatch.sh (<5ms check)
       │      ├── Verify binary integrity & permissions
       │      ├── Apply runtime hotfixes & backups (.bak)
       │      └── Validate Node module state
@@ -98,7 +98,7 @@ Upstream npm updates (`npm update -g @opencode-ai/cli` or background daemon auto
 
 To run a manual self-heal check at any time:
 ```bash
-bash scripts/opencode_autopatch.sh -v
+bash scripts/hooks/opencode_autopatch.sh -v
 ```
 
 ---
@@ -144,5 +144,5 @@ When upstream releases PR #38995 or updated TUI formatting releases:
 npm install -g @opencode-ai/cli@next
 
 # Re-run LiteRouter auto-patcher to guarantee custom guards remain intact
-bash scripts/opencode_autopatch.sh -v
+bash scripts/hooks/opencode_autopatch.sh -v
 ```

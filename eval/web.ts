@@ -138,7 +138,7 @@ export function printHelp(): void {
 
 \x1b[1mOPTIONS:\x1b[0m
   --directive <key>     Gateway directive key (default: lr-or-oa-ch-no)
-  --url <url>           Gateway chat completions URL (default: https://localhost:7766/v1/chat/completions)
+  --url <url>           Gateway chat completions URL (default: http://literouter.lan:7766/v1/chat/completions)
   --image <uri_or_path> Image input (URL, data URI, or path; defaults to internal SaaS dashboard SVG)
   --stage <n>           Run ONLY stage n (1 to 5)
   --continue            Run all stages even if failure occurs (diagnostic mode)

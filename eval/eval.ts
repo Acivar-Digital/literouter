@@ -54,6 +54,13 @@ import {
   uninstallAnthropicBridge,
 } from "./anthropic_bridge";
 
+
+/**
+ * Explorer qualification ceiling. Kept in sync with the Explorer row in
+ * eval/README.md ("Fast TTFT (<2s)"). A wire above this cannot be recommended for
+ * interactive exploration regardless of how fast it streams.
+ */
+const EXPLORER_MAX_TTFT_MS = 2000;
 export type SuiteType = "speed" | "code" | "web";
 export type ArchitecturalRole = "Orchestrator" | "General Coder" | "Explorer";
 
@@ -877,9 +884,17 @@ export function generateMarkdownReport(summary: EvalOrchestratorSummary): string
     for (const canonical of CANONICAL_CODE_STAGES) {
       const r = executedCodeMap.get(canonical.stageNumber);
       if (r) {
-        const statusIcon = r.passed ? "🟢 PASSED" : "🔴 FAILED";
-        const notes = r.notes && r.notes.length > 0 ? r.notes.join("; ") : (r.passed ? "Passed verification" : "Criteria unmet");
-        lines.push(`| **${canonical.stageNumber}** | ${r.stageName} | \`${r.score}/100\` | ${statusIcon} | ${notes} |`);
+        const stageTransportError = typeof r.error === "string" && r.error.length > 0;
+        const statusIcon = stageTransportError ? "🔴 ERROR" : r.passed ? "🟢 PASSED" : "🔴 FAILED";
+        const scoreCell = stageTransportError ? "—" : `\`${r.score}/100\``;
+        const notes = stageTransportError
+          ? `Transport error (not a model failure): ${r.error}`
+          : r.notes && r.notes.length > 0
+            ? r.notes.join("; ")
+            : r.passed
+              ? "Passed verification"
+              : "Criteria unmet";
+        lines.push(`| **${canonical.stageNumber}** | ${r.stageName} | ${scoreCell} | ${statusIcon} | ${notes} |`);
       } else {
         let reason = "Intentionally excluded (CLI filter / not scheduled)";
         if (firstFailedCodeNum !== null && canonical.stageNumber > firstFailedCodeNum) {
@@ -891,18 +906,32 @@ export function generateMarkdownReport(summary: EvalOrchestratorSummary): string
 
     for (const [stageNum, r] of executedCodeMap) {
       if (stageNum > 5 || stageNum < 1) {
-        const statusIcon = r.passed ? "🟢 PASSED" : "🔴 FAILED";
-        const notes = r.notes && r.notes.length > 0 ? r.notes.join("; ") : (r.passed ? "Passed verification" : "Criteria unmet");
-        lines.push(`| **${stageNum}** | ${r.stageName} | \`${r.score}/100\` | ${statusIcon} | ${notes} |`);
+        const stageTransportError = typeof r.error === "string" && r.error.length > 0;
+        const statusIcon = stageTransportError ? "🔴 ERROR" : r.passed ? "🟢 PASSED" : "🔴 FAILED";
+        const scoreCell = stageTransportError ? "—" : `\`${r.score}/100\``;
+        const notes = stageTransportError
+          ? `Transport error (not a model failure): ${r.error}`
+          : r.notes && r.notes.length > 0
+            ? r.notes.join("; ")
+            : r.passed
+              ? "Passed verification"
+              : "Criteria unmet";
+        lines.push(`| **${stageNum}** | ${r.stageName} | ${scoreCell} | ${statusIcon} | ${notes} |`);
       }
     }
     lines.push("");
 
     const passedCount = summary.codeSummary.results.filter((r) => r.passed).length;
     const totalCount = summary.codeSummary.results.length;
-    const codeVerdict = summary.codeSummary.allPassed
-      ? "🟢 **CERTIFIED PRODUCTION READY**"
-      : "🔴 **REJECTED (CRITICAL GATES FAILED)**";
+    // Every executed stage dying on transport means the model was never
+    // evaluated. Report that as ERROR rather than REJECTED.
+    const allCodeStagesTransportFailed =
+      totalCount > 0 && summary.codeSummary.results.every((r) => typeof r.error === "string" && r.error.length > 0);
+    const codeVerdict = allCodeStagesTransportFailed
+      ? "🔴 **ERROR (upstream unreachable — model not evaluated)**"
+      : summary.codeSummary.allPassed
+        ? "🟢 **CERTIFIED PRODUCTION READY**"
+        : "🔴 **REJECTED (CRITICAL GATES FAILED)**";
 
     lines.push(`**Code Suite Verdict:** ${codeVerdict} (\`${passedCount}/${totalCount}\` stages cleared)`);
     lines.push("");
@@ -1057,9 +1086,11 @@ function formatWireSpeed(w?: WireResultSummary): string {
     (w.summary.webResult?.stages ?? []) as WebStageResult[]
   );
   if (telemetry.pipelineAvgSpeed > 0) {
-    return `${telemetry.pipelineAvgSpeed.toFixed(1)} tok/s`;
+    // Stage wall-clock average, NOT a measured token rate. Label it so the
+    // consolidated table cannot present it as throughput for an unmeasured wire.
+    return `${telemetry.pipelineAvgSpeed.toFixed(1)} tok/s (pipeline, not measured)`;
   }
-  return "-";
+  return "not measured";
 }
 
 function formatWireTtft(w?: WireResultSummary): string {
@@ -1104,6 +1135,15 @@ function formatWireWebRate(w?: WireResultSummary): string {
 function formatWireVerdict(w?: WireResultSummary): string {
   if (!w) return "⚪ NOT RUN";
   if (w.error) return "🔴 ERROR";
+  // A wire whose every executed stage failed on transport never reached the
+  // model. "FAILED" would blame the model for a gateway rejection.
+  const stages = [
+    ...((w.summary?.codeSummary?.results ?? []) as CodeStageResult[]),
+    ...((w.summary?.webResult?.stages ?? []) as WebStageResult[]),
+  ];
+  const allTransportFailed =
+    stages.length > 0 && stages.every((r) => typeof r.error === "string" && r.error.length > 0);
+  if (allTransportFailed) return "🔴 ERROR (upstream)";
   return w.passed ? "🟢 PASSED" : "🔴 FAILED";
 }
 
@@ -1179,8 +1219,17 @@ function formatWireDetailSection(wireNumber: number, w: WireResultSummary): stri
         const stageLabel = formatStageName(r.stageName, canonical.stageNumber - 1);
         const durStr = typeof r.durationMs === "number" ? `${r.durationMs} ms` : "-";
         const tokStr = typeof r.completionTokens === "number" ? `${r.completionTokens}` : "-";
-        const statusStr = r.passed ? "🟢 PASSED" : "🔴 FAILED";
-        lines.push(`| **${canonical.stageNumber}** | ${stageLabel} | \`${r.score ?? 100}/100\` | ${statusStr} | ${durStr} | ${tokStr} |`);
+        // A stage whose request never reached the model has no capability
+        // signal. Render ERROR + a blank score so a gateway rejection
+        // (403 free-tier, 429 cooldown, timeout) is never reported as a
+        // 0/100 model deficiency.
+        const stageTransportError = typeof r.error === "string" && r.error.length > 0;
+        const statusStr = stageTransportError ? "🔴 ERROR" : r.passed ? "🟢 PASSED" : "🔴 FAILED";
+        const scoreStr = stageTransportError ? "-" : `\`${r.score ?? 100}/100\``;
+        lines.push(`| **${canonical.stageNumber}** | ${stageLabel} | ${scoreStr} | ${statusStr} | ${durStr} | ${tokStr} |`);
+        if (stageTransportError) {
+          lines.push(`> **Transport error (not a model failure):** ${r.error}`);
+        }
       } else {
         const stageLabel = formatStageName(canonical.stageName, canonical.stageNumber - 1);
         lines.push(`| **${canonical.stageNumber}** | ${stageLabel} | - | ⏭️ SKIPPED | - | - |`);
@@ -1188,7 +1237,16 @@ function formatWireDetailSection(wireNumber: number, w: WireResultSummary): stri
     }
     lines.push("");
     const passedCode = s.codeSummary.results.filter((r) => r.passed).length;
-    lines.push(`**Code Suite Verdict:** ${s.codeSummary.allPassed ? "🟢 **CERTIFIED**" : "🔴 **FAILED**"} (\`${passedCode}/${s.codeSummary.results.length}\` stages cleared)`);
+    // If every executed stage died on transport, the suite verdict is ERROR,
+    // not FAILED: the model was never evaluated.
+    const allCodeStagesTransportFailed =
+      s.codeSummary.results.length > 0 && s.codeSummary.results.every((r) => typeof r.error === "string" && r.error.length > 0);
+    const codeVerdictStr = allCodeStagesTransportFailed
+      ? "🔴 **ERROR** (upstream unreachable — model not evaluated)"
+      : s.codeSummary.allPassed
+        ? "🟢 **CERTIFIED**"
+        : "🔴 **FAILED**";
+    lines.push(`**Code Suite Verdict:** ${codeVerdictStr} (\`${passedCode}/${s.codeSummary.results.length}\` stages cleared)`);
     lines.push("");
   }
 
@@ -1287,7 +1345,10 @@ export function determineUnifiedRoleRecommendation(
   }
 
   // 3. Best Wire for Explorer
-  let bestWireForExplorer = "Chat Completions (/v1/chat/completions)";
+  // Explorer requires fast first-token arrival: eval/README.md defines the role as
+  // TTFT < 2s. Throughput alone is not a valid qualification -- a wire that waits
+  // 12s on the queue can out-stream a 900ms one while being unusable interactively.
+  let bestWireForExplorer = `N/A (no wire met the <${EXPLORER_MAX_TTFT_MS}ms TTFT gate)`;
   let maxExplorerSpeed = -1;
 
   for (const w of wires) {
@@ -1296,9 +1357,11 @@ export function determineUnifiedRoleRecommendation(
       (a) => a.model === w.summary?.model
     ) ?? w.summary.speedResult?.aggregates?.[0];
     const tokPerSec = speedAgg?.avgSpeedTokPerSec ?? 0;
+    const ttftMs = speedAgg?.avgTtftMs ?? 0;
+    if (tokPerSec <= 0 || ttftMs <= 0 || ttftMs >= EXPLORER_MAX_TTFT_MS) continue;
     if (tokPerSec > maxExplorerSpeed) {
       maxExplorerSpeed = tokPerSec;
-      const ttft = speedAgg?.avgTtftMs ? ` (${Math.round(speedAgg.avgTtftMs)}ms TTFT)` : "";
+      const ttft = ` (${Math.round(ttftMs)}ms TTFT)`;
       bestWireForExplorer = `${w.wireLabel} (\`${tokPerSec.toFixed(1)} tok/s\`${ttft})`;
     }
   }

@@ -138,10 +138,15 @@ tests/
 │   ├── network/                # Key pool, pacer conveyor, cooldown manager
 │   └── legacy/                 # Monolithic v3.x handlers & legacy HTTP/2 transport
 ├── eval/                       # Unit tests for benchmark graders (eval framework)
-│   ├── patch.test.ts           # Patch extraction and application unit tests
-│   ├── pydantic.test.ts        # Pydantic schema validation tests
-│   ├── security.test.ts        # Injection & safety guard tests
-│   └── web.test.ts             # Web runner & DOM hygiene unit tests
+│   ├── eval_orchestrator.test.ts   # Master gauntlet orchestrator unit tests
+│   ├── anthropic_bridge.test.ts    # Anthropic wire bridge unit tests
+│   ├── eval_web_runner.test.ts     # Web runner harness unit tests
+│   ├── eval_stages_web.test.ts     # Web stage 1-2 unit tests
+│   ├── eval_stages_web_stage3_4.test.ts  # Web stage 3-4 unit tests
+│   └── graders/               # Grader unit tests
+│       ├── patch_grader.test.ts    # Patch extraction and application unit tests
+│       ├── pydantic_grader.test.ts # Pydantic schema validation tests
+│       └── security_grader.test.ts # Injection & safety guard tests
 ├── integration/                # Full gateway pipeline, mock HTTP loopbacks
 │   ├── <handler>_<feature>.test.ts
 │   └── test_<feature>_e2e.py   # Pytest mock integration
@@ -159,19 +164,19 @@ eval/                           # Live model evaluations (NOT run by bun test)
 - **Scope**: Pure logic tests, dispatcher, route execution, AST parsers, directive token validation, cooldown math, header builders, scrubber transforms, pacer conveyor, and telemetry.
 - **Performance**: Ultra-fast execution (<10ms per test). Executed via accelerated parallel runner `bun test` / `bun test:lr` (or alias `bun run test:gateway`).
 - **Environment**: In-memory data structures only; loopback test doubles for mock provider responses.
-- **Examples**: `tests/unit/engine/dispatch.test.ts`, `tests/unit/network/cooldown.test.ts`, `tests/unit/transformers/scrubber.test.ts`.
+- **Examples**: `tests/unit/engine/dispatch.test.ts`, `tests/unit/cooldown.test.ts`, `tests/unit/transformers/openai_chat.test.ts`.
 
 ### 3.2 `tests/eval/` (Benchmark Grader Unit Tests)
 - **Scope**: Hermetic unit tests verifying the offline grading algorithms, patch appliers, Pydantic schema validators, security checks, and web DOM grading logic used by the `eval/` benchmark gauntlet.
 - **Performance**: Fast offline execution. Executed via `bun run test:eval` (182 tests).
 - **Environment**: 100% hermetic and local; zero LLM token consumption.
-- **Examples**: `tests/eval/patch.test.ts`, `tests/eval/pydantic.test.ts`, `tests/eval/security.test.ts`.
+- **Examples**: `tests/eval/graders/patch_grader.test.ts`, `tests/eval/graders/pydantic_grader.test.ts`, `tests/eval/graders/security_grader.test.ts`, `tests/eval/eval_stages_web.test.ts`.
 
 ### 3.3 `tests/unit/legacy/` (Dual-Path Fallback Suites)
 - **Scope**: Legacy monolithic handlers and legacy HTTP/2 transport tests maintained for dual-path fallback safety (`x-literouter-engine: legacy`).
-- **Performance**: Executed via `bun run test:legacy` (179 tests).
+- **Performance**: Executed via the accelerated runner's `legacy` domain: `bun run test legacy`.
 - **Environment**: Hermetic mock tests ensuring regression safety for legacy code paths.
-- **Examples**: `tests/unit/legacy/openai_compat_legacy.test.ts`, `tests/unit/legacy/h2_pool_legacy.test.ts`.
+- **Examples**: `tests/unit/legacy/anthropic_openai_compat.test.ts`, `tests/unit/legacy/h2_pool.test.ts`.
 
 ### 3.4 `tests/integration/` (Gateway End-to-End & Loopbacks)
 - **Scope**: In-process or loopback integration tests checking the full LiteRouter pipeline (`handleAppRequest`, route dispatching, SSE streaming, keep-alive frames, HTTP/2 pooling, abort propagation), plus Pytest integration suites (`test_*_e2e.py`).
@@ -190,7 +195,7 @@ eval/                           # Live model evaluations (NOT run by bun test)
 - **Scope**: Live benchmark gauntlets (`eval/eval.ts`, `eval/code.ts`, `eval/web.ts`, `eval/speed.ts`).
 - **Rules**:
   - Excluded from standard `bun test` passes.
-  - Require explicit model targets: `bun run eval/eval.ts <model_name>`.
+  - Require explicit model targets in this exact order: `bun run eval/eval.ts <model_name> <provider> <api_key>` (e.g. `bun run eval/eval.ts stealth/union-alpha openrouter lr-or-oa-ch-no`), or an `lr-<provider>-...` directive key as the 2nd positional (`bun run eval/eval.ts union-alpha lr-zn-cl-ms-no`). A model-only invocation throws `Missing required argument #2: <provider>` (`eval/validate_cli.ts:561-567`). Options: `--all-wires` (default), `--wire <chat|rs|ms>`, `--suites speed,code,web`, `--runs <n>`, `--stage <n>`, `--reasoning <effort>`, `--reasoning-transcript` / `--no-reasoning-transcript`, `--url <url>`, `--image <path_or_url>`, `--continue`, `--skip-report`, `-h`/`--help` (`eval/eval.ts:1738-1779`).
   - Allowed to consume live API tokens as per operator directive.
 
 ---
@@ -246,7 +251,7 @@ Never run blanket `bun test` during iterative development. LiteRouter provides f
 |---|---|---|---|
 | `bun test` or `bun test:lr` | All domains / targeted slice | ~1,170 tests | **Primary runner** (accelerated parallel runner; `bun run test:gateway` aliases here). Silent on success. |
 | `bun run test:eval` | `tests/eval` (Benchmark grader logic) | ~182 tests | When modifying eval graders, patch tools, or benchmark validation rules. |
-| `bun run test:legacy` | `tests/unit/legacy` (Dual-path legacy fallback) | ~179 tests | When verifying compatibility of legacy handlers or monolithic fallbacks. |
+| `bun run test legacy` | `tests/unit/legacy` (Dual-path legacy fallback) | legacy domain | When verifying compatibility of legacy handlers or monolithic fallbacks. There is no `test:legacy` npm script; `legacy` is a subcommand domain of `scripts/test/test_runner.ts`. |
 | `bun run test:failures` | `bun test --only-failures` | Only failed tests | When running across the suite to surface **only** regressions without passing spam. |
 | `bun test <file>` | Single test file | Targeted | **Gold standard** during active file editing (e.g. `bun test tests/unit/pacer.test.ts`). |
 

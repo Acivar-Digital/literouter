@@ -16,6 +16,9 @@ dependencies = [
     "pydantic-ai>=2.4.0",
     "h2>=4.4.1",
     "granian>=2.8.1",
+    "google-cloud-bigquery>=3.45.1",
+    "polars>=1.44.2",
+    "pyarrow>=25.0.1",
 ]
 
 [project.optional-dependencies]

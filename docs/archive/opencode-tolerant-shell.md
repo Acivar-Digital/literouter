@@ -3,7 +3,7 @@
 **Document Version:** 1.2.0 (Final Approved Enterprise Edition)  
 **Status:** Approved for Implementation  
 **Author:** AI Agent Architecture Team & Production Operations QA  
-**Scope:** Global WSL OpenCode v1 & OpenCode v2 Environments (`~/.config/opencode/` & `~/.config/opencode2/`)
+**Scope:** Global WSL OpenCode v1 & OpenCode v2 Environments (`~/.config/opencode/` & `~/.config/opencode/`)
 
 ---
 
@@ -45,7 +45,7 @@ Invalid tool input: Missing key
 OpenCode provides an official mechanism for tool replacement:
 > *"Custom tools are keyed by tool name. If a custom tool uses the same name as a built-in tool, the custom tool takes precedence."* ([OpenCode Custom Tools Documentation](https://opencode.ai/docs/custom-tools/))
 
-By implementing custom tools named `bash.ts` and `shell.ts` globally in `~/.config/opencode/tools/` and `~/.config/opencode2/tools/`, OpenCode's parameter decoder replaces the rigid built-in validator with our tolerant Zod schema across all workspaces.
+By implementing custom tools named `bash.ts` and `shell.ts` globally in `~/.config/opencode/tools/` and `~/.config/opencode/tools/`, OpenCode's parameter decoder replaces the rigid built-in validator with our tolerant Zod schema across all workspaces.
 
 ```mermaid
 graph TD
@@ -185,8 +185,8 @@ When the process completes:
 |---|---|---|---|
 | `~/.config/opencode/tools/bash.ts` | Global `bash` override | OpenCode v1 (`opencode`) | **To Deploy** |
 | `~/.config/opencode/tools/shell.ts` | Global `shell` alias | OpenCode v1 (`opencode`) | **To Deploy** |
-| `~/.config/opencode2/tools/bash.ts` | Global `bash` override | OpenCode v2 (`opencode2`) | **To Deploy** |
-| `~/.config/opencode2/tools/shell.ts` | Global `shell` alias | OpenCode v2 (`opencode2`) | **To Deploy** |
+| `~/.config/opencode/tools/bash.ts` | Global `bash` override | OpenCode v2 (`opencode`) | **To Deploy** |
+| `~/.config/opencode/tools/shell.ts` | Global `shell` alias | OpenCode v2 (`opencode`) | **To Deploy** |
 | `/home/yapilwsl/arthityap/baziforecaster/.opencode/plugins/tolerant_shell.ts` | Obsolete plugin | Baziforecaster Workspace | **To Clean Up** |
 
 ---

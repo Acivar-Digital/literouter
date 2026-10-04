@@ -22,7 +22,7 @@ import urllib.error
 import urllib.request
 from typing import Any, Dict, List, Optional, Tuple
 
-DB_PATH = os.path.expanduser("~/.local/share/opencode2/opencode/opencode.db")
+DB_PATH = os.path.expanduser("~/.local/share/opencode/opencode/opencode.db")
 GATEWAY_URLS = [
     "https://localhost:7766/v1/chat/completions",
     "http://localhost:7766/v1/chat/completions",

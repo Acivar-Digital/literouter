@@ -31,6 +31,12 @@ export interface BenchResult {
   errorMessage?: string;
 }
 
+/**
+ * Smallest generation window (ms) considered measurable. Below this, timer
+ * jitter dominates and tok/s becomes noise.
+ */
+export const MIN_OBSERVABLE_GENERATION_MS = 10;
+
 export interface ModelAggregate {
   model: string;
   successfulRuns: number;
@@ -75,17 +81,19 @@ export async function runSingleBenchmark(
     status: "OK",
   };
 
+  // /v1/responses rejects the Chat Completions body shape ("No input provided")
+  // and streams flat `response.*` events instead of `choices[]` chunks, so the
+  // wire must be detected before building the payload and before parsing SSE.
+  const isResponsesWire = endpoint.includes("/v1/responses");
+
   const payload = {
     model,
     stream: true,
-    stream_options: { include_usage: true },
+    ...(isResponsesWire ? {} : { stream_options: { include_usage: true } }),
     ...(extraPayload ?? {}),
-    messages: [
-      {
-        role: "user",
-        content: BENCH_PROMPT,
-      },
-    ],
+    ...(isResponsesWire
+      ? { input: [{ role: "user", content: BENCH_PROMPT }] }
+      : { messages: [{ role: "user", content: BENCH_PROMPT }] }),
   };
 
   const start = performance.now();
@@ -93,6 +101,7 @@ export async function runSingleBenchmark(
   let accumulatedContent = "";
   let accumulatedThinking = "";
   let reportedUsage: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } | null = null;
+  let responsesOutputTokens: number | null = null;
 
   try {
     const resp = await fetch(endpoint, {
@@ -145,6 +154,23 @@ export async function runSingleBenchmark(
             reportedUsage = json.usage;
           }
 
+          // Responses API: flat `response.*` events, no choices[] array.
+          if (isResponsesWire && typeof json.type === "string") {
+            if (
+              json.type === "response.output_text.delta" ||
+              json.type === "response.reasoning_summary_text.delta"
+            ) {
+              const text = typeof json.delta === "string" ? json.delta : "";
+              if (text && firstTokenTime === null) firstTokenTime = performance.now();
+              if (json.type === "response.output_text.delta") accumulatedContent += text;
+              else accumulatedThinking += text;
+            } else if (json.type === "response.completed" || json.type === "response.incomplete") {
+              const outputTokens = json.response?.usage?.output_tokens;
+              if (typeof outputTokens === "number") responsesOutputTokens = outputTokens;
+            }
+            continue;
+          }
+
           const choice = json.choices?.[0];
           const delta = choice?.delta;
 
@@ -152,7 +178,19 @@ export async function runSingleBenchmark(
             const content = delta.content || "";
             const reasoning = delta.reasoning_content || delta.reasoning || "";
 
-            if ((content || reasoning) && firstTokenTime === null) {
+            // Any emitted token counts as arrival. tool_calls/thought deltas
+            // are real generation and must open the measurement window too --
+            // Zen injects probe tools, so a tool-only stream carries tokens
+            // that this gate used to discard.
+            const toolCalls = delta.tool_calls;
+            const hasToolDelta =
+              Array.isArray(toolCalls) &&
+              toolCalls.some((tc: Record<string, unknown>) => {
+                const fn = tc?.function as Record<string, unknown> | undefined;
+                return Boolean(tc?.id) || typeof fn?.name === "string" || typeof fn?.arguments === "string";
+              });
+
+            if ((content || reasoning || hasToolDelta) && firstTokenTime === null) {
               firstTokenTime = performance.now();
             }
 
@@ -166,8 +204,12 @@ export async function runSingleBenchmark(
     }
 
     const end = performance.now();
-    result.ttftMs = firstTokenTime ? Math.round(firstTokenTime - start) : Math.round(end - start);
     result.totalDurationMs = Math.round(end - start);
+    // Never let TTFT equal total duration: that collapses the generation
+    // window to zero and inflates tok/s by ~1000x. If no token delta was
+    // observed the arrival time is unknown, so leave ttftMs at 0 and let
+    // the throughput guard below measure over the whole wall clock.
+    result.ttftMs = firstTokenTime ? Math.round(firstTokenTime - start) : 0;
 
     if (result.status === "ERROR") {
       result.totalTokens = 0;
@@ -175,7 +217,9 @@ export async function runSingleBenchmark(
       return result;
     }
 
-    if (reportedUsage && reportedUsage.completion_tokens) {
+    if (responsesOutputTokens !== null && responsesOutputTokens > 0) {
+      result.totalTokens = responsesOutputTokens;
+    } else if (reportedUsage && reportedUsage.completion_tokens) {
       result.totalTokens = reportedUsage.completion_tokens;
     } else {
       const totalChars = accumulatedContent.length + accumulatedThinking.length;
@@ -189,8 +233,15 @@ export async function runSingleBenchmark(
       result.contentTokens = result.totalTokens;
     }
 
-    const generationTimeSec = Math.max(0.001, (result.totalDurationMs - result.ttftMs) / 1000);
-    result.speedTokPerSec = Math.round((result.totalTokens / generationTimeSec) * 10) / 10;
+    // Guard against a zero/negative window. Falling back to full wall-clock
+    // duration yields an under-estimate rather than a 1000x over-estimate.
+    const observedWindowMs = result.totalDurationMs - result.ttftMs;
+    const generationTimeSec =
+      observedWindowMs > MIN_OBSERVABLE_GENERATION_MS
+        ? observedWindowMs / 1000
+        : result.totalDurationMs / 1000;
+    result.speedTokPerSec =
+      generationTimeSec > 0 ? Math.round((result.totalTokens / generationTimeSec) * 10) / 10 : 0;
 
     return result;
   } catch (err) {
@@ -256,7 +307,7 @@ export interface SpeedBenchmarkOptions {
  * @param models List of model names to benchmark
  * @param runs Number of runs per model (default: 2)
  * @param key Directive key (default: "lr-or-oa-ch-no")
- * @param endpoint Gateway endpoint URL (default: "https://localhost:7766/v1/chat/completions")
+ * @param endpoint Gateway endpoint URL (default: "http://literouter.lan:7766/v1/chat/completions")
  * @param verbose Whether to print progress to stdout (default: false)
  */
 export async function runSpeedBenchmark(
@@ -375,7 +426,7 @@ export async function runBenchmarkCLI() {
       console.log(`  --models <m1,m2>   Comma-separated list of models`);
       console.log(`  --runs <n>         Number of runs per model (default: 2)`);
       console.log(`  --directive <key>  Directive key (default: lr-or-oa-ch-no)`);
-      console.log(`  --url <url>        Gateway URL (default: https://localhost:7766/v1/chat/completions)`);
+      console.log(`  --url <url>        Gateway URL (default: http://literouter.lan:7766/v1/chat/completions)`);
       process.exit(0);
     } else if (arg === "--models" && i + 1 < args.length) {
       const val = args[++i];

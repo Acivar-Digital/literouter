@@ -535,7 +535,7 @@ def gauntlet_harness() -> Generator[Tuple[str, MockUpstreamContext], None, None]
 # ---------------------------------------------------------------------------
 
 
-def test_opencode2_simulation_probe_non_streaming(
+def test_opencode_simulation_probe_non_streaming(
     gauntlet_harness: Tuple[str, MockUpstreamContext],
 ) -> None:
     """Probe 1.1: OpenCode 2 non-streaming chat completion with thinking stripping."""
@@ -574,7 +574,7 @@ def test_opencode2_simulation_probe_non_streaming(
     assert first_choice.finish_reason == "stop"
 
 
-def test_opencode2_simulation_probe_streaming(
+def test_opencode_simulation_probe_streaming(
     gauntlet_harness: Tuple[str, MockUpstreamContext],
 ) -> None:
     """Probe 1.2: OpenCode 2 streaming SSE chat completion with thinking chunks stripped."""

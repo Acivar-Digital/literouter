@@ -156,7 +156,7 @@ this.logTelemetry("increment", step);
         "config/package.json",
         "bunfig.toml",
         ".opencode/opencode.json",
-        ".opencode2/opencode.json",
+        ".opencode/opencode.json",
         "tsconfig.json",
         "tsconfig.build.json",
         ".eslintrc.json",

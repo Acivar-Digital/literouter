@@ -426,8 +426,8 @@ After implementation, update these files:
 
 | File | Update |
 |------|--------|
-| `.opencode2/skills/literouter/directive-grammar.md` §5 | Add `cn` to nuance table: "Chinese model normalization: preserves native tool_calls, strips response_format upstream, unwraps markdown JSON fences (non-streaming)." |
-| `.opencode2/skills/literouter/SKILL.md` §4 | Add `lr-or-oa-ch-cn` to the Top-10 Keys table. |
+| `.opencode/skills/literouter/directive-grammar.md` §5 | Add `cn` to nuance table: "Chinese model normalization: preserves native tool_calls, strips response_format upstream, unwraps markdown JSON fences (non-streaming)." |
+| `.opencode/skills/literouter/SKILL.md` §4 | Add `lr-or-oa-ch-cn` to the Top-10 Keys table. |
 | `CHANGELOG.md` | Add entry under current version. |
 
 ---

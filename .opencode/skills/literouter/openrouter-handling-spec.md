@@ -323,8 +323,8 @@ bun test
 bun test tests/unit/thinking_transformer.test.ts tests/unit/dots_tool_mapping.test.ts
 
 # 3. Run specific tests for pacer rate-limiting and HTTP/2 session isolation
-bun test tests/unit/pacer.test.ts tests/unit/h2_pool.test.ts
+bun test tests/unit/pacer.test.ts tests/unit/legacy/h2_pool.test.ts
 
 # 4. Probe live upstream OpenRouter keys and health
-bun run scripts/doctor.ts
+bun run scripts/diagnose/doctor.ts
 ```

@@ -157,10 +157,10 @@ OpenCode 2 connects to LiteRouter on `https://localhost:7766/v1` using declarati
 
 ## 3. Testing OpenCode 2 Models
 
-Use `scripts/test_opencode_models.sh` to run non-interactive verification across active models:
+Use `scripts/test/test_opencode_models.sh` to run non-interactive verification across active models:
 
 ```bash
-bash scripts/test_opencode_models.sh
+bash scripts/test/test_opencode_models.sh
 ```
 
 ---
@@ -189,7 +189,7 @@ LiteRouter implements **Option 1B: Gateway-Level Automatic Reasoning Stream Stri
 
 To ensure zero downtime and resilience across `@opencode-ai/cli` package updates in Node/NVM environments, LiteRouter includes a standalone auto-patcher and self-healing hook.
 
-### Patcher Script (`scripts/opencode_autopatch.sh`)
+### Patcher Script (`scripts/hooks/opencode_autopatch.sh`)
 - **Autonomous Location**: Resolves installed `@opencode-ai/cli` across `$OPENCODE_CLI_DIR`, active `PATH` Node prefixes, and standard `$HOME/.nvm/versions/node/*` paths.
 - **Binary Integrity & Symlink Sync**: Verifies existence of `opencode`, establishes symlinks with `opencode.exe` where needed for npm bin compatibility, and ensures executable (`chmod +x`) permissions.
 - **Tool Message Format Normalization**: Verifies that messages with `role: "tool"` having array content `[{type: "text", text: ...}]` are cleanly flattened into strings, ensuring compatibility with strict OpenAI-compatible upstream providers.
@@ -200,7 +200,7 @@ To ensure zero downtime and resilience across `@opencode-ai/cli` package updates
 ### Launcher Hook (`~/.local/bin/opencode`)
 The global wrapper script `/home/yapilwsl/.local/bin/opencode` executes the self-healing check transparently prior to dispatching into the node binary:
 ```bash
-AUTOPATCH_SCRIPT="${HOME}/arthityap/literouter/scripts/opencode_autopatch.sh"
+AUTOPATCH_SCRIPT="${HOME}/arthityap/literouter/scripts/hooks/opencode_autopatch.sh"
 if [ -x "$AUTOPATCH_SCRIPT" ]; then
   "$AUTOPATCH_SCRIPT" >/dev/null 2>&1 || true
 fi

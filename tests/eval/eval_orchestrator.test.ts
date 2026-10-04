@@ -1085,6 +1085,156 @@ describe("eval/eval.ts Master Orchestrator Unit Tests", () => {
         expect(rec.strengths).toContain("Pydantic AI 2.0 Schema & Retry Resilience");
         expect(rec.caveats.some((c) => c.includes("runtime failure"))).toBe(true);
       });
+
+      const speedOnlyWire = (
+        wire: WireResultSummary["wire"],
+        wireLabel: string,
+        ttftMs: number,
+        tokPerSec: number,
+      ): WireResultSummary => ({
+        wire,
+        wireLabel,
+        directiveKey: "lr-or-oa-ch-no",
+        gatewayUrl: `http://literouter.lan:7766/v1/${wire}`,
+        passed: false,
+        summary: {
+          model: "test-model",
+          sanitizedModelName: "test-model",
+          timestamp: "2026-09-21T00:00:00.000Z",
+          directiveKey: "lr-or-oa-ch-no",
+          gatewayUrl: `http://literouter.lan:7766/v1/${wire}`,
+          wire,
+          suitesRun: ["speed"],
+          speedResult: {
+            allResults: {},
+            aggregates: [{
+              model: "test-model",
+              successfulRuns: 2,
+              avgTtftMs: ttftMs,
+              minTtftMs: ttftMs,
+              maxTtftMs: ttftMs,
+              avgDurationMs: 20000,
+              avgTotalTokens: 1500,
+              avgSpeedTokPerSec: tokPerSec,
+            }],
+          },
+          roleRecommendation: {
+            role: "Explorer",
+            badge: "⚡ FAST EXPLORER",
+            rationale: "speed fixture",
+            strengths: [],
+            caveats: [],
+          },
+          allSuitesPassed: false,
+        },
+      });
+
+      it("should exclude a high-throughput wire whose TTFT exceeds the Explorer gate", () => {
+        // Reproduces the dots-3-note-preview defect: Chat streams 2.7x faster than
+        // Messages but needs 12.3s for a first token, so it is unusable interactively.
+        const fastStreamSlowStart = speedOnlyWire("chat", "Chat Completions", 12291, 287.6);
+        const slowStreamFastStart = speedOnlyWire("messages", "Anthropic Messages", 905, 107.4);
+        const unmeasured = speedOnlyWire("responses", "Responses API", 0, 0);
+
+        const rec = determineUnifiedRoleRecommendation(fastStreamSlowStart, unmeasured, slowStreamFastStart);
+
+        expect(rec.bestWireForExplorer).toContain("Anthropic Messages");
+        expect(rec.bestWireForExplorer).not.toContain("Chat Completions");
+      });
+
+      it("should report no Explorer wire when every wire misses the TTFT gate", () => {
+        const slowA = speedOnlyWire("chat", "Chat Completions", 12291, 287.6);
+        const slowB = speedOnlyWire("responses", "Responses API", 9044, 213.9);
+        const unmeasured = speedOnlyWire("messages", "Anthropic Messages", 0, 0);
+
+        const rec = determineUnifiedRoleRecommendation(slowA, slowB, unmeasured);
+
+        expect(rec.bestWireForExplorer).toContain("N/A");
+        expect(rec.bestWireForExplorer).toContain("2000ms");
+      });
+
+      it("should label a pipeline-derived throughput value instead of presenting it as measured", () => {
+        // The Responses wire's speed suite previously failed, so formatWireSpeed
+        // substituted code-stage wall-clock speed into a column labeled Throughput.
+        const consolidated: ConsolidatedModelSummary = {
+          model: "dots-studio/dots-3-note-preview:free",
+          sanitizedModelName: "dots-studio_dots-3-note-preview_free",
+          timestamp: "2026-09-21T00:00:00.000Z",
+          gatewayHost: "http://literouter.lan:7766",
+          directiveKeys: {
+            chat: "lr-or-oa-ch-no",
+            responses: "lr-or-oo-rs-no",
+            messages: "lr-or-cl-ms-no",
+          },
+          wireResults: {
+            chat: {
+              wire: "chat",
+              wireLabel: "Chat Completions",
+              directiveKey: "lr-or-oa-ch-no",
+              gatewayUrl: "http://literouter.lan:7766/v1/chat/completions",
+              passed: false,
+              summary: {
+                model: "dots-studio/dots-3-note-preview:free",
+                sanitizedModelName: "dots-studio_dots-3-note-preview_free",
+                timestamp: "2026-09-21T00:00:00.000Z",
+                directiveKey: "lr-or-oa-ch-no",
+                gatewayUrl: "http://literouter.lan:7766/v1/chat/completions",
+                wire: "chat",
+                suitesRun: ["code"],
+                codeSummary: {
+                  model: "dots-studio/dots-3-note-preview:free",
+                  wire: "chat",
+                  directiveKey: "lr-or-oa-ch-no",
+                  gatewayUrl: "http://literouter.lan:7766/v1/chat/completions",
+                  allPassed: true,
+                  results: [
+                    { stageName: "Stage 4: Surgical Coding", passed: true, score: 50, details: {}, notes: [], durationMs: 24634, completionTokens: 2391 },
+                  ],
+                },
+                roleRecommendation: {
+                  role: "Orchestrator",
+                  badge: "🧠 MASTER ORCHESTRATOR",
+                  rationale: "schema fixture",
+                  strengths: [],
+                  caveats: [],
+                },
+                allSuitesPassed: true,
+              },
+            },
+            responses: {
+              wire: "responses",
+              wireLabel: "Responses API",
+              directiveKey: "lr-or-oo-rs-no",
+              gatewayUrl: "http://literouter.lan:7766/v1/responses",
+              passed: false,
+            },
+            messages: {
+              wire: "messages",
+              wireLabel: "Anthropic Messages",
+              directiveKey: "lr-or-cl-ms-no",
+              gatewayUrl: "http://literouter.lan:7766/v1/messages",
+              passed: false,
+              error: "Connection timeout",
+            },
+          },
+          allWiresPassed: false,
+          unifiedRoleRecommendation: {
+            overallRole: "Orchestrator",
+            badge: "🧠 MASTER ORCHESTRATOR",
+            rationale: "fixture",
+            bestWireForOrchestrator: "Responses API (`lr-or-oo-rs-no`)",
+            bestWireForCoder: "Chat Completions (`lr-or-oa-ch-no`)",
+            bestWireForExplorer: "N/A (no wire met the <2000ms TTFT gate)",
+            strengths: [],
+            caveats: [],
+          },
+        };
+
+        const md = generateConsolidatedMarkdownReport(consolidated);
+
+        expect(md).toContain("pipeline, not measured");
+        expect(md).toContain("no wire met the <2000ms TTFT gate");
+      });
     });
 
     describe("generateConsolidatedMarkdownReport & writeConsolidatedMarkdownReport", () => {

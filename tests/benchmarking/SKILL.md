@@ -53,10 +53,10 @@ tests/benchmarking/run_benchmarks.sh
 ### Step 3: Run OpenCode2 Live Tool & Reasoning Parity Check
 ```bash
 # Test OpenRouter route
-opencode2 run -m lr-or/stealth/ox-alpha --auto "Use bash to echo 'BENCHMARK_VERIFIED' and report what it printed."
+opencode run -m lr-or/stealth/ox-alpha --auto "Use bash to echo 'BENCHMARK_VERIFIED' and report what it printed."
 
 # Test Zen route
-opencode2 run -m lr-zn/hy3-free --auto "Use bash to echo 'BENCHMARK_VERIFIED' and report what it printed."
+opencode run -m lr-zn/hy3-free --auto "Use bash to echo 'BENCHMARK_VERIFIED' and report what it printed."
 ```
 **Gate**: Both commands must execute tool calls, return exit code 0, and output identical answer structures to direct provider runs.
 

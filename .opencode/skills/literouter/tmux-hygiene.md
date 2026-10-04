@@ -1,7 +1,7 @@
 # LiteRouter Tmux Hygiene — Clear Rubbish From the Pane
 
 > **Canonical Location:** `.opencode/skills/literouter/tmux-hygiene.md`
-> **Reference Sources:** `scripts/start.sh:81-105`, `scripts/stop.sh`, `scripts/restart.sh`, `src/ui/banner.ts`, `src/index.ts:50-58`, `src/handlers/google_native.ts:93-108`
+> **Reference Sources:** `scripts/gateway/start.sh:81-105`, `scripts/gateway/stop.sh`, `scripts/gateway/restart.sh`, `src/ui/banner.ts`, `src/index.ts:50-58`, `src/handlers/google_native.ts:93-108`
 > **Lazy-load:** Load this file ONLY when the user asks about tmux rubbish, `getcwd` noise, pane echo, blank fill, or quiet boot. Do not load it for routing, keys, or streaming tasks.
 
 ---
@@ -51,7 +51,7 @@ curl -s -m 5 http://10.32.34.243:7766/health   # VPS
 
 ## 3. How `start.sh` keeps the pane quiet (current behavior)
 
-`scripts/start.sh:81-105` (commits `524a539` / `60e2827` / `a73928e` / `329cf65`):
+`scripts/gateway/start.sh:81-105` (commits `524a539` / `60e2827` / `a73928e` / `329cf65`):
 
 1. `tmux new-session -d -s literouter -c "$ROOT_DIR"` with a single initial command — no `send-keys`, so no typed-command echo.
 2. Subshell runs `bash --noprofile --norc -c 'cd / && cd "$ROOT_DIR" && printf "\033[2J\033[H" && ... exec bun run src/index.ts ...'` — survives a stale daemon cwd, clears early warnings.
@@ -61,8 +61,8 @@ curl -s -m 5 http://10.32.34.243:7766/health   # VPS
 Normal restart stays quiet automatically:
 
 ```bash
-bash scripts/restart.sh   # stop → start → health poll → clear-history
-bash scripts/status.sh    # expect: RUNNING + Health OK
+bash scripts/gateway/restart.sh   # stop → start → health poll → clear-history
+bash scripts/gateway/status.sh    # expect: RUNNING + Health OK
 ```
 
 ---
@@ -78,7 +78,7 @@ ssh vps466a 'for p in $(pgrep -x tmux); do echo -n "TMUX $p cwd: "; readlink /pr
 ls -l /proc/*/cwd 2>/dev/null | grep -i deleted
 ```
 
-Durable fix needs a maintenance window — restarting the tmux server kills every session on it (`bazi-infra`, `baziRAG`, `baziforecast`, `literouter`, `mcpmart`). Until then: always boot via `bash scripts/restart.sh`, never manual double-`cd` from the dead cwd, and never reboot the host to "fix tmux" (kills all sessions + this agent session).
+Durable fix needs a maintenance window — restarting the tmux server kills every session on it (`bazi-infra`, `baziRAG`, `baziforecast`, `literouter`, `mcpmart`). Until then: always boot via `bash scripts/gateway/restart.sh`, never manual double-`cd` from the dead cwd, and never reboot the host to "fix tmux" (kills all sessions + this agent session).
 
 ---
 

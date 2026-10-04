@@ -72,13 +72,13 @@ tests/benchmarking/run_benchmarks.sh
 Compare direct vs LiteRouter behavior:
 ```bash
 # LiteRouter Route (ox-alpha)
-opencode2 run -m lr-or/stealth/ox-alpha --auto "Use bash to echo 'PARITY_TEST' and report what it printed."
+opencode run -m lr-or/stealth/ox-alpha --auto "Use bash to echo 'PARITY_TEST' and report what it printed."
 
 # Direct Provider Route (Zen hy3-free)
-opencode2 run -m opencode/hy3-free --auto "Use bash to echo 'PARITY_TEST' and report what it printed."
+opencode run -m opencode/hy3-free --auto "Use bash to echo 'PARITY_TEST' and report what it printed."
 
 # LiteRouter Route (Zen hy3-free)
-opencode2 run -m lr-zn/hy3-free --auto "Use bash to echo 'PARITY_TEST' and report what it printed."
+opencode run -m lr-zn/hy3-free --auto "Use bash to echo 'PARITY_TEST' and report what it printed."
 ```
 
 ---

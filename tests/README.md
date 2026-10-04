@@ -2,7 +2,7 @@
 
 Comprehensive automated test architecture, hermetic validation framework, and integration test runner for LiteRouter (Bun runtime, port 7766).
 
-> **AI Agent Authoring Mandate**: When writing or updating tests, you **MUST** follow the complete operational specification in [`.opencode2/skills/literouter/test-hygiene-playbook.md`](../.opencode2/skills/literouter/test-hygiene-playbook.md).
+> **AI Agent Authoring Mandate**: When writing or updating tests, you **MUST** follow the complete operational specification in [`.opencode/skills/literouter/test-hygiene-playbook.md`](../.opencode/skills/literouter/test-hygiene-playbook.md).
 
 ---
 

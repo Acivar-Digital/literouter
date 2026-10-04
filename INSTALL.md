@@ -129,7 +129,7 @@ Expected output:
 
 LiteRouter supports **Directive Keys** (`lr-<provider>-<wire>-<endpoint>-<nuance>`), allowing the client token to route requests dynamically.
 
-#### A. OpenCode 2 (`~/.config/opencode2/opencode.json`)
+#### A. OpenCode 2 (`~/.config/opencode/opencode.json`)
 OpenCode uses `@ai-sdk/openai-compatible` pointing to LiteRouter's `/v1` endpoint:
 
 ```json

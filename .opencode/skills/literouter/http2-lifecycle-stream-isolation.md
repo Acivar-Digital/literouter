@@ -183,5 +183,5 @@ When diagnosing stream or transport issues:
 - [ ] Run `bun run typecheck` (`tsc --noEmit`).
 - [ ] Run `bun test` to verify unit tests for `h2_pool`, `classifier`, and `pacer`.
 - [ ] Run `uv run pytest tests/integration/` to verify live streaming and dual-ALPN handshakes.
-- [ ] Verify gateway status: `bash scripts/status.sh` or `tmux attach -t literouter`.
-- [ ] Restart gateway after edits: `bash scripts/restart.sh`.
+- [ ] Verify gateway status: `bash scripts/gateway/status.sh` or `tmux attach -t literouter`.
+- [ ] Restart gateway after edits: `bash scripts/gateway/restart.sh`.

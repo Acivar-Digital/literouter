@@ -67,7 +67,7 @@ Supporting sample: `data/reports/REPORT_20260917_165055.md` — 10 traces / 2 se
 ## 5. Sources
 
 - `data/PLAN.md` §§1A (reliability), 1C (BYOK vs shared-credit economics), §9 (canonical queries), §11 (Privacy Mode).
-- `.opencode2/skills/openrouter-byok/SKILL.md` §7 (`scripts/check_openrouter_byok.ts` audit + live probe contract); §1 (waterfall `sort_order` semantics).
+- `.opencode/skills/openrouter-byok/SKILL.md` §7 (`scripts/check_openrouter_byok.ts` audit + live probe contract); §1 (waterfall `sort_order` semantics).
 - `src/network/pacer.ts` (`RequestPacer.acquire/release`, `getPacerForProvider`, `PacerConfig`) and `src/network/cooldown.ts` (`CooldownManager.quarantineKey`, `parseResetDelay`, `computeStatusTtlSec`) — signatures only.
 - `data/docs/Google_BigQuery.md` (query patterns, JSON columns, Privacy Mode).
 - `data/reports/REPORT_20260917_165055.md` (10/10 ok sample, $0.02 total).

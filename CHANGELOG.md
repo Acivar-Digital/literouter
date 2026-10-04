@@ -2,6 +2,35 @@
 
 All notable changes to LiteRouter will be documented in this file.
 
+## [Unreleased] — 2026-10-05
+
+### Fixed
+- **Multi-wire evaluation harness: speed benchmark, Explorer TTFT gate, throughput labelling** (`literouter-pmut`, `literouter-chw8`, `literouter-8upq`):
+  - **Speed benchmark was wire-blind (`eval/speed.ts`)** (`literouter-pmut`): `runSingleBenchmark` always posted a Chat Completions body (`{messages, stream_options}`) to whichever endpoint it was given, but `eval/eval.ts` passes `/v1/responses` for the Responses wire, which requires `{input}`. Observed symptom: `POST /v1/responses` returned HTTP 400 with body `{"error":{"code":"invalid_prompt","message":"No input provided"}}` in 290 ms, yielding 0 successful runs, so the Responses wire reported `Iterations 0`, `0.0 tok/s` and `Average TTFT: -` in every report and could never participate in a latency comparison. Fixed by detecting the wire from the endpoint, sending an `input`-shaped body for `/v1/responses`, and parsing the flat `response.output_text.delta` and `response.reasoning_summary_text.delta` events plus `response.completed`/`response.incomplete` for `response.usage.output_tokens`. Verified after the fix on `dots-studio/dots-3-note-preview:free`, directive `lr-or-oo-rs-no`: 2 successful runs, TTFT 9829 ms (min 6590, max 13067), throughput 280.7 tok/s, 1534 average output tokens.
+  - **Explorer wire recommendation had no TTFT gate (`eval/eval.ts`)** (`literouter-chw8`): `determineUnifiedRoleRecommendation` ranked wires for `bestWireForExplorer` by throughput alone with no latency filter, contradicting the documented Explorer criterion of TTFT < 2 s in `eval/README.md`. Observed symptom: `dots-studio/dots-3-note-preview:free` was recommended on Chat Completions at 12291 ms TTFT — 6x over the documented ceiling — and the same artifact recurred across the report directory, including a nonsensical `367081.3 tok/s` at 20607 ms TTFT. Added module constant `EXPLORER_MAX_TTFT_MS = 2000`; wires are now filtered on `avgTtftMs` before the throughput ranking, and when no wire qualifies the field states `N/A (no wire met the <2000ms TTFT gate)` instead of naming an unusable wire.
+  - **Throughput column silently substituted a different quantity (`eval/eval.ts`)** (`literouter-8upq`): `formatWireSpeed` fell back to code/web stage wall-clock speed when no speed measurement existed, then rendered it inside a column labelled `Throughput Speed`. Consequence: the Responses wire showed `73.8 tok/s` in the consolidated comparison matrix while its own speed table read `0`, which is what produced the impossible throughput figures above. Pipeline-derived values are now labelled `tok/s (pipeline, not measured)`, and wires with no measurement render as `not measured`.
+  - **Regression tests (`tests/eval/eval_orchestrator.test.ts`)**: Added 3 tests covering the Explorer TTFT gate, the no-qualifying-wire case, and the pipeline-derived throughput label.
+
+  - **Zen 403 FreeTierError: malformed User-Agent regenerated at every boot (`tools/get_opencode_ver.ts`)**: Root cause of every Zen wire failing in `eval/reports/fledge-alpha-free.md`. `getOpencodeVersion()` parsed `opencode --version` output with a single-pass prefix strip (`/^opencode?[\/@\s]*/i`) and `opencode v2.0.22` → `v2.0.22`, but any repeated prefix (`opencode opencode v2.0.22`) left `opencode v2.0.22` behind, so the template emitted `opencode/opencode v2.0.22 …` into `config/providers.json`. `scripts/gateway/start.sh:66` re-runs this tool on every boot, so the bad value was recreated at each restart and manual config edits reverted within seconds. Upstream Zen answers a malformed version with **`403 FreeTierError`, not the `426 UpgradeRequired`** documented in `.opencode/skills/literouter/zen-provider.md`, so the documented version check never fired and the failure presented as "model cannot do the task". Verified by direct curl matrix against `https://opencode.ai/zen` holding key/session/tools constant: the exact VPS User-Agent returned 403 while `opencode/2.0.22`, `opencode/v2.0.22` and `opencode/1.18.30` all returned 200; a beta User-Agent returned 426, proving the version channel is semver-gated. Replaced prefix-stripping with direct semver extraction `(\d+)\.(\d+)\.(\d+)` plus a `>= 1.18.0` floor and beta/RC rejection, making a doubled version segment structurally impossible.
+  - **Evaluation harness scored transport rejection as model failure (`eval/stages/types.ts`, `eval/stages/stage1_wire.ts`, `eval/stages_rs/stage1_wire.ts`, `eval/eval.ts`)**: When a gateway rejects a stage (403 free-tier, 429 cooldown, timeout), the harness caught the non-2xx, pushed it to `notes`, and awarded `0` — rendering an unreachable upstream as a red `0/100` "model failure". `StageResult` now carries an optional `error` meaning "the request never reached the model", so `score` carries no capability signal. Both code-suite renderers (`generateMarkdownReport` and the per-wire detail section) and `formatWireVerdict` now emit `🔴 ERROR` with the score suppressed and an explicit `upstream unreachable — model not evaluated` verdict, distinguishing it from a genuine capability miss.
+  - **Speed benchmark reported impossible throughput (`eval/speed.ts`)**: `result.ttftMs` fell back to the full request duration whenever no qualifying SSE delta was parsed, collapsing the generation window to zero; `Math.max(0.001, …)` then divided by a 1 ms floor, yielding `367081.3 tok/s` for a 1541-token / 27832 ms run (≈27816x inflated; the correct value is 55.4 tok/s). TTFT now stays `0` when arrival is unobserved, the throughput window falls back to wall-clock duration instead of clamping, and `delta.tool_calls` counts as token arrival (Zen injects probe tools, so tool-only streams were being discarded). `MIN_OBSERVABLE_GENERATION_MS = 10` bounds timer jitter.
+
+### Documentation
+- **LiteRouter skill and eval docs corrected against source** (`.opencode/skills/literouter/**`, `.opencode/skills/literouter-eval/SKILL.md`, `eval/README.md`): 22 files. Replaced stale `scripts/` paths after the subdirectory split (`scripts/doctor.ts` → `scripts/diagnose/doctor.ts`, `scripts/status.sh` → `scripts/gateway/status.sh`, `scripts/hooks/*`, `scripts/test/*`, `scripts/sync/*`); corrected timeout values that claimed a 5 s TTFT guard when `src/network/fetcher.ts` sets `TTFT_TIMEOUT_MS = 120000` and the tracked `.env` sets `LITEROUTER_NO_RESPONSE_TIMEOUT=180` (180000 ms); corrected every documented `bun run eval/eval.ts <model_name>` invocation, which aborts at `eval/validate_cli.ts:563` with `Missing required argument #2: <provider>`; removed `concurrency`/`slot headroom` claims for `eval/speed.ts` (a sequential loop) and the `>100 tok/s` Explorer threshold (the enforced gate is `EXPLORER_MAX_TTFT_MS = 2000`); documented that the default output is the Consolidated Multi-Wire report and that `--reasoning-transcript` exists on `eval/code.ts` but not `eval/web.ts`.
+
+## [Unreleased] — 2026-09-25
+
+### Verified & Hardened
+- **OpenCode V2 Context Reasoning Collapse & Anthropic Wire Compatibility**:
+  - Investigated and verified OpenCode V2 native plugin architecture for reasoning block management (`collapse-reasoning.ts`).
+  - Debunked false "Senior QA" claims regarding `@opencode/plugin` package deprecation and SQLite corruption bugs (#43731). Confirmed `@opencode-ai/plugin` (`0.0.0-next-*`) is the authentic V2 package and `ctx.session.hook("context")` operates on an in-memory dispatch array.
+  - Implemented and verified Anthropic Messages wire invariants:
+    1. Preserved reasoning blocks and cryptographic signatures for assistant turns making tool calls to avoid HTTP 400 rejection from Anthropic.
+    2. Guaranteed non-empty content arrays (`content: [{ type: "text", text: "(thinking collapsed)" }]`) when conversational turns consist solely of reasoning, eliminating fatal Anthropic HTTP 400 (`messages.X.content: Input should have at least 1 item`) and preventing role alternation collapse.
+    3. Stripped unclosed `<think>` tags resulting from truncated or token-limited model responses.
+  - Verified live in production across multi-turn sessions and tool execution on Anthropic wire model `lr-zn-ant/space-bunny-free` via `opencode run`.
+  - Documented complete architecture, wire constraints, and production-hardened source in `.opencode/skills/literouter/opencode-reasoning-scrubber.md`.
+
 ## [Unreleased] — 2026-09-21
 
 ### Added
@@ -26,7 +55,7 @@ All notable changes to LiteRouter will be documented in this file.
     2. **Subagent Simulation (custom tool + `tool_choice: "none"`)**: Validates that custom subagent tools are preserved alongside merged core probe tools, and `tool_choice` is normalized to `"auto"`.
     3. **Responses API Wire (`POST /v1/responses`)**: Validates top-level tool injection and SSE completion parsing for models like `muse-spark-1.3-contributor-free`.
 - **Decoupled OpenCode Version Discovery (`tools/get_opencode_ver.ts`)** (`literouter-c08z1`):
-  - Updated to discover `opencode2` (v2) as primary and legacy `opencode` (v1) as fallback.
+  - Updated to discover `opencode` (v2) as primary and legacy `opencode` (v1) as fallback.
   - Automatically filters out prerelease/beta tags (e.g. `0.0.0-beta-*`), falling back to a compliant stable semver (`1.18.30`) so upstream Zen anti-abuse gates never kick back `HTTP 426 UpgradeRequired`.
   - Ensures LiteRouter gateway boots and functions completely independently if the legacy `opencode` (v1) binary is uninstalled or removed.
 
@@ -37,7 +66,7 @@ All notable changes to LiteRouter will be documented in this file.
   - **Client Application Scrubbing & Unconditional Attribution Overwrite (`src/engine/zen.ts:scrubZenHeaders`)** (`literouter-djgx`):
     - Implemented case-insensitive deletion of client application identity headers (`x-client-*`, `client-*`, `x-opencode-client`, `x-opencode-version`, `x-application-*`, `sec-ch-ua*`, `origin`, etc.) across all outbound Zen calls, preventing client application signatures from leaking upstream.
     - **Unconditional Header Overwrite (`buildZenHeaders`)**: Enforces authentic OpenCode headers (`User-Agent`, `Referer`, `HTTP-Referer`, `X-Title`, `session-id`, `x-session-id`, `x-opencode-session`, `x-opencode-request`) without relying on client-supplied values.
-    - **OpenAI Responses Wire Adaptation (`src/transformers/openai_responses.ts`, `src/engine/zen.ts:adaptZenResponsesPayload`)**: Added top-level Responses API probe tool injection (`getZenResponsesProbeTools`) and upstream `stream: true` forcing with automatic stream accumulation (`accumulateZenResponsesStream`) for non-streaming callers, enabling models like `muse-spark-1.3-contributor-free` to execute cleanly via `opencode2 run` without 403 `FreeTierError`.
+    - **OpenAI Responses Wire Adaptation (`src/transformers/openai_responses.ts`, `src/engine/zen.ts:adaptZenResponsesPayload`)**: Added top-level Responses API probe tool injection (`getZenResponsesProbeTools`) and upstream `stream: true` forcing with automatic stream accumulation (`accumulateZenResponsesStream`) for non-streaming callers, enabling models like `muse-spark-1.3-contributor-free` to execute cleanly via `opencode run` without 403 `FreeTierError`.
     - **Comprehensive Regression Tests (`tests/unit/engine/zen.test.ts`, `tests/unit/transformers/openai_responses.test.ts`)**: Added coverage for header scrubbing, Responses probe tool schemas, payload adaptation, tool merging, and SSE accumulation. All 1,384 unit tests pass green.
 
 ## [Unreleased] — 2026-09-18
@@ -79,14 +108,14 @@ All notable changes to LiteRouter will be documented in this file.
 ## [Unreleased] — Error Taxonomy S5 (literouter-ky12 / lyqp / 0w12 / 4nyz / 58xb)
 
 ### Added
-- **Grilled error-handling decisions (docs-only, DOCS-ONLY slice)** — recorded in `CHANGELOG.md`, `.opencode2/skills/literouter/error-action-matrix.md`, and referenced from `SKILL.md`:
+- **Grilled error-handling decisions (docs-only, DOCS-ONLY slice)** — recorded in `CHANGELOG.md`, `.opencode/skills/literouter/error-action-matrix.md`, and referenced from `SKILL.md`:
   1. **401/403 fail-fast canonical** — request fails fast downstream (no key-rotation retry); aligned legacy handlers + v4 engine. 401 keeps tiered key quarantine (300s / 1800s / 86400s); 403 quarantines zero (see 2).
   2. **403 zero-quarantine all** — policy AND true-auth 403s bench zero seconds (`fail_fast`, `quarantineTtlSec 0`, never parked); no `CooldownManager` quarantine call on the 403 path.
   3. **408 retry_rotate via `providers.json` request_retry schedule** — retry schedule (`min_ms`, `max_ms`, `max_attempts`) from `config/providers.json` drives 408 retry rotation; no hardcoded `Retry-After: 5`; uses `request_retry.delay` jitter.
   4. **Full typed `error_type` parser (3 skins)** — parser supports 3 skin variants (`standard`, `legacy`, `v4`); `error_type` wins over `status`; conservation-first (`conserve_rules` takes precedence over generic 429 quarantine); typed output: `error_type`, `status`, `action`, `isRetryable`, `quarantineTtlSec`.
   5. **Condensed terminal format (`error_type` + `status`) + full trace** — terminal line: `error_type=<type> status=<code> action=<action>`; full trace preserved in telemetry (`session-id`, `key_index`, `provider_code`, `quarantineTtlSec`, `request_retry` config reference).
 
-> Source: `.opencode2/skills/literouter/error-action-matrix.md` (§1 status matrix, rows 3/4/5 for 401/403; row 15 for 408; §2 call chain). No `.env*` changes; no key material.
+> Source: `.opencode/skills/literouter/error-action-matrix.md` (§1 status matrix, rows 3/4/5 for 401/403; row 15 for 408; §2 call chain). No `.env*` changes; no key material.
 
 ## [Unreleased] — 2026-09-14
 
@@ -104,7 +133,7 @@ All notable changes to LiteRouter will be documented in this file.
 - **Bun v1.4.2 runtime optimization & skill update**:
   - Upgraded runtime environment to Bun v1.4.2.
   - Added proactive heap and JIT code compaction via `Bun.gc(true)` inside `handleHardReset()`.
-  - Documented Bun v1.4.2 architecture (native ALPN HTTP/2 in `Bun.serve`, JIT idle memory compaction, streaming `Bun.write`, and hardened array GC) in `.opencode2/skills/literouter/SKILL.md` (§16.5) and `gc-memory.md`.
+  - Documented Bun v1.4.2 architecture (native ALPN HTTP/2 in `Bun.serve`, JIT idle memory compaction, streaming `Bun.write`, and hardened array GC) in `.opencode/skills/literouter/SKILL.md` (§16.5) and `gc-memory.md`.
 
 ### Security
 - **Auth-gated `/reset` endpoint (`src/index.ts`)**:
@@ -125,7 +154,7 @@ All notable changes to LiteRouter will be documented in this file.
   - Unified `buildAuthHeaders` and `buildUpstreamHeaders` to invoke `ensureSessionHeaders` across all handlers, handling both `Headers` instances and plain object header maps.
   - Normalized all 6 client session header variants (`session-id`, `x-session-id`, `x-opencode-session`, `x-opencode-session-id`, `opencode-session-id`, `opencode-session`) into canonical upstream `session-id`.
   - Preserved incoming client session ID on Zen (`zn` / `zen`) provider requests without being overwritten by random session ID generation.
-  - Documented canonical session identity preservation invariant in `.opencode2/skills/literouter/SKILL.md` (§27).
+  - Documented canonical session identity preservation invariant in `.opencode/skills/literouter/SKILL.md` (§27).
   - Added test suite coverage in `tests/unit/handlers/session_forwarding.test.ts`, `tests/unit/handlers/openai_compat.test.ts`, and `tests/unit/legacy/openai_original.test.ts`.
 - **Downstream Server Protocol & Host Binding (`src/index.ts`)**:
   - Connected `loadLocationConfig()` directly into `createServer()` options so server `hostname` and `tls` options strictly track `config/location.json` instead of falling back to default cert detection or `localhost`.
@@ -162,7 +191,7 @@ All notable changes to LiteRouter will be documented in this file.
   - **Exhaustive Key Audit (`scripts/doctor_full.ts` & `--full`)**: Added `scripts/doctor_full.ts` and `--full` flag (`bun run scripts/doctor.ts --full` / `bun run doctor:full`) for running exhaustive, un-sampled key probes across all keys in all provider pools.
   - **Provider Filtering**: Preserved targeted provider probe filtering across both modes (e.g. `bun run scripts/doctor.ts zn`, `bun run scripts/doctor_full.ts nv`).
 
-- **Accelerated Parallel Test Runner & OpenCode2 Native Tool (`scripts/test_runner.ts`, `.opencode2/plugins/`)**:
+- **Accelerated Parallel Test Runner & OpenCode2 Native Tool (`scripts/test_runner.ts`, `.opencode/plugins/`)**:
   - **Domain-Partitioned Parallel Execution**: Partitioned 938+ gateway unit tests across 7 isolated domains (`handlers`, `network`, `stream`, `engine`, `telemetry`, `core`, `eval`), executing concurrently in child worker subprocesses via `scripts/test_runner.ts` (`bun test` / `bun test:lr`).
   - **Anti-Context-Bloat Pass Suppression**: Automatically suppresses all passing test noise, capturing process outputs silently and printing a single-line summary with timing and pass counts upon success. Failures are cleanly isolated and surfaced without terminal truncation.
   - **OpenCode2 Native Tool (`test_literouter`)**: Integrated a zero-bloat custom test tool into OpenCode2 plugins for programmatic subagent and agentic test execution without polluting agent context.
@@ -173,20 +202,20 @@ All notable changes to LiteRouter will be documented in this file.
   - **Logger Emitters & Types (`src/ui/logger.ts`)**: Added `formatModelDisplay`, standalone `logModel` emitter, and extended `InboundLogDetails` with optional `resolvedModel` and `tier` fields.
   - **Telemetry Session State Tracking (`src/telemetry/session.ts`)**: Extended `SessionData` with `resolvedModel?: string` and `tier?: number`, adding `setResolvedTarget(model, tier)` and `emitResolvedModel()` to emit updated model resolution banners on target progression hops.
   - **Dispatch Pipeline Synchronization (`src/engine/dispatch.ts`)**: Wired strategy target resolution (`strategy.resolveTarget`) prior to initial inbound banner emission, synchronizing `resolvedModel` and `tier` so initial inbound logging displays the resolved model and tier. Mid-flight cascade target switches on subsequent retry attempts automatically invoke `emitResolvedModel()`.
-  - **Skill Documentation**: Updated `.opencode2/skills/literouter/SKILL.md` and `.opencode2/skills/literouter/logger.md` with complete telemetry specifications, session fields, and logging patterns for fusion cascades.
+  - **Skill Documentation**: Updated `.opencode/skills/literouter/SKILL.md` and `.opencode/skills/literouter/logger.md` with complete telemetry specifications, session fields, and logging patterns for fusion cascades.
 
 - **Ground-Truth Provider Architecture & Single Conveyor Pipe Refactor**:
   - **Purged Dead Ballast**: Eradicated `limits` (`rpm`, `rpd`, `tpm`) across all providers and 12 Google models (Zdist relic); purged `circuit_breaker` across all providers into safe pass-through (zero artificial 503 outage tripping); purged fine-grained `key_cooldown` knobs and `max_delay_ms`.
   - **Single FIFO Conveyor Pipe**: Standardized `RequestPacer` default `max_queue_depth: 500` with strict FIFO ordering, zero shadow fallbacks (`?? 200`), and clean downstream `AbortSignal` dequeuing to eliminate queuing leaks on client disconnects.
-  - **Fatal Auth Fail-Fast (401/403)**: Purged the 24-hour auth lockout table; HTTP 401 (Unauthorized) and HTTP 403 (Forbidden) responses now fail fast and loud with zero retries, rejecting outright to downstream clients (`opencode2`, Claude Code CLI, etc.).
+  - **Fatal Auth Fail-Fast (401/403)**: Purged the 24-hour auth lockout table; HTTP 401 (Unauthorized) and HTTP 403 (Forbidden) responses now fail fast and loud with zero retries, rejecting outright to downstream clients (`opencode`, Claude Code CLI, etc.).
   - **Conservation-Only Benching**: Purged 65-second reactive rate limit quarantine; only explicit `conserve_rules` bench keys until `midnight_utc`.
   - **Handler Ground Truth**: Reconnected `google_native.ts` and `gcp_compat.ts` to `getProviderConfig`, purging all hardcoded magic constants (`MAX_NATIVE_ATTEMPTS = 3`, `?? 2000`, `?? 240000`, `Retry-After: 5`).
-  - **Skill & Operational Documentation**: Updated `.opencode2/skills/literouter/SKILL.md` with full ground-truth operational guidelines and architectural constraints.
+  - **Skill & Operational Documentation**: Updated `.opencode/skills/literouter/SKILL.md` with full ground-truth operational guidelines and architectural constraints.
 
 - **Canonical OpenCode Session ID Standardization (`src/engine/session_id.ts`)**: Standardized OpenCode session ID minting (`ses_` + 26 base62 alphanumeric characters) across all upstream providers (Zen, OpenRouter, etc.). Preserves inbound client session IDs (from OpenCode CLI / Antigravity IDE) and automatically synthesizes a valid `ses_...` token when missing (enabling Pydantic evals, curl, and automated test harnesses to pass Zen free-tier gating without `400 MissingSessionID`).
 - Partitioned test suite scripts in `package.json`: `test:gateway` (runs `tests/unit`), `test:eval` (runs `tests/eval`), `test:legacy` (runs `tests/unit/legacy`), and `test:failures` (`--only-failures` to eliminate context bloat and silent truncation).
 - Comprehensive production-grade documentation across all test suites: `tests/README.md` (architecture, runner matrix, and air-gap barrier), `tests/unit/README.md` (v4 core gateway tests), `tests/eval/README.md` (hermetic capability graders and web evaluators), `tests/unit/legacy/README.md` (dual-path fallback handlers and transport), and `tests/integration/README.md` (pytest integration and Downstream Agent Gauntlet).
-- Updated `.opencode2/skills/literouter/SKILL.md` and `test-hygiene-playbook.md` with targeted test runners and anti-context-bloat protocols.
+- Updated `.opencode/skills/literouter/SKILL.md` and `test-hygiene-playbook.md` with targeted test runners and anti-context-bloat protocols.
 - Updated `AGENTS.md` with the Anti-Context-Bloat & Silent Truncation Mandate and Rate Limiting & Pacing architecture notes.
 - **Reasoning-transcript capture default-ON for the code eval suite (`eval/stages/types.ts`, `eval/code.ts`, `eval/eval.ts`)**: collects per-stage `reasoning_content` deltas under the `ts-nuance` key, renders an unscored collapsible transcript appendix in markdown report cards, opt-out via `--no-reasoning-transcript` (literouter-pqi9).
 
@@ -221,7 +250,7 @@ All notable changes to LiteRouter will be documented in this file.
   - `NativeCascadeStrategy` in `src/engine/strategies/native_cascade.ts` now rewrites `:generateContent` to `:streamGenerateContent` for both `gc` and `g1`, and preserves inbound query parameters (`?alt=sse`) without leaking `key`.
   - `handleGoogleNative` in `src/handlers/v4/google_native.ts` now passes full `url.pathname + url.search` in `dispatchReq.path`.
   - Comprehensive unit test coverage added in `tests/unit/transformers/google_native.test.ts` and `tests/unit/engine/strategies/native_cascade.test.ts`.
-  - Updated LiteRouter skill documentation across `.opencode2/skills/literouter/`.
+  - Updated LiteRouter skill documentation across `.opencode/skills/literouter/`.
 - **Zero-Quarantine Transparent Forwarding for Zen (`zn`) & GCP (`gc`) (`config/providers.json`)**:
   - Restored `key_cooldown.enabled: false` for Zen (`zn`) and GCP (`gc`) in `config/providers.json`.
   - Eliminated erroneous 19,883s key cooldown lockouts caused by upstream 429 `Retry-After` headers on Zen free-tier models.
@@ -500,7 +529,7 @@ LiteRouter 4.0.0 is a milestone release delivering enterprise-grade performance,
     - `eval/speed.ts`: Model latency, TTFT, and tokens/sec throughput benchmark (moved from `scripts/bench_speed.ts`).
     - `eval/code.ts`: 5-stage agentic & coding capability harness supporting dual Chat Completions and Responses API protocols polymorphically (replaces `eval/onboard.ts` and `eval/onboard_rs.ts`).
     - `eval/web.ts`: 5-stage Vision-Language web frontend generation harness (replaces `eval/build_web.ts`).
-  - Pruned deprecated entrypoints (`eval/build_web.ts`, `eval/onboard.ts`, `eval/onboard_rs.ts`) and updated skill references in `.opencode2/skills/literouter/`.
+  - Pruned deprecated entrypoints (`eval/build_web.ts`, `eval/onboard.ts`, `eval/onboard_rs.ts`) and updated skill references in `.opencode/skills/literouter/`.
 - **Master Evaluation Orchestrator (`eval/eval.ts`)**:
   - Built a comprehensive CLI and programmatic orchestrator coordinating `speed`, `code`, and `web` evaluation suites in a single command.
   - Generates executive Markdown report cards saved directly into `eval/reports/<sanitized_model_name>.md`.
@@ -583,7 +612,7 @@ LiteRouter 4.0.0 is a milestone release delivering enterprise-grade performance,
 - **Model Registry Cleanup**:
   - Removed obsolete and confusing legacy root `models.json`.
   - Standardized all scripts, test runners, demos, and documentation on canonical `config/models.json` (`tests/integration/smoke/test_downstream_dual.py`, `scripts/health_check_models.py`, `scripts/gather_model_details.py`, `demo/demo_upsell.ts`).
-  - Overhauled `.opencode2/skills/literouter/fusion.md` to comprehensively document Google Native Flash Fusion alongside OpenAI-compatible virtual presets (`quad`, `pydn`, `fast`, `deep`).
+  - Overhauled `.opencode/skills/literouter/fusion.md` to comprehensively document Google Native Flash Fusion alongside OpenAI-compatible virtual presets (`quad`, `pydn`, `fast`, `deep`).
 
 
 ### Feat / Google Native Flash Fusion descending chain (literouter-rg8k, literouter-zzna) - 2026-09-08
@@ -610,7 +639,7 @@ LiteRouter 4.0.0 is a milestone release delivering enterprise-grade performance,
 ### Added / Zen doctor session probes + zen-provider skill sheet (literouter-9qw0, literouter-f6w6, literouter-vp10) - 2026-09-08
 - `scripts/doctor_zn.ts` (new, isolated): `generateZenSessionId()` mints a fresh `ses_` + 26 random base62 ID per probe (matches verified OpenCode pattern), `buildZenSessionHeaders()` layers registry static identity (`config/providers.json` Zen headers) with the full session fan-out, `probeZenKeyWithFreshSession()` pings `big-pickle` with one distinct session per key. `scripts/doctor.ts` Zen loop delegates to it; legacy static-only `probeZenKey` kept as fallback reference.
 - Verified live: `bun run scripts/doctor.ts --provider=zn` went 7x `400 MissingSessionID` to 7/7 `200 OK (Healthy)`; generator emits 7/7 unique IDs matching `^ses_[A-Za-z0-9]{26}$`; guardrail valid x2 + `bun run typecheck` clean.
-- `.opencode2/skills/literouter/zen-provider.md` (new): all Zen-specific ops in one place — endpoint/registry, bare-model standard, two-layer identity gating, session forwarding (`openai_compat.ts:163-179`), Zen directives, `ZEN_ENABLE_*` toggles, doctor probes, synthetic-identity policy note, and §9 referrer/session-ID mechanics with symptom-to-check table. `SKILL.md` description + Topic Map point at it for Zen/doctor questions.
+- `.opencode/skills/literouter/zen-provider.md` (new): all Zen-specific ops in one place — endpoint/registry, bare-model standard, two-layer identity gating, session forwarding (`openai_compat.ts:163-179`), Zen directives, `ZEN_ENABLE_*` toggles, doctor probes, synthetic-identity policy note, and §9 referrer/session-ID mechanics with symptom-to-check table. `SKILL.md` description + Topic Map point at it for Zen/doctor questions.
 - `AGENTS.md`: fallback trigger table now fires the skill on `scripts/doctor_zn.ts`, `zen-provider.md`, `MissingSessionID`, `FreeUsageLimitError`, `session-id`, `big-pickle`.
 
 ### Fixed / H2 drain graceful close: re-arm while activeStreams>0 (literouter-8paf, literouter-3a1j, literouter-i68z) - 2026-09-07
@@ -658,7 +687,7 @@ LiteRouter 4.0.0 is a milestone release delivering enterprise-grade performance,
 ### Added / Zen resilience parity flags docs (literouter-5ciz)
 - Documented `ZEN_ENABLE_RETRIES` (default `true`), `ZEN_ENABLE_QUARANTINE` (default `true`), `ZEN_ENABLE_CIRCUIT_BREAKER` (default `false`), `ZEN_ENABLE_PACER` (default `true`), mirroring GCP semantics (`src/config/schema.ts`, `src/config/env.ts`).
 - Tracked `.env` currently sets `false`/`false`/`false`/`true` (dumb-forwarder mode for `zn`); unset/code defaults remain `true`/`true`/`false`/`true`.
-- Skill: `.opencode2/skills/literouter/SKILL.md` items 28-30 + Environment Architecture line. Docs only, no code logic, `.env.local`/keys untouched.
+- Skill: `.opencode/skills/literouter/SKILL.md` items 28-30 + Environment Architecture line. Docs only, no code logic, `.env.local`/keys untouched.
 
 ### Fixed / Streaming `/v1/responses` USAGE with Reasoning/Speed (literouter-6i72) — SHA 622ba64
 - `src/handlers/openai_original.ts` (SHA `622ba64`): `readLoop` accumulates SSE text via streaming `TextDecoder` with 1MB cap (tail-kept 256KB, loop log-free); `tryParseStreamedResponsesUsage` scans last `response.completed` `response.usage` -> `tryParseResponsesUsage` (prompt|input, completion|output, reasoning via details); `emitStreamCompletion` emits STREAM-DONE + USAGE + SERVED.
@@ -695,15 +724,15 @@ LiteRouter 4.0.0 is a milestone release delivering enterprise-grade performance,
 - Closes literouter-943t, literouter-pun9, literouter-4jiw, literouter-nmcu, literouter-3wsb.
 - Parent audit: literouter-5gdd; consolidation: literouter-uk3o.
 
-## 2026-09-07 - /v1/responses telemetry + opencode2 verification (2026-09-06T17:09:57Z)
+## 2026-09-07 - /v1/responses telemetry + opencode verification (2026-09-06T17:09:57Z)
 
 ### Fixed / `POST /v1/responses` now emits inbound + TTFT telemetry (`src/handlers/openai_original.ts`)
 - `src/handlers/openai_original.ts` now emits `logInbound` + `logTtft` for `POST /v1/responses` (previously silent vs `/v1/chat/completions`).
 - Uses `ParsedRequestBody` + `resolveDirectiveString` for directive attribution and `Date.now()` TTFT (`startTime` → `ttftMs`) with `logTtft(reqId, ttftMs, ...)` on stream/non-stream path.
 
-### Verified / opencode2 native Responses passthrough (`lr-zn-oo-rs-no`)
+### Verified / opencode native Responses passthrough (`lr-zn-oo-rs-no`)
 - `aisdk:@ai-sdk/openai` defaults to `/v1/responses` (baseURL `https://localhost:7766/v1` + path `/responses`); directive `lr-zn-oo-rs-no` matched, upstream `https://opencode.ai/zen/v1/responses`.
-- TTFT 752ms (curl) and 1175ms (opencode2 run). strace proof: CLI -> 49374 daemon -> 7766 gateway.
+- TTFT 752ms (curl) and 1175ms (opencode run). strace proof: CLI -> 49374 daemon -> 7766 gateway.
 
 ### Gates
 - `clean_ts` valid:true, `tsc --noEmit` exit 0, `bun test` 625 passed / 55 files, live curl SSE streaming passed, tmux inbound log confirmed.
@@ -711,7 +740,7 @@ LiteRouter 4.0.0 is a milestone release delivering enterprise-grade performance,
 ### Known limitation
 - `openai_original.ts` is single-attempt with no retry loop on 429 vs `openai_compat.ts` `executeSingleAttemptLoop` (future work).
 
-### Added / OpenAI Original Wire Protocol (`oo`), Native `/v1/responses` Handler & 30s Timeout Standard (`.opencode2/skills/literouter/SKILL.md`, `CHANGELOG.md`, `src/handlers/openai_original.ts`)
+### Added / OpenAI Original Wire Protocol (`oo`), Native `/v1/responses` Handler & 30s Timeout Standard (`.opencode/skills/literouter/SKILL.md`, `CHANGELOG.md`, `src/handlers/openai_original.ts`)
 - **OpenAI Original (`oo`) Wire Protocol**: Added `oo` to the directive key format (`lr-<provider>-oo-<completion>-<nuances>`) representing native OpenAI Original protocol passthrough without schema translation.
 - **Native `POST /v1/responses` Handler (`src/handlers/openai_original.ts`)**:
   - Implemented native handler for `POST /v1/responses` supporting direct Responses API client payloads with Zen (`lr-zn-oo-rs-no`) and OpenRouter (`lr-or-oo-rs-no`).
@@ -719,7 +748,7 @@ LiteRouter 4.0.0 is a milestone release delivering enterprise-grade performance,
   - Distinguishes native passthrough (`oo-rs`) from Chat Completion bidirectional translation (`oa-rs`).
   - Enforces strict fail-fast validation against wire and endpoint mismatches.
 - **Standardized 30-Second Client Chunk Timeout (`chunkTimeout: 30000`)**:
-  - Documented and standardized `chunkTimeout: 30000` (30s) alignment across OpenCode 2 client providers (`~/.config/opencode2/config.json`), harmonized with gateway `LITEROUTER_STREAM_IDLE_TIMEOUT=30` to prevent premature client-side socket drops during deep reasoning.
+  - Documented and standardized `chunkTimeout: 30000` (30s) alignment across OpenCode 2 client providers (`~/.config/opencode/config.json`), harmonized with gateway `LITEROUTER_STREAM_IDLE_TIMEOUT=30` to prevent premature client-side socket drops during deep reasoning.
 
 ### Added / Directive `lr-zn-oa-rs-no` & Bidirectional Responses API Translation (`config/providers.json`, `src/config/schema.ts`, `src/directive/parser.ts`, `src/transformers/responses.ts`, `src/handlers/openai_compat.ts`, `src/network/fetcher.ts`, `tests/unit/responses_transformer.test.ts`)
 - **Directive `lr-zn-oa-rs-no`**: Added support for completion code `rs` across `src/config/schema.ts` (`CompletionCodeSchema`), `src/directive/parser.ts` (`CompletionCode`, `VALID_COMPLETIONS`), and `config/providers.json` (`"rs": "/v1/responses"` under `zen`), mapping OpenAI chat completion requests (`oa`) to upstream Zen Responses API endpoint (`/v1/responses`).
@@ -778,10 +807,10 @@ LiteRouter 4.0.0 is a milestone release delivering enterprise-grade performance,
   - Added test case 10 verifying that 5 consecutive 503 errors from Google do not trip the circuit breaker or block subsequent requests when `GCP_ENABLE_CIRCUIT_BREAKER=false`. Full suite passes (559/559 tests).
 
 ### Added / Skill Harmonization & Workflow Hardening
-- **Skill Renamed to Canonical `literouter` (`.opencode2/skills/literouter/`)**:
-  - Harmonized and renamed skill directory to `.opencode2/skills/literouter/` (single source of truth).
+- **Skill Renamed to Canonical `literouter` (`.opencode/skills/literouter/`)**:
+  - Harmonized and renamed skill directory to `.opencode/skills/literouter/` (single source of truth).
   - Purged all stale duplicate copies across the workspace/filesystem.
-  - Consolidated `opencode2-streaming-troubleshooting.md` into the canonical playbook.
+  - Consolidated `opencode-streaming-troubleshooting.md` into the canonical playbook.
 - **Workflow Enforcement & AGENTS.md Hardening**:
   - Updated `AGENTS.md` to mandate loading `literouter` (`skill load "literouter"`) at the start of all conversations.
   - Added explicit fallback trigger keywords table across core gateway, routing, client integration, streaming, reasoning/tools, and error classification domains.
@@ -838,7 +867,7 @@ LiteRouter 4.0.0 is a milestone release delivering enterprise-grade performance,
   - Resolved the critical `nodeReq.on("close")` trap where listening to request body stream close prematurely aborted incoming requests the instant the client upload completed.
   - Fixed `pipeWebResponseToNode` to safely ignore `nodeReq.destroyed` and handle backpressure drain events cleanly without hanging client sockets.
   - Distinguishes standard downstream client disconnects/aborts from gateway faults, preventing benign client-side cancellations from generating false "Unhandled exception" error logs.
-- **Playbook Documentation & Lazy-Loaded Topic Sheet (`.opencode2/skills/literouter-playbook/http2-lifecycle-stream-isolation.md`)**:
+- **Playbook Documentation & Lazy-Loaded Topic Sheet (`.opencode/skills/literouter-playbook/http2-lifecycle-stream-isolation.md`)**:
   - Created lazy-loaded operational topic reference detailing the `nodeReq` vs `nodeRes` event model, stream isolation rules, response piping backpressure, and zero-quarantine transport classifications.
 - **Zero-Quarantine Stream Cancellation & Transport Classification (`classifier.ts`, `openai_compat.ts`, `anthropic_compat.ts`)**:
   - Reclassified stream-level transport resets (`"The pending stream has been canceled"`, `"ERR_HTTP2_STREAM_CANCEL"`, `"RST_STREAM"`) as immediate 0s retries in `classifyTransportError` and `classifyUpstreamError`.
@@ -850,14 +879,14 @@ LiteRouter 4.0.0 is a milestone release delivering enterprise-grade performance,
   - Added standalone Bun network diagnostic script with high-performance native File I/O (`Bun.file().writer()`), `DEBUG=on` gating, and real-time upstream routing header tracking (`cf-ray`, `x-amz-cf-id`, `x-served-by`, `x-ratelimit-remaining`, `retry-after`).
 
 ### Added / OpenCode 2 Outbound Reasoning History Scrubber Plugin & Auto-Patcher Integration
-- **Outbound Reasoning History Scrubber V2 Plugin (`.opencode2/plugins/collapse-reasoning.ts`, `~/.config/opencode2/plugins/collapse-reasoning.ts`)**:
+- **Outbound Reasoning History Scrubber V2 Plugin (`.opencode/plugins/collapse-reasoning.ts`, `~/.config/opencode/plugins/collapse-reasoning.ts`)**:
   - Implemented OpenCode 2 native V2 plugin hooked into `ctx.session.hook("context")` to strip historical `<think>...</think>`, `<thought>`, and reasoning parts from prior assistant messages before dispatching turns to upstream providers.
   - Enforces the core architectural policy: preserves full live streaming reasoning observability on the terminal in real time, while preventing SQLite reasoning delta accumulation from bloating subsequent prompt turns from 40k to 300k+ tokens.
   - Universal provider coverage: operates synchronously in-memory (< 0.1ms) across all configured endpoints (Antigravity on `10.32.34.243:8045`, Zen, OpenRouter, Google, NVIDIA) with zero UI disruption and zero async process blocking.
-- **Auto-Patcher Integration & Self-Healing (`scripts/opencode2_autopatch.sh`)**:
-  - Enhanced pre-launch auto-patcher to verify and synchronize `collapse-reasoning.ts` into `~/.config/opencode2/plugins/` and guarantee automatic registration in `~/.config/opencode2/config.json` (`"plugins": ["./plugins/collapse-reasoning.ts"]`).
+- **Auto-Patcher Integration & Self-Healing (`scripts/opencode_autopatch.sh`)**:
+  - Enhanced pre-launch auto-patcher to verify and synchronize `collapse-reasoning.ts` into `~/.config/opencode/plugins/` and guarantee automatic registration in `~/.config/opencode/config.json` (`"plugins": ["./plugins/collapse-reasoning.ts"]`).
   - Added dummy postinstall script detection (`is_dummy_placeholder`) to automatically self-heal and replace placeholder scripts with real ELF binaries on `@opencode-ai/cli` upgrades.
-- **Playbook Documentation & Lazy-Loaded Topic Sheet (`.opencode2/skills/literouter-playbook/opencode2-reasoning-scrubber.md`)**:
+- **Playbook Documentation & Lazy-Loaded Topic Sheet (`.opencode/skills/literouter-playbook/opencode-reasoning-scrubber.md`)**:
   - Created lazy-loaded reference sheet detailing the streaming observability vs outbound history scrubbing policy, plugin hook lifecycle, and auto-patcher deployment.
 
 ### Upgraded / Bun v1.4.0 & Simultaneous Dual ALPN (`h2` + `http/1.1`) Gateway
@@ -995,7 +1024,7 @@ LiteRouter 4.0.0 is a milestone release delivering enterprise-grade performance,
   - Guarded `controller.close()` in `handleEof` with `if (controller.desiredSize !== null)`, eliminating noisy `ERR_INVALID_STATE` stack traces on client-side aborts/disconnects.
 - **Tool Message Wire Formatting & Multi-Turn Chaining Regression Suite (`tests/unit/tool_call_stream_regression.test.ts`)**:
   - Added unit test coverage verifying `role: "tool"` array content normalization into valid flat strings, stripping OpenCode metadata fields, and preserving incremental `tool_calls` argument deltas during reasoning streams.
-- **OpenCode2 Autonomous Tool Chaining Configuration (`~/.config/opencode2/agents/build.md`, `~/.config/opencode2/config.json`)**:
+- **OpenCode2 Autonomous Tool Chaining Configuration (`~/.config/opencode/agents/build.md`, `~/.config/opencode/config.json`)**:
   - Configured OpenCode2 Build agent with `steps: 100`, `maxSteps: 100`, auto-allowed permissions, and continuous tool chaining prompts to eliminate intermediate conversational turn-pauses ("continue" stalls) between tool invocations.
 
 ### Fixed / Throttled Synthetic Heartbeats for Extended Reasoning Streams (`src/transformers/thinking.ts`, `src/handlers/openai_compat.ts`)
@@ -1021,14 +1050,14 @@ LiteRouter 4.0.0 is a milestone release delivering enterprise-grade performance,
 - **Forensic Documentation & Diagnostic Playbook (`docs/Stream_Idle_Timeouts.md`)**:
   - Published comprehensive root cause analysis and Section 7 Diagnostic Playbook covering the 5 primary agent stall vectors (output token exhaustion, bash quoting deadlocks, UI permission gates, edge H2 resets, and SQLite WAL contention).
 
-### Added / OpenCode2 Auto-Patcher & Self-Healing Launcher (`scripts/opencode2_autopatch.sh`)
-- **Standalone Auto-Patcher Script (`scripts/opencode2_autopatch.sh`)**:
+### Added / OpenCode2 Auto-Patcher & Self-Healing Launcher (`scripts/opencode_autopatch.sh`)
+- **Standalone Auto-Patcher Script (`scripts/opencode_autopatch.sh`)**:
   - Implemented an idempotent, standalone bash script verifying the installed `@opencode-ai/cli` in Node/NVM directory.
-  - Automatically verifies executable binaries (`opencode2`), resolves platform binary links, generates `.bak` safety backups before state changes, and validates reasoning fold/scrubber logic.
+  - Automatically verifies executable binaries (`opencode`), resolves platform binary links, generates `.bak` safety backups before state changes, and validates reasoning fold/scrubber logic.
   - Added dedicated patching routines for tool message formatting (normalizing `role: "tool"` content arrays `[{type: "text", text: ...}]` into flat strings for strict OpenAI-compatible upstreams) and network error handling (preventing silent subagent completion on `network_error`, stream stalls, or empty chunks).
   - Features ultra-fast (< 5ms) execution with timestamp-based stamp verification (`.autopatch_verified`) comparing against target binaries and the patch script itself for zero-overhead startup.
-- **Launcher Integration (`~/.local/bin/opencode2`)**:
-  - Integrated pre-launch self-healing invocation into `/home/yapilwsl/.local/bin/opencode2`, ensuring transparent environment resilience on every CLI invocation.
+- **Launcher Integration (`~/.local/bin/opencode`)**:
+  - Integrated pre-launch self-healing invocation into `/home/yapilwsl/.local/bin/opencode`, ensuring transparent environment resilience on every CLI invocation.
 
 ### Added / OpenCode Reasoning Stream Filter & Context Bloat Elimination (Option 1B)
 - **Automatic OpenCode Client Detection & Reasoning Stream Stripping (`src/transformers/thinking.ts`, `src/handlers/openai_compat.ts`)**:
@@ -1135,7 +1164,7 @@ LiteRouter 4.0.0 is a milestone release delivering enterprise-grade performance,
 ### Added / Multilingual Guardrails & Domain Metaphysics Preservation
 - **Tiered Multi-Language Instruction Architecture** — Implemented global cognitive and explanatory pinning to English across Claude Code (`~/.claude/CLAUDE.md`) while explicitly whitelisting Chinese metaphysics entities (Heavenly Stems, Earthly Branches, Ten Gods, Trigrams, Hexagrams, and Solar Terms) in `baziforecaster/AGENTS.md`.
 - **Regression Test Coverage (`tests/unit/language_guardrail.test.ts`)** — Added automated verification asserting zero Chinese token leakage in generic code reasoning while guaranteeing 100% genuine Chinese character retention in BaZi metaphysics data payloads.
-- **Playbook Documentation Update (`claude-code.md`)** — Documented Chinese-native model language guardrails in `.opencode2/skills/literouter-playbook/claude-code.md`.
+- **Playbook Documentation Update (`claude-code.md`)** — Documented Chinese-native model language guardrails in `.opencode/skills/literouter-playbook/claude-code.md`.
 
 ### Fixed / Claude Code & Bun Zlib Decompression Transport Immunity
 - **Enforced `Accept-Encoding: identity` Upstream (`src/network/fetcher.ts`, `src/handlers/anthropic_compat.ts`, `src/handlers/openai_compat.ts`)** — Injected `Accept-Encoding: identity` into all outbound upstream provider HTTP and SSE streaming requests. Prevents upstream providers and edge CDNs (OpenRouter, Cloudflare, Anthropic) from returning chunked gzip streams and zero-length sync frames, completely resolving Bun native engine `Decompression error: ZlibError` (Bun issue #23149) in Claude Code and Bun-compiled CLI clients.
@@ -1160,7 +1189,7 @@ LiteRouter 4.0.0 is a milestone release delivering enterprise-grade performance,
 - **Output Token Clamping (`max_tokens <= 65536`)** — Added automatic defensive clamping in `src/transformers/payload.ts` to prevent total context overflow HTTP 400 rejections from OpenRouter (`input_tokens + max_tokens > 512,000`).
 - **OpenRouter Comment SSE Frame Handling (`hasContentToken`)** — Enhanced `hasContentToken` in `src/network/fetcher.ts` to recognize OpenRouter initial processing comment frames (`: OPENROUTER PROCESSING`) and structured JSON markers, avoiding false-positive ghost response classifications.
 - **Anthropic-to-OpenAI Tool Schema Translation** — Fixed `translateAnthropicToOpenAI` in `src/handlers/anthropic_compat.ts` to properly transform Anthropic tool structures into standard OpenAI function call schemas.
-- **Verification Matrix Update (`scripts/test_opencode2_models.sh`)** — Added `LR-DOTS` (`lr-dots/dots-studio/dots-3-note-preview:free`) to the automated multi-provider verification script.
+- **Verification Matrix Update (`scripts/test_opencode_models.sh`)** — Added `LR-DOTS` (`lr-dots/dots-studio/dots-3-note-preview:free`) to the automated multi-provider verification script.
 
 ## [3.5.0] — 2026-08-17
 
@@ -1173,10 +1202,10 @@ LiteRouter 4.0.0 is a milestone release delivering enterprise-grade performance,
 ### Added / OpenCode v2 Multi-Provider Support & Client Suite
 - **Declarative OpenCode 2 Provider Directives** — Added support for `lr-dots` (`@ai-sdk/anthropic` with `lr-or-cl-ms-dp`), `lr-or` (`@ai-sdk/openai-compatible` with `lr-or-oa-ch-no`), `lr-nv` (`@ai-sdk/openai-compatible` with `lr-nv-oa-ch-no`), `lr-zn` (`@ai-sdk/openai-compatible` with `lr-zn-oa-ch-no`), and `lr-gg` (`@ai-sdk/openai-compatible` with `lr-gg-oa-ob-gm`).
 - **Client Cache Tag Sanitizer** — Automatically strips client cache keys (`prompt_cache_key`, `prompt_cache_retrieval`, `prompt_cache_reset`) to prevent HTTP 400 validation rejections from strict upstream providers (NVIDIA NIM).
-- **Automated Verification Script (`scripts/test_opencode2_models.sh`)** — Executable multi-provider CLI test runner validating live streaming and model routing end-to-end.
+- **Automated Verification Script (`scripts/test_opencode_models.sh`)** — Executable multi-provider CLI test runner validating live streaming and model routing end-to-end.
 
 ### Documentation & Skills
-- **`literouter-playbook` Skill Modernization** — Complete rewrite of all 7 guide documents in `.opencode/skills/literouter-playbook/` (`SKILL.md`, `setup.md`, `setup_checklist.md`, `troubleshoot.md`, `opencode2-playbook.md`, `antigravity.md`, `agy-ide-setup.md`) reflecting declarative directive architecture and full visual telemetry.
+- **`literouter-playbook` Skill Modernization** — Complete rewrite of all 7 guide documents in `.opencode/skills/literouter-playbook/` (`SKILL.md`, `setup.md`, `setup_checklist.md`, `troubleshoot.md`, `opencode-playbook.md`, `antigravity.md`, `agy-ide-setup.md`) reflecting declarative directive architecture and full visual telemetry.
 
 
 ### Added / Dots Tool-Calling Polyfill

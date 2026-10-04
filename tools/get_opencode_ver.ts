@@ -2,33 +2,43 @@ import { existsSync, readFileSync, writeFileSync } from "fs";
 import { resolve } from "path";
 
 async function getOpencodeVersion(): Promise<string | null> {
-  // Support both OpenCode v2 and legacy OpenCode v1
-  for (const bin of ["opencode2", "opencode"]) {
-    try {
-      const proc = Bun.spawn([bin, "--version"], {
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const stdout = await new Response(proc.stdout).text();
-      const exitCode = await proc.exited;
+  // Extract a bare semver rather than stripping prefixes. `opencode --version`
+  // has printed several shapes across releases ("opencode v2.0.22",
+  // "opencode 2.0.22", "opencode opencode v2.0.22"), and stripping only one
+  // leading token leaves "opencode v2.0.22" in place. That residue reaches
+  // config/providers.json verbatim, and upstream Zen answers a malformed
+  // version with 403 FreeTierError -- NOT the 426 UpgradeRequired a rejected
+  // version would give, which is why this went unnoticed.
+  const SEMVER = /(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?/;
 
-      if (exitCode === 0) {
-        const raw = stdout.trim();
-        const version = raw.replace(/^opencode2?[\/@\s]*/i, "").trim();
-        // Upstream Zen checks semver >= 1.18.0. Beta tags like 0.0.0-beta-* trigger
-        // HTTP 426 UpgradeRequired. Skip beta tags to allow fallback to stable release semver.
-        if (version.startsWith("0.0.0") || version.includes("beta")) {
-          continue;
-        }
-        if (version.length > 0) {
-          return version;
+  try {
+    const proc = Bun.spawn(["opencode", "--version"], {
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const stdout = await new Response(proc.stdout).text();
+    const exitCode = await proc.exited;
+
+    if (exitCode === 0) {
+      const match = SEMVER.exec(stdout.trim());
+      // Beta/RC tags (0.0.0-beta-*, x.y.z-beta.*) are rejected upstream with
+      // 426 UpgradeRequired, so they are not eligible here.
+      if (match && !match[4]) {
+        const [, major, minor, patch] = match;
+        const parsed = `${major}.${minor}.${patch}`;
+        // Upstream Zen requires semver >= 1.18.0. Never emit a value below
+        // that floor; an older runtime uses the compliant default instead.
+        if (Number(major) > 1 || (Number(major) === 1 && Number(minor) >= 18)) {
+          return parsed;
         }
       }
-    } catch {
-      // Try next binary
     }
+  } catch {
+    // Binary missing or unusable -- fall through to the compliant default.
   }
-  // Default to compliant stable runtime version if only beta or no binary is present
+
+  // Default to a compliant stable runtime version when no binary is present or
+  // its output is unparseable.
   return "1.18.30";
 }
 

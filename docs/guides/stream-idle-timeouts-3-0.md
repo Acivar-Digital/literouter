@@ -27,7 +27,7 @@ During an investigation turn in `baziforecaster`, OpenCode executed a composite 
 The TUI collapsed right at `return {'g…`. OpenCode rendered no model response, no error toast was presented, and the turn remained hung.
 
 ### B. SQLite Turn History Analysis (`opencode.db`)
-Direct extraction of message records from `/home/yapilwsl/.local/share/opencode2/opencode/opencode.db` across failing `stealth/ox-alpha` sessions revealed exact millisecond crash timestamps:
+Direct extraction of message records from `/home/yapilwsl/.local/share/opencode/opencode/opencode.db` across failing `stealth/ox-alpha` sessions revealed exact millisecond crash timestamps:
 
 | Message ID | Event | Unix Timestamp | Elapsed Time to Crash | `rawFinish` Status |
 |---|---|---|---|---|
@@ -194,7 +194,7 @@ To cleanly separate general gateway routing from OpenCode-specific wire adaptati
 
 To prevent `ox-alpha` from pausing to chat between tool reads, the OpenCode2 Build agent is configured for continuous multi-step autonomy:
 
-### Global Agent Definition (`~/.config/opencode2/agents/build.md`)
+### Global Agent Definition (`~/.config/opencode/agents/build.md`)
 ```markdown
 ---
 description: Autonomous build and development agent
@@ -209,7 +209,7 @@ When executing multi-step tasks, investigations, or code changes:
 - Only deliver your final response after all actions, tool executions, and validations are complete.
 ```
 
-### Global Configuration (`~/.config/opencode2/config.json`)
+### Global Configuration (`~/.config/opencode/config.json`)
 ```json
 {
   "permissions": [
@@ -262,7 +262,7 @@ The exact **71,678-character, 11-message multi-tool conversation turn** that ori
 ===========================================================================
 OpenCode DB Turn Reproduction & Live Stream Harness
 ===========================================================================
-DB Path:         ~/.local/share/opencode2/opencode/opencode.db
+DB Path:         ~/.local/share/opencode/opencode/opencode.db
 Session ID:      ses_fcd71dd78ffeuRd5wpUekhfwIp
 Target Msg ID:   msg_0328eded4001jk816m46dSoid2
 Target Model:    stealth/ox-alpha
@@ -309,5 +309,5 @@ Total Suite Duration:     30.45s
 
 1. **Root Cause Confirmed**: The OpenCode stream drop was an **8.8s–11.2s Zod schema failure** (`delta.content: null`) and wire format mismatch (`role: "tool"` array content), compounded by client-side inactivity drops during deep reasoning pauses.
 2. **Gateway-Centric Solution**: All fixes operate entirely inside LiteRouter (`src/transformers/thinking.ts`, `src/handlers/openai_compat.ts`, `src/network/fetcher.ts`). No client SDK forks or secondary Python proxies are required.
-3. **Continuous Autonomy**: Setting `steps: 100` and deploying the Build agent prompt in `~/.config/opencode2/agents/build.md` permanently eliminates the interactive "continue" pause during multi-tool execution.
+3. **Continuous Autonomy**: Setting `steps: 100` and deploying the Build agent prompt in `~/.config/opencode/agents/build.md` permanently eliminates the interactive "continue" pause during multi-tool execution.
 4. **Verifiable Quality**: Full regression test coverage in `tests/unit/tool_call_stream_regression.test.ts` and `tests/e2e/streaming_kit/` ensures zero regressions for all future upstream releases.

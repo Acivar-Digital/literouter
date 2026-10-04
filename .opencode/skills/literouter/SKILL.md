@@ -22,38 +22,38 @@ description: LiteRouter API Gateway operational guide for Bun/TypeScript proxy o
 > 📖 **Full runbook**: [`tmux-hygiene.md`](tmux-hygiene.md) — load it for any pane-cleanup task.
 
 - Wipe scrollback without disturbing serving: `tmux clear-history -t literouter` (VPS: prefix `export PATH="/home/linuxbrew/.linuxbrew/bin:/usr/local/bin:$PATH"` over ssh).
-- `start.sh` already boots quiet (`new-session -c`, `--noprofile --norc`, post-boot `clear-history`); always boot via `bash scripts/restart.sh`, never manual double-`cd`.
+- `start.sh` already boots quiet (`new-session -c`, `--noprofile --norc`, post-boot `clear-history`); always boot via `bash scripts/gateway/restart.sh`, never manual double-`cd`.
 - Recurring VPS `shell-init/getcwd` = Aug-16 tmux server holding deleted `literouter-old` cwd — needs a maintenance-window server restart (kills all sessions).
 
 ## §1. Quick Reference
 
 | Action | Command |
 |---|---|
-| Start gateway | `bash scripts/start.sh` |
-| Check status | `bash scripts/status.sh` |
-| Stop gateway | `bash scripts/stop.sh` |
-| Restart gateway | `bash scripts/restart.sh` |
-| Health probe (public) | `curl -s http://10.32.34.243:7766/health` (or configured host in `config/location.json`) |
-| Hard key reset (auth-gated) | `curl -s -X POST http://10.32.34.243:7766/reset -H "Authorization: Bearer <LITEROUTER_AUTH_KEY>"` |
-| Unit tests (all) | `bun run test` (or `bun test:lr`) (accelerated domain-partitioned test runner: runs 7 domains in parallel subprocesses, completely silent on success, outputs only isolated failures) |
+| Start gateway | `bash scripts/gateway/start.sh` |
+| Check status | `bash scripts/gateway/status.sh` |
+| Stop gateway | `bash scripts/gateway/stop.sh` |
+| Restart gateway | `bash scripts/gateway/restart.sh` |
+| Health probe (public) | `curl -s http://<host>:7766/health` (host = `"host"` in `config/location.json`, currently `10.32.34.172`) |
+| Hard key reset (auth-gated) | `curl -s -X POST http://<host>:7766/reset -H "Authorization: Bearer <LITEROUTER_AUTH_KEY>"` |
+| Unit tests (all) | `bun run test` (or `bun run test:lr`) (accelerated domain-partitioned test runner: runs 7 domains in parallel subprocesses, completely silent on success, outputs only isolated failures) |
 | Targeted domain test slice | `bun run test <domain>` (or `bun test:lr <domain>`) (e.g. `bun run test handlers`, `bun run test network`, `bun run test stream`, `bun run test engine`, `bun run test telemetry`, `bun run test core`, `bun run test eval`) |
 | Raw unbuffered test runner | `bun run test:raw` (verbose escape hatch) |
 | OpenCode2 test tool | `test_literouter` native tool for zero-bloat programmatic test invocation |
-| Benchmark eval grader tests | `bun run test:eval` (`bun run scripts/test_runner.ts eval`, 182 tests) |
+| Benchmark eval grader tests | `bun run test:eval` (`bun run scripts/test/test_runner.ts eval`) |
 | Anti-bloat failure runner | `bun run test:failures` (`bun test --only-failures`) |
-| Zen wire adaptation test | `bun run test:zen` (live 3-vector test against intranet gateway `http://192.168.50.10:7766`) |
-| Diagnostics | `bun run scripts/doctor.ts` (JSON schema + live upstream key probes for Google, NVIDIA, OpenRouter, Zen, GCP) |
-| Master Model Evaluation Gauntlet | `bun run eval/eval.ts <model_name>` (orchestrates speed, code & web, outputs markdown report card; reasoning-transcript appendix default-ON via `ts`-nuance key, opt-out `--no-reasoning-transcript`) |
-| Coding & Agentic Benchmark | `bun run eval/code.ts <model_name>` (5-stage wire, pydantic, loop, str_replace & injection audit; dual Chat/Responses) |
-| Web Frontend Evaluation | `bun run eval/web.ts <model_name>` (5-stage DOM structure, responsive, React state, hygiene & a11y audit) |
-| Model probe & onboarding | `bun run scripts/probe_model.ts <model_name>` (validates OpenCode 2, Claude Code CLI & Pydantic AI) |
-| Model speed & throughput | `bun run eval/speed.ts` (measures TTFT, duration, tokens/sec; alias: `scripts/bench_speed.ts`) |
-| OpenCode2 Auto-Patch | `bash scripts/opencode_autopatch.sh` (fast <5ms self-heal & binary verification) |
-| Sync LiteRouter to VPS | `bash scripts/sync_literouter_to_vps.sh` (strictly unidirectional mirror of LiteRouter code, .env, and .env.local from WSL golden truth to VPS) |
+| Zen wire adaptation test | `bun run test:zen` (`bun run scripts/test/test_zen_fixes.ts`; live test against the gateway at the `config/location.json` host) |
+| Diagnostics | `bun run scripts/diagnose/doctor.ts` (JSON schema + live upstream key probes for Google, NVIDIA, OpenRouter, Zen, GCP) |
+| Master Model Evaluation Gauntlet | `bun run eval/eval.ts <model> <provider> <directive_key>` (orchestrates speed, code & web; default = 3-wire sequential matrix producing a Consolidated Multi-Wire report card. **A bare `<model>` alone aborts with `Missing required argument #2: <provider>`**) |
+| Coding & Agentic Benchmark | `bun run eval/code.ts <model> <provider> <directive_key>` (5-stage wire, pydantic, loop, str_replace & injection audit; dual Chat/Responses) |
+| Web Frontend Evaluation | `bun run eval/web.ts <model> <provider> <directive_key>` (5-stage DOM structure, responsive, React state, hygiene & a11y audit; **no reasoning-transcript flags**) |
+| Model probe & onboarding | `bun run scripts/probe/probe_model.ts <model_name>` (validates OpenCode 2, Claude Code CLI & Pydantic AI) |
+| Model speed & throughput | `bun run eval/speed.ts <model>` (sequential TTFT, duration, tokens & tok/s; alias: `scripts/probe/bench_speed.ts`) |
+| OpenCode2 Auto-Patch | `bash scripts/hooks/opencode_autopatch.sh` (fast <5ms self-heal & binary verification) |
+| Sync LiteRouter to VPS | `bash scripts/sync/sync_literouter_to_vps.sh` (strictly unidirectional mirror of LiteRouter code, .env, and .env.local from WSL golden truth to VPS) |
 | Typecheck & lint | `bun run typecheck` && `uv run ruff check .` |
 
 > **Accelerated Test Runner & Subcommands (`bun run test` / `bun test:lr`)**:
-> - `bun run test` (or `bun test:lr`): Accelerated domain-partitioned test runner (runs 7 domains in parallel subprocesses, completely silent on success, outputs only isolated failures). Note: NEVER run naked `bun test` as Bun treats `test` as a built-in keyword bypassing `scripts/test_runner.ts`.
+> - `bun run test` (or `bun test:lr`): Accelerated domain-partitioned test runner (runs 7 domains in parallel subprocesses, completely silent on success, outputs only isolated failures). Note: NEVER run naked `bun test` as Bun treats `test` as a built-in keyword bypassing `scripts/test/test_runner.ts`.
 > - `bun run test <domain>` (or `bun test:lr <domain>`): Fast targeted slice (e.g. `bun run test handlers`, `bun run test network`, `bun run test stream`, `bun run test engine`, `bun run test telemetry`, `bun run test core`, `bun run test eval`)
 > - `bun run test:raw`: Raw unbuffered Bun test runner (verbose escape hatch)
 > - OpenCode2 tool: `test_literouter` native tool for zero-bloat programmatic test invocation.
@@ -61,19 +61,20 @@ description: LiteRouter API Gateway operational guide for Bun/TypeScript proxy o
 > **Auth scope**: `GET /health` is public (auth-free) for liveness probes. `/reset` is **auth-gated** behind `LITEROUTER_AUTH_KEY` or valid directive token (matches `POST /admin/pool/reset`; returns `401 Unauthorized` without valid Bearer auth) — see [scripts-ops.md §2](scripts-ops.md#2-get-health-liveness-probe-no-auth-any-method) and [§3](scripts-ops.md#3-post-reset-hard-reset-no-auth-any-method-hot-reload-scope).
 
 ### Downstream Serving & ZeroTier Topology (`config/location.json`)
-- **Authoritative Configuration**: `config/location.json` is the sole downstream authority:
+- **Authoritative Configuration**: `config/location.json` is the sole downstream authority — **read the host from it, never hardcode an IP in a command or doc**:
   ```json
   {
-    "host": "10.32.34.243",
+    "host": "10.32.34.172",
     "port": 7766,
-    "tls_enabled": false
+    "tls_enabled": false,
+    "parent_dir": "arthityap",
+    "working_folder": "literouter"
   }
   ```
 - **Interface Bindings**:
-  - **VPS (`vps466a`)**: `10.32.34.243:7766` (`ztdhgfvars` ZeroTier interface).
-  - **WSL (Local)**: `10.32.34.172:7766` (`ztdhgfvars` ZeroTier interface).
+  - **VPS (`vps466a`)** and **WSL (Local)** both expose the `ztdhgfvars` ZeroTier interface. The configured `host` is `10.32.34.172`; a second ZeroTier address may exist on the VPS side — resolve it from `config/location.json` rather than assuming.
   - Never bind to `0.0.0.0` or expose raw unauthenticated ports.
-- **Client Routing**: Clients (OpenCode, Claude Code, Scribe in VPS tmux) configure `baseURL` pointing to `http://10.32.34.243:7766/v1` (or WSL `http://10.32.34.172:7766/v1`).
+- **Client Routing**: Clients (OpenCode, Claude Code, Scribe in VPS tmux) configure `baseURL` pointing to `http://<config/location.json host>:7766/v1`.
 - **Transport**: Downstream is plain HTTP/1.1 over secure ZeroTier overlay; Upstream connections to providers remain HTTP/2 over TLS managed via `Http2Pool`.
 
 ## §2. Active Key Pools (summary)
@@ -182,7 +183,7 @@ Fusion presets: `lr-fse-<preset>` where preset is ONLY one of `quad` / `pydn` / 
 - **`.env`** (tracked): operational parameters (port, timeouts, TTFT guards, reasoning defaults, `LITEROUTER_ENGINE` + `LITEROUTER_ENGINE_OVERRIDE`).
 - **Purge of Deprecated Provider Env Vars**: All 17 legacy provider-specific operational env vars (`GCP_*`, `ZEN_*`, `OPENROUTER_*`) have been purged from `src/config/env.ts` and `src/config/schema.ts` and cannot shadow `config/providers.json`. Operational settings (`pacer`, `request_retry`, optional `key_cooldown`) reside solely in `config/providers.json`. No `circuit_breaker` config exists.
 - **`LITEROUTER_ENGINE` (default `"legacy"`) + `LITEROUTER_ENGINE_OVERRIDE` (default `"false"`)**: `resolveEngine(req)` (`src/config/env.ts:130-140`) returns the env default unless override is enabled **and** a request carries `x-literouter-engine: legacy|v4` — any other value falls back to the env default ([config-schemas.md §7](config-schemas.md#7-literouter_engine-legacy-default-per-request-override-gate)).
-- ⚠️ `FUSION_UPSTREAM_URL` / `FUSION_UPSTREAM_URL_NATIVE` are **legacy Python fusion-sidecar env vars** (`docs/swap_env.md`, `docs/Longrunning_Mode.md`) — there is **no `FUSION_UPSTREAM_URL` constant in `src/`**. The TS gateway resolves upstreams from `config/providers.json` via `resolveUpstreamEndpoint()` — throws `[resolveUpstreamEndpoint] Unknown endpoint key "..." for provider "..."` on unknown endpoint key — no silent fallback ([config-schemas.md §4](config-schemas.md#4-fusion_upstream_url-what-it-is-and-is-not)).
+- ⚠️ `FUSION_UPSTREAM_URL` / `FUSION_UPSTREAM_URL_NATIVE` are **legacy Python fusion-sidecar env vars** (`docs/longrunning-mode.md`, `docs/config/env-config-plan.md`) — there is **no `FUSION_UPSTREAM_URL` constant in `src/`**. The TS gateway resolves upstreams from `config/providers.json` via `resolveUpstreamEndpoint()` — throws `[resolveUpstreamEndpoint] Unknown endpoint key "..." for provider "..."` on unknown endpoint key — no silent fallback ([config-schemas.md §4](config-schemas.md#4-fusion_upstream_url-what-it-is-and-is-not)).
 
 ## §8. Cooldown & Quarantine Knobs (summary)
 
@@ -216,7 +217,7 @@ Fusion presets: `lr-fse-<preset>` where preset is ONLY one of `quad` / `pydn` / 
 - **Handler Ground Truth**:
   - All handlers (`openai_compat`, `openai_original`, `anthropic_compat`, `google_native`, `gcp_compat`) query `config/providers.json` directly for provider capabilities and settings, with zero shadow defaults, hardcoded whitelists, or magic constants.
 
-After editing `.env`: `bash scripts/restart.sh`. After editing `config/providers.json`: `POST /reset` hot-reloads without restart ([scripts-ops.md §3.2](scripts-ops.md#32-hot-reload-scope-configprovidersjson-headers-included)).
+After editing `.env`: `bash scripts/gateway/restart.sh`. After editing `config/providers.json`: `POST /reset` hot-reloads without restart ([scripts-ops.md §3.2](scripts-ops.md#32-hot-reload-scope-configprovidersjson-headers-included)).
 
 ## §9. Gateway Resilience (summary table)
 
@@ -228,14 +229,14 @@ After editing `.env`: `bash scripts/restart.sh`. After editing `config/providers
 | 2 | Error classification & key rotation (`classifyUpstreamError`) | Fatal auth fail-fast on 401/403 (zero retry, zero quarantine, immediate client rejection); conservation-only benching via explicit `conserve_rules` (no 65s generic 429 lockouts); in-flight retry driven by `providers.json` | [error-action-matrix.md §1](error-action-matrix.md#1-status-action-matrix) |
 | 3 | Network/transport resilience (`NoResponseError`) | Pre-stream socket/TCP-RST/GOAWAY/timeout wrapped, retried ≤3 | [error-action-matrix.md §2](error-action-matrix.md#2-retry-quarantine-call-chain-wiring) |
 | 4 | Deterministic fail-fast | 400 context/schema/safety + 404 abort without burning keys | [error-action-matrix.md §1](error-action-matrix.md#1-status-action-matrix) |
-| 5-8 | TTFT guard (5s) / Idle guard (120s) / HTTP timeout (300s) / SSE keepalive (2s/15s) / Ghost guard / Cache sanitizer | Stall protection + keepalive frames + 0-token 200 rejection + `prompt_cache_*` strip | [error-action-matrix.md §4](error-action-matrix.md#4-env-knob-quick-reference) |
+| 5-8 | TTFT guard (120s) / Idle guard (120s default, 180s in tracked `.env`) / HTTP timeout (300s) / SSE keepalive (15s) / Ghost guard / Cache sanitizer | Stall protection + keepalive frames + 0-token 200 rejection + `prompt_cache_*` strip. Constants: `TTFT_TIMEOUT_MS = 120000`, `STREAM_IDLE_TIMEOUT_MS = 120000`, `MAX_HTTP_TIMEOUT_MS = 300000`, `KEEPALIVE_INTERVAL_MS = 15000` (`src/network/fetcher.ts:61-64`); `.env` overrides `LITEROUTER_STREAM_IDLE_TIMEOUT=180` | [error-action-matrix.md §4](error-action-matrix.md#4-env-knob-quick-reference) |
 | 10 | Mid-stream error interceptor + auto-resend | In-band 5xx/socket-reset/EOF → isolate key, resend into open downstream stream | `architecture.md` |
 | 11 | H2 staggered pool + anti-pinning aging (`h2_pool.ts`) | Persistent H2 sessions, least-loaded balancing, 180s±15s drain aging, GOAWAY handling | `http2-lifecycle-stream-isolation.md` |
 | 12 | Provider-isolated FIFO conveyor belt & active concurrency pacer (`pacer.ts`) | Dedicated conveyor pipe per provider (`max_queue_depth: 500`), spaced strictly by `min_delay_ms`, shared by initial calls and retries, `AbortSignal` clean dequeue without memory leaks | [error-action-matrix.md §4](error-action-matrix.md#4-env-knob-quick-reference) |
 | 13 | No circuit breaker (v4 excised) | Fully removed; no breaker mechanism in schema/network/engine | [error-action-matrix.md §2](error-action-matrix.md#2-retry-quarantine-call-chain-wiring) |
 | 14 | OpenCode reasoning filter + bloat shield | Strips reasoning deltas for `opencode*` clients; control-char healing; `content: null` delete; throttled empty-delta heartbeats | `opencode-reasoning-scrubber.md` |
-| 15 | OpenCode2 auto-patcher (`opencode_autopatch.sh`) | Sub-5ms idempotent CLI self-heal, integrated into `~/.local/bin/opencode` | [scripts-ops.md §1.5](scripts-ops.md#15-scriptsopencode_autopatchsh-opencode-cli-self-heal-idempotent) |
-| 16 | Two-leg streaming (`docs/Fix_Streaming_01.md`) | Zero-cutoff ingress conveyor + resilient replay on upstream drops | `opencode-streaming-troubleshooting.md` |
+| 15 | OpenCode2 auto-patcher (`scripts/hooks/opencode_autopatch.sh`) | Sub-5ms idempotent CLI self-heal, integrated into `~/.local/bin/opencode` | [scripts-ops.md §1.5](scripts-ops.md#15-scriptsopencode_autopatchsh-opencode-cli-self-heal-idempotent) |
+| 16 | Two-leg streaming (`docs/streaming-fix.md`) | Zero-cutoff ingress conveyor + resilient replay on upstream drops | `opencode-streaming-troubleshooting.md` |
 | 17 | XML tool calling + trapped thinking (`dots.ts`) | Live `<think>` streaming, pre-thinking tool extraction (GLM/Qwen/DeepSeek/JSON-in-XML), tool-history compaction | `architecture.md` |
 | 18 | Tool-reasoning retention + outbound scrubbing | Scrub conversational turns; **preserve reasoning on tool-call turns** (else upstream 500) | `opencode-reasoning-scrubber.md` |
 | 19-21 | GCP operational knobs (`config/providers.json`) | Governed via `gc` operational blocks (`pacer`, `request_retry`, optional `key_cooldown`); legacy env toggles purged | [config-schemas.md §3.6](config-schemas.md#36-operational-governance--zero-hardcoding-request_retry-key_cooldown-pacer-circuit_breaker) |
@@ -243,7 +244,7 @@ After editing `.env`: `bash scripts/restart.sh`. After editing `config/providers
 | 23 | Zen identity gating + bare models | OpenCode identity headers + client session forwarding (`MissingSessionID` fix); never `zen/` prefix | `zen-provider.md` |
 | 24 | NVIDIA NIM EOL catalog | Strict `410 Gone` sunsets; flagship `nemotron-3-super-120b-a12b`; `ts` nuance for `reasoning_content`-only streams | [error-action-matrix.md §1](error-action-matrix.md#1-status-action-matrix) |
 | 25-26 | Responses translation + `oo` native handler | `lr-*-oa-rs-*` bidirectional translation; `lr-*-oo-rs-*` verbatim passthrough (`openai_original.ts`) | `payload.md` |
-| 27 | Client `chunkTimeout: 30000` | Matches `LITEROUTER_STREAM_IDLE_TIMEOUT=30` | `opencode-streaming-troubleshooting.md` |
+| 27 | Client `chunkTimeout: 30000` | Gateway idle guard is `LITEROUTER_STREAM_IDLE_TIMEOUT=180` (s) in tracked `.env`, normalized to 180000 ms; schema default is `LITEROUTER_STREAM_IDLE_TIMEOUT_MS = 120000` | `opencode-streaming-troubleshooting.md` |
 | 28-30 | Zen operational knobs (`config/providers.json`) | Governed via `zn` operational blocks (`strategy: standard`, `max_concurrency: 1`, `pacer`, `request_retry`); legacy env toggles and hardcoded `isZen` checks purged | [config-schemas.md §3.6](config-schemas.md#36-operational-governance--zero-hardcoding-request_retry-key_cooldown-pacer-circuit_breaker) |
 | 31 | v4 boundary: pure handlers + transport reassembly | Handlers orchestrate; `fetcher.ts` owns H2/TTFT/reassembly; `[Upstream: HTTP/2]` tagging | `http2-lifecycle-stream-isolation.md` |
 | 32 | Payload wire matrix (`oa` scrubs / `oo` preserves) | Keyed off payload segment; `ts` keeps / `sb` forces | `payload.md` |
@@ -308,33 +309,33 @@ Canonical config companion — every `config/` file and its validator:
 
 | Need | Pointer |
 |---|---|
-| Gateway lifecycle scripts (`start`/`status`/`stop`/`restart`/`autopatch`) | [scripts-ops.md §1](scripts-ops.md#1-gateway-lifecycle-scripts-scripts) |
-| `start.sh` (idempotent) | [scripts-ops.md §1.1](scripts-ops.md#11-scriptsstartsh-start-idempotent) |
-| `status.sh` (exit-coded) | [scripts-ops.md §1.2](scripts-ops.md#12-scriptsstatussh-status-exit-coded) |
-| `stop.sh` (SIGINT → SIGTERM → SIGKILL) | [scripts-ops.md §1.3](scripts-ops.md#13-scriptsstopsh-stop-sigint-sigterm-sigkill) |
-| `restart.sh` (stop → start) | [scripts-ops.md §1.4](scripts-ops.md#14-scriptsrestartsh-restart-stop-start) |
-| `opencode_autopatch.sh` (CLI self-heal) | [scripts-ops.md §1.5](scripts-ops.md#15-scriptsopencode_autopatchsh-opencode-cli-self-heal-idempotent) |
+| Gateway lifecycle scripts (`scripts/gateway/start.sh`\|`status.sh`\|`stop.sh`\|`restart.sh`, `scripts/hooks/opencode_autopatch.sh`) | [scripts-ops.md §1](scripts-ops.md#1-gateway-lifecycle-scripts-scripts) |
+| `scripts/gateway/start.sh` (idempotent) | [scripts-ops.md §1.1](scripts-ops.md#11-scriptsstartsh-start-idempotent) |
+| `scripts/gateway/status.sh` (exit-coded) | [scripts-ops.md §1.2](scripts-ops.md#12-scriptsstatussh-status-exit-coded) |
+| `scripts/gateway/stop.sh` (SIGINT → SIGTERM → SIGKILL) | [scripts-ops.md §1.3](scripts-ops.md#13-scriptsstopsh-stop-sigint-sigterm-sigkill) |
+| `scripts/gateway/restart.sh` (stop → start) | [scripts-ops.md §1.4](scripts-ops.md#14-scriptsrestartsh-restart-stop-start) |
+| `scripts/hooks/opencode_autopatch.sh` (CLI self-heal) | [scripts-ops.md §1.5](scripts-ops.md#15-scriptsopencode_autopatchsh-opencode-cli-self-heal-idempotent) |
 | `GET /health` liveness probe (no auth) | [scripts-ops.md §2](scripts-ops.md#2-get-health-liveness-probe-no-auth-any-method) |
 | `POST /reset` hard reset (no auth) + hot-reload scope | [scripts-ops.md §3](scripts-ops.md#3-post-reset-hard-reset-no-auth-any-method-hot-reload-scope) |
 | Reset exact semantics (`SYSTEM_MAP`) | [scripts-ops.md §3.1](scripts-ops.md#31-exact-semantics-srcindexts61-79-system_map) |
 | Hot-reload scope (`providers.json` headers included; port rebind needs restart) | [scripts-ops.md §3.2](scripts-ops.md#32-hot-reload-scope-configprovidersjson-headers-included) |
 | Auth-gated `POST /admin/pool/reset` | [scripts-ops.md §3.3](scripts-ops.md#33-auth-gated-variant-post-adminpoolreset) |
-| Diagnostics (`doctor.ts` + `doctor_zn.ts`) | [scripts-ops.md §4](scripts-ops.md#4-diagnostics-scriptsdoctorts-scriptsdoctor_znts) |
-| Zen session probing contract | [scripts-ops.md §5](scripts-ops.md#5-zen-probing-scriptsdoctor_znts-session-contract) |
+| Diagnostics (`scripts/diagnose/doctor.ts` + `scripts/diagnose/doctor_zn.ts`) | [scripts-ops.md §4](scripts-ops.md#4-diagnostics-scriptsdoctorts-scriptsdoctor_znts) |
+| Zen session probing contract (`scripts/diagnose/doctor_zn.ts`) | [scripts-ops.md §5](scripts-ops.md#5-zen-probing-scriptsdoctor_znts-session-contract) |
 | Operator runbooks (copy-paste) | [scripts-ops.md §6](scripts-ops.md#6-operator-runbooks-copy-paste) |
 | Status → action matrix (429/4xx/5xx/transport) | [error-action-matrix.md §1](error-action-matrix.md#1-status-action-matrix) |
 | Retry / quarantine call chain (wiring) | [error-action-matrix.md §2](error-action-matrix.md#2-retry-quarantine-call-chain-wiring) |
 | Full repo file index (`handlers`/`network`/`transformers`/`config`/`fusion`/`directive`) | [error-action-matrix.md §3](error-action-matrix.md#3-full-repo-file-index) |
 | Env knob quick reference | [error-action-matrix.md §4](error-action-matrix.md#4-env-knob-quick-reference) |
-| Model capability probe (`probe_model.ts`) | [scripts-ops.md §4.3](scripts-ops.md#43-universal-model-capability-probe-scriptsprobe_modelts) |
+| Model capability probe (`scripts/probe/probe_model.ts`) | [scripts-ops.md §4.3](scripts-ops.md#43-universal-model-capability-probe-scriptsprobe_modelts) |
 
-## §13.5. Model Onboarding & Readiness Probing Protocol (`scripts/probe_model.ts`)
+## §13.5. Model Onboarding & Readiness Probing Protocol (`scripts/probe/probe_model.ts`)
 
 When asked to **"onboard <model> and test"** or **"verify if <model> is ready for OpenCode 2 / Claude Code / Pydantic"**:
 
 ### 1. Mandatory Execution Command
 ```bash
-bun run scripts/probe_model.ts <model_name> [--directive <directive_key>] [--url <gateway_url>]
+bun run scripts/probe/probe_model.ts <model_name> [--directive <directive_key>] [--url <gateway_url>]
 ```
 *(Default directive: `lr-or-oa-ch-no`, default URL: `https://localhost:7766/v1/chat/completions`)*
 
@@ -382,6 +383,7 @@ bun run scripts/probe_model.ts <model_name> [--directive <directive_key>] [--url
 | **Zen provider (identity gating, sessions, directives, toggles, Responses API, Muse reasoning)** | `zen-provider.md` | User asks about Zen, `zn`, `big-pickle`, `muse-spark-1.3-contributor-free`, OpenAI Responses API (`/v1/responses`), `reasoningEffort` options, session-id forwarding, Zen directive keys, or Zen retry/quarantine toggles |
 | **Fusion setup, Native Google Fusion chains (`gemini-flash`, `gemini-flash-lite`) & virtual presets (`quad`, `pydn`, `fast`, `deep`)** | `fusion.md` | User asks about Fusion multi-tier routing, native cascades, `nativeTierIndices`, sticky fallback caching, `config/fusion.json`, `FusionEngine`, v4 `classifyFailure` mapping, or execution plans |
 | **Doctor diagnostics & health probes (`doctor.ts`, `doctor_zn.ts`)** | `doctor.md` | User asks about key health probes, upstream diagnostics, status codes, or provider probe errors |
+| **Model Evaluation Gauntlet (`eval/eval.ts` / `code.ts` / `web.ts` / `speed.ts`)** | `../literouter-eval/SKILL.md` | User asks to evaluate/benchmark/profile a model, run the gauntlet, pick a directive key for an eval, or interpret a report card. **Positional order is mandatory: `<model> <provider> <directive_key>`** — a bare `<model>` aborts with `Missing required argument #2: <provider>` (`eval/validate_cli.ts:563`) |
 | **Claude Code integration** | `claude-code.md` | User asks about Claude Code, Anthropic Messages API, `ANTHROPIC_BASE_URL`, or routing Claude Code through LiteRouter |
 | **OpenCode2 integration** | `opencode-playbook.md` | User asks about OpenCode2, V2 plugins, `~/.config/opencode/`, or V1/V2 isolation |
 | **OpenCode2 streaming troubleshooting** | `opencode-streaming-troubleshooting.md` | User asks about deep-reasoning streaming hangs, Zod `content: null` breakdown, `network_error` crashes, or streaming diagnostics |
@@ -411,8 +413,8 @@ bun run scripts/probe_model.ts <model_name> [--directive <directive_key>] [--url
 5. **Fusion presets are ONLY `quad` / `pydn` / `fast` / `deep`** (verified keys of `config/fusion.json`). `smart` / `code` / `cheap` do not exist ([directive-grammar.md §7](directive-grammar.md#7-fusion-presets-lr-fse-)).
 6. **No `fusion.schema.json` on disk.** The `$schema` pointer inside `config/fusion.json` is informational only; never link it as a file ([config-schemas.md §1.4](config-schemas.md#14-validation-gap-verified-on-disk)).
 7. **`FUSION_UPSTREAM_URL` is a legacy Python sidecar env var, not a TS constant** (zero hits in `src/`) — see [config-schemas.md §4](config-schemas.md#4-fusion_upstream_url-what-it-is-and-is-not).
-8. **`POST /reset` is auth-gated and hot-reloads caches but cannot rebind ports** — requires `Bearer <LITEROUTER_AUTH_KEY>` or valid directive token. `GET /health` is public. Port/host/TLS changes are governed by `config/location.json` and require `bash scripts/restart.sh` to rebind the socket ([scripts-ops.md §3](scripts-ops.md#3-post-reset-hard-reset-no-auth-any-method-hot-reload-scope)).
-9. **Pure In-Memory Architecture (Zero Redis/Valkey Dependency)**: LiteRouter deliberately chooses NOT to use Redis, Valkey, or `Bun.redis` for core state. Single-threaded non-preemptive event-loop atomicity, `RequestPacer` FIFO burst smoothing, <0.05ms RAM lookups, and zero external failure domains eliminate external daemon baggage for single-instance gateways (see `architecture.md` §1 & `docs/ARCHITECTURE.md` §2.4).
+8. **`POST /reset` is auth-gated and hot-reloads caches but cannot rebind ports** — requires `Bearer <LITEROUTER_AUTH_KEY>` or valid directive token. `GET /health` is public. Port/host/TLS changes are governed by `config/location.json` and require `bash scripts/gateway/restart.sh` to rebind the socket ([scripts-ops.md §3](scripts-ops.md#3-post-reset-hard-reset-no-auth-any-method-hot-reload-scope)).
+9. **Pure In-Memory Architecture (Zero Redis/Valkey Dependency)**: LiteRouter deliberately chooses NOT to use Redis, Valkey, or `Bun.redis` for core state. Single-threaded non-preemptive event-loop atomicity, `RequestPacer` FIFO burst smoothing, <0.05ms RAM lookups, and zero external failure domains eliminate external daemon baggage for single-instance gateways (see `architecture.md` §1 & §2.4).
 10. **`config/providers.json` is the sole source of truth for provider operational knobs across all 13 providers.** Required: `pacer`, `request_retry`. Optional (zero runtime behavior in v4): `key_cooldown` (`.optional()` in Zod schema, carries no runtime behavior). `circuit_breaker` and `limits` are fully removed. Missing or invalid required blocks abort gateway startup (`validateProviderConfigsFailLoud()`). All 17 legacy provider-specific operational env vars (`GCP_*`, `ZEN_*`, `OPENROUTER_*`) have been purged.
 11. **Purged Dead Ballast**: `limits` (`rpm`, `rpd`, `tpm`) has been completely purged from provider schemas and `config/providers.json` (removing the retired Zdist relic). Fine-grained `key_cooldown` knobs (`initial_cooldown_ms`, `backoff_factor`, `max_consecutive_failures`) and `max_delay_ms` are purged.
 12. **No circuit breaker in v4**: Fully excised. No `circuit_breaker` config, no 503 tripping mechanism, no safe pass-through — the concept has been removed from schema, network layer, engine, and all handlers.
@@ -431,7 +433,7 @@ bun run scripts/probe_model.ts <model_name> [--directive <directive_key>] [--url
 
 ### JIT Idle Memory Reclamation
 - **Automatic flushing of JIT-compiled bytecode** during idle periods drops long-running daemon RSS by ~35–40%. This complements the bounded in-memory state (trace ring, pacer queue, H2 session rotation).
-- **Proactive `Bun.gc(true)`**: Call on explicit cache resets (`POST /reset` clears cooldowns, H2 pools, trace buffers) or during large flush events. Currently zero explicit GC in `scripts/start.sh` (see `gc-memory.md`); with v1.4.2, `Bun.gc(true)` is safe to inject on `/reset` handlers or periodic flush cycles without blocking the event loop.
+- **Proactive `Bun.gc(true)`**: Call on explicit cache resets (`POST /reset` clears cooldowns, H2 pools, trace buffers) or during large flush events. Currently zero explicit GC in `scripts/gateway/start.sh` (see `gc-memory.md`); with v1.4.2, `Bun.gc(true)` is safe to inject on `/reset` handlers or periodic flush cycles without blocking the event loop.
 - **Memory contract unchanged**: No external Redis/Valkey dependency; bounded state remains the primary leak-defense. JIT reclamation is a secondary, not primary, bound.
 
 ### Streaming `Bun.write` (Direct-to-Disk)
@@ -447,7 +449,7 @@ bun run scripts/probe_model.ts <model_name> [--directive <directive_key>] [--url
 
 ### Faster Core `require()` (Lazy-Loaded Native Modules)
 - **Lazy-loaded `node:fs`**, `node:http`, etc. via faster `require()` internals. Reduces cold-start overhead for module imports in `src/handlers/`, `src/network/`, `src/engine/`.
-- **Architectural impact**: Gateway boot time (`scripts/start.sh`) and `/reset` hot-reload latency benefit from faster module resolution; no code changes needed.
+- **Architectural impact**: Gateway boot time (`scripts/gateway/start.sh`) and `/reset` hot-reload latency benefit from faster module resolution; no code changes needed.
 
 ### Native `crypto.argon2` & WebSocket Control
 - **Native `crypto.argon2`**: Available in Bun v1.4.2 runtime for any future key-derivation or token-hashing requirements (e.g., session ID derivation, auth token rotation). No dependency on `node:crypto` polyfill needed.

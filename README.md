@@ -207,7 +207,7 @@ curl -sk http://localhost:7766/health
 
 ## 🔌 Client Integrations
 
-### OpenCode 2 (`~/.config/opencode2/opencode.json`)
+### OpenCode 2 (`~/.config/opencode/opencode.json`)
 ```json
 {
   "provider": {

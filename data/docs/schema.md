@@ -1,5 +1,4 @@
-bq query --use_legacy_sql=false \
-'CREATE TABLE `project-7b250e67-6e23-4c02-ab5.openrouter.openrouter_traces` (
+CREATE TABLE IF NOT EXISTS `my-gcp-project.openrouter.openrouter_traces` (
   `trace_id` STRING NOT NULL,
   `span_id` STRING NOT NULL,
   `parent_span_id` STRING,
@@ -39,4 +38,4 @@ bq query --use_legacy_sql=false \
   `model_parameters` JSON,
   `resource_attributes` JSON,
   `schema_version` INT64 DEFAULT 1
-);'
+);

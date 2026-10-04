@@ -320,7 +320,7 @@ Operational parameters directly govern runtime behavior across all four gateway 
 There is **no `FUSION_UPSTREAM_URL` constant in `src/`** (grep over `src/`
 returns zero hits). The names `FUSION_UPSTREAM_URL` /
 `FUSION_UPSTREAM_URL_NATIVE` are legacy **Python fusion-sidecar env vars**
-documented in `docs/swap_env.md:64-65` and `docs/Longrunning_Mode.md:118`:
+documented in `docs/longrunning-mode.md:118`:
 
 | var | example | meaning |
 |---|---|---|
@@ -381,7 +381,7 @@ All schemas and their inferred types are re-exported from `src/lib.ts:3-25`.
    It returns `{ status: "ok", message: "Hard reset successful. ...",
    timestamp }` with HTTP 200.
 4. Verify: `GET /health` (same file `:126-144`) and
-   `bun run scripts/doctor.ts` for key validation.
+   `bun run scripts/diagnose/doctor.ts` for key validation.
 
 Cache cheat-sheet (which edits need the reset):
 

@@ -189,7 +189,7 @@ When routing through Anthropic Messages wire (`/v1/messages`, e.g. Claude 3.7 So
 
 ---
 
-## 5. Self-Healing Auto-Patcher (`scripts/opencode_autopatch.sh`)
+## 5. Self-Healing Auto-Patcher (`scripts/hooks/opencode_autopatch.sh`)
 
 To guarantee persistence across `@opencode-ai/cli` upgrades, the pre-launch auto-patcher enforces plugin integrity:
 
@@ -199,7 +199,7 @@ To guarantee persistence across `@opencode-ai/cli` upgrades, the pre-launch auto
 
 Manual test/verification:
 ```bash
-bash scripts/opencode_autopatch.sh -v
+bash scripts/hooks/opencode_autopatch.sh -v
 ```
 
 ---

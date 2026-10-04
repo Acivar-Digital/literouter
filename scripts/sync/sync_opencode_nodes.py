@@ -31,7 +31,7 @@ from typing import Any, Dict, List
 LOCAL_SOURCE = {
     "name": "WSL2 Laptop (Source of Truth)",
     "home": Path.home(),
-    "opencode2_dir": Path.home() / ".config" / "opencode2",
+    "opencode_dir": Path.home() / ".config" / "opencode",
     "skills_dir": Path.home() / ".agents" / "skills",
 }
 
@@ -40,7 +40,7 @@ REMOTE_TARGETS: Dict[str, Dict[str, Any]] = {
         "name": "Mac Mini (yapilymm)",
         "ssh_host": "yapilymm",
         "home": "/Users/yapilymm",
-        "opencode2_dir": "/Users/yapilymm/.config/opencode2",
+        "opencode_dir": "/Users/yapilymm/.config/opencode",
         "legacy_link": "/Users/yapilymm/.config/opencode",
         "skills_dir": "/Users/yapilymm/.agents/skills",
     },
@@ -48,7 +48,7 @@ REMOTE_TARGETS: Dict[str, Dict[str, Any]] = {
         "name": "VPS Gateway (vps466a)",
         "ssh_host": "vps466a",
         "home": "/home/vps466a",
-        "opencode2_dir": "/home/vps466a/.config/opencode2",
+        "opencode_dir": "/home/vps466a/.config/opencode",
         "legacy_link": "/home/vps466a/.config/opencode",
         "skills_dir": "/home/vps466a/.agents/skills",
     },
@@ -87,7 +87,7 @@ def translate_paths(obj: Any, src_home: str, dst_home: str) -> Any:
 
 
 def verify_source_integrity() -> None:
-    src_dir = LOCAL_SOURCE["opencode2_dir"]
+    src_dir = LOCAL_SOURCE["opencode_dir"]
     config_file = src_dir / "config.json"
     if not config_file.is_file():
         log(f"Source configuration file not found at: {config_file}", "ERR")
@@ -106,10 +106,10 @@ def sync_node(target_key: str, node: Dict[str, Any], dry_run: bool = False) -> b
     name = node["name"]
     host = node["ssh_host"]
     dst_home = node["home"]
-    dst_opencode2 = node["opencode2_dir"]
+    dst_opencode = node["opencode_dir"]
     dst_skills = node["skills_dir"]
     src_home_str = str(LOCAL_SOURCE["home"])
-    src_opencode2 = LOCAL_SOURCE["opencode2_dir"]
+    src_opencode = LOCAL_SOURCE["opencode_dir"]
     src_skills = LOCAL_SOURCE["skills_dir"]
 
     log(f"Checking connectivity to {name} ({host})...")
@@ -120,12 +120,12 @@ def sync_node(target_key: str, node: Dict[str, Any], dry_run: bool = False) -> b
 
     log(f"Connected to {name}. Preparing target directories...", "OK")
     if not dry_run:
-        setup_script = f"mkdir -p {dst_opencode2} {dst_skills}"
+        setup_script = f"mkdir -p {dst_opencode} {dst_skills}"
         subprocess.run(["ssh"] + SSH_BASE_OPTS + [host, setup_script], check=True)
 
     # 1. Translate and push config.json
     log(f"Generating translated config.json for {name} ({src_home_str} -> {dst_home})...")
-    with open(src_opencode2 / "config.json", "r", encoding="utf-8") as f:
+    with open(src_opencode / "config.json", "r", encoding="utf-8") as f:
         src_cfg = json.load(f)
 
     dst_cfg = translate_paths(src_cfg, src_home_str, dst_home)
@@ -134,19 +134,19 @@ def sync_node(target_key: str, node: Dict[str, Any], dry_run: bool = False) -> b
         json.dump(dst_cfg, f, indent=2)
 
     if not dry_run:
-        scp_cmd = ["scp"] + SSH_BASE_OPTS + [str(tmp_cfg_path), f"{host}:{dst_opencode2}/config.json"]
+        scp_cmd = ["scp"] + SSH_BASE_OPTS + [str(tmp_cfg_path), f"{host}:{dst_opencode}/config.json"]
         run_cmd(scp_cmd)
         tmp_cfg_path.unlink(missing_ok=True)
-        log(f"config.json synchronized to {host}:{dst_opencode2}/config.json", "OK")
+        log(f"config.json synchronized to {host}:{dst_opencode}/config.json", "OK")
 
     # 2. Sync schema.json and cli.json if present
     for fname in ["schema.json", "cli.json"]:
-        src_file = src_opencode2 / fname
+        src_file = src_opencode / fname
         if src_file.is_file():
             if not dry_run:
-                scp_cmd = ["scp"] + SSH_BASE_OPTS + [str(src_file), f"{host}:{dst_opencode2}/{fname}"]
+                scp_cmd = ["scp"] + SSH_BASE_OPTS + [str(src_file), f"{host}:{dst_opencode}/{fname}"]
                 run_cmd(scp_cmd)
-                log(f"{fname} synchronized to {host}:{dst_opencode2}/{fname}", "OK")
+                log(f"{fname} synchronized to {host}:{dst_opencode}/{fname}", "OK")
 
     # 3. Sync directories via rsync: agents, command, plugins, skills
     rsync_base = [
@@ -155,11 +155,11 @@ def sync_node(target_key: str, node: Dict[str, Any], dry_run: bool = False) -> b
     ]
 
     for dname in ["agents", "command", "plugins", "skills", "tools"]:
-        src_d = src_opencode2 / dname
+        src_d = src_opencode / dname
         if src_d.is_dir():
             log(f"Synchronizing {dname}/ to {name}...")
             if not dry_run:
-                cmd = rsync_base + [f"{str(src_d)}/", f"{host}:{dst_opencode2}/{dname}/"]
+                cmd = rsync_base + [f"{str(src_d)}/", f"{host}:{dst_opencode}/{dname}/"]
                 run_cmd(cmd)
 
     # 4. Sync Global Skills (~/.agents/skills)
@@ -173,10 +173,10 @@ def sync_node(target_key: str, node: Dict[str, Any], dry_run: bool = False) -> b
     if not dry_run:
         remote_hygiene = f"""
         # Symlink config.json -> opencode.json
-        ln -sf {dst_opencode2}/config.json {dst_opencode2}/opencode.json 2>/dev/null || true
-        # Symlink ~/.config/opencode -> ~/.config/opencode2 for backwards compatibility
+        ln -sf {dst_opencode}/config.json {dst_opencode}/opencode.json 2>/dev/null || true
+        # Symlink ~/.config/opencode -> ~/.config/opencode for backwards compatibility
         if [ ! -d "{node['legacy_link']}" ] || [ -L "{node['legacy_link']}" ]; then
-            ln -sfn {dst_opencode2} {node['legacy_link']} 2>/dev/null || true
+            ln -sfn {dst_opencode} {node['legacy_link']} 2>/dev/null || true
         fi
         """
         subprocess.run(["ssh"] + SSH_BASE_OPTS + [host, remote_hygiene], check=True)
@@ -194,7 +194,7 @@ def main() -> None:
 
     print("═══════════════════════════════════════════════════════════════════════════")
     print("      LiteRouter OpenCode 2 Multi-Node Settings Aligner")
-    print("      Source of Truth: WSL2 Laptop (~/.config/opencode2)")
+    print("      Source of Truth: WSL2 Laptop (~/.config/opencode)")
     print("═══════════════════════════════════════════════════════════════════════════")
 
     verify_source_integrity()

@@ -23,7 +23,7 @@ import urllib.error
 import urllib.request
 from typing import Any, Dict, List, Tuple
 
-DB_PATH = os.path.expanduser("~/.local/share/opencode2/opencode/opencode.db")
+DB_PATH = os.path.expanduser("~/.local/share/opencode/opencode/opencode.db")
 DEFAULT_SESSION_ID = "ses_fcd71dd78ffeuRd5wpUekhfwIp"
 DEFAULT_TARGET_MSG_ID = "msg_0328eded4001jk816m46dSoid2"
 DEFAULT_GATEWAY_URL = "https://localhost:7766/v1/chat/completions"

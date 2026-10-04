@@ -23,6 +23,22 @@ export interface StageResult {
   durationMs?: number;
   completionTokens?: number;
   tokensPerSec?: number;
+  /**
+   * Transport/upstream failure (non-2xx, timeout, exception). When set, the
+   * stage never reached the model, so `score` carries NO capability signal
+   * and MUST NOT be read as a model verdict. Absent on genuine model answers.
+   */
+  error?: string;
+}
+
+/**
+ * True when a stage failed for infrastructure reasons rather than because the
+ * model answered incorrectly. Report writers use this to render an ERROR
+ * verdict instead of a scored FAIL so a gateway rejection (403 free-tier,
+ * 429 cooldown, timeout) is never reported as a model deficiency.
+ */
+export function isTransportFailure(result: Pick<StageResult, "error">): boolean {
+  return typeof result.error === "string" && result.error.length > 0;
 }
 
 /**

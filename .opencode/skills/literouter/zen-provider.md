@@ -1,15 +1,17 @@
 # Zen Provider — Identity Gating, Sessions, Directives & Doctor Probes
 
 > Load this file whenever the request touches the **Zen provider** (`zn`, `opencode.ai/zen`),
-> **doctor diagnostics** (`scripts/doctor.ts`, `scripts/doctor_zn.ts`), `big-pickle`,
+> **doctor diagnostics** (`scripts/diagnose/doctor.ts`, `scripts/diagnose/doctor_zn.ts`), `big-pickle`,
 > `MissingSessionID` / `FreeUsageLimitError`, or Zen directive keys.
 > SKILL.md is the entry point; this file is the Zen deep dive.
 
-## 1. Endpoint & Registry (ground truth: `config/providers.json:247-261`)
+## 1. Endpoint & Registry (ground truth: `config/providers.json` → `providers.zen`)
 
 > Canonical provider table (all codes, base URLs, strategies, limits):
 > [`config-schemas.md` §3](config-schemas.md#3-configprovidersjson-providers-headers-registry).
-> Zen (`zn`) uses `strategy: "zen_single_flight"` (`config/providers.json:338`).
+> Zen (`zn`) uses `strategy: "zen"` (`config/providers.json` → `providers.zen.strategy`;
+> the enum is `standard | native_cascade | gcp_guarded | anthropic_direct | zen` at
+> `src/config/schema.ts:105-113`).
 
 - Base URL: `https://opencode.ai/zen`
 - Auth header: `Bearer` with `ZEN_API_KEYS` pool entries (live keys in git-ignored `.env.local`, never hardcoded)
@@ -17,8 +19,8 @@
   - `HTTP-Referer: https://opencode.ai` (or `LITEROUTER_HTTP_REFERER`)
   - `Referer: https://opencode.ai`
   - `X-Title: OpenCode` (or `LITEROUTER_X_TITLE`)
-  - `User-Agent: OpenCode/1.18.29` (or `LITEROUTER_USER_AGENT`)
-- Endpoints: `ch` → `/v1/chat/completions`, `md` → `/v1/models`, `rs` → `/v1/responses`
+  - `User-Agent`: `opencode/1.18.30 ai-sdk/provider-utils/4.0.23 runtime/bun/1.4.2` (from `config/providers.json`; the gateway re-reads it at boot via `tools/get_opencode_ver.ts`)
+- Endpoints: `ch` → `/v1/chat/completions`, `ms` → `/v1/messages`, `md` → `/v1/models`, `rs` → `/v1/responses`
 
 ## 2. Bare Model Standard (no `zen/` prefix)
 
@@ -43,11 +45,12 @@ Static `User-Agent` / `Referer` alone does **not** satisfy free-tier gating — 
 `buildZenHeaders(incomingHeaders?, sessionId?)` merges provider headers from `config/providers.json` (as the single source of truth) and ensures strict session validation:
 - **Client Header Scrubbing (`scrubZenHeaders`)**: Deletes all client attribution headers (`x-client-*`, `client-*`, `x-opencode-client`, `x-opencode-version`, `x-application-*`, `sec-ch-ua*`, `origin`, etc.) before forwarding upstream.
 - **Unconditional Attribution Injection**: Sets authentic OpenCode runtime identity (`User-Agent: opencode/1.18.30 ...`, `Referer: https://opencode.ai`, `HTTP-Referer: https://opencode.ai`, `X-Title: OpenCode`).
-- **Session ID Enforcement**: Validates against OpenCode canonical session format (`ses_<hex>ffe<base62>`). If missing or non-matching (e.g. generic UUID4s), automatically generates a compliant token via `generateOpenCodeSessionId()`.
+- **Session ID Enforcement**: Validates against OpenCode canonical session format `ses_[0-9a-f]{8}8ffe[0-9a-zA-Z]{14}` (`src/engine/zen.ts:15`). `isAcceptableSessionId` also accepts bare 8-char alphanumeric IDs and other well-formed `ses_…` tokens; anything else (e.g. generic UUID4s) is replaced by a freshly generated compliant token via `generateOpenCodeSessionId()`.
 - **Core Probe Tool Merging (`adaptZenPayload` & `adaptZenResponsesPayload`)**:
   - Automatically merges OpenCode core probe tools (`bash`, `read`, `write`, `edit`, `glob`, `grep`) into `tools` without removing any client-supplied or subagent tools.
   - Normalizes `tool_choice`: converts `"none"` to `"auto"` so subagents (such as title generation) don't trigger upstream `FreeTierError`.
   - Forces `stream: true` upstream. For downstream non-streaming callers, LiteRouter transparently accumulates SSE stream chunks into standard responses (`chat.completion` or Responses JSON) via `accumulateZenStreamToCompletion` / `accumulateZenResponsesStream`.
+- **Emitted Zen Headers**: `buildZenHeaders` returns exactly the registry `zen.headers` plus `User-Agent` (registry value, hardcoded fallback `opencode/1.18.30 ai-sdk/provider-utils/4.0.23 runtime/bun/1.4.2`), `HTTP-Referer`, `Referer`, `X-Title`, and the session trio `session-id` / `x-session-id` / `x-opencode-session` plus `x-opencode-request: msg_<session tail>` (`src/engine/zen.ts:125-135`).
 - **Startup Version Sync**: Prior to gateway startup, `scripts/gateway/start.sh` invokes `tools/get_opencode_ver.ts`, executing local `opencode --version` and updating `config/providers.json` with the exact runtime `User-Agent`.
 
 ### 4.1 🚨 CRITICAL MANDATE: NEVER DROP OPENCODE SESSION ID OR USE UUID4
@@ -74,21 +77,25 @@ Static `User-Agent` / `Referer` alone does **not** satisfy free-tier gating — 
 
 `ZEN_ENABLE_RETRIES=false` + `ZEN_ENABLE_QUARANTINE=false` = transparent dumb forwarder.
 
-## 7. Doctor Diagnostics (`scripts/doctor.ts` + `scripts/doctor_zn.ts`)
+## 7. Doctor Diagnostics (`scripts/diagnose/doctor.ts` + `scripts/diagnose/doctor_zn.ts`)
 
 > 📖 **Comprehensive Reference**: For complete operational details on all doctor probes, error classifications (including `prompt_cache_key`), and CLI filters, see [`doctor.md`](doctor.md).
 
-- Full sweep (all providers): `bun run scripts/doctor.ts`
-- Zen only: `bun run scripts/doctor.ts --provider=zn`
-- Legacy `probeZenKey` (`doctor.ts:263-308`) sends static headers only → always
-  gets `400 MissingSessionID` on `big-pickle`; kept as fallback reference.
-- Live path: `scripts/doctor_zn.ts` (isolated helper, wired into the Zen loop):
-  - `generateZenSessionId()` — fresh `ses_` + 26 random base62 per probe via
-    `crypto.getRandomValues` (one distinct session per key, mimics N clients)
-  - `buildZenSessionHeaders(sessionId)` — §1 static headers + §4 session fan-out
-    + `x-client-name: opencode` / `x-client-version` matching the User-Agent
-  - `probeZenKeyWithFreshSession(key)` — `big-pickle` ping with 429 body parsing
-- Verified 2026-09-08: 7/7 Zen keys `200 OK (Healthy)` (previously 7× `400`).
+- Full sweep (all providers): `bun run scripts/diagnose/doctor.ts`
+- Zen only: `bun run scripts/diagnose/doctor.ts zn` (also `--provider=zn`)
+- Live path: `scripts/diagnose/doctor_zn.ts` — the Zen pool is wired to
+  `probeZenKeyWithFreshSession` at `scripts/diagnose/doctor.ts:505`:
+  - `generateZenSessionId()` (`:13-15`) — delegates to `generateOpenCodeSessionId()`
+    (`src/engine/session_id.ts:12-26`), producing `ses_` + 8 hex + `8ffe` + 14 base62
+    via `crypto.getRandomValues`, one distinct session per key.
+  - `buildZenSessionHeaders(sessionId)` (`:17-19`) — delegates to `buildZenHeaders()`,
+    giving registry headers + `session-id` / `x-session-id` / `x-opencode-session` /
+    `x-opencode-request` (§4).
+  - `probeZenKeyWithFreshSession(key)` (`:21-44`) — `big-pickle` streaming ping with the
+    Zen core probe `tools` merged in, `tool_choice: auto`, and 429/403 body parsing.
+- Legacy `probeZenKey` (`scripts/diagnose/doctor.ts:278-323`) sends static headers only
+  and would always get `400 MissingSessionID` on `big-pickle`; it is **dead code** — the
+  live Zen loop never calls it.
 
 ## 8. Policy & Automation Note
 
@@ -149,12 +156,12 @@ To register Zen Muse in OpenCode 2, configure `lr-zn-rs` under `providers`:
       "npm": "@ai-sdk/openai",
       "name": "LiteRouter Zen Responses",
       "settings": {
-        "baseURL": "http://192.168.50.10:7766/v1",
+        "baseURL": "http://10.32.34.172:7766/v1",
         "apiKey": "lr-zn-oo-rs-no",
         "chunkTimeout": 120000
       },
       "options": {
-        "baseURL": "http://192.168.50.10:7766/v1",
+        "baseURL": "http://10.32.34.172:7766/v1",
         "apiKey": "lr-zn-oo-rs-no",
         "chunkTimeout": 120000
       },
@@ -188,24 +195,28 @@ To register Zen Muse in OpenCode 2, configure `lr-zn-rs` under `providers`:
 
 ### 10.1 Where each upstream header originates
 
-`resolveUpstreamEndpoint` (`src/handlers/openai_compat.ts:106-131`) returns the
-registry `headers` object verbatim; `buildAuthHeaders` (`:133-181`) and the unified
-dispatch engine (`src/engine/dispatch.ts`) then merge it via `Object.assign` and append
-forwarded or synthesized session headers (`ensureSessionHeaders`). Per-header truth:
+`resolveUpstreamEndpoint` (`src/config/providers.ts:126-156`) returns the
+registry `headers` object verbatim; `buildAuthHeaders`
+(`src/handlers/openai_compat.ts:93`) and the Zen engine then merge it and append
+forwarded or synthesized session headers (`ensureSessionHeaders`,
+`src/engine/session_id.ts:67-89`). Per-header truth:
 
 | Upstream header | Source | Client-overridable? |
 |---|---|---|
 | `Authorization: Bearer <key>` | Rotating `ZEN_API_KEYS` pool entry selected per attempt | No — client `Authorization` carries the `lr-*` directive key only |
-| `User-Agent`, `HTTP-Referer`, `Referer`, `X-Title` | `config/providers.json` `zen.headers` verbatim (currently `OpenCode/1.18.29` / `https://opencode.ai` / `OpenCode`) | No — inbound client values are **not** forwarded; upstream always sees registry identity |
-| `session-id`, `x-session-id`, `x-opencode-session`, `x-opencode-session-id`, `opencode-session-id`, `opencode-session`, `x-client-version`, `x-client-name` | Verbatim from inbound client request if present; if missing, synthesized via `ensureSessionHeaders` (`ses_` + 26 base62 chars via `src/engine/session_id.ts`) | Yes — preserved when provided by client, auto-synthesized when omitted |
+| `User-Agent`, `HTTP-Referer`, `Referer`, `X-Title` | `config/providers.json` `zen.headers` verbatim (currently `opencode/1.18.30 ai-sdk/provider-utils/4.0.23 runtime/bun/1.4.2` / `https://opencode.ai` / `OpenCode`) | No — inbound client values are **not** forwarded; `buildZenHeaders` unconditionally overwrites all four (`src/engine/zen.ts:127-130`) |
+| `session-id`, `x-session-id` | Preserved from the inbound client session when acceptable, otherwise synthesized by `ensureSessionHeaders` as `ses_<8hex>8ffe<14 base62>` (`src/engine/session_id.ts:12-26`) | Yes — preserved when supplied by the client, auto-synthesized when omitted |
+| `x-opencode-session`, `x-opencode-request` | Set unconditionally by `buildZenHeaders` to the active session ID and `msg_<session tail>` (`src/engine/zen.ts:131-132`) | No |
 
 Notes:
-- `LITEROUTER_HTTP_REFERER` / `LITEROUTER_X_TITLE` / `LITEROUTER_USER_AGENT`
-  (defaults in `src/config/schema.ts:143-145`) are honored by the doctor probes
-  (`scripts/doctor.ts`, `scripts/doctor_zn.ts` fall back to registry-matching
-  values); on the gateway path the registry is the source of truth.
+- `LITEROUTER_HTTP_REFERER` (default `https://opencode.ai`) / `LITEROUTER_X_TITLE`
+  (default `OpenCode`) / `LITEROUTER_USER_AGENT` (default `OpenCode/1.0.0`)
+  (`src/config/schema.ts:214-216`) are honored by the doctor probes
+  (`scripts/diagnose/doctor.ts:293-296` for the legacy probe, and
+  `src/engine/zen.ts:120-123` for the live path); on the gateway path the
+  `config/providers.json` registry is the source of truth.
 - After editing `config/providers.json` headers, hot-reload with
-  `curl -sk -X POST https://localhost:7766/reset` (no restart needed).
+  `curl -sk -X POST https://localhost:7766/reset -H "Authorization: Bearer <LITEROUTER_AUTH_KEY>"` (no restart needed).
 - The terminal Model line's `Ref: <User-Agent> @ <Referer>` suffix renders the
   same registry headers, so it shows what Zen was told — compare it first when
   identity errors appear.
@@ -216,7 +227,7 @@ Zen gates in two stages: static headers answer "is this OpenCode at all"
 (fail → `429 FreeUsageLimitError`); session headers answer "which OpenCode
 session is calling" (fail → `400 MissingSessionID` on gated free-tier models).
 Referrer fixes layer 1 only — `big-pickle` and other free-tier models additionally
-require layer 2, which is why the legacy static-only probe always returned 400.
+require layer 2, which is why the unused static-only `probeZenKey` in `doctor.ts` would always return 400.
 
 ### 10.3 Symptom → check table
 
@@ -224,29 +235,31 @@ require layer 2, which is why the legacy static-only probe always returned 400.
 |---|---|---|
 | `429 FreeUsageLimitError` | Upstream not seeing OpenCode static identity | `config/providers.json` `zen.headers`; stale registry → `POST /reset`; confirm request actually routed `zn` (directive key `lr-zn-*-*`, 🎯 line) |
 | `400 MissingSessionID` | No session header outbound | Check if `ensureSessionHeaders` (`src/engine/session_id.ts`) is invoked on the dispatch path; confirm client didn't supply an empty session header override |
-| `401/403` | Bad or revoked pool key | `bun run scripts/doctor.ts --provider=zn` to isolate the key; rotate `ZEN_API_KEYS` + restart |
+| `401/403` | Bad or revoked pool key | `bun run scripts/diagnose/doctor.ts zn` to isolate the key; rotate `ZEN_API_KEYS` + restart |
 | Doctor PASS but gateway FAILs | Doctor bypasses the gateway (direct upstream) | Reproduce via gateway: `curl -sk https://localhost:7766/v1/chat/completions -H "Authorization: Bearer <lr-zn-oa-ch-no>" -H "session-id: <real>"`; check pool loaded at boot and directive parsing |
-| Gateway PASS but doctor FAILs | Legacy static-only probe path | Expected for `probeZenKey`; the wired Zen loop uses `doctor_zn.ts` fresh sessions |
+| Gateway PASS but doctor FAILs | Legacy static-only probe path | Not expected — the wired Zen loop uses `probeZenKeyWithFreshSession` (`scripts/diagnose/doctor_zn.ts`); the static-only `probeZenKey` in `doctor.ts:278-323` is never called |
 
 ### 10.4 Quick verification commands
 
-> 📌 **Intranet Gateway Host**: The LiteRouter gateway runs on the intranet Linux server at `http://192.168.50.10:7766` (or `http://literouter.lan:7766`), NOT `localhost`.
+> 📌 **Gateway Host**: The authoritative bind host is `config/location.json` → `host`
+> (currently `10.32.34.172`, `port: 7766`, `tls_enabled: false`). The previous
+> `192.168.50.10` value is stale and no longer appears anywhere in the repo config.
 
 ```bash
 # 1. Deterministic Unit Verification (tests tool merging, choice normalization, and stream accumulation offline)
 bun test tests/unit/engine/zen.test.ts
 
-# 2. Live Gateway Wire Adaptation Test (runs 3 live test vectors against intranet gateway at 192.168.50.10:7766)
+# 2. Live Gateway Wire Adaptation Test (runs 3 live test vectors against the gateway from config/location.json)
 bun run test:zen
 # (or explicitly target a specific URL)
-bun run scripts/test/test_zen_fixes.ts --url http://192.168.50.10:7766
+bun run scripts/test/test_zen_fixes.ts --url http://10.32.34.172:7766
 
 # 3. Zen Upstream Key Health Doctor Probes (direct upstream key check)
-bun run scripts/doctor.ts --provider=zn
+bun run scripts/diagnose/doctor.ts zn
 
 # 4. Gateway Health Probe
-curl -s http://192.168.50.10:7766/health | jq .
+curl -s http://10.32.34.172:7766/health | jq .
 
 # 5. Hot-reload providers.json header edits
-curl -s -X POST http://192.168.50.10:7766/reset
+curl -s -X POST http://10.32.34.172:7766/reset -H "Authorization: Bearer <LITEROUTER_AUTH_KEY>"
 ```

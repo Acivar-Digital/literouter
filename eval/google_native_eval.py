@@ -4,7 +4,7 @@ eval/google_native_eval.py
 
 Google Native Model Evaluation & Capability Harness for LiteRouter.
 Uses Google's official GenAI SDK (google.genai) over LiteRouter's native RPC
-gateway (https://localhost:7766) with directive key `lr-gg-gg-gc-no`.
+gateway (http://literouter.lan:7766) with directive key `lr-gg-gg-gc-no`.
 
 Evaluates across all three pillars:
   ⚡ Speed & Throughput Benchmark

@@ -25,7 +25,7 @@ load_dotenv(".env.local", override=True)
 # Auto-detect TLS for test runners
 _root_dir = Path(__file__).parent.parent
 _cert_path = _root_dir / "certs" / "localhost.pem"
-_ca_path = Path.home() / ".local" / "share" / "opencode2" / "mkcert" / "rootCA.pem"
+_ca_path = Path.home() / ".local" / "share" / "mkcert" / "rootCA.pem"
 
 if _cert_path.exists() and os.environ.get("LITEROUTER_TLS_ENABLED", "").lower() != "false":
     if not os.environ.get("LITEROUTER_BASE_URL"):

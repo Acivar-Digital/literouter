@@ -45,7 +45,7 @@ Identify the provider from the model identifier:
 ## §2. Canonical Execution Commands
 
 ### 1. Full 3-Pillar Gauntlet (Speed + Code + Web)
-Default master runner executes all 3 suites sequentially and produces an executive markdown report:
+Default master runner executes the **3-wire sequential matrix** (Chat → Responses → Messages) and produces the **Consolidated Multi-Wire report** — a `# 🏛️ Consolidated Multi-Wire Evaluation Report: \`<model>\`` (`eval/eval.ts:1354`) containing a 3-column `📊 Cross-Wire Comparison Matrix` (Directive Key, Endpoint, Overall Verdict, Throughput Speed, Avg TTFT, Avg Latency, Code/Web Pass Rate, Wire Role — `eval/eval.ts:1403-1415`) plus one **Unified Role Recommendation** across all wires. This is the default because `parseCliArgs` defaults `allWires = true`. Pass `--wire <chat|rs|ms>` to narrow to a single wire instead.
 
 ```bash
 # General OpenRouter model (e.g. stealth/space-bunny-alpha)
@@ -62,8 +62,11 @@ bun run eval/eval.ts meta/llama-3.3-70b-instruct nvidia lr-nv-oa-ch-no --continu
 When asked to test only a specific pillar:
 
 ```bash
-# Speed & Latency ONLY (TTFT, tok/s, concurrency)
+# Speed & Latency ONLY (sequential TTFT, duration, tokens, tok/s — no concurrency)
 bun run eval/eval.ts <model> <provider> <directive_key> --suites speed
+
+# Isolated speed benchmark (speed.ts takes a bare model positional; no provider arg)
+bun run eval/speed.ts <model> --directive lr-or-oa-ch-no
 
 # Agentic Coding ONLY (Wire, Pydantic, Loop, str_replace, Security)
 bun run eval/eval.ts <model> <provider> <directive_key> --suites code --continue
@@ -73,17 +76,17 @@ bun run eval/eval.ts <model> <provider> <directive_key> --suites web --continue
 ```
 
 ### 3. Targeted Stage Debugging (Surgical Probe)
-When isolating a specific stage (1–5) to diagnose a failure:
+When isolating a specific stage (1–5) to diagnose a failure. `eval/code.ts` and `eval/web.ts` run the **same** `validateStrictEvalArgs` gate as `eval/eval.ts`, so they also require the `<model> <provider> <directive_key>` (or `<model> <directive_key>`) positional form — a bare `bun run eval/code.ts <model>` aborts with `Missing required argument #2: <provider>` (`eval/validate_cli.ts:563`).
 
 ```bash
 # Isolated Coding Stage 4 (surgical str_replace indentation check)
-bun run eval/code.ts <model> --stage 4 --directive lr-or-oa-ch-no
+bun run eval/code.ts <model> openrouter lr-or-oa-ch-no --stage 4
 
 # Isolated Coding Stage 2 (Pydantic schema conformity)
-bun run eval/code.ts <model> --stage 2 --directive lr-or-oa-ch-no
+bun run eval/code.ts <model> openrouter lr-or-oa-ch-no --stage 2
 
 # Isolated Web Stage 2 (mobile grid collapse)
-bun run eval/web.ts <model> --stage 2 --directive lr-or-oa-ch-no
+bun run eval/web.ts <model> openrouter lr-or-oa-ch-no --stage 2
 ```
 
 ### 4. Reasoning & Thinking Controls
@@ -103,13 +106,76 @@ bun run eval/eval.ts <model> <provider> <key> --reasoning high --continue
 bun run eval/eval.ts <model> <provider> lr-or-oa-ch-ts --reasoning-transcript --continue
 ```
 
+> ⚠️ **Transcript support is NOT universal.** `--reasoning-transcript` / `--no-reasoning-transcript` exist on **`eval/eval.ts`** (default ON) and **`eval/code.ts`** (default ON). **`eval/web.ts` has zero transcript support** — those flags are not in its `--help` and passing them there has no effect. There is no transcript flag on `eval/speed.ts` either.
+
+### 5. Flag Reference (verbatim from each script's `--help`)
+
+`bun run eval/eval.ts --help`:
+```
+  --all-wires            Execute full 3-wire sequential matrix (Chat -> Responses -> Messages) (default)
+  --suites <list>        Comma-separated benchmark suites to execute:
+                         speed, code, web (default: speed,code,web)
+  --url <url>            LiteRouter gateway endpoint URL (default: http://literouter.lan:7766)
+  --wire <chat|rs|ms>    Wire protocol ('chat', 'rs'/'responses', 'messages'/'ms')
+  --stage <n>            Run ONLY a specific stage (1-5) for code / web suites
+  --reasoning <effort>   Reasoning effort for thinking models: none, medium, high
+  --reasoning-transcript Preserve upstream thinking (ts-nuance key) and append transcripts
+  --no-reasoning-transcript Scrub thinking, no transcript appendix
+  --runs <n>             Number of benchmark iterations per test (default: 2)
+  --continue             Continue suite execution on stage failure (Diagnostic Mode)
+  --skip-report          Do not write Markdown report card to eval/reports/
+  --image <path_or_url>  Custom image input for web vision-language evaluation
+  -h, --help             Show this help manual and exit
+```
+
+`bun run eval/code.ts --help`:
+```
+  --wire <chat|rs>    Wire protocol ('chat' or 'rs'/'responses', auto-detected if omitted)
+  --directive <key>   Directive key (default: lr-or-oa-ch-no for chat, lr-zn-oo-rs-no for responses)
+  --url <url>         Gateway endpoint
+  --stage <n>         Run ONLY a specific stage (1, 2, 3, 4, or 5)
+  --continue          Do not abort on failure; run all stages (Diagnostic Mode)
+  --runs <n>          Number of benchmark iterations (default: 2)
+  --cooldown <ms>     Cooldown delay between stages in milliseconds (default: 2000)
+  --timeout <ms>      Stage execution timeout in milliseconds (default: 120000)
+  --reasoning-transcript    Preserve upstream thinking via ts-nuance key and capture
+                            transcripts into the report appendix (default: ON)
+  --no-reasoning-transcript Scrub thinking (default no-nuance key), no transcripts
+  -h, --help          Show this help screen
+```
+
+`bun run eval/web.ts --help` (note: **no transcript flags**):
+```
+  --directive <key>     Gateway directive key (default: lr-or-oa-ch-no)
+  --url <url>           Gateway chat completions URL (default: http://literouter.lan:7766/v1/chat/completions)
+  --image <uri_or_path> Image input (URL, data URI, or path; defaults to internal SaaS dashboard SVG)
+  --stage <n>           Run ONLY stage n (1 to 5)
+  --continue            Run all stages even if failure occurs (diagnostic mode)
+  --runs <n>            Number of test runs/iterations per check (default: 2)
+  --cooldown <ms>       Cooldown delay between stages in milliseconds (default: 2000)
+  --timeout <ms>        HTTP request timeout per stage in ms (default: 180000)
+  --max-tokens <n>      Max completion tokens (default: 8192)
+  --reasoning <effort>  Reasoning effort: high, medium, none
+  -h, --help            Show this help menu and exit
+```
+
+`bun run eval/speed.ts --help`:
+```
+Usage: bun run eval/speed.ts [model] [options]
+  --models <m1,m2>   Comma-separated list of models
+  --runs <n>         Number of runs per model (default: 2)
+  --directive <key>  Directive key (default: lr-or-oa-ch-no)
+  --url <url>        Gateway URL (default: http://literouter.lan:7766/v1/chat/completions)
+```
+
 ---
 
 ## §3. The Three Pillars Breakdown
 
 ```
 eval/
-├── speed.ts       # ⚡ Speed & Latency: TTFT (<2s target), tok/s (>30 target)
+├── speed.ts       # ⚡ Speed & Latency: sequential loop over models/runs measuring TTFT,
+│                  #    total duration, token counts and tok/s. No concurrency, no parallel slots.
 ├── code.ts        # 💻 Agentic Coding (5 Stages):
 │                  #    Stage 1: Wire & Protocol resilience
 │                  #    Stage 2: Pydantic Schema fidelity
@@ -131,10 +197,12 @@ eval/
 Reports are automatically generated and saved to:
 `eval/reports/<sanitized_model_name>.md`
 
+**Default output shape is the Consolidated Multi-Wire report** (3-column `📊 Cross-Wire Comparison Matrix` + one `🎯 Unified Role Recommendation`) because `parseCliArgs` defaults `allWires = true`; `--wire <chat|rs|ms>` narrows the run to a single wire.
+
 Based on composite scores, models are assigned:
 - 🧠 **Orchestrator**: High Pydantic score, robust 3-turn state loop, perfect surgical patch fidelity (`str_replace`).
 - 💻 **General Coder**: High surgical patch fidelity, zero package hallucinations, clean AST syntax.
-- ⚡ **Explorer**: Fast TTFT (<2s), high streaming throughput (>100 tok/s), large context window.
+- ⚡ **Explorer**: The only **enforced** criterion is **TTFT < 2000 ms** (`EXPLORER_MAX_TTFT_MS`, `eval/eval.ts:63`), applied when picking the best Explorer wire across a multi-wire run (`eval/eval.ts:1298-1316`); throughput is a tie-breaker, not a threshold. There is **no** `>100 tok/s` gate and **no** context-window check in `eval/` — treat those as non-enforced qualitative guidance. Note the per-wire classifier ends in an **unconditional Explorer fallback** (`eval/eval.ts:605-615`) that inspects no speed data, so a single-wire run labels the wire Explorer by default.
 
 ---
 
@@ -152,6 +220,12 @@ bun run eval/eval.ts thinkingmachines/inkling:free openrouter lr-or-oa-ch-no --c
 
 # Test gemini-3.5-flash-lite (Google AI Studio)
 bun run eval/eval.ts gemini-3.5-flash-lite google lr-gg-gg-gc-no --continue
+
+# Narrow to a SINGLE wire instead of the default 3-wire matrix
+bun run eval/eval.ts muse-spark-1.3-contributor-free zen lr-zn-oo-rs-no --wire rs --continue
+
+# 2-positional form: provider is auto-inferred from the directive key
+bun run eval/eval.ts thinkingmachines/inkling:free lr-or-oo-rs-no --continue
 
 # Check gateway health before running
 curl -s http://literouter.lan:7766/health

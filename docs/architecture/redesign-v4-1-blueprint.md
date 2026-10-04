@@ -2233,7 +2233,7 @@ process.on("SIGINT", initiateDrain);
 
 ### 16.3 Mandatory Test Properties
 
-All tests MUST follow the test hygiene playbook (`.opencode2/skills/literouter/test-hygiene-playbook.md`):
+All tests MUST follow the test hygiene playbook (`.opencode/skills/literouter/test-hygiene-playbook.md`):
 
 - **Air-gapped**: Zero outbound network calls. Use `tp` (test provider) at `127.0.0.1:8999`.
 - **No real keys**: All tests use mock stub tokens (`sk-test-stub-0001`).

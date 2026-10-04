@@ -48,10 +48,11 @@ LiteRouter is an enterprise-grade, high-density AI API Gateway and multiplexing 
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │ 4. RESILIENCE, POOLING & TELEMETRY (`src/network/`, `src/ui/`)               │
 │    • In-Memory RequestPacer & FastFifoQueue: Deterministic burst smoothing   │
-│    • KeyPool & CooldownManager: In-flight 2s 429 rotation, 7d auth quarantine│
+│    • KeyPool & CooldownManager: jittered in-flight 429 rotation,          │
+│      7d auth/quota quarantine                                            │
 │    • Provider Circuit Breakers (60s auto-canary half-open leases)           │
 │    • Outbound Staggered HTTP/2 Origin Pool (`h2_pool.ts`, maxAge 180s ±15s)  │
-│    • TTFT Sentry Guard (5s first-byte ghosting abort & zero-penalty rotate) │
+│    • TTFT Sentry Guard (120s first-byte ghosting abort & zero-penalty rotate)  │
 │    • Synchronous High-Speed Terminal Telemetry (`logger.ts`)                │
 └──────────────────────────────────────┬──────────────────────────────────────┘
                                        │
@@ -62,13 +63,13 @@ LiteRouter is an enterprise-grade, high-density AI API Gateway and multiplexing 
 ```
 
 ### Core Architecture Pillars:
-- **Port `7766` Runtime**: Booted via `bun run src/index.ts` or `bash scripts/start.sh` (daemonized inside tmux session `literouter`).
+- **Port `7766` Runtime**: Booted via `bun run src/index.ts` or `bash scripts/gateway/start.sh` (daemonized inside tmux session `literouter`). The top-level `scripts/start.sh` is byte-identical to `scripts/gateway/start.sh` but resolves `DEFAULT_ROOT="$SCRIPT_DIR/../.."` (`scripts/start.sh:7`), which from `scripts/` lands on the repo's parent — use `scripts/gateway/*`.
 - **Dual ALPN Engine**: Powered by `node:http2` `createSecureServer` with `allowHTTP1: true`. Transparently negotiates pure HTTP/2 (`h2`) for binary multiplexed clients (Python `httpx[http2]`, Pydantic AI) and HTTP/1.1 over TLS for Node.js runtimes (OpenCode 2, Claude Code) without handshake rejection or protocol negotiation errors. Falls back to cleartext HTTP if certificates (`certs/localhost.pem`, `certs/localhost-key.pem`) are absent.
 - **Pure In-Memory Coordination Engine**: Replaces external database daemons with zero-overhead in-memory components (`RequestPacer`, `FastFifoQueue`, `KeyPool`, `CooldownManager`). Eliminates external failure domains and delivers sub-millisecond RAM lookups (<0.05ms) with single-process event loop atomicity.
 - **Resilience Guarantees**:
-  - **2-Second 429 Key Rotation**: When upstream returns HTTP 429, the failing key enters cooldown, and the request is immediately retried on Key #2 after a minimal 2,000ms delay.
+  - **In-Flight 429 Key Rotation**: When upstream returns HTTP 429, the failing key enters cooldown and the request is retried on the next key after a randomized delay drawn from `config/providers.json` → `request_retry.delay` (`src/handlers/openai_compat.ts:1007-1015`): `200–500ms` for `openrouter`/`nvidia`/`google`/`gcp`, `200–2000ms` for `zen`. There is no fixed 2,000ms rotation delay; `LITEROUTER_ROTATE_DELAY_MS` is a legacy knob with no reader under `src/`.
   - **Anti-Stall Guarantee**: LiteRouter NEVER forces clients to hang in 60s+ backoff sleeps when keys are throttled; it rotates keys in-flight or cascades down the Fusion Fallback chain.
-  - **First-Byte Ghosting Protection (`TTFT Guard`)**: Driven by `LITEROUTER_NO_RESPONSE_TIMEOUT=5` (5s). If an upstream connection opens but sends 0 content bytes within 5s, the request is aborted without penalizing the key and cleanly rotated.
+  - **First-Byte Ghosting Protection (`TTFT Guard`)**: Resolved per request from `LITEROUTER_TTFT_TIMEOUT_MS`, falling back to `LITEROUTER_NO_RESPONSE_TIMEOUT_MS` (`src/engine/dispatch.ts:192-196`, `src/network/fetcher.ts:637-638`). Both schema-default to `120000` ms (`src/config/schema.ts:203-204`), matching the module constant `TTFT_TIMEOUT_MS = 120000` (`src/network/fetcher.ts:61`). The tracked `.env:14` sets the legacy non-`_MS` alias `LITEROUTER_NO_RESPONSE_TIMEOUT=180` (seconds), normalized to `180000` ms by `src/config/env.ts:62-65`, so the effective first-byte timeout on a stock checkout is **180s, not 5s**. If an upstream connection opens but sends no verifiable content byte before that deadline, the request is aborted via `NoResponseError` without penalizing the key and rotated cleanly.
   - **Gemma ThinkingConfig Sanitization**: Upstream Gemma engines crash if unexpected thinking arguments appear. LiteRouter recursively strips `thinkingConfig` and `thinking_config` from all payloads targeting Gemma models across both Google Native and OpenAI-compat routes.
 
 ### Architectural Decision: In-Memory Engine vs. Redis/Valkey ("We Choose Not To")
@@ -84,7 +85,7 @@ This architectural posture is rooted in deliberate systems engineering tradeoffs
    Synchronous execution on Bun's single-threaded event loop makes `KeyPool` pointer updates and quarantine checks 100% race-condition free without needing locks or Lua scripts. Because JavaScript execution between `await` points is strictly non-preemptive, pointer incrementation, round-robin rotation, and state updates in memory execute atomically without distributed synchronization primitives.
 
 2. **Deterministic FIFO Pacing**:
-   `RequestPacer` with `FastFifoQueue` (`src/network/pacer.ts`) serializes bursts per-provider, preventing upstream 429 thundering herd collisions without Redis rate limit counters. Rather than allowing requests to hammer upstreams simultaneously and counting failures in a sliding window, the $O(1)$ doubly-linked FIFO queue meters inbound dispatches at the gateway edge (e.g. 2,000ms for Google/GCP, 500ms for Zen/OpenRouter), smoothing bursts deterministically.
+   `RequestPacer` with `FastFifoQueue` (`src/network/pacer.ts`) serializes bursts per-provider, preventing upstream 429 thundering herd collisions without Redis rate limit counters. Rather than allowing requests to hammer upstreams simultaneously and counting failures in a sliding window, the $O(1)$ doubly-linked FIFO queue meters inbound dispatches at the gateway edge, with intervals read from `config/providers.json` → `pacer.min_delay_ms` (`src/network/pacer.ts:296-299`): `200ms` for `openrouter` / `nvidia` / `google` / `zen` and `2000ms` for `gcp` (GCP Vertex), smoothing bursts deterministically.
 
 3. **Sub-Millisecond Speed (<0.05ms vs. 1–3ms)**:
    Direct RAM lookup takes <0.05ms, compared to 1–3ms for a TCP loopback Redis roundtrip + serialization. In high-frequency, multi-turn agentic workflows (OpenCode2, Claude Code, Pydantic AI), saving 1–3ms on every routing decision and key check preserves precious TTFT (Time To First Token) and eliminates connection churn.
@@ -132,13 +133,14 @@ Error classification is managed in `src/network/classifier.ts` and tracked in `C
 
 - **Rate Limit (HTTP 429)**:
   - If headers include `Retry-After`, quarantine key for exact duration.
-  - Standard 429 without header: default quarantine is controlled by `COOLDOWN_RATE_LIMIT_TTL_SEC` (default 30s/65s).
+  - Standard 429 without header: TTL is floored to `0` when `COOLDOWN_RATE_LIMIT_TTL_SEC === 0` (`src/network/classifier.ts:149-151,317-319`), otherwise the upstream reset delay in seconds. Schema default is `65` (`src/config/schema.ts:208`); the tracked `.env:67` sets `0`, i.e. 429 quarantine is disabled on a stock checkout.
   - Quota / Credit Exhaustion (`isQuotaExhausted429`): 7 days (`SEVEN_DAYS_SEC = 604800s`).
-- **Auth Errors (HTTP 401 & 403)**:
-  - Tiered quarantine scaling based on consecutive failures:
+- **Auth Errors (HTTP 401)**:
+  - Tiered quarantine scaling based on consecutive failures (`resolveAuthTtl`, `src/network/classifier.ts:88-100,340-348`):
     - 1st failure: `300s` (5 minutes)
     - 2nd failure: `1800s` (30 minutes)
-    - 3rd+ failure: `86400s` (24 hours) / 7 days for invalid tokens.
+    - 3rd+ failure: `86400s` (24 hours)
+  - Separately, `KeyPool` throws `FatalAuthError` on **401 and 403** (`src/network/pool.ts:161-163`), which handlers (`openai_compat.ts`, `anthropic_compat.ts`, `gcp_compat.ts`, `google_native.ts`, `openai_original.ts`) treat as fail-fast with zero retry and no quarantine. Classifier-level HTTP 403 alone is `fail_fast` / `quarantineTtlSec: 0` (`src/network/classifier.ts:328-337`) — it never enters the tiered auth ladder.
 - **Server Errors (HTTP 5xx)**:
   - 10-second quarantine (`quarantineTtlSec: 10`). Retries in-flight up to 3 times across alternative keys in the pool.
 - **Deterministic Client Errors (HTTP 400 Context Length Overflow, 404)**:
@@ -147,24 +149,26 @@ Error classification is managed in `src/network/classifier.ts` and tracked in `C
   - `ECONNRESET`, `RemoteProtocolError`, HTTP/2 stream cancellation: `quarantineTtlSec: 2` or `0`, retrying immediately on a fresh key.
 
 ### 2.5 Operational Resilience Toggles (`.env`)
-LiteRouter allows fine-grained runtime control over retries, quarantines, pacers, and circuit breakers:
+The `*_ENABLE_*` toggles below are **legacy knobs**: none of `GCP_ENABLE_*`, `ZEN_ENABLE_*`, or `OPENROUTER_ENABLE_QUARANTINE` is read anywhere under `src/`. Provider retry, quarantine, pacer, and breaker policy is now resolved declaratively from `config/providers.json` (`request_retry`, `key_cooldown`, `pacer`, `circuit_breaker`) — see `isProviderQuarantineEnabled` (`src/network/pool.ts:39-48`) and `src/network/pacer.ts:285-310`. Values shown are the tracked `.env` values, not effective behaviour:
 
 ```ini
-# GCP Vertex Controls
-GCP_ENABLE_RETRIES=true            # In-flight key rotation on 429/5xx (false = single-flight passthrough)
-GCP_ENABLE_QUARANTINE=true         # Key cooldown tracking (false = dumb forwarder, no lockout)
-GCP_ENABLE_CIRCUIT_BREAKER=false   # Decouples GCP from global breaker (avoids false 24-key pool lockouts)
-GCP_ENABLE_PACER=true              # Enforces 30 RPM (2000ms delay) conveyor belt pacing
+# GCP Vertex (legacy env toggles — inert; config/providers.json governs)
+GCP_ENABLE_RETRIES=false           # .env:52 — retry now comes from providers.gcp.request_retry (enabled, max_attempts 3)
+GCP_ENABLE_QUARANTINE=false        # .env:53 — quarantine now comes from providers.gcp.key_cooldown
+GCP_ENABLE_CIRCUIT_BREAKER=false   # .env:54
+GCP_ENABLE_PACER=true              # .env:55 — providers.gcp.pacer min_delay_ms 2000 / max_delay_ms 3000
 
-# Zen Controls
-ZEN_ENABLE_RETRIES=true            # In-flight key rotation across Zen keys
-ZEN_ENABLE_QUARANTINE=false        # Bypass quarantine lockout during peak free-tier spikes
-ZEN_ENABLE_CIRCUIT_BREAKER=false   # Decouples Zen from global circuit breaker
-ZEN_ENABLE_PACER=true              # Zen conveyor belt pacer (500ms delay)
+# Zen (legacy env toggles — inert)
+ZEN_ENABLE_RETRIES=false           # .env:58 — providers.zen.request_retry enabled, max_attempts 5
+ZEN_ENABLE_QUARANTINE=false        # .env:59
+ZEN_ENABLE_CIRCUIT_BREAKER=false   # .env:60
+ZEN_ENABLE_PACER=true              # .env:61 — providers.zen.pacer min_delay_ms 200 / max_delay_ms 2000
 
-# OpenRouter Controls
-OPENROUTER_ENABLE_QUARANTINE=true  # Set to false to bypass quarantine on OpenRouter free keys
-COOLDOWN_RATE_LIMIT_TTL_SEC=30     # Default 429 quarantine penalty in seconds (0 to disable)
+# OpenRouter (legacy env toggle — inert)
+OPENROUTER_ENABLE_QUARANTINE=false # .env:68 — providers.openrouter.key_cooldown
+
+# Live knob
+COOLDOWN_RATE_LIMIT_TTL_SEC=0      # .env:67 — schema default is 65 (src/config/schema.ts:208); 0 disables 429 quarantine TTLs
 ```
 
 ---
@@ -430,10 +434,10 @@ Native chains run transparently through `src/handlers/google_native.ts` without 
 ### Gateway Management:
 ```bash
 # Check daemon status
-bash scripts/status.sh
+bash scripts/gateway/status.sh
 
 # Restart gateway daemon
-bash scripts/restart.sh
+bash scripts/gateway/restart.sh
 
 # Live health probe (returns uptime, circuit breaker states, and H2 pool stats)
 curl -sk https://localhost:7766/health | jq .
@@ -445,10 +449,10 @@ curl -sk -X POST https://localhost:7766/reset | jq .
 ### Comprehensive Diagnostic Probes:
 ```bash
 # Run doctor diagnostics across all key pools
-bun run scripts/doctor.ts
+bun run scripts/diagnose/doctor.ts
 
 # Run Zen-specific identity and session probes
-bun run scripts/doctor_zn.ts
+bun run scripts/diagnose/doctor_zn.ts
 ```
 
 ### Test Suite Execution:
@@ -475,9 +479,9 @@ uv run pytest tests/integration/
 2. **In-Flight Error Classification & Key Rotation (`classifyUpstreamError`)**: Automatically classifies upstream HTTP errors. Retries in-flight up to 3 times across active keys for transient 400 provider errors (0s cooldown), rate limits (dynamic cooldown), exhausted quotas (7d cooldown), 401/403 bad keys (7d cooldown), and 5xx server errors (10s cooldown). Full status→TTL→retry wiring lives in `error-action-matrix.md`.
 3. **Network & Transport Layer Resilience**: Wraps pre-stream socket failures, TCP resets (TCP RST / `ECONNRESET`), HTTP/2 GOAWAY (`RemoteProtocolError`), and network connection timeouts (`ConnectTimeout` / `ConnectError`) into `NoResponseError`, retrying across pooled keys in-flight (up to 3 attempts) before failing.
 4. **Deterministic Fail-Fast**: Immediately aborts retries without burning other keys on deterministic client errors (HTTP 400 context length exceeded, schema/validation errors, safety filters, HTTP 404).
-5. **TTFT Guard** (5s): aborts upstream if no verifiable content token arrives, rotates to next key with zero cooldown penalty. Dispatch-engine wiring: per-attempt `AbortController` linked to the client signal (`src/engine/dispatch.ts:160-191`); TTFT expiry rejects `NoResponseError`, retried while `attempt < maxAttempts`, else 504 `ttft_timeout`; client abort rethrows quiet with no breaker write.
-6. **Stream Idle Guard** (120s / 2 mins) & **Max HTTP Timeout** (300s / 5 mins): protects against mid-stream stalls while giving deep-reasoning and large-context models (e.g. `stealth/ox-alpha` on 40k+ context) sufficient thinking leeway without premature socket severance.
-7. **SSE Keepalive** (2s/15s): injects comment frames (`: keep-alive\n\n`) to keep client connections active during thinking and long processing pauses.
+5. **TTFT Guard** (120s schema default / 180s on a stock checkout): aborts upstream if no verifiable content token arrives, rotates to next key with zero cooldown penalty. The deadline is `LITEROUTER_TTFT_TIMEOUT_MS || LITEROUTER_NO_RESPONSE_TIMEOUT_MS` (`src/engine/dispatch.ts:192-196`), schema default `120000` ms (`src/config/schema.ts:203-204`), module constant `TTFT_TIMEOUT_MS = 120000` (`src/network/fetcher.ts:61`); tracked `.env:14` sets `LITEROUTER_NO_RESPONSE_TIMEOUT=180` s → `180000` ms (`src/config/env.ts:62-65`). Dispatch-engine wiring: per-attempt `AbortController` linked to the client signal (`src/engine/dispatch.ts:160-191`); TTFT expiry rejects `NoResponseError`, retried while `attempt < maxAttempts`, else 504 `ttft_timeout`; client abort rethrows quiet with no breaker write.
+6. **Stream Idle Guard** (`LITEROUTER_STREAM_IDLE_TIMEOUT_MS`, schema default `120000` ms = 2 mins, `src/config/schema.ts:205`; tracked `.env:16` sets the non-`_MS` alias `LITEROUTER_STREAM_IDLE_TIMEOUT=180` s → `180000` ms via `src/config/env.ts:50-53`, so the effective value is **3 mins**; module fallback `STREAM_IDLE_TIMEOUT_MS = 120000` at `src/network/fetcher.ts:62`, consumed at `src/network/fetcher.ts:1034`) & **Max HTTP Timeout** (300s / 5 mins: `MAX_HTTP_TIMEOUT_MS = 300000`, `src/network/fetcher.ts:63`): protects against mid-stream stalls while giving deep-reasoning and large-context models (e.g. `stealth/ox-alpha` on 40k+ context) sufficient thinking leeway without premature socket severance.
+7. **SSE Keepalive**: injects comment frames (`: keep-alive\n\n`, `src/network/fetcher.ts:115-118`) to keep client connections active during thinking and long processing pauses. Interval is `KEEPALIVE_INTERVAL_MS` (`src/network/fetcher.ts:202`), schema default `15000` ms (`src/config/schema.ts:213`); tracked `.env:75` sets it to `200` ms.
 8. **Ghost Response Guard**: rejects HTTP 200 responses with 0 content tokens.
 9. **Client Cache Sanitizer**: strips `prompt_cache_key`/`prompt_cache_retrieval`/`prompt_cache_reset` before upstream dispatch.
 10. **Mid-Stream Error Interceptor & Long-Running Auto-Resend**: Detects mid-stream in-band 5xx error chunks (`Server error mid-response. The response above may be incomplete.`), socket resets, and premature EOFs, isolates the failing key (10s/60s), and automatically resends across available keys into the open downstream client stream. Prioritizes long-running harness survival over terminal token purity.
@@ -485,8 +489,8 @@ uv run pytest tests/integration/
 12. **Token-Bucket Rate Pacer & Ingress Conveyor Belt (`src/network/pacer.ts`)**: Enforces per-provider `min_delay_ms` with an $O(1)$ `FastFifoQueue`, bounded queue dwell (`max_queue_wait_ms`), and unified conveyor pacing for both inbound and mid-stream retries, dynamically driven by `config/providers.json`. Ingress conveyor is enforced at the **gateway edge** (`src/index.ts` `handleAppRequest`/`dispatchRoute` → `acquireIngressPacer` → `getPacerForProvider(provider).acquire(req.signal)` for all registered providers where `pacer.enabled` is true, with `WeakSet<Request>` deduplication removing duplicate handler ingress for `openai_compat.ts`/`anthropic_compat.ts`). Mid-stream retries are paced inside handlers (`openai_compat.ts`/`gcp_compat.ts`/`anthropic_compat.ts` `acquireProviderPacer`/`acquireGcpPacer` before each `fetchWithTtftGuard` retry). `PACER` telemetry `🐢 [PACER]` (`src/ui/logger.ts` `logPacer`: `dwell`/`depth`/`avg`/`interval`) is visible in `tmux` alongside `TTFT`.
 13. **Provider Circuit Breaker (`src/engine/circuit_breaker.ts`)**: 3-state protection (`CLOSED`, `OPEN`, `HALF_OPEN`); 5 failures in the 60s window → `OPEN` 30s → `HALF_OPEN` max 2 probes, 2 successes to close (`:5-12,101-113`). 503 taxonomy: `breaker_open` = half-open probe-cap (`src/engine/dispatch.ts:337-363`, no `Retry-After`) vs `circuit_breaker_open` = OPEN reject (`dispatch.ts:320-335` + `circuit_breaker.ts:160-181`, with `Retry-After`) — see `error-action-matrix.md` §2 + taxonomy.
 14. **OpenCode Reasoning Stream Filter & Context Bloat Shield (Option 1B)**: OpenCode 2 beta accumulates streaming `delta.reasoning` / `delta.reasoning_content` chunks into SQLite and re-injects them into subsequent request turns, bloating context from ~40K to 300K+ tokens. LiteRouter detects OpenCode (`User-Agent: opencode*`, `x-opencode` header, `x-client-name`) and strips reasoning deltas in flight while preserving `content`, `role`, `tool_calls`, `finish_reason`, and token usage stats. Includes automatic upstream defect healing: sanitizes unescaped raw control characters (escaping `\r` `0x0D` to prevent `JSON.parse` crashes in Vercel AI SDK), deletes `delta.content: null` to conform with strict Zod schemas, and emits stateful 5-second throttled synthetic empty delta heartbeats (`data: {"choices":[{"index":0,"delta":{}}]}`) during deep thinking periods to prevent downstream client 55s inactivity disconnects. Non-OpenCode clients retain full raw reasoning streams. Overridden via `ts` nuance (to keep thinking in OpenCode) or `sb` (to force-strip for any client).
-15. **OpenCode2 Auto-Patcher & Self-Healing Hook (`scripts/opencode_autopatch.sh`)**: Standalone, idempotent, sub-5ms verifier ensuring `@opencode-ai/cli` in Node/NVM paths has intact permissions, valid binary symlinks, automatic `.bak` backups, tool message format normalization (converting `role: "tool"` content arrays to strings), and anti-silent network error guards. Integrated directly into `~/.local/bin/opencode`.
-16. **Two-Leg Streaming Architecture (`docs/Fix_Streaming_01.md`)**:
+15. **OpenCode2 Auto-Patcher & Self-Healing Hook (`scripts/hooks/opencode_autopatch.sh`)**: Standalone, idempotent, sub-5ms verifier ensuring `@opencode-ai/cli` in Node/NVM paths has intact permissions, valid binary symlinks, automatic `.bak` backups, tool message format normalization (converting `role: "tool"` content arrays to strings), and anti-silent network error guards. Integrated directly into `~/.local/bin/opencode`.
+16. **Two-Leg Streaming Architecture (`docs/streaming-fix.md`)** — the specification's own title is `LiteRouter Production Streaming & Dispatch: Long-Running Harness Specification (Fix_Streaming_01)` (`docs/streaming-fix.md:1`); the standalone file `docs/Fix_Streaming_01.md` referenced by older CHANGELOG entries (`CHANGELOG.md:981,991`) no longer exists:
     - **Incoming Leg**: Zero artificial client socket cutoffs; ingress traffic sequenced via **gateway-edge conveyor belt** (`src/index.ts` `handleAppRequest`/`dispatchRoute` `acquireIngressPacer` for registered providers with pacer enabled) plus handler mid-stream pacer for retries — unified intervals and bounded dwell driven by `config/providers.json`.
     - **Outgoing Leg**: Resilient replay on upstream socket drops; key pool rotation without aborting downstream client sessions; mid-stream retries re-acquire the conveyor (`acquireGcpPacer`/`acquireProviderPacer`) before each `fetchWithTtftGuard`.
 17. **Universal XML Tool Calling, Trapped Thinking Extraction & Turn Compaction (`src/transformers/dots.ts`)**:
@@ -511,7 +515,7 @@ uv run pytest tests/integration/
 24. **NVIDIA NIM EOL Catalog & Reasoning Treatment**: NVIDIA NIM is an infrastructure host and does not use agentic harness headers, but aggressively sunsets models with strict `HTTP 410 Gone` deprecations (e.g. `meta/llama-3.1-8b-instruct` EOL on 2026-08-26; active flagship is `nvidia/nemotron-3-super-120b-a12b`). Flagship reasoning models emit exclusively `reasoning_content` deltas during initial stream chunks (`content` null), requiring thinking preservation (`ts` nuance, client `reasoning_content` extraction) and keepalive frames to prevent false client-side ghosting timeouts.
 25. **Zen Responses API Translation (`lr-zn-oa-rs-no`)**: Provides bidirectional translation between OpenAI wire format (`POST /v1/chat/completions`) and Zen's `/v1/responses` endpoint (`src/transformers/responses.ts`). Converts standard `messages` array to Responses `input`, sanitizes encrypted reasoning items, maps reasoning tokens to standard usage objects, converts Responses SSE events (`response.output_text.delta`, `response.completed`) into standard `chat.completion.chunk` events, and prevents false premature stream EOF stalls in `src/network/fetcher.ts`.
 26. **OpenAI Original Wire Protocol & Native Responses API Handler (`lr-zn-oo-rs-no`, `lr-or-oo-rs-no`)**: Native passthrough handler (`src/handlers/openai_original.ts`) for `POST /v1/responses` using the `oo` wire protocol. Directly handles native Responses API payloads with multi-key round-robin rotation, quarantine, circuit breaking, pacer ingress, and SSE streaming passthrough across Zen and OpenRouter key pools without altering Responses API schemas. Enforces strict fail-fast validation against wire/endpoint mismatches. Emits inbound + TTFT telemetry (`logInbound`/`logTtft` via `handleOpenAiOriginal`) on par with `/v1/chat/completions`.
-27. **OpenCode 2 Client Chunk Timeout Alignment (`chunkTimeout: 30000`)**: Standard 30s (`chunkTimeout: 30000`) alignment across all OpenCode 2 provider blocks (`~/.config/opencode/config.json`) matching `LITEROUTER_STREAM_IDLE_TIMEOUT=30`, eliminating premature client-side stream timeouts during extended model reasoning pauses while keeping LiteRouter's keepalive and pacer loops in sync.
+27. **OpenCode 2 Client Chunk Timeout Alignment (`chunkTimeout: 30000`)**: Standard 30s (`chunkTimeout: 30000`) alignment across all OpenCode 2 provider blocks (`~/.config/opencode/config.json`). NOTE: this was originally described as matching `LITEROUTER_STREAM_IDLE_TIMEOUT=30`; the tracked `.env:16` now sets `LITEROUTER_STREAM_IDLE_TIMEOUT=180` s → `180000` ms (`src/config/env.ts:50-53`), so the client 30s `chunkTimeout` no longer tracks the gateway idle timeout. Raise the client value to at least `180000` (or leave the keepalive comment frames flowing) to eliminate premature client-side stream timeouts during extended model reasoning pauses.
 28. **Zen Single-Flight & In-Flight Retry Toggle (`ZEN_ENABLE_RETRIES`, mirrors item 19)**: Configurable resilience parameter (default: `true`, supports boolean coercion `true`/`false`/`1`/`0`/`yes`/`no`; schema default in `src/config/schema.ts`, fallback in `src/config/env.ts`). When set to `true`, enables full in-flight key rotation and retry resilience for Zen (`zn`) on 429 rate limits, 5xx server errors, and transport failures. When set to `false`, activates single-flight pass-through mode: passes upstream 4xx/5xx responses directly downstream on attempt 1 while preserving key health and quarantine tracking in `globalKeyPool` for subsequent requests, synthesizing HTTP 502 Bad Gateway on transport drops (`NoResponseError`), and closing SSE streams cleanly on mid-stream drops. NOTE: tracked `.env` currently sets `ZEN_ENABLE_RETRIES=false` (dumb-forwarder mode); unset/code default is `true`.
 29. **Zen Key Quarantine Toggle & Dumb-Forwarder Mode (`ZEN_ENABLE_QUARANTINE`, mirrors item 20)**: Configurable cooldown/quarantine parameter (default: `true`, supports boolean coercion `true`/`false`/`1`/`0`/`yes`/`no`). When set to `false`, bypasses all key quarantine, cooldown state tracking, and 503 load-shedding mechanisms for Zen keys (`zn`) across all error status codes (429, 5xx, 401, 403, transport drops). Keys remain immediately available for round-robin selection. When combined with `ZEN_ENABLE_RETRIES=false`, turns LiteRouter into a pure transparent dumb forwarder for Zen keys. NOTE: tracked `.env` currently sets `ZEN_ENABLE_QUARANTINE=false` (dumb-forwarder mode); unset/code default is `true`.
 30. **Zen Circuit Breaker & Pacer Isolation (`ZEN_ENABLE_CIRCUIT_BREAKER`, `ZEN_ENABLE_PACER`, mirrors item 21)**: Decouples Zen (`zn`) from global gateway circuit breakers. Defaults mirror GCP semantics: `ZEN_ENABLE_CIRCUIT_BREAKER=false` (pass upstream 503 capacity spikes directly downstream without tripping an internal breaker that blocks the whole Zen pool), `ZEN_ENABLE_PACER=true` (pacing runs exactly once in the attempt loop before key selection, eliminating duplicate conveyor delays). NOTE: tracked `.env` currently sets `ZEN_ENABLE_CIRCUIT_BREAKER=false` / `ZEN_ENABLE_PACER=true`; these match the code defaults.
