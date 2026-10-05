@@ -18,11 +18,12 @@ when `tls_enabled` is `false`.
 
 ## 1. Gateway Lifecycle Scripts (`scripts/gateway/`)
 
-> ⚠️ Use the `scripts/gateway/*` copies. The top-level `scripts/start.sh`, `scripts/stop.sh`,
-> and `scripts/restart.sh` are **broken**: they resolve `DEFAULT_ROOT="$SCRIPT_DIR/../.."`
-> (`scripts/start.sh:7`), which from `scripts/` lands on the repo's *parent* directory, so their
-> `config/location.json` lookup fails and they exit `[FATAL]`. The `scripts/gateway/*` copies have
-> the correct `../..` depth (one level deeper) and resolve the repo root properly.
+> ✅ **Symlink Resolution (Fixed)**: All gateway scripts (`start.sh`, `stop.sh`, `restart.sh`,
+> `status.sh`, `setup_certs.sh`) now use a canonical POSIX symlink resolution loop that traverses
+> `BASH_SOURCE[0]` to the real script file before computing `SCRIPT_DIR` and `DEFAULT_ROOT`.
+> Both direct calls (`scripts/gateway/start.sh`) and symlink calls (`scripts/start.sh`, `scripts/restart.sh`,
+> `scripts/stop.sh`, `scripts/status.sh`, or `./start.sh` from `scripts/`) resolve the repo root
+> cleanly and reliably without jumping to parent directories.
 
 All lifecycle scripts `cd` to the repo root, source `.env` then `.env.local`
 (if present), and resolve the bind target **exclusively** from

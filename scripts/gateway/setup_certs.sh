@@ -1,8 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ROOT_DIR="$(dirname "$(dirname "$SCRIPT_DIR")")"
+RESOLVED_SOURCE="${BASH_SOURCE[0]}"
+while [ -L "$RESOLVED_SOURCE" ]; do
+    TARGET_DIR="$(cd -P "$(dirname "$RESOLVED_SOURCE")" && pwd)"
+    RESOLVED_SOURCE="$(readlink "$RESOLVED_SOURCE")"
+    [[ $RESOLVED_SOURCE != /* ]] && RESOLVED_SOURCE="$TARGET_DIR/$RESOLVED_SOURCE"
+done
+SCRIPT_DIR="$(cd -P "$(dirname "$RESOLVED_SOURCE")" && pwd)"
+ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd -P)"
 CERTS_DIR="$ROOT_DIR/certs"
 
 echo "================================================================================"
