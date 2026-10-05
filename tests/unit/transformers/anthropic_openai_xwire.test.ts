@@ -18,13 +18,16 @@ const dummyDirective: ParsedDirective = {
 function createMockTelemetry() {
   const markTtft = mock((_protocol?: string, _details?: string) => {});
   const recordUsage = mock((_record: UsageRecord) => {});
+  const upstreamStreamError = mock((_message: string) => {});
   return {
     telemetry: {
       markTtft,
       recordUsage,
+      upstreamStreamError,
     } as unknown as RequestTelemetry,
     markTtft,
     recordUsage,
+    upstreamStreamError,
   };
 }
 
@@ -515,6 +518,66 @@ describe("AnthropicOpenAIXWireTransformer", () => {
 
       const outputText = await streamToString(readable.pipeThrough(stream));
       expect(outputText).toBe("");
+    });
+
+    it("relays the upstream error message verbatim and makes the failure visible", async () => {
+      const transformer = new AnthropicOpenAIXWireTransformer();
+      const { telemetry, markTtft, upstreamStreamError } = createMockTelemetry();
+      const abortController = new AbortController();
+
+      const stream = transformer.createWireToClientStream(dummyDirective, telemetry, abortController.signal);
+
+      // The exact upstream shape that killed omp sessions: a role-only delta
+      // followed by an in-band error carrying no usable type field.
+      const sseChunks = [
+        'data: {"id":"chatcmpl-e1","model":"gpt-4o","choices":[{"delta":{"role":"assistant"}}]}\n\n',
+        'data: {"error":{"message":"Provider returned an empty response"}}\n\n',
+      ];
+
+      const readable = new ReadableStream<Uint8Array>({
+        start(controller) {
+          const encoder = new TextEncoder();
+          for (const chunk of sseChunks) {
+            controller.enqueue(encoder.encode(chunk));
+          }
+          controller.close();
+        },
+      });
+
+      const outputText = await streamToString(readable.pipeThrough(stream));
+
+      // The message the client actually sees must survive verbatim.
+      expect(outputText).toContain("event: error");
+      expect(outputText).toContain("Provider returned an empty response");
+      // No content was ever produced, so no TTFT may be claimed.
+      expect(markTtft).not.toHaveBeenCalled();
+      // And the failure must be countable instead of vanishing from the log.
+      expect(upstreamStreamError).toHaveBeenCalledTimes(1);
+      expect(upstreamStreamError.mock.calls[0]?.[0]).toContain("Provider returned an empty response");
+    });
+
+    it("preserves a specific upstream error type instead of masking it as api_error", async () => {
+      const transformer = new AnthropicOpenAIXWireTransformer();
+      const { telemetry } = createMockTelemetry();
+      const abortController = new AbortController();
+
+      const stream = transformer.createWireToClientStream(dummyDirective, telemetry, abortController.signal);
+
+      const readable = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(
+            new TextEncoder().encode(
+              'data: {"error":{"message":"upstream overloaded","type":"overloaded_error"}}\n\n'
+            )
+          );
+          controller.close();
+        },
+      });
+
+      const outputText = await streamToString(readable.pipeThrough(stream));
+
+      expect(outputText).toContain('"type":"overloaded_error"');
+      expect(outputText).not.toContain('"type":"api_error"');
     });
   });
 });

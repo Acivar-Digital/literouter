@@ -144,7 +144,7 @@ The cascade combines **tier fallback** with **inner key pool rotation**:
 
 ### 1.5b v4 Engine Mapping (`NativeCascadeStrategy`)
 
-Under the `v4` engine (`LITEROUTER_ENGINE=v4`, default is `legacy` — see
+Under the `v4.1` engine (`LITEROUTER_ENGINE=v4.1`, which **is** the default — see
 `directive-grammar.md` §11), the same cascade is decided by
 `classifyFailure` (`src/engine/strategies/native_cascade.ts:82-95`):
 

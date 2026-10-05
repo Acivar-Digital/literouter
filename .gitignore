@@ -86,3 +86,8 @@ data/reviews/
 
 # Beads / Dolt files (added by bd init)
 *.gate.lock*
+
+# Local VPS deploy helper (per-operator; deploys code only, no secrets).
+# Kept untracked deliberately: it encodes this workstation's VPS host/IP and the
+# operator's preferred redeploy flow, neither of which belongs in the shared repo.
+scripts/sync/vps_git_pull.sh

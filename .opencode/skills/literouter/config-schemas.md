@@ -356,7 +356,7 @@ native base override via `MOCK_GG_PORT` / `GOOGLE_NATIVE_BASE_URL`
 | `ModelCatalogEntrySchema` | `:89-97` | one `config/models.json` entry |
 | `ModelsConfigSchema` | `:99-101` | `{ models: [...] }` |
 | `EnvConfigSchema` | `:202-274` | gateway env incl. pacer/cooldown/GCP/Zen toggles |
-| `LiteRouterEngineSchema` | `:199` | `"legacy" \| "v4"` (default `"legacy"`) |
+| `LiteRouterEngineSchema` | `src/config/schema.ts` | `"legacy" \| "v4.1"` (default **`"v4.1"`**; `DEFAULT_ENV_RECORD.LITEROUTER_ENGINE` in `src/config/env.ts` agrees) |
 
 All schemas and their inferred types are re-exported from `src/lib.ts:3-25`.
 

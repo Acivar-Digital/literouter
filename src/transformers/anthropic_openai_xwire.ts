@@ -766,12 +766,18 @@ function updateUsageTokens(parsed: Record<string, unknown>, state: StreamTransfo
 function handleSseErrorChunk(
   parsed: Record<string, unknown>,
   controller: TransformStreamDefaultController<Uint8Array>,
-  encoder: TextEncoder
+  encoder: TextEncoder,
+  telemetry?: RequestTelemetry
 ): boolean {
   if (parsed.error && typeof parsed.error === "object") {
     const errObj = parsed.error as Record<string, unknown>;
     const errMsg = typeof errObj.message === "string" ? errObj.message : JSON.stringify(errObj);
     const errType = typeof errObj.type === "string" ? errObj.type : "api_error";
+    // An in-band upstream error on an already-200 stream is otherwise invisible:
+    // no TTFT line, no usage line, and a success row in traces.db. Log it so the
+    // failure is countable, and keep the upstream error code instead of masking
+    // every upstream failure as the generic "api_error".
+    telemetry?.upstreamStreamError?.(`In-band upstream error [${errType}]: ${errMsg}`);
     controller.enqueue(
       sseEvent(encoder, "error", {
         type: "error",
@@ -875,7 +881,7 @@ function processParsedChunk(
   controller: TransformStreamDefaultController<Uint8Array>,
   encoder: TextEncoder
 ): void {
-  if (handleSseErrorChunk(parsed, controller, encoder)) {
+  if (handleSseErrorChunk(parsed, controller, encoder, ctx.telemetry)) {
     return;
   }
   if (handleNativeAnthropicPassThrough(rawData, parsed, controller, encoder)) {

@@ -253,6 +253,22 @@ export class RequestTelemetry {
     this.metrics.onRequestEnd(this.reqId, 500, durationMs, this.getTtftMs());
   }
 
+  /**
+   * Logs an upstream error observed INSIDE an already-serving response stream.
+   *
+   * Deliberately side-effect free on `status` and on `metrics.onRequestEnd`:
+   * the streaming dispatch path has already called `served(200)` before the
+   * body is handed to the client, so routing through `error()` would both
+   * corrupt the recorded status to 500 and fire `onRequestEnd` twice. An
+   * in-band upstream error is otherwise completely invisible: the client
+   * receives an `event: error` frame over a 200 response, no TTFT line is
+   * emitted, and the request counts as a success in traces.db.
+   */
+  upstreamStreamError(message: string): void {
+    const ts = formatTimestamp();
+    console.warn(`${EMOJI.limit} ${ts} [STREAM ${this.reqId}] ${message}`);
+  }
+
   // ── Derived Metrics ──
 
   /** Returns TTFT in ms, or undefined if no first token received. */
