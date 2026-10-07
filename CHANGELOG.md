@@ -2,6 +2,14 @@
 
 All notable changes to LiteRouter will be documented in this file.
 
+## [Unreleased] — 2026-10-07
+
+### Fixed
+- **Wired `/v1beta/interactions` and `/v1beta/files/*` in the `v4.1` router (`src/handlers/v4/router.ts`)** (`literouter-1v60`):
+  - `LITEROUTER_ENGINE` defaults to `v4.1`, routing all requests through `dispatchV4` (`src/handlers/v4/router.ts`), which previously omitted `/v1beta/interactions` and `/v1beta/files/*` (leaving them only in legacy `dispatchGoogleBeta` at `src/index.ts:335`) and returned `HTTP 404 Route not found: POST /v1beta/interactions`.
+  - Added `dispatchGoogleRoute` in `src/handlers/v4/router.ts` to forward `POST`/`GET` `/v1beta/interactions*` and `/v1beta/files*` to `handleGoogleInteractionsPassthrough` (`src/handlers/google_native.ts`), enabling Google Interactions API models (e.g., `antigravity-preview-09-2026`) and environment file downloads under `v4.1`.
+  - Added unit tests in `tests/unit/handlers/v4_router.test.ts` (`1,387` unit tests pass across 7 domains; `clean_ts` and `bun run typecheck` clean).
+
 ## [Unreleased] — 2026-10-05
 
 ### Fixed

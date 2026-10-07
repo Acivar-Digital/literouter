@@ -8,6 +8,7 @@ import { handleV4AnthropicMessages } from "./anthropic_messages";
 import { handleV4GoogleNative } from "./google_native";
 import { handleV4OpenAIResponses } from "./openai_responses";
 import { handleV4GcpCompat } from "./gcp_compat";
+import { handleGoogleInteractionsPassthrough } from "../google_native";
 
 export interface TraceDbRow {
   req_id: string;
@@ -212,8 +213,25 @@ function isGoogleNativePath(path: string): boolean {
   return path.endsWith(":generateContent") || path.endsWith(":streamGenerateContent");
 }
 
-function isGcpCompatPath(path: string): boolean {
-  return path.startsWith("/v1beta/openai/");
+function dispatchGoogleRoute(
+  path: string,
+  req: Request,
+  rawKey: string,
+  reqId: string
+): Promise<Response> | null {
+  if (path.startsWith("/v1beta/interactions") || path.startsWith("/v1beta/files")) {
+    return handleGoogleInteractionsPassthrough(req, rawKey, reqId);
+  }
+  if (req.method !== "POST") {
+    return null;
+  }
+  if (isGoogleNativePath(path)) {
+    return handleV4GoogleNative(req, rawKey, reqId);
+  }
+  if (path.startsWith("/v1beta/openai/")) {
+    return handleV4GcpCompat(req, rawKey, reqId);
+  }
+  return null;
 }
 
 function dispatchPostRoute(
@@ -222,6 +240,9 @@ function dispatchPostRoute(
   rawKey: string,
   reqId: string
 ): Promise<Response> | null {
+  if (req.method !== "POST") {
+    return null;
+  }
   if (CHAT_PATHS.has(path)) {
     return handleV4OpenAIChat(req, rawKey, reqId);
   }
@@ -230,12 +251,6 @@ function dispatchPostRoute(
   }
   if (RESPONSES_PATHS.has(path)) {
     return handleV4OpenAIResponses(req, rawKey, reqId);
-  }
-  if (isGoogleNativePath(path)) {
-    return handleV4GoogleNative(req, rawKey, reqId);
-  }
-  if (isGcpCompatPath(path)) {
-    return handleV4GcpCompat(req, rawKey, reqId);
   }
   return null;
 }
@@ -253,11 +268,9 @@ export async function dispatchV4(
     return handleTraceEndpoints(url, path, rawKey);
   }
 
-  if (req.method === "POST") {
-    const postRes = dispatchPostRoute(path, req, rawKey, reqId);
-    if (postRes !== null) {
-      return postRes;
-    }
+  const postRes = dispatchPostRoute(path, req, rawKey, reqId) ?? dispatchGoogleRoute(path, req, rawKey, reqId);
+  if (postRes !== null) {
+    return postRes;
   }
 
   return Response.json(

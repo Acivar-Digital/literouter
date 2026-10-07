@@ -136,6 +136,35 @@ describe("v4 router dispatcher", () => {
       const json = await res.json();
       expect(json.error.message).toContain("Invalid JSON");
     });
+
+    it("dispatches POST and GET /v1beta/interactions and /v1beta/files/* to Google interactions passthrough", async () => {
+      const postInteractions = new Request("http://localhost:7766/v1beta/interactions", {
+        method: "POST",
+        body: JSON.stringify({ model: "antigravity-preview-09-2026" }),
+      });
+      const res1 = await dispatchV4(postInteractions, "lr-or-oa-ch-no", "req-int-1");
+      expect(res1.status).toBe(400);
+      const json1 = await res1.json();
+      expect(json1.error.message).toContain("Antigravity interactions requires a Google directive");
+
+      const getFileDownload = new Request(
+        "http://localhost:7766/v1beta/files/environment-abc123:download?alt=media",
+        { method: "GET" }
+      );
+      const res2 = await dispatchV4(getFileDownload, "lr-or-oa-ch-no", "req-file-1");
+      expect(res2.status).toBe(400);
+      const json2 = await res2.json();
+      expect(json2.error.message).toContain("Antigravity interactions requires a Google directive");
+
+      const postFiles = new Request("http://localhost:7766/v1beta/files/", {
+        method: "POST",
+        body: "{}",
+      });
+      const res3 = await dispatchV4(postFiles, "lr-or-oa-ch-no", "req-file-2");
+      expect(res3.status).toBe(400);
+      const json3 = await res3.json();
+      expect(json3.error.message).toContain("Antigravity interactions requires a Google directive");
+    });
   });
 
   describe("trace inspection endpoints", () => {
