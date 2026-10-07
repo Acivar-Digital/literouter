@@ -12,10 +12,14 @@ Mandatory operational guidance for AI agents working in this repository.
 ---
 
 ## Technical Knowledge Base & Fixed Core Paths
-- **LiteRouter Skill (Absolute)**: `/home/yapilwsl/arthityap/literouter/.opencode/skills/literouter/SKILL.md` (dir: `.opencode/skills/literouter/`)
-- **Model Eval Skill**: `/home/yapilwsl/arthityap/literouter/.opencode/skills/literouter-eval/SKILL.md` (dir: `.opencode/skills/literouter-eval/`)
+- **MANDATORY REPO INSPECTION (WSL & VPS)**: When asked any question about LiteRouter behavior, routes, errors, providers, or config—especially when running on the VPS (`vps466a`)—you **MUST** read the repository source files on disk before answering or diagnosing. Never guess from memory or stale docs.
+- **Repository Roots**:
+  - **WSL2 (Dev / Golden Truth)**: `/home/yapilwsl/arthityap/literouter`
+  - **VPS (`vps466a` Production)**: `/home/vps466a/services/literouter`
+- **LiteRouter Skill**: `.opencode/skills/literouter/SKILL.md` (WSL: `/home/yapilwsl/arthityap/literouter/.opencode/skills/literouter/SKILL.md` | VPS: `/home/vps466a/services/literouter/.opencode/skills/literouter/SKILL.md`)
+- **Model Eval Skill**: `.opencode/skills/literouter-eval/SKILL.md` (WSL: `/home/yapilwsl/arthityap/literouter/.opencode/skills/literouter-eval/SKILL.md` | VPS: `/home/vps466a/services/literouter/.opencode/skills/literouter-eval/SKILL.md`)
 - **Key Docs**: `CHANGELOG.md`, `docs/architecture.md`, `docs/streaming-fix.md` (streaming spec), `docs/longrunning-mode.md`
-- **Main Handlers**: `src/handlers/openai_compat.ts`, `src/network/fetcher.ts`, `src/network/pacer.ts`
+- **Active Engine (`v4.1` default, `src/config/env.ts`) & Main Handlers**: `src/index.ts` (`dispatchRoute` -> `dispatchV4`), `src/handlers/v4/router.ts`, `src/engine/dispatch.ts`, `src/handlers/google_interactions.ts`, `src/network/fetcher.ts`, `src/network/pacer.ts` (legacy compat handlers in `src/handlers/openai_compat.ts` and `src/handlers/anthropic_compat.ts` are inactive unless `LITEROUTER_ENGINE=legacy`)
 - **Lazy-Load Guides**: Antigravity IDE: `.opencode/skills/literouter/agy-ide-setup.md` | TUI Math: `.opencode/skills/literouter/tui-latex-math-rendering.md` | Test Hygiene: `.opencode/skills/literouter/test-hygiene-playbook.md`
 - **Rate Limiting (Zdist Retired)**: Client-side sliding-window tracking is retired (see `docs/GRAVEYARD/ZDIST.md`). Active stack: deterministic **RequestPacer** (`src/network/pacer.ts`) + reactive **CooldownManager** (`src/network/cooldown.ts` 429 quarantine with `Retry-After`).
 - **OpenCode Config Format**: v1 (`.opencode/opencode.json`, key: `"plugin"` [strings]) vs v2 (`.opencode/opencode.json`, key: `"plugins"` [strings or `{ package, options }`]).
@@ -23,11 +27,12 @@ Mandatory operational guidance for AI agents working in this repository.
 ---
 
 ## Session Start & Skill Protocol
-1. **Initialize Beads**: Run `bd prime` (or `bd ready`) immediately on session start.
-2. **Load Skill (MANDATORY)**: Run `skill load "literouter"` at conversation start. Fallback: load immediately if touching gateway routing, keys, streaming, models, or errors.
-3. **Ticket (Definition of Done)**: Create issue if not already tracked: `bd create "..." -t task -p 2 -d "..." --acceptance="1. Deterministic verification passes\n2. Output artifact exists"` (`validation.on-create: error` is enforced; omitting `--acceptance` fails).
-4. **Claim**: Run `bd update <id> --claim`.
-5. **Resume Protocol**: If context is lost or session restarts, run `bd list --status in_progress --json` to find your claimed task and continue. Never ask the user "what should I work on?" if tasks are in progress. [Rationale: Persistent brain in beads].
+1. **Read the Repo First**: On both WSL (`/home/yapilwsl/arthityap/literouter`) and VPS (`/home/vps466a/services/literouter`), always inspect the live repo files (`src/`, `config/`, `fusion.json`, `.opencode/skills/literouter/`) before answering questions or diagnosing issues.
+2. **Initialize Beads**: Run `bd prime` (or `bd ready`) immediately on session start.
+3. **Load Skill (MANDATORY)**: Run `skill load "literouter"` (or read `.opencode/skills/literouter/SKILL.md` directly) at conversation start. Fallback: load immediately if touching gateway routing, keys, streaming, models, or errors.
+4. **Ticket (Definition of Done)**: Create issue if not already tracked: `bd create "..." -t task -p 2 -d "..." --acceptance="1. Deterministic verification passes\n2. Output artifact exists"` (`validation.on-create: error` is enforced; omitting `--acceptance` fails).
+5. **Claim**: Run `bd update <id> --claim`.
+6. **Resume Protocol**: If context is lost or session restarts, run `bd list --status in_progress --json` to find your claimed task and continue. Never ask the user "what should I work on?" if tasks are in progress. [Rationale: Persistent brain in beads].
 
 ---
 
