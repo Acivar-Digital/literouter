@@ -14,6 +14,10 @@ All notable changes to LiteRouter will be documented in this file.
   - Updated `README.md` endpoints table to accurately specify that `/reset` requires admin authorization (`Bearer <LITEROUTER_AUTH_KEY>`).
 - **Test Hardcoded Keys Verification** (`literouter-g3a`):
   - Verified and confirmed full cleanup of hardcoded test keys (`sk-lr-8f2a9e3b1c4d7e5f`) across all test files using dynamic `os.environ.get("LITEROUTER_AUTH_KEY")` and skip-if-not-set guardrails.
+- **Transitive Dependency Vulnerability Audit** (`literouter-g3b`):
+  - Conducted comprehensive audit of reported transitive Python dependencies: `pyasn1` (0.6.3, patched for CVE-2024-34064), `aiohttp` (3.14.1, patched), `cryptography` (49.0.0, patched), and `pydantic-settings` (2.14.1, patched for CVE-2024-37890).
+  - Confirmed zero production exposure: live gateway runtime is decoupled on Bun TypeScript with a single production runtime dependency (`zod`).
+  - Documented threat model, status, and isolation analysis in `docs/security/dependency_audit_2026.md`.
 - **Admin & Trace Authentication Lockdown (`verifyMasterSecret`)**:
   - Hardened `/reset`, `POST /admin/pool/reset`, and `GET /v1/traces` to strictly require `Authorization: Bearer <LITEROUTER_AUTH_KEY>`.
   - Replaced naive string matching with constant-time SHA-256 digest comparison (`crypto.timingSafeEqual`) in `verifyMasterSecret` (`src/directive/validator.ts`) to eliminate timing attack side channels.
