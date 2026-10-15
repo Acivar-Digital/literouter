@@ -92,6 +92,15 @@ function extractMessageContentText(content: string | null | readonly OpenAIConte
 // 2. REQUEST SERIALIZER (Fixes Upstream 400 Schema Collisions)
 // ---------------------------------------------------------------------------
 
+function escapeXmlAttr(unsafe: string): string {
+  return unsafe
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;");
+}
+
 export function transformLingRequest(req: OpenAIRequestPayload): OpenAIRequestPayload {
   const transformed: Record<string, unknown> = { ...req };
   const serializedMessages: OpenAIMessage[] = [];
@@ -114,7 +123,7 @@ export function transformLingRequest(req: OpenAIRequestPayload): OpenAIRequestPa
     const isLastTurn = i >= messages.length - 2;
 
     if (msg.role === "tool") {
-      const toolId = msg.tool_call_id || "call_unknown";
+      const toolId = escapeXmlAttr(msg.tool_call_id || "call_unknown");
       const text = extractMessageContentText(msg.content);
       pendingToolResponses.push(`<tool_response id="${toolId}">\n${text}\n</tool_response>`);
       continue;

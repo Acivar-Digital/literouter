@@ -10,7 +10,12 @@ import { getStrategy } from "./strategy_registry";
 import { safeClose, safeEnqueue, NoResponseError } from "../network/fetcher";
 import { isProviderQuarantineEnabled } from "../network/pool";
 import type { OutboundWirePayload, PayloadTransformerContract } from "./transformer";
-import { globalKeyPool, overrideProviderUrl } from "../handlers/openai_compat";
+import {
+  globalKeyPool,
+  overrideProviderUrl,
+  executeFusionFlow,
+  type OpenAIRequestPayload,
+} from "../handlers/openai_compat";
 import { RequestTelemetry, type UsageRecord } from "../telemetry/session";
 import { traceBuffer, type SanitizedTrace } from "../telemetry/ring_buffer";
 import { traceWriter } from "../telemetry/trace_writer";
@@ -99,6 +104,18 @@ export const BANNED_OUTBOUND_HEADERS = new Set([
   "content-length",
 ]);
 
+export const SAFE_CLIENT_PASS_HEADERS = new Set<string>([
+  "accept",
+  "anthropic-version",
+  "anthropic-beta",
+  "x-request-id",
+  "session-id",
+  "x-session-id",
+  "user-agent",
+  "x-title",
+  "http-referer",
+]);
+
 function isBannedOutboundHeader(key: string): boolean {
   const lowerKey = key.toLowerCase();
   return lowerKey === "host" || BANNED_OUTBOUND_HEADERS.has(lowerKey);
@@ -107,11 +124,19 @@ function isBannedOutboundHeader(key: string): boolean {
 function mergeHeaderSource(
   target: Record<string, string>,
   source?: Record<string, string>,
-  filterHopByHop = false
+  filterClientHeaders = false
 ): void {
   if (!source) return;
   for (const [k, v] of Object.entries(source)) {
-    if (filterHopByHop && isBannedOutboundHeader(k)) {
+    const lower = k.toLowerCase();
+    if (
+      filterClientHeaders &&
+      (isBannedOutboundHeader(lower) ||
+        lower === "cookie" ||
+        lower === "authorization" ||
+        lower === "x-forwarded-for" ||
+        lower === "proxy-authorization")
+    ) {
       continue;
     }
     setHeaderCaseInsensitive(target, k, v);
@@ -244,15 +269,21 @@ function buildTtftTimeoutResponse(reqId: string, timeoutMs: number): Response {
   );
 }
 
-function createCleanErrorResponse(
+export function createCleanErrorResponse(
   upstreamResponse: Response,
   errText: string
 ): Response {
+  const sanitizedBody = sanitizeBody(errText);
   const cleanHeaders = new Headers(upstreamResponse.headers);
   cleanHeaders.delete("content-encoding");
   cleanHeaders.delete("content-length");
   cleanHeaders.delete("transfer-encoding");
-  return new Response(errText, {
+  cleanHeaders.delete("set-cookie");
+  cleanHeaders.delete("server");
+  cleanHeaders.delete("cf-ray");
+  cleanHeaders.delete("cf-cache-status");
+
+  return new Response(sanitizedBody, {
     status: upstreamResponse.status,
     statusText: upstreamResponse.statusText,
     headers: cleanHeaders,
@@ -388,6 +419,19 @@ export async function executeDispatchPipeline(
   req: DispatchRequest,
   fetchFn: FetchFn = fetch
 ): Promise<Response> {
+  if (req.directive.type === "fusion") {
+    return executeFusionFlow(
+      req.directive.preset,
+      req.rawInboundBody as OpenAIRequestPayload,
+      req.clientSignal,
+      req.reqId,
+      {
+        userAgent: req.clientHeaders.get("user-agent") || undefined,
+        headers: req.clientHeaders,
+      }
+    );
+  }
+
   const providerCode = req.directive.type === "direct" ? req.directive.provider : "or";
   const provConfig = getProviderConfig(providerCode);
   const strategy: ProviderExecutionStrategy = getStrategy(providerCode);

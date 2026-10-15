@@ -3410,3 +3410,9 @@ $ bun run scripts/test_runner.ts
 Run: 2026-09-17T12:02:25Z
 $ bun run scripts/test_runner.ts
 ✓ All tests passed (1355 tests across 7 domains in 26.35s)
+Run: 2026-10-07T12:04:36Z
+$ bun run scripts/test/test_runner.ts
+✓ All tests passed (1387 tests across 7 domains in 26.62s)
+Run: 2026-10-15T18:34:23Z
+$ bun run scripts/test/test_runner.ts
+✓ All tests passed (1424 tests across 7 domains in 24.21s)

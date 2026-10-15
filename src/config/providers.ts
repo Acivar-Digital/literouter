@@ -133,7 +133,8 @@ export function resolveUpstreamEndpoint(
     const endpoints = p.endpoints as Record<string, string | undefined>;
     const rawPath = endpoints[endpointKey] ?? (endpointKey.startsWith("/") ? endpointKey : undefined);
     if (rawPath) {
-      const formatted = model !== undefined ? rawPath.replace("{model}", model) : rawPath;
+      const safeModel = model !== undefined ? encodeURIComponent(model) : "";
+      const formatted = model !== undefined ? rawPath.replace("{model}", safeModel) : rawPath;
       const originalUrl = `${p.base_url}${formatted.startsWith("/") ? formatted : `/${formatted}`}`;
       return {
         url: overrideProviderUrl(originalUrl, p.code),

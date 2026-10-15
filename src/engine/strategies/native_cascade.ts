@@ -38,7 +38,7 @@ export class NativeCascadeStrategy implements ProviderExecutionStrategy {
         `No endpoint for completion code "${completionCode}" on provider "${ctx.providerConfig.code}"`
       );
     }
-    let path = endpointTemplate.replace("{model}", model);
+    let path = endpointTemplate.replace("{model}", encodeURIComponent(model));
     if (
       (completionCode === "gc" || completionCode === "g1") &&
       ctx.path?.includes(":streamGenerateContent")

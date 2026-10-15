@@ -305,3 +305,37 @@ src/
 │   └── payload.ts         # Gemma sanitizer and payload normalizer
 └── index.ts               # Bun HTTP/2 server entrypoint and route dispatcher
 ```
+
+---
+
+## 9. Ingress Security, Memory Bounding & Reliability Architecture (v4.1)
+
+LiteRouter v4.1 hardens the production boundary across key security and degradation vectors:
+
+### 9.1 Strict Master Secret Authentication & Authorization Segregation
+- **Administrative Lockdown**: Administrative endpoints (`POST /reset`, `POST /admin/pool/reset`) and telemetry trace buffers (`GET /v1/traces`) strictly require `Authorization: Bearer <LITEROUTER_AUTH_KEY>`.
+- **Timing Attack Defense**: Comparisons use `crypto.timingSafeEqual` over fixed-length SHA-256 digests (`verifyMasterSecret`), preventing side-channel timing leaks.
+- **Directive Key Isolation**: Directive keys (`lr-*`) are valid solely for inference proxy routes (`/v1/chat/completions`, `/v1/messages`, `/v1/responses`, `/v1beta/*`). Supplying a directive key to administrative or trace routes immediately returns `401 Unauthorized`.
+
+### 9.2 Outbound Client Header Allowlisting (`SAFE_CLIENT_PASS_HEADERS`)
+- Client request headers are stripped of sensitive values (e.g., `cookie`, `set-cookie`, `authorization`, `x-forwarded-for`, `x-real-ip`).
+- Only explicitly allowed headers (`content-type`, `accept`, `user-agent`, `x-request-id`, `x-session-id`, `anthropic-version`, etc.) are forwarded upstream.
+
+### 9.3 Inbound Request Body Size Caps (32MB)
+- `MAX_REQUEST_BODY_SIZE` (32MB) is enforced on both HTTP/1.1 (`Bun.serve`) and HTTP/2 (`http2.createSecureServer`).
+- Oversized bodies immediately abort the stream and return HTTP 413 (`Payload Too Large`), protecting the Bun V8 heap against denial-of-service memory exhaustion.
+
+### 9.4 Defense-in-Depth Secret Scrubbing & Error Redaction
+- Upstream error messages are scrubbed via `sanitizeBody` using an expanded `SECRET_REGEX` matching Anthropic, OpenAI project/service, Groq, Cerebras, NVIDIA, Google AI Studio, and URL query tokens.
+- Upstream transport headers (`set-cookie`, `server`, `cf-ray`, `cf-cache-status`, `content-encoding`) are stripped before relaying error responses downstream.
+
+### 9.5 Fusion Directives in v4.1 Dispatch Pipeline
+- Inbound directives with `type: "fusion"` (`lr-fse-*`) route directly to `executeFusionFlow`, preserving model fallback hierarchies and sticky routing rather than falling back to provider `"or"`.
+
+### 9.6 URL Path Injection & Store Bounding
+- Path interpolations for `{model}` use `encodeURIComponent` to prevent directory traversal and SSRF attacks.
+- In-memory telemetry and signature caches (`TelemetrySink.ttftStore`, `THOUGHT_SIGNATURE_STORE`) are capped at 2,000 entries using LRU eviction.
+
+### 9.7 Graceful In-Flight Request Draining
+- All inbound requests are tracked via `trackInFlight`.
+- On process termination signals (`SIGINT`, `SIGTERM`), the gateway triggers `drainInFlight(10000)` to allow in-flight streaming requests up to 10 seconds to cleanly complete before closing sockets and exiting.

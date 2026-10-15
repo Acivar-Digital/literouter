@@ -29,10 +29,18 @@ export interface RequestTrace {
   readonly error?: string;
 }
 
+const MAX_TTFT_STORE_ENTRIES = 2000;
+
 export class TelemetrySink {
   private static readonly ttftStore = new Map<string, number>();
 
   public static recordTtft(reqId: string, ttftMs: number): void {
+    if (this.ttftStore.size >= MAX_TTFT_STORE_ENTRIES) {
+      const oldestKey = this.ttftStore.keys().next().value;
+      if (oldestKey !== undefined) {
+        this.ttftStore.delete(oldestKey);
+      }
+    }
     this.ttftStore.set(reqId, ttftMs);
   }
 

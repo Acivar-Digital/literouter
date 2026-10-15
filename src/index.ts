@@ -11,7 +11,7 @@ import {
 import { loadLocationConfig } from "./config/location";
 import { initStrategyRegistry } from "./engine/strategy_registry";
 import { parseDirective, type ParsedDirective } from "./directive/parser";
-import { extractDirectiveToken } from "./directive/validator";
+import { extractDirectiveToken, verifyMasterSecret, resolveInferenceAuth, createUnauthorizedResponse } from "./directive/validator";
 import { handleAnthropicCompat, handleAnthropicCountTokens } from "./handlers/anthropic_compat";
 import { handleModelsDiscovery } from "./handlers/discovery";
 import { handleGcpCompat } from "./handlers/gcp_compat";
@@ -43,6 +43,7 @@ import { traceWriter } from "./telemetry/trace_writer";
 import {
   clearPacerRegistry,
 } from "./network/pacer";
+import { trackInFlight, drainInFlight } from "./lifecycle/shutdown";
 import { type BannerOptions, printBanner } from "./ui/banner";
 import { logAmber, logError, logInfo } from "./ui/logger";
 
@@ -81,7 +82,13 @@ function loadTlsOptions(tlsEnabledFlag?: boolean): { cert: string; key: string }
 export function handleHardReset(req?: Request, rawKey?: string): Response {
   const token = rawKey || (req ? extractDirectiveToken(req) : "") || "";
   const authKey = getEnv().LITEROUTER_AUTH_KEY;
-  const isValid = (authKey && token === authKey) || parseDirective(token) !== null;
+  if (!authKey) {
+    return Response.json(
+      { error: { message: "Admin endpoints disabled: LITEROUTER_AUTH_KEY not configured", type: "authentication_error" } },
+      { status: 401 }
+    );
+  }
+  const isValid = verifyMasterSecret(token, authKey);
 
   if (!isValid) {
     return Response.json(
@@ -131,7 +138,13 @@ export function handleHardReset(req?: Request, rawKey?: string): Response {
 async function handleAdminPoolReset(req: Request, rawKey: string): Promise<Response> {
   const token = rawKey || extractDirectiveToken(req) || "";
   const authKey = getEnv().LITEROUTER_AUTH_KEY;
-  const isValid = (authKey && token === authKey) || parseDirective(token) !== null;
+  if (!authKey) {
+    return Response.json(
+      { error: { message: "Admin endpoints disabled: LITEROUTER_AUTH_KEY not configured", type: "authentication_error" } },
+      { status: 401 }
+    );
+  }
+  const isValid = verifyMasterSecret(token, authKey);
 
   if (!isValid) {
     return Response.json(
@@ -453,6 +466,15 @@ export async function dispatchRoute(
     return modelsRes;
   }
 
+  const isTrace = path === "/v1/traces" || path.startsWith("/v1/traces/");
+  if (!isTrace) {
+    const authCheck = resolveInferenceAuth(req, rawKey);
+    if (!authCheck.valid) {
+      return createUnauthorizedResponse(authCheck.error);
+    }
+    rawKey = authCheck.directiveStr;
+  }
+
   const engine = resolveEngine(req);
   if (engine === "v4.1") {
     return dispatchV4(req, rawKey, reqId);
@@ -655,6 +677,8 @@ export interface LiteRouterServer {
   readonly stop: () => void | Promise<void>;
 }
 
+export const MAX_REQUEST_BODY_SIZE = 32 * 1024 * 1024; // 32MB
+
 export function createServer(portOverride?: number): Server<unknown> | LiteRouterServer {
   initProviderRegistry();
   initStrategyRegistry();
@@ -711,9 +735,35 @@ export function createServer(portOverride?: number): Server<unknown> | LiteRoute
         nodeReq.once("aborted", onAbort);
         nodeRes.once("close", onAbort);
 
+        let receivedBytes = 0;
+        let isOverLimit = false;
         const chunks: Buffer[] = [];
-        nodeReq.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+        nodeReq.on("data", (chunk) => {
+          if (isOverLimit) return;
+          const buf = Buffer.from(chunk);
+          receivedBytes += buf.length;
+          if (receivedBytes > MAX_REQUEST_BODY_SIZE) {
+            isOverLimit = true;
+            chunks.length = 0; // Release allocated chunks
+            nodeReq.destroy();
+            if (!nodeRes.headersSent && !nodeRes.destroyed) {
+              nodeRes.writeHead(413, { "content-type": "application/json" });
+              nodeRes.end(
+                JSON.stringify({
+                  error: {
+                    message: "Payload Too Large: request body exceeds 32MB limit",
+                    type: "invalid_request_error",
+                    code: "payload_too_large",
+                  },
+                })
+              );
+            }
+            return;
+          }
+          chunks.push(buf);
+        });
         nodeReq.on("end", async () => {
+          if (isOverLimit) return;
           const reqId = `req_${Math.random().toString(36).slice(2, 9)}`;
           try {
             const hasBody = !["GET", "HEAD"].includes(nodeReq.method || "");
@@ -731,7 +781,7 @@ export function createServer(portOverride?: number): Server<unknown> | LiteRoute
               signal: abortController.signal,
             });
 
-            const webRes = await handleAppRequest(req);
+            const webRes = await trackInFlight(handleAppRequest(req));
             await pipeWebResponseToNode(webRes, nodeReq, nodeRes);
           } catch (err) {
             const msg = err instanceof Error ? err.message : String(err ?? "");
@@ -788,9 +838,10 @@ export function createServer(portOverride?: number): Server<unknown> | LiteRoute
     port,
     hostname: host,
     idleTimeout: env.LITEROUTER_IDLE_TIMEOUT_SEC,
+    maxRequestBodySize: MAX_REQUEST_BODY_SIZE,
     tls: tls ? { cert: tls.cert, key: tls.key } : undefined,
     async fetch(req: Request) {
-      return handleAppRequest(req);
+      return trackInFlight(handleAppRequest(req));
     },
   });
 }
@@ -833,12 +884,14 @@ process.on("unhandledRejection", (reason) => {
   console.error("Unhandled promise rejection in gateway process:", reason);
 });
 
-process.on("SIGINT", () => {
+process.on("SIGINT", async () => {
+  await drainInFlight(10000);
   traceWriter.drainSync();
   process.exit(0);
 });
 
-process.on("SIGTERM", () => {
+process.on("SIGTERM", async () => {
+  await drainInFlight(10000);
   traceWriter.drainSync();
   process.exit(0);
 });

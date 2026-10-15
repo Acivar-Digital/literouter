@@ -60,7 +60,7 @@ describe("Hard Reset Endpoint (/reset)", () => {
     expect(body.message).toContain("Hard reset successful");
   });
 
-  it("allows access with valid directive token in Authorization header", async () => {
+  it("rejects access with directive token in Authorization header", async () => {
     const req = new Request("http://localhost:7766/reset", {
       method: "POST",
       headers: {
@@ -68,9 +68,25 @@ describe("Hard Reset Endpoint (/reset)", () => {
       },
     });
     const res = await handleAppRequest(req);
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as { status: string; message: string };
-    expect(body.status).toBe("ok");
+    expect(res.status).toBe(401);
+    const body = (await res.json()) as { error: { message: string; type: string } };
+    expect(body.error.type).toBe("authentication_error");
+    expect(body.error.message).toBe("Unauthorized admin access");
+  });
+
+  it("rejects access when LITEROUTER_AUTH_KEY is not configured", async () => {
+    delete process.env.LITEROUTER_AUTH_KEY;
+    resetEnvCache();
+    const req = new Request("http://localhost:7766/reset", {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer test-admin-secret-key-123",
+      },
+    });
+    const res = await handleAppRequest(req);
+    expect(res.status).toBe(401);
+    const body = (await res.json()) as { error: { message: string; type: string } };
+    expect(body.error.message).toBe("Admin endpoints disabled: LITEROUTER_AUTH_KEY not configured");
   });
 
   it("ensures /health remains public without authentication", async () => {

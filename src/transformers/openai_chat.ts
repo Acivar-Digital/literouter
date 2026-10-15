@@ -11,6 +11,7 @@ import {
 import { sanitizeAndTransformPayload } from "./payload";
 import type { OpenAIRequestPayload } from "./nuances";
 import { EMOJI, logWarn } from "../ui/logger";
+import { SAFE_CLIENT_PASS_HEADERS } from "../engine/dispatch";
 
 interface ParsedUsageDetails {
   readonly reasoning_tokens?: number;
@@ -219,9 +220,14 @@ export class OpenAIChatTransformer implements PayloadTransformerContract {
     const wireHeaders: Record<string, string> = {
       "content-type": "application/json",
     };
-    headers.forEach((value, key) => {
-      wireHeaders[key.toLowerCase()] = value;
-    });
+    if (headers && typeof headers.forEach === "function") {
+      headers.forEach((value, key) => {
+        const lower = key.toLowerCase();
+        if (SAFE_CLIENT_PASS_HEADERS.has(lower)) {
+          wireHeaders[lower] = value;
+        }
+      });
+    }
 
     const nuances = extractDirectiveNuances(directive);
     const wire = extractDirectiveWire(directive);

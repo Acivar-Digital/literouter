@@ -1,6 +1,7 @@
 import { Database } from "bun:sqlite";
 import { existsSync } from "node:fs";
-import { parseDirectiveKey } from "../../directive/parser";
+import { getEnv } from "../../config/env";
+import { verifyMasterSecret } from "../../directive/validator";
 import { traceBuffer, type SanitizedTrace } from "../../telemetry/ring_buffer";
 import { traceWriter } from "../../telemetry/trace_writer";
 import { handleV4OpenAIChat } from "./openai_chat";
@@ -141,14 +142,15 @@ function handleTraceList(url: URL): Response {
   return Response.json({ traces });
 }
 
-function handleTraceEndpoints(url: URL, path: string, rawKey: string): Response {
-  const directive = parseDirectiveKey(rawKey);
-  if (!directive) {
+function handleTraceEndpoints(url: URL, path: string, rawKey: string, req?: Request): Response {
+  const authKey = getEnv().LITEROUTER_AUTH_KEY;
+  const candidate = rawKey || (req ? req.headers.get("x-literouter-key") || req.headers.get("x-auth-key") || "" : "");
+  if (!authKey || !verifyMasterSecret(candidate, authKey)) {
     return Response.json(
       {
         error: {
           code: "unauthorized",
-          message: "Directive key authorization required to access trace inspection endpoints",
+          message: "Admin authentication required to access trace inspection endpoints",
           type: "authentication_error",
         },
       },
@@ -265,7 +267,7 @@ export async function dispatchV4(
   const path = rawPath.length > 1 && rawPath.endsWith("/") ? rawPath.slice(0, -1) : rawPath;
 
   if (isTracePath(path)) {
-    return handleTraceEndpoints(url, path, rawKey);
+    return handleTraceEndpoints(url, path, rawKey, req);
   }
 
   const postRes = dispatchPostRoute(path, req, rawKey, reqId) ?? dispatchGoogleRoute(path, req, rawKey, reqId);

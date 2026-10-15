@@ -1,0 +1,51 @@
+{
+  "$schema": "https://repomix.com/schemas/config.json",
+  "output": {
+    "filePath": "repomix.md",
+    "style": "markdown",
+    "parsableStyle": true,
+    "fileSummary": true,
+    "directoryStructure": true,
+    "topFilesLength": 10,
+    "showLineNumbers": true,
+    "removeComments": false,
+    "removeEmptyLines": false
+  },
+  "include": [
+    "package.json",
+    "tsconfig.json",
+    "bunfig.toml",
+    "src/**/*.ts",
+    "config/providers.json",
+    "config/fusion.json",
+    "config/models.json",
+    "config/location.json.example"
+  ],
+  "ignore": {
+    "useGitignore": true,
+    "useDefaultPatterns": true,
+    "customPatterns": [
+      ".env*",
+      "**/*.env*",
+      "*.key",
+      "*.pem",
+      "tests/**",
+      "eval/**",
+      "admin/**",
+      "scripts/**",
+      "docs/**",
+      "scratch/**",
+      "tools/**",
+      "oldgen/**",
+      "vps/**",
+      "*.db*",
+      "*.sqlite*",
+      "*.log*",
+      "repomix.md",
+      "repomix-output.*"
+    ]
+  },
+  "security": {
+    "enableSecurityCheck": true
+  }
+}

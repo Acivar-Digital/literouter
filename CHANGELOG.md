@@ -2,6 +2,34 @@
 
 All notable changes to LiteRouter will be documented in this file.
 
+## [Unreleased] — 2026-10-16
+
+### Security & Reliability Hardening
+- **Admin & Trace Authentication Lockdown (`verifyMasterSecret`)**:
+  - Hardened `/reset`, `POST /admin/pool/reset`, and `GET /v1/traces` to strictly require `Authorization: Bearer <LITEROUTER_AUTH_KEY>`.
+  - Replaced naive string matching with constant-time SHA-256 digest comparison (`crypto.timingSafeEqual`) in `verifyMasterSecret` (`src/directive/validator.ts`) to eliminate timing attack side channels.
+  - Segregated directive tokens (`lr-*`) exclusively to inference proxy routes (`/v1/chat/completions`, `/v1/messages`, `/v1/responses`, `/v1beta/*`), explicitly rejecting directives from administrative and trace endpoints with HTTP `401 Unauthorized`.
+  - Maintained permissive development behavior for inference proxying when `LITEROUTER_AUTH_KEY` is unset.
+- **Outbound Client Header Allowlisting (`SAFE_CLIENT_PASS_HEADERS`)**:
+  - Introduced strict `SAFE_CLIENT_PASS_HEADERS` allowlist in `src/engine/dispatch.ts`, `src/transformers/openai_chat.ts`, and `src/transformers/openai_responses.ts`.
+  - Strips sensitive client cookies (`cookie`, `set-cookie`), client authorization headers (`authorization`, `x-api-key`, etc.), and hop-by-hop/routing metadata (`x-forwarded-for`, `x-real-ip`) before dispatching requests upstream.
+- **Inbound Request Body Size Caps (32MB) & DoS Protection**:
+  - Implemented `MAX_REQUEST_BODY_SIZE = 32 * 1024 * 1024` (32MB) across both HTTP/1.1 (`Bun.serve({ maxRequestBodySize })`) and HTTP/2 (`http2.createSecureServer`).
+  - Added streaming chunk accumulation byte counters and HTTP 413 `Payload Too Large` rejection on oversized HTTP/2 payloads to prevent heap OOM.
+- **Secret Regex Scrubbing & Error Redaction Pipeline**:
+  - Expanded `SECRET_PATTERNS` and `SECRET_REGEX` in `src/telemetry/sanitize.ts` to redact Anthropic, OpenAI project/service, Groq, Cerebras, NVIDIA, Google AI Studio, and URL query parameter keys/tokens.
+  - Enhanced `createCleanErrorResponse` in `src/engine/dispatch.ts` to sanitize all upstream error bodies through `sanitizeBody` and strip sensitive upstream headers (`set-cookie`, `server`, `cf-ray`, `cf-cache-status`).
+- **Fusion Directives in v4.1 Dispatch & Wire Graceful Shutdown**:
+  - Fixed fusion directive fallback in `executeDispatchPipeline` (`src/engine/dispatch.ts`), routing `lr-fse-*` directly through `executeFusionFlow` instead of defaulting to OpenRouter `"or"`.
+  - Wired in-flight request tracking (`trackInFlight`) in `Bun.serve` and `http2.createSecureServer`, with a 10-second graceful drain (`drainInFlight(10000)`) on `SIGINT` and `SIGTERM`.
+- **URL Path Traversal Prevention & Memory Store Bounding**:
+  - Wrapped `{model}` path interpolation in `resolveUpstreamEndpoint` (`src/config/providers.ts`) and `native_cascade.ts` with `encodeURIComponent` to prevent directory traversal and SSRF attacks.
+  - Capped in-memory caches (`TelemetrySink.ttftStore` in `src/ui/telemetry.ts` and `THOUGHT_SIGNATURE_STORE` in `src/transformers/thinking.ts`) at 2,000 entries using LRU eviction.
+  - Added XML character escaping (`escapeXmlAttr`) for synthesized tool call attributes in `src/transformers/dots.ts` and `src/transformers/ling.ts`.
+- **Testing & Verification**:
+  - Added comprehensive test suites: `tests/unit/security_admin_auth.test.ts`, `tests/unit/security_headers.test.ts`, `tests/unit/security_body_size.test.ts`, `tests/unit/security_secret_scrubbing.test.ts`, `tests/unit/security_fusion_shutdown.test.ts`, `tests/unit/security_path_and_stores.test.ts`.
+  - Total test suite expanded to 1,424 tests passing across 7 domains with zero typecheck errors.
+
 ## [Unreleased] — 2026-10-07
 
 ### Fixed

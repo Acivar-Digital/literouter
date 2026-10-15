@@ -447,13 +447,23 @@ function parseToolCallArguments(raw: unknown): Record<string, unknown> {
   return {};
 }
 
+function escapeXmlAttr(unsafe: string): string {
+  return unsafe
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;");
+}
+
 function serializeParamEntry([k, v]: [string, unknown]): string {
+  const safeKey = escapeXmlAttr(k);
   const valStr = typeof v === "object" && v !== null ? JSON.stringify(v) : String(v);
-  return `<parameter name="${k}">${valStr}</parameter>`;
+  return `<parameter name="${safeKey}">${valStr}</parameter>`;
 }
 
 function serializeSingleInvoke(tc: OpenAIToolCall): string {
-  const fnName = tc.function?.name || "tool";
+  const fnName = escapeXmlAttr(tc.function?.name || "tool");
   const argsObj = parseToolCallArguments(tc.function?.arguments);
   const paramXml = Object.entries(argsObj).map(serializeParamEntry).join("\n");
   if (paramXml.length > 0) {

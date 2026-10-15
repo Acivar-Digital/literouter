@@ -212,12 +212,13 @@ describe("LiteRouter Engine Dual-Path & Header Override (literouter-exqh.2 / exq
 
     it("routes to v4.1 dispatcher when LITEROUTER_ENGINE=v4.1", async () => {
       process.env.LITEROUTER_ENGINE = "v4.1";
+      process.env.LITEROUTER_AUTH_KEY = "test-master-key";
       resetEnvCache();
 
       // In v4.1 mode, /v1/traces is a valid v4.1 route
       const traceReq = new Request("http://localhost:7766/v1/traces", {
         headers: {
-          Authorization: "Bearer lr-zn-oa-ch-no",
+          Authorization: "Bearer test-master-key",
         },
       });
       const traceRes = await handleAppRequest(traceReq);
@@ -230,6 +231,7 @@ describe("LiteRouter Engine Dual-Path & Header Override (literouter-exqh.2 / exq
         method: "POST",
         headers: {
           Authorization: "Bearer lr-zn-oa-ch-no",
+          "x-literouter-key": "test-master-key",
         },
       });
       const unknownRes = await handleAppRequest(unknownReq);
@@ -242,11 +244,12 @@ describe("LiteRouter Engine Dual-Path & Header Override (literouter-exqh.2 / exq
     it("routes to v4.1 dispatcher via X-LiteRouter-Engine: v4.1 when override is enabled", async () => {
       process.env.LITEROUTER_ENGINE = "legacy";
       process.env.LITEROUTER_ENGINE_OVERRIDE = "true";
+      process.env.LITEROUTER_AUTH_KEY = "test-master-key";
       resetEnvCache();
 
       const traceReq = new Request("http://localhost:7766/v1/traces", {
         headers: {
-          Authorization: "Bearer lr-zn-oa-ch-no",
+          Authorization: "Bearer test-master-key",
           "X-LiteRouter-Engine": "v4.1",
         },
       });
@@ -257,8 +260,10 @@ describe("LiteRouter Engine Dual-Path & Header Override (literouter-exqh.2 / exq
     });
 
     it("dispatchV4 returns a Response directly", async () => {
+      process.env.LITEROUTER_AUTH_KEY = "test-master-key";
+      resetEnvCache();
       const req = new Request("http://localhost:7766/v1/traces");
-      const res = await dispatchV4(req, "lr-zn-oa-ch-no", "test_v4_direct");
+      const res = await dispatchV4(req, "test-master-key", "test_v4_direct");
       expect(res).toBeInstanceOf(Response);
       expect(res.status).toBe(200);
     });

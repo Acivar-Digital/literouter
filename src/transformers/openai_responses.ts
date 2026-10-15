@@ -4,6 +4,7 @@ import type {
   PayloadTransformerContract,
 } from "../engine/transformer";
 import type { RequestTelemetry } from "../telemetry/session";
+import { SAFE_CLIENT_PASS_HEADERS } from "../engine/dispatch";
 
 export interface ResponsesUsageDetails {
   readonly reasoning_tokens?: number;
@@ -163,7 +164,10 @@ export class OpenAIResponsesTransformer implements PayloadTransformerContract {
 
     if (headers && typeof headers.forEach === "function") {
       headers.forEach((value, key) => {
-        wireHeaders[key.toLowerCase()] = value;
+        const lower = key.toLowerCase();
+        if (SAFE_CLIENT_PASS_HEADERS.has(lower)) {
+          wireHeaders[lower] = value;
+        }
       });
     }
 

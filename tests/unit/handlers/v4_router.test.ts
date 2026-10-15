@@ -4,6 +4,7 @@ import { traceBuffer, type SanitizedTrace } from "../../../src/telemetry/ring_bu
 import { traceWriter } from "../../../src/telemetry/trace_writer";
 import { initProviderRegistry } from "../../../src/config/providers";
 import { initStrategyRegistry } from "../../../src/engine/strategy_registry";
+import { resetEnvCache } from "../../../src/config/env";
 
 function createMockTrace(reqId: string, status = 200): SanitizedTrace {
   return {
@@ -168,12 +169,29 @@ describe("v4 router dispatcher", () => {
   });
 
   describe("trace inspection endpoints", () => {
-    it("returns 401 when accessing traces without valid directive key", async () => {
+    const originalAuth = process.env.LITEROUTER_AUTH_KEY;
+
+    beforeEach(() => {
+      process.env.LITEROUTER_AUTH_KEY = "test-admin-secret-key-123";
+      resetEnvCache();
+    });
+
+    afterEach(() => {
+      if (originalAuth !== undefined) {
+        process.env.LITEROUTER_AUTH_KEY = originalAuth;
+      } else {
+        delete process.env.LITEROUTER_AUTH_KEY;
+      }
+      resetEnvCache();
+    });
+
+    it("returns 401 when accessing traces without valid admin key", async () => {
       const req1 = new Request("http://localhost:7766/v1/traces");
       const res1 = await dispatchV4(req1, "", "req-t1");
       expect(res1.status).toBe(401);
       const json1 = await res1.json();
       expect(json1.error.code).toBe("unauthorized");
+      expect(json1.error.message).toBe("Admin authentication required to access trace inspection endpoints");
       expect(json1.error.type).toBe("authentication_error");
 
       const req2 = new Request("http://localhost:7766/v1/traces/req-123");
@@ -181,21 +199,38 @@ describe("v4 router dispatcher", () => {
       expect(res2.status).toBe(401);
       const json2 = await res2.json();
       expect(json2.error.code).toBe("unauthorized");
+
+      // Directives must NOT be accepted as admin auth
+      const req3 = new Request("http://localhost:7766/v1/traces");
+      const res3 = await dispatchV4(req3, "lr-or-oa-ch-no", "req-t3");
+      expect(res3.status).toBe(401);
+      const json3 = await res3.json();
+      expect(json3.error.message).toBe("Admin authentication required to access trace inspection endpoints");
     });
 
-    it("returns trace from RAM when present", async () => {
+    it("returns 401 when LITEROUTER_AUTH_KEY is not configured", async () => {
+      delete process.env.LITEROUTER_AUTH_KEY;
+      resetEnvCache();
+      const req = new Request("http://localhost:7766/v1/traces");
+      const res = await dispatchV4(req, "test-admin-secret-key-123", "req-t-no-key");
+      expect(res.status).toBe(401);
+      const json = await res.json();
+      expect(json.error.message).toBe("Admin authentication required to access trace inspection endpoints");
+    });
+
+    it("returns trace from RAM when present with master key", async () => {
       const trace = createMockTrace("req-ram-test-1", 200);
       traceBuffer.push(trace);
 
       const req = new Request("http://localhost:7766/v1/traces/req-ram-test-1");
-      const res = await dispatchV4(req, "lr-or-oa-ch-no", "req-caller");
+      const res = await dispatchV4(req, "test-admin-secret-key-123", "req-caller");
       expect(res.status).toBe(200);
       const json = await res.json();
       expect(json.reqId).toBe("req-ram-test-1");
       expect(json.durationMs).toBe(120);
     });
 
-    it("returns trace from SQLite when evicted from RAM", async () => {
+    it("returns trace from SQLite when evicted from RAM with master key", async () => {
       traceWriter.init(":memory:");
       const trace = createMockTrace("req-sqlite-1", 200);
       traceWriter.enqueue(trace);
@@ -203,41 +238,41 @@ describe("v4 router dispatcher", () => {
       traceBuffer.clear();
 
       const req = new Request("http://localhost:7766/v1/traces/req-sqlite-1");
-      const res = await dispatchV4(req, "lr-or-oa-ch-no", "req-caller");
+      const res = await dispatchV4(req, "test-admin-secret-key-123", "req-caller");
       expect(res.status).toBe(200);
       const json = await res.json();
       expect(json.reqId).toBe("req-sqlite-1");
     });
 
-    it("returns 404 when trace is neither in RAM nor SQLite", async () => {
+    it("returns 404 when trace is neither in RAM nor SQLite with master key", async () => {
       const req = new Request("http://localhost:7766/v1/traces/req-missing");
-      const res = await dispatchV4(req, "lr-or-oa-ch-no", "req-caller");
+      const res = await dispatchV4(req, "test-admin-secret-key-123", "req-caller");
       expect(res.status).toBe(404);
       const json = await res.json();
       expect(json.error.code).toBe("not_found");
       expect(json.error.message).toContain("req-missing");
     });
 
-    it("returns recent traces list for GET /v1/traces", async () => {
+    it("returns recent traces list for GET /v1/traces with master key", async () => {
       traceBuffer.push(createMockTrace("trace-1", 200));
       traceBuffer.push(createMockTrace("trace-2", 500));
 
       const req = new Request("http://localhost:7766/v1/traces");
-      const res = await dispatchV4(req, "lr-or-oa-ch-no", "req-caller");
+      const res = await dispatchV4(req, "test-admin-secret-key-123", "req-caller");
       expect(res.status).toBe(200);
       const json = await res.json();
       expect(Array.isArray(json.traces)).toBe(true);
       expect(json.traces.length).toBe(2);
     });
 
-    it("filters errors when requested via GET /v1/traces?errors=true&n=5", async () => {
+    it("filters errors when requested via GET /v1/traces?errors=true&n=5 with master key", async () => {
       traceBuffer.push(createMockTrace("trace-ok-1", 200));
       traceBuffer.push(createMockTrace("trace-err-1", 500));
       traceBuffer.push(createMockTrace("trace-ok-2", 200));
       traceBuffer.push(createMockTrace("trace-err-2", 429));
 
       const req = new Request("http://localhost:7766/v1/traces?errors=true&n=5");
-      const res = await dispatchV4(req, "lr-or-oa-ch-no", "req-caller");
+      const res = await dispatchV4(req, "test-admin-secret-key-123", "req-caller");
       expect(res.status).toBe(200);
       const json = await res.json();
       expect(json.traces.length).toBe(2);

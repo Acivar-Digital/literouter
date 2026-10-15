@@ -1,9 +1,16 @@
 import type { OpenAIMessage, OpenAIToolCall } from "./nuances";
 
+const MAX_THOUGHT_SIGNATURE_ENTRIES = 2000;
 const THOUGHT_SIGNATURE_STORE = new Map<string, string>();
 
 export function storeThoughtSignature(toolCallId: string, signature: string): void {
   if (toolCallId && signature) {
+    if (THOUGHT_SIGNATURE_STORE.size >= MAX_THOUGHT_SIGNATURE_ENTRIES) {
+      const oldestKey = THOUGHT_SIGNATURE_STORE.keys().next().value;
+      if (oldestKey !== undefined) {
+        THOUGHT_SIGNATURE_STORE.delete(oldestKey);
+      }
+    }
     THOUGHT_SIGNATURE_STORE.set(toolCallId, signature);
   }
 }

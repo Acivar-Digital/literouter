@@ -17,6 +17,7 @@ import {
 import { FatalAuthError, isFatalAuthError, KeyPool, type SelectedKey } from "../network/pool";
 import { sanitizeAndTransformPayload } from "../transformers/payload";
 import type { OpenAIRequestPayload } from "../transformers/nuances";
+export type { OpenAIRequestPayload };
 import { createDotsStreamTransformer, parseDotsXml, stripLeakedTemplateTags } from "../transformers/dots";
 import { createLingStreamTransformer, parseLingXml, transformLingResponse } from "../transformers/ling";
 import {

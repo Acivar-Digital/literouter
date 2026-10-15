@@ -35,15 +35,20 @@ export const REDACTED_HEADERS: ReadonlySet<string> = new Set<string>([
 ]);
 
 export const SECRET_PATTERNS: readonly RegExp[] = [
-  /Bearer\s+[a-zA-Z0-9_.-]+/g,
-  /sk-or-v1-[a-zA-Z0-9]{64}/g,
-  /nvapi-[a-zA-Z0-9_-]{64}/g,
-  /AIzaSy[a-zA-Z0-9_-]{33}/g,
-  /sk-lr-[a-zA-Z0-9_-]+/g,
+  /Bearer\s+[a-zA-Z0-9_.\-~+/]+=*/gi,
+  /sk-or-v1-[a-zA-Z0-9]{64}/gi,
+  /sk-ant-[a-zA-Z0-9_-]{20,}/gi,
+  /sk-(?:proj|svcacct|live|test)-[a-zA-Z0-9_-]{20,}/gi,
+  /nvapi-[a-zA-Z0-9_-]{32,}/gi,
+  /AIzaSy[a-zA-Z0-9_-]{20,}/gi,
+  /gsk_[a-zA-Z0-9_-]{20,}/gi,
+  /csk-[a-zA-Z0-9_-]{20,}/gi,
+  /sk-lr-[a-zA-Z0-9_.-]+/gi,
+  /([?&](?:key|api_key|token)=)[^&\s"]+/gi,
 ] as const;
 
 export const SECRET_REGEX =
-  /(?:Bearer\s+[a-zA-Z0-9_.-]+|sk-or-v1-[a-zA-Z0-9]{64}|nvapi-[a-zA-Z0-9_-]{64}|AIzaSy[a-zA-Z0-9_-]{33}|sk-lr-[a-zA-Z0-9_-]+)/g;
+  /(?:Bearer\s+[a-zA-Z0-9_.\-~+/]+=*|sk-or-v1-[a-zA-Z0-9]{64}|sk-ant-[a-zA-Z0-9_-]{20,}|sk-(?:proj|svcacct|live|test)-[a-zA-Z0-9_-]{20,}|nvapi-[a-zA-Z0-9_-]{32,}|AIzaSy[a-zA-Z0-9_-]{20,}|gsk_[a-zA-Z0-9_-]{20,}|csk-[a-zA-Z0-9_-]{20,}|sk-lr-[a-zA-Z0-9_.-]+|([?&](?:key|api_key|token)=)[^&\s"]+)/gi;
 
 /**
  * Sanitize headers using allowlist guarantee.

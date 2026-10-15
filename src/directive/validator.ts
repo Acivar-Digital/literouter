@@ -1,7 +1,61 @@
+import { createHash, timingSafeEqual } from "node:crypto";
 import { parseDirective, type ParsedDirective } from "./parser";
+import { getEnv } from "../config/env";
 
 export const DIRECTIVE_ERROR_CODE = "invalid_api_key";
 export const DIRECTIVE_ERROR_TYPE = "invalid_request_error";
+
+export function verifyMasterSecret(candidate: string, expected: string): boolean {
+  if (!candidate || !expected) {
+    return false;
+  }
+  const candHash = createHash("sha256").update(candidate).digest();
+  const expHash = createHash("sha256").update(expected).digest();
+  return timingSafeEqual(candHash, expHash);
+}
+
+export interface ResolvedInferenceAuth {
+  readonly valid: boolean;
+  readonly directiveStr: string;
+  readonly error?: string;
+}
+
+export function resolveInferenceAuth(req: Request, candidateToken?: string): ResolvedInferenceAuth {
+  const authKey = getEnv().LITEROUTER_AUTH_KEY;
+  const token = (candidateToken || extractDirectiveToken(req) || "").trim();
+  const headerDirective = req.headers.get("x-literouter-directive") || req.headers.get("x-directive");
+  const headerMasterKey = req.headers.get("x-literouter-key") || req.headers.get("x-auth-key");
+
+  if (!authKey) {
+    // Permissive ergonomics when LITEROUTER_AUTH_KEY is not configured
+    const directiveStr = headerDirective?.trim() || token;
+    return { valid: true, directiveStr };
+  }
+
+  // When LITEROUTER_AUTH_KEY is configured:
+  // Option 1: Authorization: Bearer <authKey> with x-literouter-directive: lr-...
+  if (verifyMasterSecret(token, authKey)) {
+    if (headerDirective && headerDirective.trim()) {
+      return { valid: true, directiveStr: headerDirective.trim() };
+    }
+    return {
+      valid: false,
+      directiveStr: "",
+      error: "Master key accepted, but missing routing directive in 'x-literouter-directive' header",
+    };
+  }
+
+  // Option 2: Authorization: Bearer <directive> with x-literouter-key: <authKey>
+  if (headerMasterKey && verifyMasterSecret(headerMasterKey.trim(), authKey)) {
+    return { valid: true, directiveStr: token };
+  }
+
+  return {
+    valid: false,
+    directiveStr: "",
+    error: "Authentication failed: valid LITEROUTER_AUTH_KEY required",
+  };
+}
 
 export interface ValidationSuccess {
   readonly valid: true;

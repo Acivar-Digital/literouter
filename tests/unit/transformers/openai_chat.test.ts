@@ -80,7 +80,8 @@ describe("Slice 4.1: OpenAIChatTransformer", () => {
         temperature: 0.7,
       };
       const headers = new Headers({
-        "x-custom-header": "test-val",
+        "x-request-id": "test-val",
+        cookie: "session=secret",
       });
 
       const wire = openAiChatTransformer.transformClientToWire(
@@ -93,7 +94,8 @@ describe("Slice 4.1: OpenAIChatTransformer", () => {
       expect(wire.method).toBe("POST");
       expect(wire.isStreaming).toBe(false);
       expect(wire.headers["content-type"]).toBe("application/json");
-      expect(wire.headers["x-custom-header"]).toBe("test-val");
+      expect(wire.headers["x-request-id"]).toBe("test-val");
+      expect(wire.headers["cookie"]).toBeUndefined();
       expect(wire.body.model).toBe("deepseek-ai/deepseek-r1");
       expect(wire.body.temperature).toBe(0.7);
     });

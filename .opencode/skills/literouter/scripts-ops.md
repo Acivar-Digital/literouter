@@ -167,7 +167,7 @@ Troubleshooting matrix:
 
 ### 3.1 Exact semantics (`src/index.ts:81-129`; dispatch at `:442-444`)
 
-`/reset` is routed directly to `handleHardReset()` (`src/index.ts:442-444`) with **strict authentication gating**. Callers must provide either `Authorization: Bearer <LITEROUTER_AUTH_KEY>` or a valid `lr-` directive token in the `Authorization` header. Requests lacking valid credentials are rejected immediately with HTTP `401 Unauthorized`:
+`/reset` is routed directly to `handleHardReset()` (`src/index.ts`) with **strict authentication gating**. Callers must provide `Authorization: Bearer <LITEROUTER_AUTH_KEY>`. Directive keys (`lr-*`) are valid strictly for inference proxy routes and are rejected on administrative routes with HTTP `401 Unauthorized`. Constant-time comparison (`timingSafeEqual`) prevents timing attack side channels:
 
 ```bash
 curl -s -X POST http://10.32.34.172:7766/reset \
@@ -232,10 +232,10 @@ and require `bash scripts/gateway/restart.sh` (§1.4).
 
 ### 3.3 Auth-gated variant — `POST /admin/pool/reset`
 
-`/admin/pool/reset` is dispatched to `handleAdminPoolReset()` (`src/index.ts:131-174`,
-routed at `:438-440`), which applies the same credential check as `handleHardReset()`
-(either `Authorization: Bearer <LITEROUTER_AUTH_KEY>` or any valid `lr-` directive
-token). Invalid credentials return HTTP `401`
+`/admin/pool/reset` is dispatched to `handleAdminPoolReset()` (`src/index.ts`),
+which applies the same credential check as `handleHardReset()`
+(strictly requires `Authorization: Bearer <LITEROUTER_AUTH_KEY>`; directive tokens are
+rejected). Invalid or missing credentials return HTTP `401`
 `{"error":{"message":"Unauthorized admin access","type":"authentication_error"}}`.
 
 ```bash
