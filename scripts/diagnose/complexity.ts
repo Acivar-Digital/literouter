@@ -4,7 +4,7 @@ import { join, resolve, normalize } from "path";
 // @ts-ignore
 import tsComplex from "ts-complex";
 
-const PROJECT_ROOT = resolve(import.meta.dir, "..");
+const PROJECT_ROOT = resolve(import.meta.dir, "../..");
 const PROJECT_ROOT_REAL = realpathSync(PROJECT_ROOT);
 
 function isPathWithinBase(target: string, base: string, baseReal: string): boolean {
@@ -12,10 +12,14 @@ function isPathWithinBase(target: string, base: string, baseReal: string): boole
   if (resolved !== baseReal && !resolved.startsWith(baseReal + "/")) {
     return false;
   }
-  const realResolved = normalize(realpathSync(resolved));
-  return (
-    realResolved === baseReal || realResolved.startsWith(baseReal + "/")
-  );
+  try {
+    const realResolved = normalize(realpathSync(resolved));
+    return (
+      realResolved === baseReal || realResolved.startsWith(baseReal + "/")
+    );
+  } catch {
+    return false;
+  }
 }
 
 function getAllTsFiles(dir: string): string[] {

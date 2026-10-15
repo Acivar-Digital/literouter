@@ -116,7 +116,7 @@ Write `~/.config/opencode/config.json` with 100% provider parity and default mod
       "name": "LiteRouter",
       "options": {
         "baseURL": "http://localhost:7766/v1",
-        "apiKey": "sk-lr-8f2a9e3b1c4d7e5f",
+        "apiKey": "sk-lr-your-auth-key",
         "chunkTimeout": 120000
       },
       "models": { ... }

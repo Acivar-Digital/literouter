@@ -121,7 +121,7 @@ LiteRouter starts as a resilient background daemon managed via `tmux`.
 | `/v1beta/models/*` | `POST` | Direct Google Gemini REST (`lr-gg-gg-gc-no`) | HTTP/2 or HTTP/1.1 |
 | `/v1/models` | `GET` | Dynamic model discovery and registered fusion chains | HTTP/2 or HTTP/1.1 |
 | `/health` | `GET` | Auth-free health probe, active key counts, and circuit breaker stats | HTTP/2 or HTTP/1.1 |
-| `/reset` | `POST` | Auth-free hot reload of provider headers and key pools | HTTP/2 or HTTP/1.1 |
+| `/reset` | `POST` | Admin hot reload of provider headers and key pools (`Bearer <LITEROUTER_AUTH_KEY>`) | HTTP/2 or HTTP/1.1 |
 
 > **Transport**: When certificates (`certs/localhost.pem`, `certs/localhost-key.pem`) exist, LiteRouter negotiates **HTTP/2 ALPN over HTTPS** on port 7766. Without certs, it operates over high-speed HTTP/1.1. Run `bash scripts/setup_certs.sh` to generate local TLS certificates with `mkcert`.
 

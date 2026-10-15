@@ -123,7 +123,7 @@ After migration, `.env.local` should contain **ONLY** secret API keys and gatewa
 
 ```env
 # Gateway Client Auth Key
-LITEROUTER_AUTH_KEY=sk-lr-8f2a9e3b1c4d7e5f
+LITEROUTER_AUTH_KEY=sk-lr-your-auth-key
 
 # Secret Upstream API Keys (Comma-separated)
 OPENROUTER_API_KEYS=sk-or-v1-...
@@ -169,7 +169,7 @@ GOOGLE_API_KEYS=AQ.Ab8RN6...,AIzaSy...
    bun run scripts/doctor.ts
 
    # 2. Probe endpoint health
-   curl -H "Authorization: Bearer sk-lr-8f2a9e3b1c4d7e5f" http://localhost:7766/health
+   curl -H "Authorization: Bearer sk-lr-your-auth-key" http://localhost:7766/health
 
    # 3. Run integration smoke suite
    uv run pytest tests/integration/

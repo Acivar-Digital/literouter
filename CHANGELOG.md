@@ -5,6 +5,15 @@ All notable changes to LiteRouter will be documented in this file.
 ## [Unreleased] — 2026-10-16
 
 ### Security & Reliability Hardening
+- **Path Traversal Protection & Diagnostic Normalization (`scripts/diagnose/complexity.ts`)** (`literouter-g2y`):
+  - Corrected project root calculation in `scripts/diagnose/complexity.ts` to properly resolve repository root from nested `scripts/diagnose/` path.
+  - Hardened `isPathWithinBase` with defensive `try/catch` error trapping on `realpathSync` to prevent unhandled `ENOENT` crashes and cleanly reject traversal attempts.
+  - Added forwarder `scripts/complexity.ts` pointing to `scripts/diagnose/complexity.ts` for backward-compatible CLI execution.
+- **Documentation Secret Redaction & Admin Auth Documentation** (`literouter-g2z`):
+  - Redacted exposed and example authentication tokens in `docs/config/env-config-plan.md` and `docs/ops/opencode-migration.md`, replacing with standardized non-secret placeholders (`sk-lr-your-auth-key`, `Bearer <LITEROUTER_AUTH_KEY>`).
+  - Updated `README.md` endpoints table to accurately specify that `/reset` requires admin authorization (`Bearer <LITEROUTER_AUTH_KEY>`).
+- **Test Hardcoded Keys Verification** (`literouter-g3a`):
+  - Verified and confirmed full cleanup of hardcoded test keys (`sk-lr-8f2a9e3b1c4d7e5f`) across all test files using dynamic `os.environ.get("LITEROUTER_AUTH_KEY")` and skip-if-not-set guardrails.
 - **Admin & Trace Authentication Lockdown (`verifyMasterSecret`)**:
   - Hardened `/reset`, `POST /admin/pool/reset`, and `GET /v1/traces` to strictly require `Authorization: Bearer <LITEROUTER_AUTH_KEY>`.
   - Replaced naive string matching with constant-time SHA-256 digest comparison (`crypto.timingSafeEqual`) in `verifyMasterSecret` (`src/directive/validator.ts`) to eliminate timing attack side channels.
