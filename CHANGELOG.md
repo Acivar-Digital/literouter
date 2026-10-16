@@ -34,6 +34,18 @@ All notable changes to LiteRouter will be documented in this file.
   - Added targeted test suites: `tests/unit/trailing_assistant.test.ts`, `tests/unit/latex_preservation.test.ts`, `tests/unit/fusion_singleton.test.ts`, `tests/unit/trace_truncation.test.ts`, `tests/unit/sse_fast_path.test.ts`.
   - All 1,442 tests across 7 domains passed cleanly (`bun run test`) with zero static typecheck errors (`bun run typecheck`).
 
+### In-Band Stream Error Forensics & Architecture Resolution (`literouter-mv7s`)
+- **Empirical Production Telemetry Audit**:
+  - Captured and analyzed live production gateway telemetry from `vps466a` (`logs/gateway.log` for `req_60trd1x` on OpenRouter `dots-studio/dots-3-note-preview:free`).
+  - Proved that in-band stream failures arrive **role-delta / content-delta first**, not error-first: the first content block delta was delivered downstream and recorded (`TTFT = 1122ms | First content block delta received [Upstream: anthropic]`) prior to the unexpected upstream socket termination 353ms later.
+- **Criterion 3 Architectural Decision**:
+  - Confirmed that a first-chunk stream peek in `src/engine/dispatch.ts` is abandoned as a pure regression risk: peeking would observe valid content deltas, commit HTTP 200, and fail to prevent subsequent mid-stream errors while penalizing TTFT and forcing buffer allocations on 100% of all streaming requests.
+  - Maintained cross-model fusion fallback presets (`config/fusion.json`) and advisor slug repointing as the proper, non-regressive architectural mitigations.
+
+### Documentation & Memory Synchronization
+- Updated LiteRouter skill documentation (`.opencode/skills/literouter/SKILL.md` and `payload.md`) covering trailing assistant auto-healing, direct SSE streaming bypass, cold-boot key pooling, singleton `FusionEngine`, LaTeX math preservation, and 64KB trace bounds.
+- Audited and updated Beads persistent memories (`bd remember`), correcting previously speculative entries (`gotcha-inband-retry-needs-chunk-order`, `decision-pruning-architecture`, `decision-transport-stability`, `decision-streaming-passthrough`) to match verified ground truth.
+
 ### Security & Reliability Hardening
 - **Path Traversal Protection & Diagnostic Normalization (`scripts/diagnose/complexity.ts`)** (`literouter-g2y`):
   - Corrected project root calculation in `scripts/diagnose/complexity.ts` to properly resolve repository root from nested `scripts/diagnose/` path.

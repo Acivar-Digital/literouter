@@ -23,10 +23,31 @@ Endpoint (`ch` vs `rs`) does **not** change this. `src/index.ts:285`
 `oa` — the compat handler still runs the `oa` scrub path, then
 `transformOpenAiToResponses` converts `messages[]` → Responses `input`.
 
-Engine scope: the routing above is the default `legacy` engine. `v4`
-(`LITEROUTER_ENGINE=v4` or override header) branches to `dispatchV4`
-before any of this (`src/index.ts:414-417`) — see
-`directive-grammar.md` §11 for engine selection and v4-only routes.
+Engine scope: default engine is **`v4.1`** (`src/config/env.ts`), routing via `dispatchV4`
+(`src/handlers/v4/router.ts`) and `executeDispatchPipeline` (`src/engine/dispatch.ts`).
+Legacy compat handlers (`src/handlers/openai_compat.ts`, `anthropic_compat.ts`) execute only
+when `LITEROUTER_ENGINE=legacy`.
+
+## 1.1. Inbound Trailing Assistant Auto-Healing (`ensureTerminalUserTurn`)
+
+When downstream agent runtimes (Antigravity, Cursor, Oh My Pi, OpenCode) send multi-turn
+histories ending with an `assistant` or `model` message, upstream providers (OpenRouter,
+vLLM, DeepSeek, Google) either reject the request with HTTP 400 or emit an immediate
+empty EOS `[DONE]` token without content, causing stream stalls or timeouts.
+
+LiteRouter automatically heals these histories across `opencode_adapter.ts`, `payload.ts`,
+and `anthropic_openai_xwire.ts` via `ensureTerminalUserTurn`:
+- If the final non-null message in `messages[]` has `role === 'assistant'` or `role === 'model'`,
+  it appends a synthetic turn `{ role: 'user', content: 'ok go on' }`.
+- Intentional assistant prefill prompts (`options.isPrefill`, `directive.wire === 'cl'`)
+  are strictly preserved and never mutated.
+
+## 1.2. Mathematical Formatting Preservation (Zero LaTeX Normalization)
+
+Proxy-level LaTeX normalization (`applyLatexNormalization`) was purged from `payload.ts`.
+LiteRouter acts as a high-throughput forwarder; mathematical expressions containing `\times`,
+`\rightarrow`, and regex formulas pass through untouched, allowing downstream terminal TUI
+and Webview math renderers to process raw formulas without corrupted Unicode substitution.
 
 ## 2. What `oa` Scrubs
 

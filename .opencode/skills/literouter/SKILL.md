@@ -117,7 +117,7 @@ description: LiteRouter API Gateway operational guide for Bun/TypeScript proxy o
 | `POST /v1beta/openai/*` | `src/handlers/gcp_compat.ts` / `google_native.ts` | `handleGcpCompat` / `handleGoogleOpenAIBeta` | `lr-gc-oa-ch-no`. GCP Vertex AI OpenAI-compatible route. |
 | `GET /v1/models`, `/v1beta/models` | `src/handlers/discovery.ts` | `handleModelsDiscovery` | Advertises models from `models.json` (legacy, advertisement-only) & `fusion.json`; serving is dynamic passthrough, never registry-gated. |
 | `GET /health`, `/hello` | `src/index.ts` | `handleHealthCheck` | Auth-free liveness probe (uptime, H2 pool stats). No circuit breaker stats (v4 excised). |
-| `POST /reset` | `src/index.ts` | `handleHardReset` | Auth-free hard reset; hot-reloads `config/providers.json` headers — **cannot rebind port** (restart for port/host/cert changes). |
+| `POST /reset` | `src/index.ts` | `handleHardReset` | Admin-auth gated hard reset (requires `Bearer <LITEROUTER_AUTH_KEY>`); hot-reloads `config/providers.json` headers, resets fusion caches, flushes pools/cooldowns — **cannot rebind port** (restart for port/host/cert changes). |
 
 ## §4. Directive Key Grammar (summary)
 
@@ -250,6 +250,11 @@ After editing `.env`: `bash scripts/gateway/restart.sh`. After editing `config/p
 | 28-30 | Zen operational knobs (`config/providers.json`) | Governed via `zn` operational blocks (`strategy: standard`, `max_concurrency: 1`, `pacer`, `request_retry`); legacy env toggles and hardcoded `isZen` checks purged | [config-schemas.md §3.6](config-schemas.md#36-operational-governance--zero-hardcoding-request_retry-key_cooldown-pacer-circuit_breaker) |
 | 31 | v4 boundary: pure handlers + transport reassembly | Handlers orchestrate; `fetcher.ts` owns H2/TTFT/reassembly; `[Upstream: HTTP/2]` tagging | `http2-lifecycle-stream-isolation.md` |
 | 32 | Payload wire matrix (`oa` scrubs / `oo` preserves) | Keyed off payload segment; `ts` keeps / `sb` forces | `payload.md` |
+| 33 | Inbound Trailing Assistant Auto-Healing (`ensureTerminalUserTurn`) | Appends `{ role: 'user', content: 'ok go on' }` to assistant/model-ending histories, preventing upstream 0-token ghost responses and stream stalls on OpenRouter/vLLM/DeepSeek/Google while preserving intentional prefill prompts | `payload.md` |
+| 34 | Direct SSE Chunk Fast-Path Bypass (`openai_chat.ts`) | When `!shouldScrub` and TTFT is marked, unmutated content chunks bypass `JSON.parse` and `JSON.stringify`, streaming raw `dataStr` directly and cutting JSON allocation overhead by >90% during streaming | `architecture.md` |
+| 35 | Singleton FusionEngine with In-Memory `StickyPositionCache` | `FusionEngine` cached as module singleton in `src/handlers/openai_compat.ts` and reset on `/reset`, preserving fallback tier affinity across multi-turn sessions | `fusion.md` |
+| 36 | Trace Leg Bounding & Zero-Stringify Size Estimation | Truncates trace legs to `MAX_LEG_BYTES` (64KB) before regex scrubbing in `sanitizeBody`; `estimateTraceSize` eliminates JSON stringification on enqueue; client errors remain untruncated | `architecture.md` |
+| 37 | Purge of Dead-Weight Pruning & LaTeX Preservation | `context_pruner.ts` pruned to zero-overhead forwarder shim (`ContextPrunerShim`); LaTeX normalization purged from `payload.ts` to preserve raw math for TUIs | `payload.md` |
 
 ## §10. Connection Diagnostics (summary)
 
@@ -425,6 +430,11 @@ bun run scripts/probe/probe_model.ts <model_name> [--directive <directive_key>] 
 14. **Single Dedicated FIFO Conveyor Pipe**: Every provider has its own dedicated conveyor pipe (`RequestPacer`) with `max_queue_depth: 500`. All inbound requests and retries share the same conveyor belt, spaced strictly by `min_delay_ms`. Downstream client cancellation cleanly dequeues waiting requests via `AbortSignal` without memory leaks.
 15. **Fatal Auth Fail-Fast (401/403)**: On HTTP 401 (Unauthorized) or 403 (Forbidden), LiteRouter rejects outright and returns the error directly to the downstream client (`opencode`, Claude Code, etc.) with ZERO retries and zero 24-hour quarantine.
 16. **Conservation-Only Benching & Handler Ground Truth**: The only mechanism that benches a key is explicit `conserve_rules` in `config/providers.json` (e.g. OpenRouter daily quota exhaustion until midnight UTC). Generic 429 errors do not trigger 65s lockouts. All handlers (`openai_compat`, `openai_original`, `anthropic_compat`, `google_native`, `gcp_compat`) query `config/providers.json` directly with zero shadow defaults or hardcoded magic constants.
+17. **Inbound Trailing Assistant Auto-Healing (`ensureTerminalUserTurn`)**: Multi-turn client histories ending with `role: 'assistant'` or `'model'` are automatically appended with `{ role: 'user', content: 'ok go on' }` across `opencode_adapter.ts`, `payload.ts`, and `anthropic_openai_xwire.ts`. This eliminates upstream 0-token ghost responses, model deadlocks, and TTFT timeouts on OpenRouter, vLLM, DeepSeek, and Google without mutating intentional assistant prefill prompts.
+18. **Direct SSE Chunk Fast-Path Bypass**: In `src/transformers/openai_chat.ts`, un-scrubbed streaming chunks without usage/finish_reason bypass `JSON.parse` and `JSON.stringify` once TTFT is established, streaming raw `dataStr` directly downstream to reduce JSON serialization CPU overhead by >90%.
+19. **Cold-Boot Key Pool Architecture**: `initializeKeyPools()` runs strictly at cold boot and upon admin `/reset` (or `/admin/pool/reset`). It is never invoked inside per-request handlers (`handleAppRequest`, `resolveApiKey`), preventing race conditions, lockups, and disk I/O under concurrent load.
+20. **Singleton FusionEngine with In-Memory `StickyPositionCache`**: `FusionEngine` is cached as a singleton in `src/handlers/openai_compat.ts` and reset on `/reset` via `resetCachedFusionEngine()`. This preserves sticky fallback position state across turns instead of recreating a blank cache per request.
+21. **Bounded Telemetry Tracing (`MAX_LEG_BYTES` = 64KB)**: In `src/telemetry/sanitize.ts`, trace leg payloads are truncated to `MAX_LEG_BYTES` (64KB) prior to regex secret scanning, preventing multi-MB heap allocations. Client-facing error responses are passed `Infinity` and remain untruncated. Trace queue estimation uses `estimateTraceSize` in `src/telemetry/ring_buffer.ts` to avoid `JSON.stringify` allocations.
 
 ## §16.5. Bun v1.4.2 Runtime & Optimization Guidelines
 
