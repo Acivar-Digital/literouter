@@ -54,6 +54,20 @@ import {
   uninstallAnthropicBridge,
 } from "./anthropic_bridge";
 
+// Auto-forward master secret to LiteRouter gateway if configured
+if (process.env.LITEROUTER_AUTH_KEY) {
+  const masterKey = process.env.LITEROUTER_AUTH_KEY;
+  const originalFetch = globalThis.fetch;
+  const authFetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined));
+    if (!headers.has("x-literouter-key") && !headers.has("x-auth-key")) {
+      headers.set("x-literouter-key", masterKey);
+    }
+    return originalFetch(input, { ...init, headers });
+  };
+  globalThis.fetch = Object.assign(authFetch, originalFetch);
+}
+
 
 /**
  * Explorer qualification ceiling. Kept in sync with the Explorer row in
@@ -2144,7 +2158,13 @@ export async function runMasterEvaluation(
     : isResponses
       ? "responses"
       : "chat";
-  const directiveKey = options.directiveKey ?? (isMessages ? "lr-zn-cl-ms-no" : isResponses ? "lr-zn-oo-rs-no" : "lr-or-oa-ch-no");
+  const provCode = model.toLowerCase().startsWith("muse") || model.toLowerCase().includes("zen") ? "zn" : "or";
+  const defaultDirective = isMessages
+    ? `lr-${provCode}-cl-ms-no`
+    : isResponses
+      ? `lr-${provCode}-oo-rs-no`
+      : `lr-${provCode}-oa-ch-no`;
+  const directiveKey = options.directiveKey ?? defaultDirective;
   const baseUrl = getDefaultGatewayBaseUrl();
   const defaultUrl = isMessages
     ? `${baseUrl}/v1/messages`
@@ -2381,7 +2401,18 @@ export async function runBatchEvaluation(
 
 if (import.meta.main) {
   try {
-    const options = parseCliArgs(process.argv.slice(2), { strict: true });
+    let options: EvalOrchestratorOptions;
+    try {
+      options = parseCliArgs(process.argv.slice(2), { strict: true });
+    } catch (err) {
+      const args = process.argv.slice(2);
+      const { positionals } = extractPositionalAndNamed(args);
+      if (positionals.length === 1 && !positionals[0]?.endsWith(".txt") && !positionals[0]?.endsWith(".csv")) {
+        options = parseCliArgs(args, { strict: false });
+      } else {
+        throw err;
+      }
+    }
     const targets = options.batchTargets && options.batchTargets.length > 0
       ? options.batchTargets
       : [{

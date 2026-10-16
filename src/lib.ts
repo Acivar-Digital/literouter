@@ -51,4 +51,5 @@ export {
   handleHardReset,
   resetAllState,
   getCooldownState,
+  MAX_REQUEST_BODY_SIZE,
 } from "./index";

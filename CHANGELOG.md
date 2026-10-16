@@ -4,6 +4,20 @@ All notable changes to LiteRouter will be documented in this file.
 
 ## [Unreleased] — 2026-10-16
 
+### VPS Production Deployment & Multi-Model Eval Gauntlet Validation
+- **VPS Deployment & Service Synchronization (`scripts/sync/sync_literouter_to_vps.sh`)**:
+  - One-way synchronization from WSL (golden truth) to VPS (`vps466a` on `192.168.50.10:7766`).
+  - Purged stale tmux exports, restarted gateway daemon (PID 7025), and verified active `/health` probe.
+  - Active key pools confirmed healthy: `nv` (6 keys), `gg` (7 keys), `zn` (7 keys).
+- **Comprehensive Security Fixes Test Suite (`tests/unit/security_fixes_comprehensive.test.ts`)**:
+  - 36 automated unit tests validating path traversal containment in `scripts/diagnose/complexity.ts`, admin endpoint auth key timing-safe lockdown (`timingSafeEqual`), safe outbound client header allowlists (`SAFE_CLIENT_PASS_HEADERS`), 32MB request body size limits, and secret scrubbing.
+- **Comprehensive Performance Upgrades Test Suite (`tests/unit/performance_upgrades_comprehensive.test.ts`)**:
+  - 29 automated unit tests (133 assertions) validating trailing assistant auto-healing (`ensureTerminalUserTurn`), LaTeX formula preservation (`$\int_0^\infty e^{-x} dx$`), cold-boot key pool caching on hot paths, singleton `FusionEngine` with cross-turn `StickyPositionCache` retention, bounded trace truncation (`maxBytes=65536`), and direct SSE chunk fast-path bypass.
+- **Model Evaluation Gauntlet Benchmark Verification (`eval/reports/`)**:
+  - Evaluated `dots-studio/dots-3-note-preview:free` on OpenRouter (Responses wire): awarded 🏆 **`🧠 MASTER ORCHESTRATOR`** (100% code suite certification, 388.6 tok/s peak streaming).
+  - Evaluated `liquid/lfm-2.5-2.6b:free` on OpenRouter (Chat wire): awarded 🏆 **`💻 GENERAL CODER`** (4/5 stages passed, 928.4 tok/s peak streaming).
+  - Evaluated `muse-spark-1.3-contributor-free` on Zen (Responses wire): awarded 🏆 **`💻 GENERAL CODER`** (4/5 stages passed, 459.7 tok/s peak streaming).
+
 ### Eval Gauntlet Methodological & Implementation Upgrades (`literouter-gsti`)
 - **Stage 4 Surgical Patch Fidelity & Functional Verification (`eval/stages/stage4_patch.ts`, `eval/stages_rs/stage4_patch.ts`)**:
   - Added `EXPECTED_INNER_OLD_STR` targeting the core code statements (`const step = val * 2; this.count += step; this.logTelemetry("increment", step);`).

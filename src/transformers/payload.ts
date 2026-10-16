@@ -283,7 +283,7 @@ export function scrubUnsupportedParameters(
   return cleaned as unknown as OpenAIRequestPayload;
 }
 
-function transformMessages(
+export function transformMessages(
   messages: readonly OpenAIMessage[],
   nuances: readonly string[],
   model?: string,

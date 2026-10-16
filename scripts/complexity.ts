@@ -1,1 +1,3 @@
-import "./diagnose/complexity";
+import { runComplexityReport } from "./diagnose/complexity";
+
+runComplexityReport();

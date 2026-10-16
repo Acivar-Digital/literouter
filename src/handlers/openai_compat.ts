@@ -88,6 +88,8 @@ export function getCachedFusionEngine(): FusionEngine {
   return cachedFusionEngine;
 }
 
+export const getFusionEngine = getCachedFusionEngine;
+
 export function resetProvidersRegistryCache(): void {
   initProviderRegistry();
   resetCachedFusionEngine();

@@ -31,6 +31,7 @@ import {
   resetProvidersRegistryCache,
   resetCachedFusionEngine,
   getCachedFusionEngine,
+  getFusionEngine,
 } from "./handlers/openai_compat";
 import {
   type Directive,
@@ -439,7 +440,7 @@ function dispatchResponsesRoute(
   return null;
 }
 
-export { dispatchV4, getCachedFusionEngine, resetCachedFusionEngine };
+export { dispatchV4, getCachedFusionEngine, getFusionEngine, resetCachedFusionEngine };
 
 export async function dispatchRoute(
   req: Request,
