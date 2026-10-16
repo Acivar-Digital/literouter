@@ -14,9 +14,9 @@ All notable changes to LiteRouter will be documented in this file.
 - **Comprehensive Performance Upgrades Test Suite (`tests/unit/performance_upgrades_comprehensive.test.ts`)**:
   - 29 automated unit tests (133 assertions) validating trailing assistant auto-healing (`ensureTerminalUserTurn`), LaTeX formula preservation (`$\int_0^\infty e^{-x} dx$`), cold-boot key pool caching on hot paths, singleton `FusionEngine` with cross-turn `StickyPositionCache` retention, bounded trace truncation (`maxBytes=65536`), and direct SSE chunk fast-path bypass.
 - **Model Evaluation Gauntlet Benchmark Verification (`eval/reports/`)**:
-  - Evaluated `dots-studio/dots-3-note-preview:free` on OpenRouter (Responses wire): awarded 🏆 **`🧠 MASTER ORCHESTRATOR`** (100% code suite certification, 388.6 tok/s peak streaming).
-  - Evaluated `liquid/lfm-2.5-2.6b:free` on OpenRouter (Chat wire): awarded 🏆 **`💻 GENERAL CODER`** (4/5 stages passed, 928.4 tok/s peak streaming).
-  - Evaluated `muse-spark-1.3-contributor-free` on Zen (Responses wire): awarded 🏆 **`💻 GENERAL CODER`** (4/5 stages passed, 459.7 tok/s peak streaming).
+  - Evaluated `dots-studio/dots-3-note-preview:free` across 3 wires (Chat, Responses, Messages) with native unconstrained reasoning: awarded 🏆 **`🧠 MASTER ORCHESTRATOR`** (Chat wire: 5/5 100% code suite certification, 325.6 tok/s; Responses wire: 4/5 80%, 237.1 tok/s; Messages wire: 4/5 80%, 88.7 tok/s).
+  - Evaluated `liquid/lfm-2.5-2.6b:free` across 3 wires with native reasoning: awarded 🏆 **`💻 GENERAL CODER`** (4/5 80% code certification across Chat at 711.3 tok/s, Responses at 725.9 tok/s, and Messages at 215.0 tok/s with 839ms TTFT).
+  - Evaluated `muse-spark-1.3-contributor-free` on Zen across 3 wires with native unconstrained reasoning: awarded 🏆 **`💻 GENERAL CODER`** (Responses wire: 4/5 80% code certification at 492.9 tok/s with 9,343ms TTFT; 3/5 Web suite cleared with 72/100 composite score; Stage 4 failed due to missing `old_str` in tool arguments).
 
 ### Eval Gauntlet Methodological & Implementation Upgrades (`literouter-gsti`)
 - **Stage 4 Surgical Patch Fidelity & Functional Verification (`eval/stages/stage4_patch.ts`, `eval/stages_rs/stage4_patch.ts`)**:
