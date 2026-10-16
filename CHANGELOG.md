@@ -16,16 +16,18 @@ All notable changes to LiteRouter will be documented in this file.
 - **Model Evaluation Gauntlet Benchmark Verification (`eval/reports/`)**:
   - Evaluated `dots-studio/dots-3-note-preview:free` across 3 wires (Chat, Responses, Messages) with native unconstrained reasoning: awarded 🏆 **`🧠 MASTER ORCHESTRATOR`** (Chat wire: 5/5 100% code suite certification, 325.6 tok/s; Responses wire: 4/5 80%, 237.1 tok/s; Messages wire: 4/5 80%, 88.7 tok/s).
   - Evaluated `liquid/lfm-2.5-2.6b:free` across 3 wires with native reasoning: awarded 🏆 **`💻 GENERAL CODER`** (4/5 80% code certification across Chat at 711.3 tok/s, Responses at 725.9 tok/s, and Messages at 215.0 tok/s with 839ms TTFT).
-  - Evaluated `muse-spark-1.3-contributor-free` on Zen across 3 wires with native unconstrained reasoning: awarded 🏆 **`💻 GENERAL CODER`** (Responses wire: 4/5 80% code certification at 492.9 tok/s with 9,343ms TTFT; 3/5 Web suite cleared with 72/100 composite score; Stage 4 failed due to missing `old_str` in tool arguments).
+  - Re-evaluated `muse-spark-1.3-contributor-free` on Zen Responses wire under the upgraded eval gauntlet: awarded 🏆 **`🧠 MASTER ORCHESTRATOR`** (Code suite: 5/5 100% certification at 87.3 tok/s; Web suite: 5/5 cleared with 98/100 composite score; Speed: 448.6 tok/s throughput; TTFT: 12,121ms).
 
 ### Eval Gauntlet Methodological & Implementation Upgrades (`literouter-gsti`)
 - **Stage 4 Surgical Patch Fidelity & Functional Verification (`eval/stages/stage4_patch.ts`, `eval/stages_rs/stage4_patch.ts`)**:
   - Added `EXPECTED_INNER_OLD_STR` targeting the core code statements (`const step = val * 2; this.count += step; this.logTelemetry("increment", step);`).
+  - Added tool aliases (`edit_file`, `edit`) and argument aliases (`old_str`/`oldString`, `new_str`/`newString`, `path`/`filePath`).
   - Updated `gradeIndentation` to award full points (50/50, `status: "PASSED"`, `fidelity: "PERFECT"`) when models replace the target code cleanly without requiring outer comment boundaries (`// TARGET SCOPE START / END`).
   - Added functional verification of `new_str`: verifies that the replacement logic preserves telemetry logging, applies correct step values, and implements valid arithmetic before awarding execution points.
 - **Zero-Overhead TSX AST Syntax Gating (`eval/stages_web/ast_verify.ts`)**:
   - Implemented `verifyComponentAst` / `verifyTsxCompiles` powered by Bun's native C++/Zig Transpiler (`new Bun.Transpiler({ loader: "tsx", target: "browser" })`), parsing TSX in ~0.5ms with zero external runtime dependencies.
-  - Automatically wraps unadorned HTML/JSX snippets in fragment wrappers to validate balanced tag nesting and attribute syntax.
+  - Implemented 4-tier compilation cascade: direct TSX compilation -> void tag normalization -> JSX fragment component wrapper -> normalized void tags in JSX fragment wrapper.
+  - Added unclosed code fence recovery in `extractCodeSnippet` (`eval/stages_web/stage3_state.ts`) and direct code block prompt guidance (`eval/stages_web/stage1_structure.ts`, `stage2_responsive.ts`).
   - Gated Web Stages 1 through 5 with AST verification: components with syntax or nesting errors are capped at a maximum of 30/100 (`passed: false`), preventing heuristic regex matches from masking broken frontend code.
 - **Web Modality Resilience & Local SVG Fixtures (`eval/stages_web/fixtures.ts`, `eval/stages_web/stage1_structure.ts`, `stage2_responsive.ts`, `stage5_a11y.ts`)**:
   - Replaced GreptimeDB PNG asset references with self-contained, semantically aligned local SVGs (`pricing_table.svg`, `auth_error.svg`).

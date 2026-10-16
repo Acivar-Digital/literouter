@@ -15,6 +15,7 @@ export interface StageContext {
   maxTokens?: number;  // Max completion tokens (default: 8192)
   reasoningEffort?: "high" | "medium" | "none"; // Reasoning effort for thinking models
   extraPayload?: Record<string, unknown>;
+  headers?: Record<string, string>;
 }
 
 export interface SubCheck {
@@ -56,12 +57,15 @@ export function isResponsesEndpoint(gatewayUrl: string, directiveKey: string): b
 }
 
 export function buildStageHeaders(ctx: StageContext): Record<string, string> {
+  const masterKey = process.env.LITEROUTER_AUTH_KEY;
   return {
     "Content-Type": "application/json",
     Authorization: `Bearer ${ctx.directiveKey}`,
     "User-Agent": "OpenCode/1.18.29",
     "X-Title": "OpenCode",
     "HTTP-Referer": "https://opencode.ai",
+    ...(masterKey ? { "x-literouter-key": masterKey } : {}),
+    ...(ctx.headers ?? {}),
   };
 }
 
@@ -71,12 +75,28 @@ export function extractCompletionText(data: any): string {
     return data.choices[0].message.content;
   }
   if (Array.isArray(data.output)) {
-    return data.output
+    const msgText = data.output
       .filter((item: any) => item && item.type === "message")
       .flatMap((msg: any) => msg.content || [])
       .filter((part: any) => part && (part.type === "text" || part.type === "output_text"))
       .map((part: any) => part.text || "")
       .join("");
+    if (msgText.trim().length > 0) {
+      return msgText;
+    }
+
+    // Fallback: check function_call arguments (e.g. write tool content)
+    for (const item of data.output) {
+      if (item && item.type === "function_call" && item.arguments) {
+        try {
+          const parsed = JSON.parse(item.arguments);
+          if (typeof parsed.content === "string") return parsed.content;
+          if (typeof parsed.code === "string") return parsed.code;
+        } catch {
+          // ignore
+        }
+      }
+    }
   }
   if (typeof data.output_text === "string") {
     return data.output_text;

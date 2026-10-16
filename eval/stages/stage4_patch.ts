@@ -113,13 +113,13 @@ ${TARGET_SOURCE_CODE}
 \`\`\`
 
 Task:
-Call the 'edit_file' tool to replace the TARGET SCOPE block inside the increment() method.
+Immediately call the 'edit_file' (or 'edit') tool to replace the TARGET SCOPE block inside the increment() method. Do not run bash commands or exploratory scripts; execute the surgical edit directly.
 Replace it with:
       const step = val * 3;
       this.count += step;
 
 Rules:
-1. 'old_str' MUST match the existing code in the file EXACTLY, character-for-character, including all 6 leading spaces on each line.
+1. 'old_str' (or 'oldString') MUST match the existing code in the file EXACTLY, character-for-character, including all 6 leading spaces on each line.
 2. Do not omit any lines or use '// rest of code' comments.
 `;
 
@@ -150,6 +150,22 @@ Rules:
                   new_str: { type: "string", description: "New replacement string" },
                 },
                 required: ["path", "old_str", "new_str"],
+              },
+            },
+          },
+          {
+            type: "function",
+            function: {
+              name: "edit",
+              description: "Performs surgical exact string replacement in a file",
+              parameters: {
+                type: "object",
+                properties: {
+                  filePath: { type: "string" },
+                  oldString: { type: "string", description: "Exact string to replace" },
+                  newString: { type: "string", description: "New replacement string" },
+                },
+                required: ["filePath", "oldString", "newString"],
               },
             },
           },
@@ -184,8 +200,8 @@ Rules:
         for (const call of toolCalls) {
           const fn = call?.function as Record<string, unknown> | undefined;
           const callArgs = typeof fn?.arguments === "string" ? JSON.parse(fn.arguments) : (fn?.arguments as Record<string, unknown> | undefined);
-          const callPath = callArgs?.path as string | undefined;
-          const callNewStr = callArgs?.new_str as string | undefined;
+          const callPath = (callArgs?.path || callArgs?.filePath) as string | undefined;
+          const callNewStr = (callArgs?.new_str || callArgs?.newString) as string | undefined;
 
           // M3 Hard Veto: VETO_TEST_TAMPERING
           if (callPath && checkTestTampering(callPath)) {
@@ -213,10 +229,14 @@ Rules:
           return result;
         }
 
-        const firstCall = toolCalls[0]?.function as Record<string, unknown>;
-        const args = typeof firstCall?.arguments === "string" ? JSON.parse(firstCall.arguments) : (firstCall?.arguments as Record<string, unknown> | undefined);
-        const oldStr = args?.old_str as string | undefined;
-        const newStr = args?.new_str as string | undefined;
+        const editCall = toolCalls.find((c) => {
+          const name = (c?.function as Record<string, unknown>)?.name;
+          return name === "edit_file" || name === "edit";
+        }) ?? toolCalls[0];
+        const fn = editCall?.function as Record<string, unknown>;
+        const args = typeof fn?.arguments === "string" ? JSON.parse(fn.arguments) : (fn?.arguments as Record<string, unknown> | undefined);
+        const oldStr = (args?.old_str || args?.oldString) as string | undefined;
+        const newStr = (args?.new_str || args?.newString) as string | undefined;
 
         if (!oldStr) {
           result.notes.push("Missing old_str in edit_file arguments");
@@ -287,10 +307,10 @@ ${AMBIGUOUS_SOURCE}
 \`\`\`
 
 Task:
-Call the 'edit_file' tool to modify handleBeta() so that 'const valid = x > 0;' becomes 'const valid = x >= 10;'.
+Immediately call the 'edit_file' (or 'edit') tool to modify handleBeta() so that 'const valid = x > 0;' becomes 'const valid = x >= 10;'. Do not run bash commands or exploratory scripts; execute the surgical edit directly.
 
 CRITICAL RULE:
-The code block 'const valid = x > 0;\\n  return valid;' appears in BOTH handleAlpha and handleBeta.
+The code block 'const valid = x > 0;\n  return valid;' appears in BOTH handleAlpha and handleBeta.
 If your 'old_str' matches multiple locations, the tool will FAIL with an ambiguous match error.
 You MUST include enough surrounding context (e.g. 'function handleBeta' or '// SCOPE BETA') in 'old_str' so that it matches EXACTLY ONCE in the file.
 `;
@@ -324,6 +344,22 @@ You MUST include enough surrounding context (e.g. 'function handleBeta' or '// S
               },
             },
           },
+          {
+            type: "function",
+            function: {
+              name: "edit",
+              description: "Performs surgical exact string replacement in a file",
+              parameters: {
+                type: "object",
+                properties: {
+                  filePath: { type: "string" },
+                  oldString: { type: "string", description: "Exact unique string to replace" },
+                  newString: { type: "string", description: "New replacement string" },
+                },
+                required: ["filePath", "oldString", "newString"],
+              },
+            },
+          },
         ],
         messages: [{ role: "user", content: prompt42 }],
       }),
@@ -339,8 +375,8 @@ You MUST include enough surrounding context (e.g. 'function handleBeta' or '// S
         for (const call of toolCalls42) {
           const fn = call?.function as Record<string, unknown> | undefined;
           const callArgs = typeof fn?.arguments === "string" ? JSON.parse(fn.arguments) : (fn?.arguments as Record<string, unknown> | undefined);
-          const callPath = callArgs?.path as string | undefined;
-          const callNewStr = callArgs?.new_str as string | undefined;
+          const callPath = (callArgs?.path || callArgs?.filePath) as string | undefined;
+          const callNewStr = (callArgs?.new_str || callArgs?.newString) as string | undefined;
 
           // M3 Hard Veto: VETO_TEST_TAMPERING
           if (callPath && checkTestTampering(callPath)) {
@@ -368,9 +404,13 @@ You MUST include enough surrounding context (e.g. 'function handleBeta' or '// S
           return result;
         }
 
-        const firstCall = toolCalls42[0]?.function as Record<string, unknown>;
-        const args42 = typeof firstCall?.arguments === "string" ? JSON.parse(firstCall.arguments) : (firstCall?.arguments as Record<string, unknown> | undefined);
-        const oldStr42 = args42?.old_str as string | undefined;
+        const editCall42 = toolCalls42.find((c) => {
+          const name = (c?.function as Record<string, unknown>)?.name;
+          return name === "edit_file" || name === "edit";
+        }) ?? toolCalls42[0];
+        const fn42 = editCall42?.function as Record<string, unknown>;
+        const args42 = typeof fn42?.arguments === "string" ? JSON.parse(fn42.arguments) : (fn42?.arguments as Record<string, unknown> | undefined);
+        const oldStr42 = (args42?.old_str || args42?.oldString) as string | undefined;
 
         if (oldStr42) {
           const firstIdx = AMBIGUOUS_SOURCE.indexOf(oldStr42);

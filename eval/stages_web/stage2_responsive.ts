@@ -202,7 +202,7 @@ Key requirements:
 1. Breakpoint modifiers: Use sm:, md:, lg:, and xl: modifiers appropriately.
 2. Mobile stack: Multi-column grids must collapse to a single column on mobile (grid-cols-1 md:grid-cols-3) and flex containers must collapse (flex-col md:flex-row). Include responsive visibility for mobile navigation.
 3. Overflow prevention: Do NOT use rigid fixed widths like w-[1400px] or min-w-[1000px]. Use fluid containers (w-full, max-w-7xl, mx-auto, overflow-hidden).
-Output only the clean HTML/Tailwind code block.
+Output only the clean HTML/Tailwind code block inside \`\`\`html and \`\`\`. Do not invoke tools or run commands; reply directly with the HTML code block.
 `.trim();
 
 function buildMessages(imageUri: string) {

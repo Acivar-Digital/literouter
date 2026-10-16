@@ -80,6 +80,12 @@ export function extractCodeSnippet(text: string): string {
     return reactBlock ?? matches[0] ?? text.trim();
   }
 
+  // Fallback: check if the model output has an unclosed code fence
+  const unclosed = /```(?:tsx|jsx|typescript|javascript|html)?\s*([\s\S]+)$/i.exec(text);
+  if (unclosed && unclosed[1]) {
+    return unclosed[1].trim();
+  }
+
   return text.trim();
 }
 

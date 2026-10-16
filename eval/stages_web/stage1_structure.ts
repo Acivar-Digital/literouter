@@ -206,7 +206,7 @@ Strict Rules:
 2. Use modern layout primitives: CSS Grid (grid, grid-cols-3) and Flexbox (flex, flex-col, items-center, justify-between).
 3. Ensure you create a 3-column metric card grid (grid-cols-3) without absolute positioning hacks.
 4. Keep the code compact and focused on the key layout so that it completes within 1000 tokens without getting cut off.
-Output only the clean HTML/Tailwind code block inside \`\`\`html and \`\`\`.
+Output only the clean HTML/Tailwind code block inside \`\`\`html and \`\`\`. Do not invoke tools or run commands; reply directly with the HTML code block.
 `.trim();
 
 function buildMessages(imageUri: string) {

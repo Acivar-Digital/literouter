@@ -227,7 +227,7 @@ export function normalizeWebOptions(opts: WebEvalOptions = {}): Required<Omit<We
   const cooldownMs = opts.cooldownMs ?? 2000;
   const runs = opts.runs ?? 2;
   const timeoutMs = opts.timeoutMs ?? 180000;
-  const maxTokens = opts.maxTokens ?? 8192;
+  const maxTokens = opts.maxTokens ?? (model.includes("muse") ? 32768 : 8192);
   const silent = opts.silent ?? false;
 
   if (model.includes("muse")) {

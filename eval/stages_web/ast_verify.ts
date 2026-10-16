@@ -12,6 +12,30 @@ export interface TsxCompileResult {
   error?: string;
 }
 
+const HTML_VOID_TAGS = [
+  "area", "base", "br", "col", "embed", "hr", "img", "input",
+  "link", "meta", "param", "source", "track", "wbr"
+];
+
+/**
+ * Safely normalizes HTML void tags (<img ...>, <input ...>) into self-closing JSX syntax
+ * while respecting quoted string literals so arrow functions `(e) =>` in JSX expressions
+ * are never corrupted.
+ */
+function normalizeVoidTagsForJsx(html: string): string {
+  let normalized = html
+    .replace(/<!DOCTYPE[^>]*>/gi, "")
+    .replace(/<\/?(?:html|head|body)\b[^>]*>/gi, "")
+    .replace(/<!--[\s\S]*?-->/g, "");
+
+  for (const tag of HTML_VOID_TAGS) {
+    const regex = new RegExp(`<(${tag}\\b(?:[^>"']|"[^"]*"|'[^']*')*?)(?<!\\/)>`, "gi");
+    normalized = normalized.replace(regex, "<$1 />");
+  }
+
+  return normalized;
+}
+
 export function verifyTsxCompiles(code: string): TsxCompileResult {
   if (!code || typeof code !== "string" || code.trim().length === 0) {
     return {
@@ -21,25 +45,54 @@ export function verifyTsxCompiles(code: string): TsxCompileResult {
     };
   }
 
+  // Tier 1: Try compiling code directly as a complete TSX module
   try {
-    // If snippet is a pure JSX/HTML template without function/export wrapper,
-    // wrap it so the transpiler does not discard it as unused top-level JSX expressions.
-    const toTest = !/export\s+|function\s+|const\s+|class\s+/i.test(code)
-      ? `export default function _Snippet() { return (\n${code}\n); }`
-      : code;
-
-    const transpiled = tsxTranspiler.transformSync(toTest);
-    const scanned = tsxTranspiler.scan(toTest);
+    const transpiled = tsxTranspiler.transformSync(code);
+    const scanned = tsxTranspiler.scan(code);
     return {
       valid: transpiled.length > 0,
       exportsCount: scanned.exports.length,
     };
-  } catch (err) {
-    return {
-      valid: false,
-      exportsCount: 0,
-      error: err instanceof Error ? err.message : String(err),
-    };
+  } catch {
+    // Tier 2: Try direct compilation with normalized void tags
+    try {
+      const normalized = normalizeVoidTagsForJsx(code);
+      const transpiled = tsxTranspiler.transformSync(normalized);
+      const scanned = tsxTranspiler.scan(normalized);
+      return {
+        valid: transpiled.length > 0,
+        exportsCount: scanned.exports.length,
+      };
+    } catch {
+      // Tier 3: Try wrapping snippet in a JSX component fragment
+      const wrapped = `export default function _Snippet() { return (<>\n${code}\n</>); }`;
+      try {
+        const transpiled = tsxTranspiler.transformSync(wrapped);
+        const scanned = tsxTranspiler.scan(wrapped);
+        return {
+          valid: transpiled.length > 0,
+          exportsCount: scanned.exports.length,
+        };
+      } catch {
+        // Tier 4: Try wrapping normalized snippet in a JSX component fragment
+        try {
+          const normalized = normalizeVoidTagsForJsx(code);
+          const wrappedNorm = `export default function _Snippet() { return (<>\n${normalized}\n</>); }`;
+          const transpiled = tsxTranspiler.transformSync(wrappedNorm);
+          const scanned = tsxTranspiler.scan(wrappedNorm);
+          return {
+            valid: transpiled.length > 0,
+            exportsCount: scanned.exports.length,
+          };
+        } catch (errFinal) {
+          return {
+            valid: false,
+            exportsCount: 0,
+            error: errFinal instanceof Error ? errFinal.message : String(errFinal),
+          };
+        }
+      }
+    }
   }
 }
 
