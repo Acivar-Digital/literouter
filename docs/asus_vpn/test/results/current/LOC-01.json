@@ -1,0 +1,19 @@
+{
+  "test_id": "LOC-01",
+  "test_name": "Local Host Intranet Subnet Alignment",
+  "category": "Connectivity",
+  "timestamp": "2026-10-11T08:18:41Z",
+  "source_host": "yapilwsl",
+  "source_env": "WSL2",
+  "target_host": "localhost",
+  "protocol": "ipv4",
+  "command": "ip route get 192.168.50.1",
+  "expected_result": "Local host has functional route (NAT, direct, or WireGuard) to 192.168.50.0/24",
+  "actual_result": "Route to 192.168.50.1 resolves successfully.",
+  "status": "PASS",
+  "severity": "INFORMATIONAL",
+  "raw_evidence_file": "/home/yapilwsl/arthityap/literouter/docs/asus_vpn/test/results/current/LOC_raw.txt",
+  "interpretation": "Host has functional routing path to target intranet.",
+  "remediation": "None.",
+  "rerun_command": "bash /home/yapilwsl/arthityap/asus_vpn/test/bin/02_test_local_host.sh"
+}

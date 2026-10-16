@@ -1,0 +1,19 @@
+======================================================================
+Phase B: IP Routing Table & Subnet Verification
+Timestamp: 2026-10-11T08:18:43Z
+======================================================================
+--- Testing route to 192.168.50.10 ---
+192.168.50.10 via 172.25.112.1 dev eth0 src 172.25.121.73 uid 1000 
+    cache 
+  RT-01        Route Resolution to Local Linux Server     [ [0;32mPASS           [0m ] (INFORMATIONAL)
+--- Testing route to 192.168.50.11 ---
+192.168.50.11 via 172.25.112.1 dev eth0 src 172.25.121.73 uid 1000 
+    cache 
+  RT-02        Route Resolution to Mac Mini Node          [ [0;32mPASS           [0m ] (INFORMATIONAL)
+--- Testing route to 192.168.50.199 ---
+192.168.50.199 via 172.25.112.1 dev eth0 src 172.25.121.73 uid 1000 
+    cache 
+  RT-03        Route Resolution to Windows Host / Mirror  [ [0;32mPASS           [0m ] (INFORMATIONAL)
+Subnet route for 192.168.50.0/24:
+
+  RT-04        Intranet Subnet CIDR Isolation Check       [ [0;32mPASS           [0m ] (INFORMATIONAL)

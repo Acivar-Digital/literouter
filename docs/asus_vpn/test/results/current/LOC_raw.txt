@@ -1,0 +1,18 @@
+======================================================================
+Phase B: Local Host Network & Resolver Checks
+Timestamp: 2026-10-11T08:18:41Z
+======================================================================
+Route to router (192.168.50.1):
+192.168.50.1 via 172.25.112.1 dev eth0 src 172.25.121.73 uid 1000 
+    cache 
+  LOC-01       Local Host Intranet Subnet Alignment       [ [0;32mPASS           [0m ] (INFORMATIONAL)
+Ping output for router 192.168.50.1:
+PING 192.168.50.1 (192.168.50.1) 56(84) bytes of data.
+64 bytes from 192.168.50.1: icmp_seq=1 ttl=63 time=2.78 ms
+64 bytes from 192.168.50.1: icmp_seq=2 ttl=63 time=2.71 ms
+64 bytes from 192.168.50.1: icmp_seq=3 ttl=63 time=2.80 ms
+
+--- 192.168.50.1 ping statistics ---
+3 packets transmitted, 3 received, 0% packet loss, time 2004ms
+rtt min/avg/max/mdev = 2.710/2.762/2.798/0.037 ms
+  LOC-02       Default Gateway (ASUS Router) ICMP Reachability [ [0;32mPASS           [0m ] (INFORMATIONAL)

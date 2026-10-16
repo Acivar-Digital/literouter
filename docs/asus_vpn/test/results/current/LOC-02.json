@@ -1,0 +1,19 @@
+{
+  "test_id": "LOC-02",
+  "test_name": "Default Gateway (ASUS Router) ICMP Reachability",
+  "category": "Connectivity",
+  "timestamp": "2026-10-11T08:18:43Z",
+  "source_host": "yapilwsl",
+  "source_env": "WSL2",
+  "target_host": "192.168.50.1",
+  "protocol": "icmp",
+  "command": "ping -c 3 -W 2 192.168.50.1",
+  "expected_result": "Router responds to ICMP ping with 0% packet loss",
+  "actual_result": "0% packet loss. RTT stats present.",
+  "status": "PASS",
+  "severity": "INFORMATIONAL",
+  "raw_evidence_file": "/home/yapilwsl/arthityap/literouter/docs/asus_vpn/test/results/current/LOC_raw.txt",
+  "interpretation": "Router ICMP responsiveness verified on LAN.",
+  "remediation": "None.",
+  "rerun_command": "bash /home/yapilwsl/arthityap/asus_vpn/test/bin/02_test_local_host.sh"
+}

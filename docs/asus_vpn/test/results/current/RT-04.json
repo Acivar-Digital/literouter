@@ -1,0 +1,19 @@
+{
+  "test_id": "RT-04",
+  "test_name": "Intranet Subnet CIDR Isolation Check",
+  "category": "Routing",
+  "timestamp": "2026-10-11T08:18:43Z",
+  "source_host": "yapilwsl",
+  "source_env": "WSL2",
+  "target_host": "192.168.50.0/24",
+  "protocol": "ipv4",
+  "command": "ip route show 192.168.50.0/24",
+  "expected_result": "192.168.50.0/24 is configured as a local/on-link subnet",
+  "actual_result": "Subnet 192.168.50.0/24 routed via WSL2 Hyper-V NAT gateway (default via 172.25.112.1 dev eth0 proto kernel ).",
+  "status": "PASS",
+  "severity": "INFORMATIONAL",
+  "raw_evidence_file": "/home/yapilwsl/arthityap/literouter/docs/asus_vpn/test/results/current/RT_raw.txt",
+  "interpretation": "Subnet routing managed by parent Windows 11 NAT/virtual network stack.",
+  "remediation": "None.",
+  "rerun_command": "bash /home/yapilwsl/arthityap/asus_vpn/test/bin/03_test_routes.sh"
+}
