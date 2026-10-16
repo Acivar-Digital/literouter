@@ -26,8 +26,8 @@ All notable changes to LiteRouter will be documented in this file.
   - Added functional verification of `new_str`: verifies that the replacement logic preserves telemetry logging, applies correct step values, and implements valid arithmetic before awarding execution points.
 - **Zero-Overhead TSX AST Syntax Gating (`eval/stages_web/ast_verify.ts`)**:
   - Implemented `verifyComponentAst` / `verifyTsxCompiles` powered by Bun's native C++/Zig Transpiler (`new Bun.Transpiler({ loader: "tsx", target: "browser" })`), parsing TSX in ~0.5ms with zero external runtime dependencies.
-  - Implemented 4-tier compilation cascade: direct TSX compilation -> void tag normalization -> JSX fragment component wrapper -> normalized void tags in JSX fragment wrapper.
-  - Added unclosed code fence recovery in `extractCodeSnippet` (`eval/stages_web/stage3_state.ts`) and direct code block prompt guidance (`eval/stages_web/stage1_structure.ts`, `stage2_responsive.ts`).
+  - Implemented 4-tier compilation cascade: direct TSX compilation -> void tag normalization -> JSX fragment component wrapper -> normalized void tags in JSX fragment wrapper. Required `transpiled.length > 0` on direct compilation to correctly cascade top-level dead-code JSX fragments into the wrapper tier.
+  - Added unclosed code fence recovery and expanded regex (`ts`, `js`) in `extractCodeSnippet` (`eval/stages_web/stage3_state.ts`), plus direct code block prompt guidance (`eval/stages_web/stage1_structure.ts`, `stage2_responsive.ts`, `stage3_state.ts`, `stage4_hygiene.ts`) inhibiting tool invocation diversion.
   - Gated Web Stages 1 through 5 with AST verification: components with syntax or nesting errors are capped at a maximum of 30/100 (`passed: false`), preventing heuristic regex matches from masking broken frontend code.
 - **Web Modality Resilience & Local SVG Fixtures (`eval/stages_web/fixtures.ts`, `eval/stages_web/stage1_structure.ts`, `stage2_responsive.ts`, `stage5_a11y.ts`)**:
   - Replaced GreptimeDB PNG asset references with self-contained, semantically aligned local SVGs (`pricing_table.svg`, `auth_error.svg`).
@@ -40,7 +40,7 @@ All notable changes to LiteRouter will be documented in this file.
   - Introduced the `🚫 REJECTED / UNVERIFIED` tier in `determineArchitecturalRole` and `determineUnifiedRoleRecommendation` for models that fail baseline capability gates, syntax validation, or experience fatal upstream protocol rejections (e.g. 100% HTTP 403/401 errors).
   - Gated `⚡ FAST EXPLORER` on empirical TTFT (<2500ms), viable throughput (>=25 tok/s), and at least 1 passing functional stage (or speed-only evaluation).
   - Clarified single-run reporting: when `runs <= 1`, outputs deterministic `Stage Pass Rate: X/Y (%)` and suppresses misleading `pass@k` statistical rows.
-  - Integrated `[BUFFERED]` speed notes and web modality indicators in generated Markdown reports.
+  - Integrated `[BUFFERED]` speed notes, web modality indicators, and explicit `(AST Error: <message>)` diagnostics in generated Markdown scorecards.
 - **Automated Verification Suite (`tests/eval/eval_gauntlet_upgrades.test.ts`)**:
   - Added comprehensive unit tests covering TSX AST compilation gating, Stage 4 inner-scope patch grading, speed buffering detection, Rejection role assignment, and single-run pass rate formatting.
   - All 1,442 tests pass across 7 domains (`bun run test`) with zero TypeScript diagnostics (`bun run typecheck`).

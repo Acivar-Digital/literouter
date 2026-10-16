@@ -325,7 +325,7 @@ Strict Requirements:
 3. Security: Do NOT use raw 'dangerouslySetInnerHTML', dynamic execution, or 'javascript:' URIs. All dynamic text must be safely escaped via standard JSX.
 4. Rich Visuals: Include real metric bars (e.g. CPU, RAM, Latency), formatted timestamp, and uptime status indicator badge.
 
-Return the complete TSX code inside a \`\`\`tsx ... \`\`\` block.
+Return the complete TSX code inside a \`\`\`tsx ... \`\`\` block. Do not invoke tools or run commands; reply directly with the TSX code block.
 `.trim();
 
   try {

@@ -1097,7 +1097,17 @@ export function generateMarkdownReport(summary: EvalOrchestratorSummary): string
           typeof stage.details.modality === "string"
             ? ` (${stage.details.modality})`
             : "";
-        const checkRate = totalChecks > 0 ? `\`${passedChecks}/${totalChecks}\` checks${modalityStr}` : `N/A${modalityStr}`;
+        const astNote =
+          stage.details &&
+          typeof stage.details === "object" &&
+          "astValid" in stage.details &&
+          stage.details.astValid === false
+            ? ` (AST Error: ${(stage.details as Record<string, unknown>).astError || "Syntax Error"})`
+            : "";
+        const checkRate =
+          totalChecks > 0
+            ? `\`${passedChecks}/${totalChecks}\` checks${modalityStr}${astNote}`
+            : `N/A${modalityStr}${astNote}`;
         lines.push(`| **${stage.stageNumber}** | ${stage.stageName} | \`${stage.score}/100\` | ${statusIcon} | \`${stage.durationMs} ms\` | ${checkRate} |`);
       } else {
         let reason = "Intentionally excluded (CLI filter / not scheduled)";
@@ -1120,7 +1130,17 @@ export function generateMarkdownReport(summary: EvalOrchestratorSummary): string
           typeof stage.details.modality === "string"
             ? ` (${stage.details.modality})`
             : "";
-        const checkRate = totalChecks > 0 ? `\`${passedChecks}/${totalChecks}\` checks${modalityStr}` : `N/A${modalityStr}`;
+        const astNote =
+          stage.details &&
+          typeof stage.details === "object" &&
+          "astValid" in stage.details &&
+          stage.details.astValid === false
+            ? ` (AST Error: ${(stage.details as Record<string, unknown>).astError || "Syntax Error"})`
+            : "";
+        const checkRate =
+          totalChecks > 0
+            ? `\`${passedChecks}/${totalChecks}\` checks${modalityStr}${astNote}`
+            : `N/A${modalityStr}${astNote}`;
         lines.push(`| **${stage.stageNumber}** | ${stage.stageName} | \`${stage.score}/100\` | ${statusIcon} | \`${stage.durationMs} ms\` | ${checkRate} |`);
       }
     }

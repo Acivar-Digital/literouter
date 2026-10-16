@@ -56,7 +56,7 @@ export interface StateAnalysisResult {
  * Extracts raw code from potential markdown code fences.
  */
 export function extractCodeSnippet(text: string): string {
-  const codeBlockRegex = /```(?:tsx|jsx|typescript|javascript|html)?\s*([\s\S]*?)```/gi;
+  const codeBlockRegex = /```(?:tsx|jsx|typescript|javascript|ts|js|html)?\s*([\s\S]*?)```/gi;
   const matches: string[] = [];
   let match: RegExpExecArray | null;
 
@@ -81,7 +81,7 @@ export function extractCodeSnippet(text: string): string {
   }
 
   // Fallback: check if the model output has an unclosed code fence
-  const unclosed = /```(?:tsx|jsx|typescript|javascript|html)?\s*([\s\S]+)$/i.exec(text);
+  const unclosed = /```(?:tsx|jsx|typescript|javascript|ts|js|html)?\s*([\s\S]+)$/i.exec(text);
   if (unclosed && unclosed[1]) {
     return unclosed[1].trim();
   }
@@ -327,7 +327,7 @@ Requirements:
    - Conditional rendering for loading spinner/disabled button while submitting.
    - Conditional error banner displaying the error message when validation fails.
 
-Return the complete, working TSX code inside a \`\`\`tsx ... \`\`\` block.
+Return the complete, working TSX code inside a \`\`\`tsx ... \`\`\` block. Do not invoke tools or run commands; reply directly with the TSX code block.
 `.trim();
 
   try {
