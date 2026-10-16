@@ -1,10 +1,8 @@
 import type {
-  AnthropicContentBlock,
   AnthropicMessage,
   AnthropicMessagesRequest,
 } from "../handlers/anthropic_compat";
 import type {
-  OpenAIContentPart,
   OpenAIMessage,
   OpenAIRequestPayload,
 } from "./nuances";
@@ -150,201 +148,39 @@ export function extractContextLimit(text: string): number | null {
   return null;
 }
 
+/**
+ * LiteRouter v4.1 Forwarder Contract:
+ * Context limits and pruning are managed upstream and by client agents (Oh My Pi, OpenCode, Pydantic AI).
+ * The gateway acts as a high-throughput, low-latency forwarder without mutating payloads or slicing messages.
+ */
 export function sanitizeAnthropicToolReferences(
   messages: readonly AnthropicMessage[]
 ): AnthropicMessage[] {
-  const validToolUseIds = new Set<string>();
-  for (const msg of messages) {
-    if (msg.role === "assistant" && Array.isArray(msg.content)) {
-      for (const block of msg.content) {
-        if (block.type === "tool_use" && typeof block.id === "string") {
-          validToolUseIds.add(block.id);
-        }
-      }
-    }
-  }
-
-  return messages.map((msg) => {
-    if (msg.role !== "user" || !Array.isArray(msg.content)) {
-      return msg;
-    }
-
-    let modified = false;
-    const sanitizedBlocks: AnthropicContentBlock[] = msg.content.map((block) => {
-      if (block.type === "tool_result" && block.tool_use_id && !validToolUseIds.has(block.tool_use_id)) {
-        modified = true;
-        const rawContent = typeof block.content === "string"
-          ? block.content
-          : JSON.stringify(block.content ?? "");
-        return {
-          type: "text",
-          text: `[Pruned tool result (${block.tool_use_id})]:\n${rawContent}`,
-        };
-      }
-      return block;
-    });
-
-    return modified ? { ...msg, content: sanitizedBlocks } : msg;
-  });
+  return messages as AnthropicMessage[];
 }
 
 export function normalizeAnthropicAlternation(
   messages: readonly AnthropicMessage[]
 ): AnthropicMessage[] {
-  if (messages.length === 0) return [];
-
-  const result: AnthropicMessage[] = [];
-  let current: AnthropicMessage = messages[0]!;
-
-  for (let i = 1; i < messages.length; i++) {
-    const next = messages[i]!;
-    if (next.role === current.role) {
-      const currentBlocks = typeof current.content === "string"
-        ? [{ type: "text" as const, text: current.content }]
-        : [...current.content];
-      const nextBlocks = typeof next.content === "string"
-        ? [{ type: "text" as const, text: next.content }]
-        : [...next.content];
-      current = {
-        role: current.role,
-        content: [...currentBlocks, ...nextBlocks],
-      };
-    } else {
-      result.push(current);
-      current = next;
-    }
-  }
-  result.push(current);
-
-  if (result.length > 0 && result[0]!.role !== "user") {
-    result.unshift({
-      role: "user",
-      content: "[Context resumed after truncation]",
-    });
-  }
-
-  return result;
+  return messages as AnthropicMessage[];
 }
 
 export function pruneAnthropicPayload(
   req: AnthropicMessagesRequest,
-  targetLimitTokens = DEFAULT_SAFE_CONTEXT_TOKENS
+  _targetLimitTokens = DEFAULT_SAFE_CONTEXT_TOKENS
 ): AnthropicMessagesRequest {
-  const currentTokens = estimateAnthropicTokens(req);
-  if (currentTokens <= targetLimitTokens || !Array.isArray(req.messages) || req.messages.length <= 2) {
-    return req;
-  }
-
-  const messages = req.messages;
-  let cutoff = 0;
-
-  for (let i = 1; i < messages.length - 1; i++) {
-    const candidateSlice = messages.slice(i);
-    const candidateReq: AnthropicMessagesRequest = { ...req, messages: candidateSlice };
-    const tokens = estimateAnthropicTokens(candidateReq);
-    if (tokens <= targetLimitTokens) {
-      cutoff = i;
-      break;
-    }
-  }
-
-  if (cutoff === 0 && messages.length > 2) {
-    cutoff = Math.max(1, messages.length - 2);
-  }
-
-  let prunedMessages: AnthropicMessage[];
-  if (cutoff > 1 && messages[0]!.role === "user") {
-    const rootUserMsg = messages[0]!;
-    const noticeBlock: AnthropicContentBlock = {
-      type: "text",
-      text: "\n\n[Note: Intermediate conversation history was pruned by LiteRouter to fit within model context limits.]\n\n",
-    };
-
-    const augmentedRoot: AnthropicMessage = {
-      role: "user",
-      content: typeof rootUserMsg.content === "string"
-        ? `${rootUserMsg.content}\n\n[Note: Intermediate conversation history was pruned by LiteRouter to fit within model context limits.]`
-        : [...rootUserMsg.content, noticeBlock],
-    };
-
-    prunedMessages = [augmentedRoot, ...messages.slice(cutoff)];
-  } else {
-    prunedMessages = [...messages.slice(cutoff)];
-  }
-
-  const sanitized = sanitizeAnthropicToolReferences(prunedMessages);
-  const normalized = normalizeAnthropicAlternation(sanitized);
-
-  return {
-    ...req,
-    messages: normalized,
-  };
+  return req;
 }
 
 export function sanitizeOpenAIToolReferences(
   messages: readonly OpenAIMessage[]
 ): OpenAIMessage[] {
-  const validToolCallIds = new Set<string>();
-  for (const msg of messages) {
-    if (msg.role === "assistant" && Array.isArray(msg.tool_calls)) {
-      for (const tc of msg.tool_calls) {
-        if (tc.id) validToolCallIds.add(tc.id);
-      }
-    }
-  }
-
-  return messages.map((msg) => {
-    if (msg.role === "tool" && msg.tool_call_id && !validToolCallIds.has(msg.tool_call_id)) {
-      return {
-        role: "user",
-        content: `[Pruned tool result (${msg.tool_call_id})]:\n${typeof msg.content === "string" ? msg.content : JSON.stringify(msg.content ?? "")}`,
-      };
-    }
-    return msg;
-  });
+  return messages as OpenAIMessage[];
 }
 
 export function pruneOpenAIPayload(
   req: OpenAIRequestPayload,
-  targetLimitTokens = DEFAULT_SAFE_CONTEXT_TOKENS
+  _targetLimitTokens = DEFAULT_SAFE_CONTEXT_TOKENS
 ): OpenAIRequestPayload {
-  const currentTokens = estimateOpenAITokens(req);
-  if (currentTokens <= targetLimitTokens || !Array.isArray(req.messages) || req.messages.length <= 2) {
-    return req;
-  }
-
-  const messages = req.messages;
-  const systemMessages = messages.filter((m) => m.role === "system");
-  const nonSystemMessages = messages.filter((m) => m.role !== "system");
-
-  if (nonSystemMessages.length <= 2) {
-    return req;
-  }
-
-  let cutoff = 0;
-  for (let i = 1; i < nonSystemMessages.length - 1; i++) {
-    const candidateSlice = nonSystemMessages.slice(i);
-    const candidateReq: OpenAIRequestPayload = {
-      ...req,
-      messages: [...systemMessages, ...candidateSlice],
-    };
-    const tokens = estimateOpenAITokens(candidateReq);
-    if (tokens <= targetLimitTokens) {
-      cutoff = i;
-      break;
-    }
-  }
-
-  if (cutoff === 0 && nonSystemMessages.length > 2) {
-    cutoff = Math.max(1, nonSystemMessages.length - 2);
-  }
-
-  const retainedNonSystem = nonSystemMessages.slice(cutoff);
-  const combined = [...systemMessages, ...retainedNonSystem];
-  const sanitized = sanitizeOpenAIToolReferences(combined);
-
-  return {
-    ...req,
-    messages: sanitized,
-  };
+  return req;
 }

@@ -17,11 +17,15 @@ import {
   type OpenAIRequestPayload,
 } from "../handlers/openai_compat";
 import { RequestTelemetry, type UsageRecord } from "../telemetry/session";
-import { traceBuffer, type SanitizedTrace } from "../telemetry/ring_buffer";
+import { traceBuffer, MAX_LEG_BYTES, type SanitizedTrace } from "../telemetry/ring_buffer";
 import { traceWriter } from "../telemetry/trace_writer";
 import { sanitizeBody } from "../telemetry/sanitize";
 import { extractErrorMessage } from "../ui/logger";
 import { ensureSessionHeaders } from "./session_id";
+import {
+  accumulateZenStreamToCompletion,
+  accumulateZenResponsesStream,
+} from "./zen";
 
 export type { OutboundWirePayload, PayloadTransformerContract };
 
@@ -501,7 +505,7 @@ export async function executeDispatchPipeline(
   if (preResult) {
     telemetry.served(preResult.status);
     recordTrace(telemetry, preResult.status, {
-      clientInbound: sanitizeBody(req.rawInboundBody),
+      clientInbound: sanitizeBody(req.rawInboundBody, MAX_LEG_BYTES),
     });
     return preResult;
   }
@@ -526,7 +530,7 @@ export async function executeDispatchPipeline(
       telemetry.error("All keys exhausted or in cooldown");
       telemetry.served(429, attempt, maxAttempts);
       recordTrace(telemetry, 429, {
-        clientInbound: sanitizeBody(req.rawInboundBody),
+        clientInbound: sanitizeBody(req.rawInboundBody, MAX_LEG_BYTES),
         clientOutbound: JSON.stringify({
           error: {
             message: "All keys in cooldown or exhausted",
@@ -640,8 +644,8 @@ export async function executeDispatchPipeline(
 
           telemetry.served(upstreamResponse.status, attempt, maxAttempts);
           recordTrace(telemetry, upstreamResponse.status, {
-            clientInbound: sanitizeBody(req.rawInboundBody),
-            upstreamOutbound: sanitizeBody(req.outboundPayload.body),
+            clientInbound: sanitizeBody(req.rawInboundBody, MAX_LEG_BYTES),
+            upstreamOutbound: sanitizeBody(req.outboundPayload.body, MAX_LEG_BYTES),
             clientOutbound: "[STREAM]",
           });
 
@@ -660,7 +664,6 @@ export async function executeDispatchPipeline(
         // If the upstream responded with an event stream but client requested non-streaming (e.g. Zen adaptation),
         // accumulate SSE events into a chat.completion or responses JSON object
         if (upstreamResponse.headers.get("content-type")?.includes("text/event-stream") && upstreamResponse.body) {
-          const { accumulateZenStreamToCompletion, accumulateZenResponsesStream } = require("./zen");
           const isResponses = req.outboundPayload.endpointKey === "rs";
           const accumulated = isResponses
             ? await accumulateZenResponsesStream(upstreamResponse.body, String(req.outboundPayload.body?.model ?? ""))
@@ -707,10 +710,10 @@ export async function executeDispatchPipeline(
         telemetry.recordUsage(extractUsage(jsonBody));
         telemetry.served(upstreamResponse.status, attempt, maxAttempts);
         recordTrace(telemetry, upstreamResponse.status, {
-          clientInbound: sanitizeBody(req.rawInboundBody),
-          upstreamOutbound: sanitizeBody(req.outboundPayload.body),
-          upstreamInbound: sanitizeBody(jsonBody),
-          clientOutbound: sanitizeBody(clientJson),
+          clientInbound: sanitizeBody(req.rawInboundBody, MAX_LEG_BYTES),
+          upstreamOutbound: sanitizeBody(req.outboundPayload.body, MAX_LEG_BYTES),
+          upstreamInbound: sanitizeBody(jsonBody, MAX_LEG_BYTES),
+          clientOutbound: sanitizeBody(clientJson, MAX_LEG_BYTES),
         });
 
         pacerLease?.release();
@@ -746,8 +749,8 @@ export async function executeDispatchPipeline(
         pacerLease?.release();
         telemetry.served(upstreamResponse.status, attempt, maxAttempts);
         recordTrace(telemetry, upstreamResponse.status, {
-          clientInbound: sanitizeBody(req.rawInboundBody),
-          upstreamOutbound: sanitizeBody(req.outboundPayload.body),
+          clientInbound: sanitizeBody(req.rawInboundBody, MAX_LEG_BYTES),
+          upstreamOutbound: sanitizeBody(req.outboundPayload.body, MAX_LEG_BYTES),
         });
         return createCleanErrorResponse(upstreamResponse, errText);
       }
@@ -784,8 +787,8 @@ export async function executeDispatchPipeline(
 
       telemetry.served(upstreamResponse.status, attempt, maxAttempts);
       recordTrace(telemetry, upstreamResponse.status, {
-        clientInbound: sanitizeBody(req.rawInboundBody),
-        upstreamOutbound: sanitizeBody(req.outboundPayload.body),
+        clientInbound: sanitizeBody(req.rawInboundBody, MAX_LEG_BYTES),
+        upstreamOutbound: sanitizeBody(req.outboundPayload.body, MAX_LEG_BYTES),
       });
       return createCleanErrorResponse(upstreamResponse, errText);
     } catch (err) {
@@ -805,8 +808,8 @@ export async function executeDispatchPipeline(
 
         telemetry.served(504, attempt, maxAttempts);
         recordTrace(telemetry, 504, {
-          clientInbound: sanitizeBody(req.rawInboundBody),
-          upstreamOutbound: sanitizeBody(req.outboundPayload.body),
+          clientInbound: sanitizeBody(req.rawInboundBody, MAX_LEG_BYTES),
+          upstreamOutbound: sanitizeBody(req.outboundPayload.body, MAX_LEG_BYTES),
         });
         return buildTtftTimeoutResponse(req.reqId, ttftTimeoutMs);
       }
@@ -821,8 +824,8 @@ export async function executeDispatchPipeline(
 
       telemetry.served(500, attempt, maxAttempts);
       recordTrace(telemetry, 500, {
-        clientInbound: sanitizeBody(req.rawInboundBody),
-        upstreamOutbound: sanitizeBody(req.outboundPayload.body),
+        clientInbound: sanitizeBody(req.rawInboundBody, MAX_LEG_BYTES),
+        upstreamOutbound: sanitizeBody(req.outboundPayload.body, MAX_LEG_BYTES),
       });
 
       throw err;
@@ -832,8 +835,8 @@ export async function executeDispatchPipeline(
   telemetry.error("All retry attempts exhausted");
   telemetry.served(502);
   recordTrace(telemetry, 502, {
-    clientInbound: sanitizeBody(req.rawInboundBody),
-    upstreamOutbound: sanitizeBody(req.outboundPayload.body),
+    clientInbound: sanitizeBody(req.rawInboundBody, MAX_LEG_BYTES),
+    upstreamOutbound: sanitizeBody(req.outboundPayload.body, MAX_LEG_BYTES),
   });
   return new Response(
     JSON.stringify({

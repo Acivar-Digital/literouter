@@ -16,7 +16,6 @@ import { isFatalAuthError } from "../network/pool";
 import {
   buildAuthHeaders,
   globalKeyPool,
-  initializeKeyPools,
   overrideProviderUrl,
   resolveUpstreamEndpoint,
 } from "./openai_compat";
@@ -138,7 +137,6 @@ export function resolveApiKey(
   if (fromState) {
     return fromState;
   }
-  initializeKeyPools();
   const selected = globalKeyPool.selectNextKey(provider);
   return selected ? { key: selected.key, index: selected.index } : null;
 }

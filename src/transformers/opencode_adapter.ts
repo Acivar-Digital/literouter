@@ -451,3 +451,17 @@ export function scrubReasoningFromMessages(
   }
   return messages.map(scrubReasoningFromMessage);
 }
+
+export function ensureTerminalUserTurn(
+  messages: readonly OpenAIMessage[] | undefined
+): readonly OpenAIMessage[] {
+  if (!Array.isArray(messages) || messages.length === 0) {
+    return messages ?? [];
+  }
+  const last = messages[messages.length - 1];
+  if (last && (last.role === "assistant" || (last.role as string) === "model")) {
+    return [...messages, { role: "user", content: "ok go on" }];
+  }
+  return messages;
+}
+

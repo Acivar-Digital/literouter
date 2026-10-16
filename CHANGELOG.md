@@ -4,6 +4,36 @@ All notable changes to LiteRouter will be documented in this file.
 
 ## [Unreleased] — 2026-10-16
 
+### Performance & High-Throughput Upgrades (`literouter-g98s`)
+- **Phase 1: Inbound Trailing Assistant Auto-Healing (`ensureTerminalUserTurn`)**:
+  - Implemented `ensureTerminalUserTurn` across `src/transformers/opencode_adapter.ts`, `src/transformers/payload.ts`, and `src/transformers/anthropic_openai_xwire.ts`.
+  - Automatically appends `{ role: 'user', content: 'ok go on' }` whenever an inbound multi-turn request ends on an assistant or model turn.
+  - Eliminates upstream model hangs, TTFT timeouts, and immediate 0-token EOS ghost responses on OpenRouter, vLLM, DeepSeek, and Google chat templates.
+  - Preserves intentional prefill prompt turns (`directive.wire === 'cl'`, `options?.isPrefill`, `isPrefillPrompt`).
+- **Phase 2: Purged Context Pruning Overhead & LaTeX Normalization**:
+  - Pruned `src/transformers/context_pruner.ts` from ~280 lines of dead heuristics to a lightweight, zero-overhead passthrough forwarder shim (`ContextPrunerShim`).
+  - Removed wasteful `applyLatexNormalization` regex iterations from `transformMessages` (`src/transformers/payload.ts`), avoiding string churn and preserving raw LaTeX formulas unaltered for frontend TUIs.
+- **Phase 3: Cold-Boot Key Pool Architecture**:
+  - Eliminated redundant per-request `initializeKeyPools()` invocation on hot paths (`src/index.ts` in `handleAppRequest` and `src/handlers/openai_original.ts` in `resolveApiKey`).
+  - Moved key pool discovery to server cold-boot and dedicated config reload events (`/reset`, file change watchers), eliminating disk I/O and process env parsing on inference requests.
+- **Phase 4: Singleton `FusionEngine` with In-Memory `StickyPositionCache`**:
+  - Replaced per-request `new FusionEngine()` instantiation in `executeFusionFlow` (`src/handlers/openai_compat.ts`) with a cached singleton `getFusionEngine()`.
+  - Enables durable cross-turn in-memory stickiness (`StickyPositionCache`) across multi-turn conversations without wiping cache state every turn.
+  - Exported `resetCachedFusionEngine()` wired into `/reset` for clean admin state wiping.
+- **Phase 5: Bounded Trace Payload Truncation & Memory Safety**:
+  - Added optional `maxBytes?: number` to `sanitizeBody` (`src/telemetry/sanitize.ts`), truncating oversized trace payloads before regex scanning while preserving full untruncated content for client error responses.
+  - Added `estimateTraceSize` (`src/telemetry/ring_buffer.ts`) and wired it into `src/telemetry/trace_writer.ts` to replace expensive `JSON.stringify(trace).length` on enqueue.
+  - Wired `MAX_LEG_BYTES` (64KB) into all `recordTrace` legs in `src/engine/dispatch.ts`.
+- **Phase 6: Direct SSE Chunk Streaming & Fast-Path Bypass**:
+  - Implemented SSE fast-path bypass in `src/transformers/openai_chat.ts`.
+  - When reasoning scrubbing is disabled and TTFT is marked, mid-stream content chunks bypass `JSON.parse` and `JSON.stringify` entirely, streaming raw `dataStr` directly downstream.
+  - Substantially reduces CPU usage and memory churn during long-context streaming generation while maintaining precise TTFT and usage telemetry.
+- **Phase 7: Hoisted Dynamic Module Requires**:
+  - Replaced dynamic `require("./zen")` inside the non-streaming response handler in `src/engine/dispatch.ts` with top-level static ES imports (`accumulateZenStreamToCompletion`, `accumulateZenResponsesStream`).
+- **Phase 8: Comprehensive Verification**:
+  - Added targeted test suites: `tests/unit/trailing_assistant.test.ts`, `tests/unit/latex_preservation.test.ts`, `tests/unit/fusion_singleton.test.ts`, `tests/unit/trace_truncation.test.ts`, `tests/unit/sse_fast_path.test.ts`.
+  - All 1,442 tests across 7 domains passed cleanly (`bun run test`) with zero static typecheck errors (`bun run typecheck`).
+
 ### Security & Reliability Hardening
 - **Path Traversal Protection & Diagnostic Normalization (`scripts/diagnose/complexity.ts`)** (`literouter-g2y`):
   - Corrected project root calculation in `scripts/diagnose/complexity.ts` to properly resolve repository root from nested `scripts/diagnose/` path.

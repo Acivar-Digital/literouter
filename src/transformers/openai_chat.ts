@@ -141,13 +141,14 @@ function recordTelemetryEvents(
 
 function emitFilteredOrRaw(
   parsed: Record<string, unknown>,
+  dataStr: string,
   shouldScrub: boolean,
   reqId: string | undefined,
   controller: TransformStreamDefaultController<Uint8Array>,
   encoder: TextEncoder
 ): void {
   if (!shouldScrub) {
-    controller.enqueue(encoder.encode(`data: ${JSON.stringify(parsed)}\n\n`));
+    controller.enqueue(encoder.encode(`data: ${dataStr}\n\n`));
     return;
   }
 
@@ -170,6 +171,22 @@ function handleDataChunk(
     return;
   }
 
+  const shouldScrub = shouldScrubReasoning(directive);
+
+  // Fast-path bypass:
+  // If reasoning scrubbing is disabled, TTFT is already marked, and the chunk contains
+  // neither usage nor finish_reason, it is a pure mid-stream content delta.
+  // We can pass dataStr directly to the client without JSON.parse / JSON.stringify.
+  if (
+    !shouldScrub &&
+    state.ttftMarked &&
+    !dataStr.includes('"usage"') &&
+    !dataStr.includes('"finish_reason"')
+  ) {
+    controller.enqueue(encoder.encode(`data: ${dataStr}\n\n`));
+    return;
+  }
+
   let parsed: Record<string, unknown>;
   try {
     parsed = JSON.parse(dataStr) as Record<string, unknown>;
@@ -180,9 +197,8 @@ function handleDataChunk(
     return;
   }
 
-  const shouldScrub = shouldScrubReasoning(directive);
   recordTelemetryEvents(parsed, state, shouldScrub, telemetry);
-  emitFilteredOrRaw(parsed, shouldScrub, telemetry.reqId, controller, encoder);
+  emitFilteredOrRaw(parsed, dataStr, shouldScrub, telemetry.reqId, controller, encoder);
 }
 
 function handleLine(

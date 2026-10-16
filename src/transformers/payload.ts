@@ -17,6 +17,7 @@ import {
   stripToolMetadata,
   scrubReasoningFromMessage,
   scrubReasoningFromMessages,
+  ensureTerminalUserTurn,
 } from "./opencode_adapter";
 import {
   DEFAULT_SAFE_CONTEXT_TOKENS,
@@ -36,6 +37,7 @@ export {
   stripToolMetadata,
   scrubReasoningFromMessage,
   scrubReasoningFromMessages,
+  ensureTerminalUserTurn,
   DEFAULT_SAFE_CONTEXT_TOKENS,
   DEFAULT_MAX_CONTEXT_TOKENS,
   estimateTextTokens,
@@ -288,7 +290,6 @@ function transformMessages(
   tools?: readonly unknown[]
 ): readonly OpenAIMessage[] {
   let res = scrubReasoningFromMessages(messages);
-  res = applyLatexNormalization(res);
   if (nuances.includes("gm")) {
     res = applyGemmaConstraints(res);
   }
@@ -303,6 +304,7 @@ function transformMessages(
     res = serializeDotsToolHistory(res);
     res = mergeConsecutiveMessages(res);
   }
+  res = ensureTerminalUserTurn(res);
   return res;
 }
 

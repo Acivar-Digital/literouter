@@ -29,6 +29,8 @@ import {
   handleOpenAICompat,
   initializeKeyPools,
   resetProvidersRegistryCache,
+  resetCachedFusionEngine,
+  getCachedFusionEngine,
 } from "./handlers/openai_compat";
 import {
   type Directive,
@@ -437,7 +439,7 @@ function dispatchResponsesRoute(
   return null;
 }
 
-export { dispatchV4 };
+export { dispatchV4, getCachedFusionEngine, resetCachedFusionEngine };
 
 export async function dispatchRoute(
   req: Request,
@@ -533,7 +535,6 @@ export function getCooldownState(): Record<string, unknown> {
 }
 
 export async function handleAppRequest(req: Request): Promise<Response> {
-  initializeKeyPools();
   const reqId =
     req.headers.get("x-request-id") ||
     req.headers.get("x-req-id") ||

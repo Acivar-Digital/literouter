@@ -85,8 +85,9 @@ export function sanitizeHeaders(
 /**
  * Sanitize body content using defense-in-depth regex scrubbing.
  * Converts input to string (JSON if object) and scrubs known secret patterns.
+ * Optionally truncates input text to maxBytes before running regex to bound CPU and memory usage.
  */
-export function sanitizeBody(body: unknown): string {
+export function sanitizeBody(body: unknown, maxBytes?: number): string {
   if (body === undefined) {
     return "";
   }
@@ -102,5 +103,12 @@ export function sanitizeBody(body: unknown): string {
     }
   }
 
-  return text.replace(SECRET_REGEX, "[REDACTED_KEY]");
+  let truncated = false;
+  if (typeof maxBytes === "number" && maxBytes > 0 && text.length > maxBytes) {
+    text = text.slice(0, maxBytes);
+    truncated = true;
+  }
+
+  const sanitized = text.replace(SECRET_REGEX, "[REDACTED_KEY]");
+  return truncated ? `${sanitized}... [TRUNCATED FOR TRACE]` : sanitized;
 }

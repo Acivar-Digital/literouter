@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import type { SanitizedTrace } from "./ring_buffer";
+import { estimateTraceSize, type SanitizedTrace } from "./ring_buffer";
 
 export const FLUSH_INTERVAL_MS = 30_000;
 export const FLUSH_COUNT_THRESHOLD = 100;
@@ -112,7 +112,7 @@ export class TraceWriter {
     }
 
     this.queue.push(trace);
-    this.queueBytes += JSON.stringify(trace).length;
+    this.queueBytes += estimateTraceSize(trace);
 
     if (
       this.queue.length >= this.flushCountThreshold ||

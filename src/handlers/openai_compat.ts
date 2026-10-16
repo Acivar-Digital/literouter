@@ -75,8 +75,22 @@ export interface ProviderEndpointConfig extends Omit<ProviderConfigEntry, "conse
   readonly conserve_rules?: readonly ConserveRule[];
 }
 
+let cachedFusionEngine: FusionEngine | null = null;
+
+export function resetCachedFusionEngine(): void {
+  cachedFusionEngine = null;
+}
+
+export function getCachedFusionEngine(): FusionEngine {
+  if (!cachedFusionEngine) {
+    cachedFusionEngine = new FusionEngine(loadFusionConfig());
+  }
+  return cachedFusionEngine;
+}
+
 export function resetProvidersRegistryCache(): void {
   initProviderRegistry();
+  resetCachedFusionEngine();
 }
 
 export function getProviderEndpointConfig(providerCode: string): ProviderEndpointConfig | undefined {
@@ -1088,8 +1102,7 @@ export async function executeFusionFlow(
   reqId: string,
   clientOptions?: RequestClientOptions
 ): Promise<Response> {
-  const fusionCfg = loadFusionConfig();
-  const engine = new FusionEngine(fusionCfg);
+  const engine = getCachedFusionEngine();
   const plan = engine.createExecutionPlan(presetName, body.model);
 
   if (!plan || plan.orderedTiers.length === 0) {

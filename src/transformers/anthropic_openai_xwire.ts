@@ -3,6 +3,7 @@ import type { OutboundWirePayload, PayloadTransformerContract } from "../engine/
 import type { RequestTelemetry, UsageRecord } from "../telemetry/session";
 import { TagSanitizerStreamBuffer, stripLeakedTemplateTags } from "./dots";
 import type { OpenAIMessage, OpenAIRequestPayload } from "./nuances";
+import { ensureTerminalUserTurn } from "./opencode_adapter";
 import { getEnv } from "../config/env";
 
 export interface AnthropicImageSource {
@@ -359,7 +360,7 @@ export function translateAnthropicToOpenAI(req: AnthropicMessagesRequest): OpenA
 
   const result: Record<string, unknown> = {
     model: req.model,
-    messages: openAiMessages,
+    messages: ensureTerminalUserTurn(openAiMessages),
     stream: req.stream,
   };
 
