@@ -18,6 +18,10 @@ All notable changes to LiteRouter will be documented in this file.
   - Evaluated `liquid/lfm-2.5-2.6b:free` across 3 wires with native reasoning: awarded 🏆 **`💻 GENERAL CODER`** (4/5 80% code certification across Chat at 711.3 tok/s, Responses at 725.9 tok/s, and Messages at 215.0 tok/s with 839ms TTFT).
   - Re-evaluated `muse-spark-1.3-contributor-free` on Zen Responses wire under the upgraded eval gauntlet: awarded 🏆 **`🧠 MASTER ORCHESTRATOR`** (Code suite: 5/5 100% certification at 87.3 tok/s; Web suite: 5/5 cleared with 98/100 composite score; Speed: 448.6 tok/s throughput; TTFT: 12,121ms).
 
+### Model & Fusion Configuration Updates (`literouter-u9s`)
+- **Fusion Model Chain Optimization (`fusion.json`)**:
+  - Removed `nvidia/deepseek-ai/deepseek-v4-flash` from the `pydantic/flash` fusion chain per user configuration (`literouter-u9s`), promoting `nvidia/stepfun-ai/step-3.7-flash` as the primary fallback model for fast Pydantic agent workflows.
+
 ### Eval Gauntlet Wire Protocol Resilience & N/A Semantics (`literouter-kgj2`, `literouter-uxma`, `literouter-guyw`, `literouter-j0nw`)
 - **S3: Responses-Wire Protocol Unsupported N/A Classification (`eval/stages_rs/stage1_wire.ts`, `eval/stages/types.ts`, `eval/stages_rs/types.ts`)**:
   - Added `unsupportedWire?: boolean` property to `StageResult` in both Chat and Responses types, along with `isWireUnsupported` helper.

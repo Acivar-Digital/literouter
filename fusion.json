@@ -24,7 +24,6 @@
   "pydantic/flash": {
     "description": "Fast NVIDIA-hosted fusion via Bun Gateway (OpenAI-compat /v1), for pydantic-ai",
     "chain": [
-      "nvidia/deepseek-ai/deepseek-v4-flash",
       "nvidia/stepfun-ai/step-3.7-flash",
       "nvidia/thinkingmachines/inkling",
       "nvidia/mistralai/mistral-medium-3.5-128b",
