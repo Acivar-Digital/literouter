@@ -45,6 +45,7 @@ export interface CodeEvalSummary {
   directiveKey: string;
   gatewayUrl: string;
   allPassed: boolean;
+  unsupportedWire?: boolean;
   results: StageResult[];
 }
 
@@ -231,6 +232,9 @@ function formatStageSpeed(result: StageResult): string {
 }
 
 function formatStageLoopLog(stageNum: number, result: StageResult): string {
+  if (result.unsupportedWire) {
+    return `Stage ${stageNum}: N/A (Wire Protocol Unsupported)`;
+  }
   const statusText = result.passed ? "Passed" : "Failed";
   const latencyPart = result.durationMs !== undefined ? ` | Latency: ${result.durationMs}ms` : "";
   const speed = formatStageSpeed(result);
@@ -251,12 +255,14 @@ export function printFinalSummary(model: string, wire: string, results: StageRes
   let allPassed = results.length > 0;
   for (const r of results) {
     const padName = r.stageName.padEnd(54).slice(0, 54);
-    const padScore = `${r.score}/100`.padStart(7);
-    const statusStr = r.passed ? `\x1b[32mPASSED\x1b[0m` : `\x1b[31mFAILED\x1b[0m`;
+    const padScore = r.unsupportedWire ? `  N/A  ` : `${r.score}/100`.padStart(7);
+    const statusStr = r.unsupportedWire
+      ? `\x1b[33m N/A  \x1b[0m`
+      : (r.passed ? `\x1b[32mPASSED\x1b[0m` : `\x1b[31mFAILED\x1b[0m`);
     const padDur = formatStageDuration(r).padStart(10);
     const padSpeed = formatStageSpeed(r).padStart(13);
     console.log(`| ${padName} | ${padScore} | ${statusStr} | ${padDur} | ${padSpeed} |`);
-    if (!r.passed) {
+    if (!r.passed && !r.unsupportedWire) {
       allPassed = false;
       for (const note of r.notes) {
         console.log(`  \x1b[33m└─ ${note}\x1b[0m`);
@@ -270,7 +276,9 @@ export function printFinalSummary(model: string, wire: string, results: StageRes
 
   console.log(banner);
   console.log(`⚡ Overall Pipeline Average Speed: ${avgSpeed} tok/s`);
-  if (allPassed) {
+  if (results.length > 0 && results.every((r) => r.unsupportedWire)) {
+    console.log(`🏁 FINAL VERDICT: \x1b[33mSKIPPED - WIRE PROTOCOL UNSUPPORTED BY TARGET MODEL (N/A)\x1b[0m`);
+  } else if (allPassed) {
     console.log(`🏁 FINAL VERDICT: \x1b[32mCERTIFIED PRODUCTION-READY FOR OPENCODE 2 & CLAUDE CODE\x1b[0m`);
   } else {
     console.log(`🏁 FINAL VERDICT: \x1b[31mREJECTED - FAILED CRITICAL CERTIFICATION GATES\x1b[0m`);
@@ -317,6 +325,11 @@ export async function runCodeEvaluation(options: CodeEvalOptions = {}): Promise<
     stageResults.push(result);
     console.log(formatStageLoopLog(s.stageNum, result));
 
+    if (result.unsupportedWire) {
+      console.log(`\nℹ️ Wire Protocol Unsupported (N/A). Skipping downstream stages for this wire.`);
+      break;
+    }
+
     if (!result.passed && !stageFilter && !continueOnFailure) {
       console.log(`\n🛑 Pipeline Aborted: Failed Stage ${s.stageNum} (${result.stageName}).`);
       break;
@@ -325,13 +338,15 @@ export async function runCodeEvaluation(options: CodeEvalOptions = {}): Promise<
 
   printFinalSummary(resolved.model, resolved.wire, stageResults);
 
-  const allPassed = stageResults.length > 0 && stageResults.every((r) => r.passed);
+  const hasUnsupportedWire = stageResults.some((r) => r.unsupportedWire);
+  const allPassed = stageResults.length > 0 && stageResults.every((r) => r.passed || r.unsupportedWire);
   return {
     model: resolved.model,
     wire: resolved.wire,
     directiveKey: effectiveKey,
     gatewayUrl: resolved.gatewayUrl,
     allPassed,
+    unsupportedWire: hasUnsupportedWire,
     results: stageResults,
   };
 }

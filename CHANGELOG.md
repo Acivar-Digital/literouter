@@ -18,6 +18,19 @@ All notable changes to LiteRouter will be documented in this file.
   - Evaluated `liquid/lfm-2.5-2.6b:free` across 3 wires with native reasoning: awarded 🏆 **`💻 GENERAL CODER`** (4/5 80% code certification across Chat at 711.3 tok/s, Responses at 725.9 tok/s, and Messages at 215.0 tok/s with 839ms TTFT).
   - Re-evaluated `muse-spark-1.3-contributor-free` on Zen Responses wire under the upgraded eval gauntlet: awarded 🏆 **`🧠 MASTER ORCHESTRATOR`** (Code suite: 5/5 100% certification at 87.3 tok/s; Web suite: 5/5 cleared with 98/100 composite score; Speed: 448.6 tok/s throughput; TTFT: 12,121ms).
 
+### Eval Gauntlet Wire Protocol Resilience & N/A Semantics (`literouter-kgj2`, `literouter-uxma`, `literouter-guyw`, `literouter-j0nw`)
+- **S3: Responses-Wire Protocol Unsupported N/A Classification (`eval/stages_rs/stage1_wire.ts`, `eval/stages/types.ts`, `eval/stages_rs/types.ts`)**:
+  - Added `unsupportedWire?: boolean` property to `StageResult` in both Chat and Responses types, along with `isWireUnsupported` helper.
+  - In `stages_rs/stage1_wire.ts`, HTTP 400 rejections with `ModelProtocolUnsupported` or unsupported wire text now mark `result.unsupportedWire = true` with diagnostic details instead of penalizing the model with a 0-point failure verdict.
+- **S4: Non-Failing Pipeline Handling & N/A Report Rendering (`eval/code.ts`, `eval/eval.ts`)**:
+  - In `eval/code.ts`, encountering `unsupportedWire` skips remaining stages for that wire without triggering fail-fast abort (`🛑 Pipeline Aborted`) and does not falsify `allPassed`.
+  - Added `formatWireVerdict` handling to emit `⚪ N/A` for unsupported wires across single-wire and consolidated multi-wire evaluation outputs.
+  - In `eval/eval.ts`, `generateMarkdownReport` and `generateConsolidatedMarkdownReport` render `⚪ N/A` status icons and skip downstream stages with descriptive notices rather than reporting model failure.
+- **S6: Explicit Wire Precedence Over Directive Sniffing (`eval/eval.ts`)**:
+  - In `runMasterEvaluation`, explicit `options.wire` takes strict precedence over directive key substring sniffing (`-cl-`, `-rs-`, `-ms-`), ensuring directives with format prefixes (e.g. `lr-zn-cl-ch-no`) targeting chat endpoints route cleanly to `/v1/chat/completions` instead of `/v1/messages`.
+- **S5: Dedicated Wire Support & N/A Regression Test Suite (`tests/eval/eval_wire_support.test.ts`)**:
+  - Added 7 automated tests verifying Responses API HTTP 400 `ModelProtocolUnsupported` handling, pipeline fail-fast bypass, report markdown generation, and explicit wire priority.
+
 ### Eval Gauntlet Methodological & Implementation Upgrades (`literouter-gsti`)
 - **Stage 4 Surgical Patch Fidelity & Functional Verification (`eval/stages/stage4_patch.ts`, `eval/stages_rs/stage4_patch.ts`)**:
   - Added `EXPECTED_INNER_OLD_STR` targeting the core code statements (`const step = val * 2; this.count += step; this.logTelemetry("increment", step);`).

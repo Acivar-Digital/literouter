@@ -26,6 +26,21 @@ Do not introduce unnecessary dependencies or speculative utility functions.
 Follow deterministic minimalism and verification-led execution.
 `.repeat(30); // ~12k tokens of hydration payload
 
+function isResponsesWireUnsupported(status: number, errText: string): boolean {
+  if (status !== 400 && status !== 404 && status !== 501) return false;
+  const lower = errText.toLowerCase();
+  return (
+    errText.includes("ModelProtocolUnsupported") ||
+    lower.includes("protocol unsupported") ||
+    lower.includes("unsupported wire") ||
+    lower.includes("unsupported or invalid provider") ||
+    lower.includes("endpoint mismatch") ||
+    lower.includes("does not support /v1/responses") ||
+    lower.includes("does not support responses") ||
+    lower.includes("not supported for this model")
+  );
+}
+
 export async function runStage1Wire(ctx: StageContext): Promise<StageResult> {
   const result: StageResult = {
     stageName: "Stage 1: Wire Protocol & Long Context Hydration",
@@ -74,9 +89,19 @@ export async function runStage1Wire(ctx: StageContext): Promise<StageResult> {
 
     if (!resp1.ok) {
       const errText = await resp1.text();
+      if (isResponsesWireUnsupported(resp1.status, errText)) {
+        result.unsupportedWire = true;
+        result.error = `ModelProtocolUnsupported: Wire /v1/responses not supported (HTTP ${resp1.status})`;
+        result.notes.push(`Responses API wire unsupported by model or provider: ${errText.slice(0, 160)}`);
+        result.details["unsupportedWire"] = true;
+        console.log(`         ℹ️ Responses Wire Unsupported (HTTP ${resp1.status}): N/A`);
+        return result;
+      }
+      result.error = `HTTP ${resp1.status}: ${errText}`;
       result.notes.push(`Test 1.1 failed with HTTP ${resp1.status}: ${errText}`);
       result.details["test_1_1_status"] = resp1.status;
       console.log(`         ❌ Test 1.1 Failed: HTTP ${resp1.status} - ${errText.slice(0, 120)}`);
+      return result;
     } else {
       const data1 = (await resp1.json()) as ResponsesApiResponse;
       const usage1 = data1.usage as { output_tokens?: number; completion_tokens?: number } | undefined;
@@ -147,6 +172,15 @@ export async function runStage1Wire(ctx: StageContext): Promise<StageResult> {
 
     if (!resp2.ok) {
       const errText = await resp2.text();
+      if (isResponsesWireUnsupported(resp2.status, errText)) {
+        result.unsupportedWire = true;
+        result.error = `ModelProtocolUnsupported: Wire /v1/responses not supported (HTTP ${resp2.status})`;
+        result.notes.push(`Responses API wire unsupported by model or provider: ${errText.slice(0, 160)}`);
+        result.details["unsupportedWire"] = true;
+        console.log(`         ℹ️ Responses Wire Unsupported (HTTP ${resp2.status}): N/A`);
+        return result;
+      }
+      result.error = `HTTP ${resp2.status}: ${errText}`;
       result.notes.push(`Test 1.2 failed with HTTP ${resp2.status}: ${errText}`);
       result.details["test_1_2_status"] = resp2.status;
       console.log(`         ❌ Test 1.2 Failed: HTTP ${resp2.status} - ${errText.slice(0, 120)}`);
@@ -172,6 +206,12 @@ export async function runStage1Wire(ctx: StageContext): Promise<StageResult> {
       result.notes.push(`Test 1.2 exception: ${String(err)}`);
       console.log(`         ❌ Test 1.2 Error: ${String(err)}`);
     }
+  }
+
+  if (result.unsupportedWire) {
+    result.passed = false;
+    result.score = 0;
+    return result;
   }
 
   result.passed = result.score >= 50;

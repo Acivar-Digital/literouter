@@ -133,6 +133,7 @@ export interface WireResultSummary {
   directiveKey: string;
   gatewayUrl: string;
   passed: boolean;
+  unsupportedWire?: boolean;
   summary?: EvalOrchestratorSummary;
   error?: string;
 }
@@ -997,30 +998,51 @@ export function generateMarkdownReport(summary: EvalOrchestratorSummary): string
       executedCodeMap.set(stageNum, r);
     });
 
-    const firstFailedCode = executedResults.find((r) => !r.passed);
+    const firstFailedCode = executedResults.find((r) => !r.passed && !r.unsupportedWire);
     let firstFailedCodeNum: number | null = null;
     if (firstFailedCode) {
       const fIdx = executedResults.indexOf(firstFailedCode);
       firstFailedCodeNum = extractCodeStageNumber(firstFailedCode.stageName, fIdx);
     }
+    const hasUnsupportedWire = Boolean(
+      summary.codeSummary.unsupportedWire ||
+      executedResults.some((r) => r.unsupportedWire)
+    );
 
     for (const canonical of CANONICAL_CODE_STAGES) {
       const r = executedCodeMap.get(canonical.stageNumber);
       if (r) {
+        const isUnsupported = Boolean(
+          r.unsupportedWire ||
+          (typeof r.error === "string" &&
+            (r.error.toLowerCase().includes("modelprotocolunsupported") ||
+             r.error.toLowerCase().includes("protocol unsupported") ||
+             r.error.toLowerCase().includes("unsupported wire")))
+        );
         const stageTransportError = typeof r.error === "string" && r.error.length > 0;
-        const statusIcon = stageTransportError ? "🔴 ERROR" : r.passed ? "🟢 PASSED" : "🔴 FAILED";
-        const scoreCell = stageTransportError ? "—" : `\`${r.score}/100\``;
-        const notes = stageTransportError
-          ? `Transport error (not a model failure): ${r.error}`
-          : r.notes && r.notes.length > 0
-            ? r.notes.join("; ")
+        const statusIcon = isUnsupported
+          ? "⚪ N/A"
+          : stageTransportError
+            ? "🔴 ERROR"
             : r.passed
-              ? "Passed verification"
-              : "Criteria unmet";
+              ? "🟢 PASSED"
+              : "🔴 FAILED";
+        const scoreCell = isUnsupported ? "—" : (stageTransportError ? "—" : `\`${r.score}/100\``);
+        const notes = isUnsupported
+          ? `Wire protocol unsupported (HTTP 400 ModelProtocolUnsupported): ${r.error || "Wire unsupported"}`
+          : stageTransportError
+            ? `Transport error (not a model failure): ${r.error}`
+            : r.notes && r.notes.length > 0
+              ? r.notes.join("; ")
+              : r.passed
+                ? "Passed verification"
+                : "Criteria unmet";
         lines.push(`| **${canonical.stageNumber}** | ${r.stageName} | ${scoreCell} | ${statusIcon} | ${notes} |`);
       } else {
         let reason = "Intentionally excluded (CLI filter / not scheduled)";
-        if (firstFailedCodeNum !== null && canonical.stageNumber > firstFailedCodeNum) {
+        if (hasUnsupportedWire) {
+          reason = "Skipped: Wire protocol unsupported by target model / provider";
+        } else if (firstFailedCodeNum !== null && canonical.stageNumber > firstFailedCodeNum) {
           reason = `Aborted: Stage ${firstFailedCodeNum} failed in fail-fast mode`;
         }
         lines.push(`| **${canonical.stageNumber}** | ${canonical.stageName} | \`—\` | ⏭️ SKIPPED | ${reason} |`);
@@ -1029,16 +1051,31 @@ export function generateMarkdownReport(summary: EvalOrchestratorSummary): string
 
     for (const [stageNum, r] of executedCodeMap) {
       if (stageNum > 5 || stageNum < 1) {
+        const isUnsupported = Boolean(
+          r.unsupportedWire ||
+          (typeof r.error === "string" &&
+            (r.error.toLowerCase().includes("modelprotocolunsupported") ||
+             r.error.toLowerCase().includes("protocol unsupported") ||
+             r.error.toLowerCase().includes("unsupported wire")))
+        );
         const stageTransportError = typeof r.error === "string" && r.error.length > 0;
-        const statusIcon = stageTransportError ? "🔴 ERROR" : r.passed ? "🟢 PASSED" : "🔴 FAILED";
-        const scoreCell = stageTransportError ? "—" : `\`${r.score}/100\``;
-        const notes = stageTransportError
-          ? `Transport error (not a model failure): ${r.error}`
-          : r.notes && r.notes.length > 0
-            ? r.notes.join("; ")
+        const statusIcon = isUnsupported
+          ? "⚪ N/A"
+          : stageTransportError
+            ? "🔴 ERROR"
             : r.passed
-              ? "Passed verification"
-              : "Criteria unmet";
+              ? "🟢 PASSED"
+              : "🔴 FAILED";
+        const scoreCell = isUnsupported ? "—" : (stageTransportError ? "—" : `\`${r.score}/100\``);
+        const notes = isUnsupported
+          ? `Wire protocol unsupported (HTTP 400 ModelProtocolUnsupported): ${r.error || "Wire unsupported"}`
+          : stageTransportError
+            ? `Transport error (not a model failure): ${r.error}`
+            : r.notes && r.notes.length > 0
+              ? r.notes.join("; ")
+              : r.passed
+                ? "Passed verification"
+                : "Criteria unmet";
         lines.push(`| **${stageNum}** | ${r.stageName} | ${scoreCell} | ${statusIcon} | ${notes} |`);
       }
     }
@@ -1050,11 +1087,25 @@ export function generateMarkdownReport(summary: EvalOrchestratorSummary): string
     // evaluated. Report that as ERROR rather than REJECTED.
     const allCodeStagesTransportFailed =
       totalCount > 0 && summary.codeSummary.results.every((r) => typeof r.error === "string" && r.error.length > 0);
-    const codeVerdict = allCodeStagesTransportFailed
-      ? "🔴 **ERROR (upstream unreachable — model not evaluated)**"
-      : summary.codeSummary.allPassed
-        ? "🟢 **CERTIFIED PRODUCTION READY**"
-        : "🔴 **REJECTED (CRITICAL GATES FAILED)**";
+    const allCodeStagesUnsupported =
+      totalCount > 0 &&
+      summary.codeSummary.results.every((r) =>
+        Boolean(
+          r.unsupportedWire ||
+          (typeof r.error === "string" &&
+            (r.error.toLowerCase().includes("modelprotocolunsupported") ||
+             r.error.toLowerCase().includes("protocol unsupported") ||
+             r.error.toLowerCase().includes("unsupported wire")))
+        )
+      );
+
+    const codeVerdict = allCodeStagesUnsupported
+      ? "⚪ **N/A (wire protocol unsupported)**"
+      : allCodeStagesTransportFailed
+        ? "🔴 **ERROR (upstream unreachable — model not evaluated)**"
+        : summary.codeSummary.allPassed
+          ? "🟢 **CERTIFIED PRODUCTION READY**"
+          : "🔴 **REJECTED (CRITICAL GATES FAILED)**";
 
     lines.push(`**Code Suite Verdict:** ${codeVerdict} (\`${passedCount}/${totalCount}\` stages cleared)`);
     lines.push("");
@@ -1274,6 +1325,7 @@ function formatWireLatency(w?: WireResultSummary): string {
 
 function formatWireCodeRate(w?: WireResultSummary): string {
   if (!w?.summary?.codeSummary) return w?.error ? "Error" : "N/A";
+  if (w.unsupportedWire || w.summary.codeSummary.unsupportedWire) return "N/A";
   const results = w.summary.codeSummary.results ?? [];
   if (results.length === 0) return "N/A";
   const passed = results.filter((r) => r.passed).length;
@@ -1289,15 +1341,40 @@ function formatWireWebRate(w?: WireResultSummary): string {
   return `${passed}/${stages.length} (${w.summary.webResult.compositeScore}/100)`;
 }
 
-function formatWireVerdict(w?: WireResultSummary): string {
+export function formatWireVerdict(w?: WireResultSummary): string {
   if (!w) return "⚪ NOT RUN";
-  if (w.error) return "🔴 ERROR";
+  if (w.unsupportedWire || w.summary?.codeSummary?.unsupportedWire) return "⚪ N/A";
+  if (w.error) {
+    const errLower = w.error.toLowerCase();
+    if (
+      errLower.includes("modelprotocolunsupported") ||
+      errLower.includes("protocol unsupported") ||
+      errLower.includes("unsupported wire") ||
+      errLower.includes("endpoint mismatch")
+    ) {
+      return "⚪ N/A";
+    }
+    return "🔴 ERROR";
+  }
   // A wire whose every executed stage failed on transport never reached the
   // model. "FAILED" would blame the model for a gateway rejection.
   const stages = [
     ...((w.summary?.codeSummary?.results ?? []) as CodeStageResult[]),
     ...((w.summary?.webResult?.stages ?? []) as WebStageResult[]),
   ];
+  const allUnsupported =
+    stages.length > 0 &&
+    stages.every((r) =>
+      Boolean(
+        ("unsupportedWire" in r && (r as any).unsupportedWire) ||
+        (typeof r.error === "string" &&
+          (r.error.toLowerCase().includes("modelprotocolunsupported") ||
+           r.error.toLowerCase().includes("protocol unsupported") ||
+           r.error.toLowerCase().includes("unsupported wire")))
+      )
+    );
+  if (allUnsupported) return "⚪ N/A";
+
   const allTransportFailed =
     stages.length > 0 && stages.every((r) => typeof r.error === "string" && r.error.length > 0);
   if (allTransportFailed) return "🔴 ERROR (upstream)";
@@ -1316,6 +1393,13 @@ function formatWireDetailSection(wireNumber: number, w: WireResultSummary): stri
   lines.push(`> **Directive Key:** \`${w.directiveKey}\`  `);
   lines.push(`> **Endpoint Target:** \`${w.gatewayUrl}\`  `);
   lines.push(`> **Verdict:** ${formatWireVerdict(w)}  `);
+
+  if (w.unsupportedWire || w.summary?.codeSummary?.unsupportedWire) {
+    lines.push("");
+    lines.push(`> ℹ️ **Wire Notice:** Wire protocol \`${w.wire}\` is unsupported by this model or provider (N/A).  `);
+    lines.push("");
+    return lines;
+  }
 
   if (w.error) {
     lines.push("");
@@ -1784,6 +1868,7 @@ export async function runMultiWireModelEvaluation(
     });
     wireResults.chat.summary = summaryChat;
     wireResults.chat.passed = summaryChat.allSuitesPassed;
+    wireResults.chat.unsupportedWire = summaryChat.codeSummary?.unsupportedWire;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`\x1b[31m❌ Wire 1 (Chat Completions) failed:\x1b[0m`, msg);
@@ -1810,6 +1895,7 @@ export async function runMultiWireModelEvaluation(
     });
     wireResults.responses.summary = summaryRs;
     wireResults.responses.passed = summaryRs.allSuitesPassed;
+    wireResults.responses.unsupportedWire = summaryRs.codeSummary?.unsupportedWire;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`\x1b[31m❌ Wire 2 (Responses API) failed:\x1b[0m`, msg);
@@ -1836,6 +1922,7 @@ export async function runMultiWireModelEvaluation(
     });
     wireResults.messages.summary = summaryMs;
     wireResults.messages.passed = summaryMs.allSuitesPassed;
+    wireResults.messages.unsupportedWire = summaryMs.codeSummary?.unsupportedWire;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`\x1b[31m❌ Wire 3 (Anthropic Messages) failed:\x1b[0m`, msg);
@@ -1845,7 +1932,11 @@ export async function runMultiWireModelEvaluation(
     uninstallAnthropicBridge();
   }
 
-  const allWiresPassed = wireResults.chat.passed && wireResults.responses.passed && wireResults.messages.passed;
+  const allWiresPassed =
+    (wireResults.chat.passed || wireResults.chat.unsupportedWire) &&
+    (wireResults.responses.passed || wireResults.responses.unsupportedWire) &&
+    (wireResults.messages.passed || wireResults.messages.unsupportedWire) &&
+    (wireResults.chat.passed || wireResults.responses.passed || wireResults.messages.passed);
   const unifiedRoleRecommendation = determineUnifiedRoleRecommendation(
     wireResults.chat,
     wireResults.responses,
@@ -1859,7 +1950,7 @@ export async function runMultiWireModelEvaluation(
     gatewayHost: baseUrl,
     directiveKeys: wireKeys,
     wireResults,
-    allWiresPassed,
+    allWiresPassed: Boolean(allWiresPassed),
     unifiedRoleRecommendation,
     extraPayload: effectiveExtraPayload,
   };
@@ -1879,7 +1970,9 @@ export async function runMultiWireModelEvaluation(
   for (const w of [wireResults.chat, wireResults.responses, wireResults.messages]) {
     const proto = w.wireLabel.padEnd(20).slice(0, 20);
     const key = w.directiveKey.padEnd(16).slice(0, 16);
-    const st = (w.passed ? "\x1b[32mPASSED\x1b[0m  " : "\x1b[31mFAILED\x1b[0m  ");
+    const st = w.unsupportedWire
+      ? "\x1b[33mN/A     \x1b[0m"
+      : (w.passed ? "\x1b[32mPASSED\x1b[0m  " : "\x1b[31mFAILED\x1b[0m  ");
     const spd = formatWireSpeed(w).padEnd(9).slice(0, 9);
     const ttft = formatWireTtft(w).padEnd(8).slice(0, 8);
     const code = formatWireCodeRate(w).padEnd(13).slice(0, 13);
@@ -2161,23 +2254,25 @@ export async function runMasterEvaluation(
   const runs = options.runs ?? 2;
   const continueOnFailure = options.continueOnFailure ?? false;
 
-  // Auto-detect Responses vs Chat wire
-  const isResponses =
-    options.wire === "responses" ||
-    model.toLowerCase().includes("muse") ||
-    options.directiveKey?.includes("-rs-") ||
-    options.gatewayUrl?.includes("/responses");
-  const isMessages =
-    options.wire === "messages" ||
-    options.directiveKey?.includes("-ms-") ||
-    options.directiveKey?.includes("-cl-") ||
-    options.gatewayUrl?.includes("/messages");
+  // Wire resolution: explicit options.wire MUST take strict precedence over directive/model/url sniffing
+  let wire: "chat" | "responses" | "messages";
+  if (options.wire && options.wire !== "auto") {
+    wire = options.wire;
+  } else {
+    const isMessages =
+      options.directiveKey?.includes("-ms-") ||
+      options.directiveKey?.includes("-cl-") ||
+      options.gatewayUrl?.includes("/messages");
+    const isResponses =
+      model.toLowerCase().includes("muse") ||
+      options.directiveKey?.includes("-rs-") ||
+      options.gatewayUrl?.includes("/responses");
+    wire = isMessages ? "messages" : isResponses ? "responses" : "chat";
+  }
 
-  const wire: "chat" | "responses" | "messages" = isMessages
-    ? "messages"
-    : isResponses
-      ? "responses"
-      : "chat";
+  const isMessages = wire === "messages";
+  const isResponses = wire === "responses";
+
   const provCode = model.toLowerCase().startsWith("muse") || model.toLowerCase().includes("zen") ? "zn" : "or";
   const defaultDirective = isMessages
     ? `lr-${provCode}-cl-ms-no`

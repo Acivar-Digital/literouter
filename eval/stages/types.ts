@@ -29,6 +29,7 @@ export interface StageResult {
    * and MUST NOT be read as a model verdict. Absent on genuine model answers.
    */
   error?: string;
+  unsupportedWire?: boolean;
 }
 
 /**
@@ -39,6 +40,25 @@ export interface StageResult {
  */
 export function isTransportFailure(result: Pick<StageResult, "error">): boolean {
   return typeof result.error === "string" && result.error.length > 0;
+}
+
+/**
+ * True when a stage failed because the model or provider does not support the requested wire protocol
+ * (e.g., Responses API /v1/responses returning ModelProtocolUnsupported).
+ */
+export function isWireUnsupported(result: { unsupportedWire?: boolean; error?: string }): boolean {
+  if (result.unsupportedWire) return true;
+  if (typeof result.error === "string") {
+    const err = result.error.toLowerCase();
+    return (
+      err.includes("modelprotocolunsupported") ||
+      err.includes("protocol unsupported") ||
+      err.includes("unsupported wire") ||
+      err.includes("unsupported provider") ||
+      err.includes("endpoint mismatch")
+    );
+  }
+  return false;
 }
 
 /**

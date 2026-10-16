@@ -29,6 +29,7 @@ export interface StageResult {
    * and MUST NOT be read as a model verdict. Absent on genuine model answers.
    */
   error?: string;
+  unsupportedWire?: boolean;
 }
 
 export interface ResponsesToolFunction {
