@@ -305,6 +305,47 @@ describe("eval/eval.ts Master Orchestrator Unit Tests", () => {
       expect(role.role).toBe("Explorer");
       expect(role.badge).toContain("FAST EXPLORER");
     });
+
+    it("should recommend Rejected when all code and web stages fail", () => {
+      const codeSummary = {
+        model: "failing-model",
+        allPassed: false,
+        results: [
+          { stageName: "Stage 1: Wire", passed: false, score: 0, details: {}, notes: [] },
+          { stageName: "Stage 2: Pydantic", passed: false, score: 0, details: {}, notes: [] },
+        ],
+      };
+      const webResult = {
+        model: "failing-model",
+        allPassed: false,
+        compositeScore: 10,
+        isProductionReady: false,
+        stages: [
+          { stageNumber: 1, stageName: "Stage 1", passed: false, score: 10, checks: [], durationMs: 100 },
+        ],
+      };
+
+      const role = determineArchitecturalRole(undefined, codeSummary as any, webResult as any);
+      expect(role.role).toBe("Rejected");
+      expect(role.badge).toBe("🚫 REJECTED / UNVERIFIED");
+      expect(role.rationale).toContain("Failed baseline capability gates");
+    });
+
+    it("should recommend Rejected when passed summary object with zero passed stages or fatal upstream errors", () => {
+      const role = determineArchitecturalRole({
+        codeSummary: { passed: 0, results: [] } as any,
+        webResult: { passedStages: 0, stages: [] } as any,
+        stageErrors: ["HTTP 403 Forbidden: Free tier disabled"],
+      });
+      expect(role.role).toBe("Rejected");
+      expect(role.badge).toBe("🚫 REJECTED / UNVERIFIED");
+    });
+
+    it("should recommend Rejected when neither functional stages nor speed runs succeeded", () => {
+      const role = determineArchitecturalRole(undefined, undefined, undefined);
+      expect(role.role).toBe("Rejected");
+      expect(role.badge).toBe("🚫 REJECTED / UNVERIFIED");
+    });
   });
 
   describe("generateMarkdownReport & writeMarkdownReport", () => {
@@ -1151,6 +1192,44 @@ describe("eval/eval.ts Master Orchestrator Unit Tests", () => {
 
         expect(rec.bestWireForExplorer).toContain("N/A");
         expect(rec.bestWireForExplorer).toContain("2000ms");
+      });
+
+      it("should return Rejected overall role when all evaluated wires are rejected or error", () => {
+        const wireErr = (wire: WireResultSummary["wire"], wireLabel: string): WireResultSummary => ({
+          wire,
+          wireLabel,
+          directiveKey: `lr-or-mock-${wire}`,
+          gatewayUrl: `http://localhost:7766/v1/${wire}`,
+          passed: false,
+          error: "HTTP 403 Forbidden: Free tier exhausted",
+          summary: {
+            model: "bad-model",
+            sanitizedModelName: "bad-model",
+            timestamp: "2026-09-21T00:00:00.000Z",
+            directiveKey: `lr-or-mock-${wire}`,
+            gatewayUrl: `http://localhost:7766/v1/${wire}`,
+            wire,
+            suitesRun: ["code"],
+            roleRecommendation: {
+              role: "Rejected",
+              badge: "🚫 REJECTED / UNVERIFIED",
+              rationale: "Failed baseline capability gates.",
+              strengths: [],
+              caveats: ["HTTP 403 Forbidden: Free tier exhausted"],
+            },
+            allSuitesPassed: false,
+          },
+        });
+
+        const rec = determineUnifiedRoleRecommendation(
+          wireErr("chat", "Chat Completions"),
+          wireErr("responses", "Responses API"),
+          wireErr("messages", "Anthropic Messages")
+        );
+
+        expect(rec.overallRole).toBe("Rejected");
+        expect(rec.badge).toBe("🚫 REJECTED / UNVERIFIED");
+        expect(rec.rationale).toContain("Failed baseline capability gates");
       });
 
       it("should label a pipeline-derived throughput value instead of presenting it as measured", () => {

@@ -29,6 +29,8 @@ export interface BenchResult {
   speedTokPerSec: number;
   status: "OK" | "ERROR";
   errorMessage?: string;
+  buffered?: boolean;
+  chunkCount?: number;
 }
 
 /**
@@ -46,6 +48,7 @@ export interface ModelAggregate {
   avgDurationMs: number;
   avgTotalTokens: number;
   avgSpeedTokPerSec: number;
+  buffered?: boolean;
 }
 
 export interface SpeedBenchmarkResult {
@@ -102,6 +105,8 @@ export async function runSingleBenchmark(
   let accumulatedThinking = "";
   let reportedUsage: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } | null = null;
   let responsesOutputTokens: number | null = null;
+  let chunkCount = 0;
+  let maxChunkTokens = 0;
 
   try {
     const resp = await fetch(endpoint, {
@@ -162,6 +167,11 @@ export async function runSingleBenchmark(
             ) {
               const text = typeof json.delta === "string" ? json.delta : "";
               if (text && firstTokenTime === null) firstTokenTime = performance.now();
+              if (text) {
+                chunkCount++;
+                const chunkTokens = Math.max(1, Math.round(text.length / 3.8));
+                if (chunkTokens > maxChunkTokens) maxChunkTokens = chunkTokens;
+              }
               if (json.type === "response.output_text.delta") accumulatedContent += text;
               else accumulatedThinking += text;
             } else if (json.type === "response.completed" || json.type === "response.incomplete") {
@@ -194,6 +204,13 @@ export async function runSingleBenchmark(
               firstTokenTime = performance.now();
             }
 
+            if (content || reasoning || hasToolDelta) {
+              chunkCount++;
+              const textLen = (content ? content.length : 0) + (reasoning ? reasoning.length : 0);
+              const chunkTokens = Math.max(1, Math.round(textLen / 3.8));
+              if (chunkTokens > maxChunkTokens) maxChunkTokens = chunkTokens;
+            }
+
             if (content) accumulatedContent += content;
             if (reasoning) accumulatedThinking += reasoning;
           }
@@ -205,6 +222,7 @@ export async function runSingleBenchmark(
 
     const end = performance.now();
     result.totalDurationMs = Math.round(end - start);
+    result.chunkCount = chunkCount;
     // Never let TTFT equal total duration: that collapses the generation
     // window to zero and inflates tok/s by ~1000x. If no token delta was
     // observed the arrival time is unknown, so leave ttftMs at 0 and let
@@ -243,6 +261,17 @@ export async function runSingleBenchmark(
     result.speedTokPerSec =
       generationTimeSec > 0 ? Math.round((result.totalTokens / generationTimeSec) * 10) / 10 : 0;
 
+    // Burst delivery & proxy buffering detection:
+    // If upstream proxy or single TCP read dumps the bulk of tokens in <= 2 chunks
+    // where maxChunkTokens > 80% of totalTokens, the window collapses artificially.
+    // Calculate throughput over the full wall-clock duration instead.
+    if (result.totalTokens > 0 && chunkCount <= 2 && maxChunkTokens / result.totalTokens > 0.8) {
+      result.buffered = true;
+      const wallClockSec = result.totalDurationMs / 1000;
+      result.speedTokPerSec =
+        wallClockSec > 0 ? Math.round((result.totalTokens / wallClockSec) * 10) / 10 : 0;
+    }
+
     return result;
   } catch (err) {
     result.status = "ERROR";
@@ -280,6 +309,7 @@ export function computeAggregate(model: string, runs: BenchResult[]): ModelAggre
 
   const speeds = successful.map((r) => r.speedTokPerSec);
   const avgSpeedTokPerSec = Math.round((speeds.reduce((a, b) => a + b, 0) / speeds.length) * 10) / 10;
+  const anyBuffered = successful.some((r) => r.buffered);
 
   return {
     model,
@@ -290,6 +320,7 @@ export function computeAggregate(model: string, runs: BenchResult[]): ModelAggre
     avgDurationMs,
     avgTotalTokens,
     avgSpeedTokPerSec,
+    ...(anyBuffered ? { buffered: true } : {}),
   };
 }
 
@@ -337,8 +368,9 @@ export async function runSpeedBenchmark(
 
       if (verbose) {
         if (res.status === "OK") {
+          const speedLabel = `${res.speedTokPerSec} tok/s${res.buffered ? " [BUFFERED]" : ""}`;
           console.log(
-            `\x1b[32mDONE\x1b[0m (TTFT: \x1b[1m${res.ttftMs}ms\x1b[0m | Total: \x1b[1m${res.totalDurationMs}ms\x1b[0m | Speed: \x1b[33m${res.speedTokPerSec} tok/s\x1b[0m | Tokens: ${res.totalTokens})`
+            `\x1b[32mDONE\x1b[0m (TTFT: \x1b[1m${res.ttftMs}ms\x1b[0m | Total: \x1b[1m${res.totalDurationMs}ms\x1b[0m | Speed: \x1b[33m${speedLabel}\x1b[0m | Tokens: ${res.totalTokens})`
           );
         } else {
           console.log(`\x1b[31mFAILED\x1b[0m (${res.errorMessage})`);
@@ -386,7 +418,7 @@ export function printBenchmarkSummary(aggregates: ModelAggregate[]) {
     const padTtft = `${agg.avgTtftMs}ms`.padStart(9);
     const padTotal = `${agg.avgDurationMs}ms`.padStart(10);
     const padTok = `${agg.avgTotalTokens}`.padStart(6);
-    const padSpeed = `${agg.avgSpeedTokPerSec} t/s`.padStart(13);
+    const padSpeed = `${agg.avgSpeedTokPerSec} t/s${agg.buffered ? " [BUFFERED]" : ""}`.padStart(13);
 
     console.log(`| ${padModel} | ${padTtft} | ${padTotal} | ${padTok} | ${padSpeed} | ${rankStr} |`);
   });

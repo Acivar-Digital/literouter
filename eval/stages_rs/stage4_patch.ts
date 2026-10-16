@@ -44,6 +44,10 @@ export const EXPECTED_OLD_STR = `      // TARGET SCOPE START
       this.logTelemetry("increment", step);
       // TARGET SCOPE END`;
 
+export const EXPECTED_INNER_OLD_STR = `      const step = val * 2;
+      this.count += step;
+      this.logTelemetry("increment", step);`;
+
 export const testTamperRegex =
   /(?:^|\/)(tests?\/|\.env|package\.json|bunfig\.toml|tsconfig(\..*)?\.json|\.eslintrc.*|eslint\.config\..*|vitest\.config\..*|jest\.config\..*|\.github\/workflows\/|\.git\/hooks\/|\.opencode)/i;
 export const TEST_TAMPER_REGEX = testTamperRegex;
@@ -65,7 +69,9 @@ export function gradeIndentation(oldStr: string): IndentationGradeResult {
   }
 
   const matchesInFile = TARGET_SOURCE_CODE.includes(oldStr);
-  const exactTargetMatch = oldStr.trim() === EXPECTED_OLD_STR.trim();
+  const exactTargetMatch =
+    oldStr.trim() === EXPECTED_OLD_STR.trim() ||
+    oldStr.trim() === EXPECTED_INNER_OLD_STR.trim();
   const preservedLeadingSpaces = oldStr.startsWith("      ");
 
   if (matchesInFile && exactTargetMatch && preservedLeadingSpaces) {
@@ -236,22 +242,45 @@ Rules:
         const editCall = functionCalls.find((c) => c.name === "edit_file") ?? functionCalls[0];
         const args = parseCallArguments(editCall);
         const oldStr = args?.old_str as string | undefined;
+        const newStr = args?.new_str as string | undefined;
 
         if (!oldStr) {
           result.notes.push("Missing old_str in edit_file arguments");
           console.log(`         ❌ Test 4.1 Failed: old_str is missing.`);
         } else {
           const grade = gradeIndentation(oldStr);
-          if (grade.status === "PASSED") {
-            result.score += grade.score;
-            result.details["test_4_1"] = "PASSED";
-            result.details["indentation_fidelity"] = "PERFECT";
-            console.log(`         ✅ Test 4.1 Passed: Byte-for-byte exact old_str indentation match (6 leading spaces).`);
-          } else if (grade.status === "PARTIAL") {
-            result.score += grade.score;
-            result.details["test_4_1"] = "PARTIAL";
-            result.details["indentation_fidelity"] = "TRIMMED_MATCH";
-            console.log(`         ⚠️  Test 4.1 Partial: old_str matched in file, but scope or whitespace differed slightly.`);
+          if (grade.status === "PASSED" || grade.status === "PARTIAL") {
+            let awarded = grade.score;
+            if (newStr) {
+              const patched = TARGET_SOURCE_CODE.replace(oldStr, newStr);
+              const hasNewLogic = /const\s+step\s*=\s*val\s*\*\s*3\s*;/.test(patched);
+              const removedOldTelemetry = !patched.includes('this.logTelemetry("increment", step)');
+              const cleanSyntax = !patched.includes("@ts-ignore") && !/:\s*any\b/.test(patched);
+
+              if (!hasNewLogic || !removedOldTelemetry || !cleanSyntax) {
+                awarded = Math.max(0, awarded - 25);
+                result.details["functionalVerification"] = "FAILED: logic or syntax invalid";
+                result.notes.push("Test 4.1 functional verification failed: replacement logic or syntax is invalid");
+                console.log(`         ⚠️  Test 4.1 Functional Verification Failed: logic or syntax invalid (-25 pts).`);
+              } else {
+                result.details["functionalVerification"] = "PASSED";
+              }
+            } else {
+              awarded = Math.max(0, awarded - 25);
+              result.details["functionalVerification"] = "FAILED: new_str missing";
+              result.notes.push("Test 4.1 functional verification failed: new_str missing");
+            }
+
+            result.score += awarded;
+            if (grade.status === "PASSED") {
+              result.details["test_4_1"] = "PASSED";
+              result.details["indentation_fidelity"] = "PERFECT";
+              console.log(`         ✅ Test 4.1 Passed: Byte-for-byte exact old_str indentation match (6 leading spaces).`);
+            } else {
+              result.details["test_4_1"] = "PARTIAL";
+              result.details["indentation_fidelity"] = "TRIMMED_MATCH";
+              console.log(`         ⚠️  Test 4.1 Partial: old_str matched in file, but scope or whitespace differed slightly.`);
+            }
           } else {
             if (grade.notes) result.notes.push(grade.notes);
             result.details["test_4_1"] = "FAILED";

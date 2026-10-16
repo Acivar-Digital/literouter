@@ -17,6 +17,7 @@ import {
   extractCompletionText,
   isResponsesEndpoint,
 } from "./types";
+import { verifyTsxCompiles } from "./ast_verify";
 
 export interface StructureEvaluation {
   score: number;
@@ -220,12 +221,27 @@ function buildMessages(imageUri: string) {
   ];
 }
 
+function isImageUnsupportedError(status: number, errText: string): boolean {
+  if (status !== 400) return false;
+  const lower = errText.toLowerCase();
+  return (
+    lower.includes("image") ||
+    lower.includes("vision") ||
+    lower.includes("modality") ||
+    lower.includes("unsupported") ||
+    lower.includes("not support") ||
+    lower.includes("invalid message content") ||
+    lower.includes("multimodal")
+  );
+}
+
 /**
  * Executes Stage 1: DOM Structure & Layout Fidelity against gateway.
  */
 export async function runStage1Structure(ctx: StageContext): Promise<StageResult> {
   const startTime = Date.now();
   const imageUri = ctx.imageInput || ctx.imageUri || DEFAULT_DASHBOARD_MOCKUP;
+  let modalityFallbackTriggered = false;
 
   console.log(`\n========================================================================`);
   console.log(`🏛️  STAGE 1: DOM STRUCTURE & LAYOUT FIDELITY`);
@@ -256,12 +272,47 @@ export async function runStage1Structure(ctx: StageContext): Promise<StageResult
           messages: buildMessages(imageUri),
         };
 
-    const response = await fetch(ctx.gatewayUrl, {
+    let response = await fetch(ctx.gatewayUrl, {
       method: "POST",
       headers: buildStageHeaders(ctx),
       body: JSON.stringify(bodyPayload),
       signal: AbortSignal.timeout(ctx.timeoutMs ?? 180000),
     });
+
+    if (!response.ok && !isResponses) {
+      const errorText = await response.text();
+      if (isImageUnsupportedError(response.status, errorText)) {
+        console.log(`   ⚠️ Vision input unsupported (HTTP 400). Retrying with text-only prompt fallback...`);
+        modalityFallbackTriggered = true;
+        const textFallbackPayload = {
+          model: ctx.model,
+          stream: false,
+          max_tokens: ctx.maxTokens ?? 8192,
+          ...(ctx.reasoningEffort ? { reasoning: { effort: ctx.reasoningEffort } } : {}),
+          ...(ctx.extraPayload ?? {}),
+          messages: [{ role: "user", content: PROMPT_STRUCTURE }],
+        };
+        response = await fetch(ctx.gatewayUrl, {
+          method: "POST",
+          headers: buildStageHeaders(ctx),
+          body: JSON.stringify(textFallbackPayload),
+          signal: AbortSignal.timeout(ctx.timeoutMs ?? 180000),
+        });
+      } else {
+        return {
+          stageNumber: 1,
+          stageName: "Stage 1: DOM Structure & Layout Fidelity",
+          passed: false,
+          score: 0,
+          durationMs: Date.now() - startTime,
+          checks: [
+            { name: "HTTP Gateway Response", passed: false, detail: `HTTP ${response.status}: ${errorText.slice(0, 100)}` },
+          ],
+          error: `HTTP ${response.status}: ${errorText}`,
+          notes: [`Request failed with status ${response.status}`],
+        };
+      }
+    }
 
     if (!response.ok) {
       const errorText = await response.text();
@@ -279,10 +330,17 @@ export async function runStage1Structure(ctx: StageContext): Promise<StageResult
       };
     }
 
-    const data = (await response.json()) as any;
+    const data = (await response.json()) as Record<string, unknown>;
 
     if (data.error) {
-      const errMsg = typeof data.error === "object" ? data.error.message || JSON.stringify(data.error) : data.error;
+      let errMsg = String(data.error);
+      if (data.error && typeof data.error === "object") {
+        if ("message" in data.error && typeof data.error.message === "string") {
+          errMsg = data.error.message;
+        } else {
+          errMsg = JSON.stringify(data.error);
+        }
+      }
       console.log(`   ❌ Upstream provider error: ${errMsg}`);
       return {
         stageNumber: 1,
@@ -299,7 +357,23 @@ export async function runStage1Structure(ctx: StageContext): Promise<StageResult
     const rawContent = extractCompletionText(data);
     const cleanCode = extractCodeBlock(rawContent);
 
+    const ast = verifyTsxCompiles(cleanCode);
     const evalResult = evaluateStructure(cleanCode);
+    if (!ast.valid) {
+      evalResult.score = Math.min(evalResult.score, 30);
+      evalResult.passed = false;
+      evalResult.details.astValid = false;
+      evalResult.details.astError = ast.error;
+      evalResult.notes.push(`TSX compilation failed: ${ast.error}`);
+    } else {
+      evalResult.details.astValid = true;
+    }
+
+    if (modalityFallbackTriggered) {
+      evalResult.details.modality = "Text-to-UI (Vision Unsupported)";
+      evalResult.notes.push("Evaluated via text-to-UI fallback (model rejected image inputs)");
+    }
+
     const durationMs = Date.now() - startTime;
 
     console.log(`   Score: ${evalResult.score}/100 - Passed: ${evalResult.passed}`);

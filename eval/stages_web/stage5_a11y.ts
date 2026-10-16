@@ -23,6 +23,7 @@ import {
   isResponsesEndpoint,
 } from "./types";
 import { FIXTURES } from "./fixtures";
+import { verifyTsxCompiles } from "./ast_verify";
 
 export interface A11yViolation {
   rule: string;
@@ -275,12 +276,66 @@ export async function runStage5A11y(ctx: StageContext): Promise<StageResult> {
           ...(ctx.extraPayload ?? {}),
         };
 
-    const resp = await fetch(ctx.gatewayUrl, {
+    let resp = await fetch(ctx.gatewayUrl, {
       method: "POST",
       headers: buildStageHeaders(ctx),
       body: JSON.stringify(bodyPayload),
       signal: AbortSignal.timeout(ctx.timeoutMs ?? 180000),
     });
+
+    let modalityFallbackTriggered = false;
+
+    if (!resp.ok && !isResponses) {
+      const errText = await resp.text();
+      const lower = errText.toLowerCase();
+      const isImageRejection =
+        resp.status === 400 &&
+        (lower.includes("image") ||
+          lower.includes("vision") ||
+          lower.includes("modality") ||
+          lower.includes("unsupported") ||
+          lower.includes("not support") ||
+          lower.includes("invalid message content") ||
+          lower.includes("multimodal"));
+
+      if (isImageRejection) {
+        console.log(`   ⚠️ Vision input unsupported in Stage 5 (HTTP 400). Retrying with text-only prompt fallback...`);
+        modalityFallbackTriggered = true;
+        const textPrompt = [
+          prompt[0],
+          {
+            role: "user",
+            content:
+              "Implement an authentication modal dialog with error state. Ensure strict ARIA compliance, semantic buttons, labeled inputs, and dialog roles.",
+          },
+        ];
+        const textPayload = {
+          model: ctx.model,
+          messages: textPrompt,
+          stream: false,
+          max_tokens: ctx.maxTokens ?? 8192,
+          ...(ctx.reasoningEffort ? { reasoning: { effort: ctx.reasoningEffort } } : {}),
+          temperature: 0.1,
+          ...(ctx.extraPayload ?? {}),
+        };
+        resp = await fetch(ctx.gatewayUrl, {
+          method: "POST",
+          headers: buildStageHeaders(ctx),
+          body: JSON.stringify(textPayload),
+          signal: AbortSignal.timeout(ctx.timeoutMs ?? 180000),
+        });
+      } else {
+        notes.push(`Gateway returned HTTP ${resp.status}: ${errText.slice(0, 200)}`);
+        result.error = errText;
+        result.details = { status: resp.status, error: errText };
+        result.checks.push({
+          name: "Gateway Response",
+          passed: false,
+          detail: `HTTP ${resp.status}`,
+        });
+        return result;
+      }
+    }
 
     result.durationMs = Date.now() - startTime;
 
@@ -297,10 +352,17 @@ export async function runStage5A11y(ctx: StageContext): Promise<StageResult> {
       return result;
     }
 
-    const json = (await resp.json()) as any;
+    const json = (await resp.json()) as Record<string, unknown>;
 
     if (json.error) {
-      const errMsg = typeof json.error === "object" ? json.error.message || JSON.stringify(json.error) : json.error;
+      let errMsg = String(json.error);
+      if (json.error && typeof json.error === "object") {
+        if ("message" in json.error && typeof json.error.message === "string") {
+          errMsg = json.error.message;
+        } else {
+          errMsg = JSON.stringify(json.error);
+        }
+      }
       notes.push(`Upstream error: ${errMsg}`);
       result.checks.push({
         name: "Upstream Response",
@@ -324,14 +386,25 @@ export async function runStage5A11y(ctx: StageContext): Promise<StageResult> {
       return result;
     }
 
+    const ast = verifyTsxCompiles(generatedCode);
     const audit = auditA11y(generatedCode);
 
-    result.score = audit.score;
-    result.passed = audit.passed;
+    if (!ast.valid) {
+      result.score = Math.min(audit.score, 30);
+      result.passed = false;
+      notes.push(`TSX compilation failed: ${ast.error}`);
+    } else {
+      result.score = audit.score;
+      result.passed = audit.passed;
+    }
+
     result.details = {
       codeSnippet: generatedCode.slice(0, 250),
       metrics: audit.metrics,
       violations: audit.violations,
+      astValid: ast.valid,
+      ...(ast.error ? { astError: ast.error } : {}),
+      ...(modalityFallbackTriggered ? { modality: "Text-to-UI (Vision Unsupported)" } : {}),
     };
 
     result.checks.push({

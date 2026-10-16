@@ -62,7 +62,7 @@ import {
  */
 const EXPLORER_MAX_TTFT_MS = 2000;
 export type SuiteType = "speed" | "code" | "web";
-export type ArchitecturalRole = "Orchestrator" | "General Coder" | "Explorer";
+export type ArchitecturalRole = "Orchestrator" | "General Coder" | "Explorer" | "Rejected";
 
 export interface MultiWireTarget extends ValidatedEvalArgs {
   extraPayload?: Record<string, unknown>;
@@ -482,6 +482,25 @@ export function buildStatisticalAnalysisSection(
 ): string[] {
   const lines: string[] = [];
   const speedData = extractSpeedRunData(summary);
+  const codeResults = (summary.codeSummary?.results ?? []) as CodeStageResult[];
+  const webStages = (summary.webResult?.stages ?? []) as WebStageResult[];
+  const totalStages = codeResults.length + webStages.length;
+  const passedStages =
+    codeResults.filter((r) => r.passed).length +
+    webStages.filter((s) => s.passed).length;
+
+  if (runs <= 1) {
+    const passRateStr = totalStages > 0
+      ? `${passedStages}/${totalStages} (${Math.round((passedStages / totalStages) * 100)}%)`
+      : (summary.allSuitesPassed ? "100%" : "0%");
+
+    lines.push(`## 📊 Stage Pass Rate (Single Run)`);
+    lines.push("");
+    lines.push(`- **Stage Pass Rate:** ${passRateStr}`);
+    lines.push("");
+    return lines;
+  }
+
   const { n, c } = resolvePassCounts(summary, runs);
   const k = Math.max(1, Math.min(runs, n));
 
@@ -510,12 +529,51 @@ export function buildStatisticalAnalysisSection(
  * to synthesize an architectural role recommendation.
  */
 export function determineArchitecturalRole(
-  speedAgg?: ModelAggregate,
-  code?: CodeEvalSummary,
-  web?: WebEvalResult
+  arg1?:
+    | ModelAggregate
+    | {
+        speedAgg?: ModelAggregate;
+        codeSummary?: CodeEvalSummary;
+        webResult?: WebEvalResult;
+        stageErrors?: string[];
+        code?: CodeEvalSummary;
+        web?: WebEvalResult;
+        speedResult?: { aggregates?: ModelAggregate[] };
+        model?: string;
+      },
+  codeArg?: CodeEvalSummary,
+  webArg?: WebEvalResult
 ): RoleRecommendation {
+  let speedAgg: ModelAggregate | undefined;
+  let code: CodeEvalSummary | undefined = codeArg;
+  let web: WebEvalResult | undefined = webArg;
+  let stageErrors: string[] | undefined;
+
+  if (
+    arg1 &&
+    typeof arg1 === "object" &&
+    ("codeSummary" in arg1 || "webResult" in arg1 || "stageErrors" in arg1 || "speedResult" in arg1)
+  ) {
+    const obj = arg1 as any;
+    speedAgg =
+      obj.speedAgg ??
+      obj.speedResult?.aggregates?.find((a: any) => a.model === obj.model) ??
+      obj.speedResult?.aggregates?.[0];
+    code = obj.codeSummary ?? obj.code ?? codeArg;
+    web = obj.webResult ?? obj.web ?? webArg;
+    stageErrors = obj.stageErrors;
+  } else {
+    speedAgg = arg1 as ModelAggregate | undefined;
+  }
+
   const strengths: string[] = [];
   const caveats: string[] = [];
+
+  if (stageErrors && stageErrors.length > 0) {
+    for (const err of stageErrors) {
+      caveats.push(`Upstream failure: ${err}`);
+    }
+  }
 
   let codeScore = 0;
   let codeStagesPassed = 0;
@@ -543,9 +601,11 @@ export function determineArchitecturalRole(
 
   let webScore = 0;
   let webReady = false;
+  let webStagesPassed = 0;
   if (web && web.stages.length > 0) {
     webScore = web.compositeScore;
     webReady = web.isProductionReady;
+    webStagesPassed = web.stages.filter((s) => s.passed).length;
     if (webReady) strengths.push("Production-Ready Visual & Responsive Frontend DOM Fidelity");
     if (webScore >= 80) strengths.push(`High Web Synthesis Score (${webScore}/100)`);
   }
@@ -566,6 +626,35 @@ export function determineArchitecturalRole(
 
   if (web && !web.allPassed) {
     caveats.push("Sub-optimal web frontend or accessibility compliance");
+  }
+
+  const totalStagesEvaluated =
+    (code ? code.results.length : 0) + (web ? web.stages.length : 0);
+  const totalPassed = codeStagesPassed + webStagesPassed;
+  const hasFatalUpstreamErrors = stageErrors !== undefined && stageErrors.length > 0 && totalPassed === 0;
+
+  // REJECTED / UNVERIFIED: Zero passed stages when stages evaluated, or fatal upstream errors with zero passes
+  if ((totalStagesEvaluated > 0 && totalPassed === 0) || hasFatalUpstreamErrors) {
+    return {
+      role: "Rejected",
+      badge: "🚫 REJECTED / UNVERIFIED",
+      rationale:
+        "Failed baseline capability gates, syntax validation, or encountered fatal upstream auth/transport errors across all evaluated stages. Not recommended for production agent delegation.",
+      strengths: [],
+      caveats: caveats.length > 0 ? caveats : ["Zero passed evaluation stages across evaluated suites."],
+    };
+  }
+
+  // REJECTED / UNVERIFIED: No functional stages evaluated and no successful speed runs
+  if (totalStagesEvaluated === 0 && (!speedAgg || speedAgg.successfulRuns === 0)) {
+    return {
+      role: "Rejected",
+      badge: "🚫 REJECTED / UNVERIFIED",
+      rationale:
+        "Failed baseline capability gates, syntax validation, or encountered fatal upstream auth/transport errors across all evaluated stages. Not recommended for production agent delegation.",
+      strengths: [],
+      caveats: ["No successful evaluation runs or upstream responses recorded."],
+    };
   }
 
   // 1. ORCHESTRATOR CRITERIA:
@@ -603,14 +692,33 @@ export function determineArchitecturalRole(
   }
 
   // 3. EXPLORER CRITERIA:
-  // High throughput, rapid triage, or lighter-weight reasoning.
+  // Fast first-token arrival (< 2500ms), viable throughput (>= 25 tok/s),
+  // and either speed-only suite or at least 1 passing stage.
+  const isExplorerCandidate =
+    ttftMs > 0 &&
+    ttftMs < 2500 &&
+    tokPerSec >= 25 &&
+    (totalStagesEvaluated === 0 || totalPassed >= 1);
+
+  if (isExplorerCandidate) {
+    return {
+      role: "Explorer",
+      badge: "⚡ FAST EXPLORER",
+      rationale:
+        "Demonstrates high streaming velocity, responsive first-token arrival, or lightweight resource footprint. Best allocated to fast repository exploration, code search, initial issue triage, rapid prototyping, and high-frequency queries.",
+      strengths,
+      caveats,
+    };
+  }
+
+  // 4. FALLTHROUGH: REJECTED / UNVERIFIED
   return {
-    role: "Explorer",
-    badge: "⚡ FAST EXPLORER",
+    role: "Rejected",
+    badge: "🚫 REJECTED / UNVERIFIED",
     rationale:
-      "Demonstrates high streaming velocity, responsive first-token arrival, or lightweight resource footprint. Best allocated to fast repository exploration, code search, initial issue triage, rapid prototyping, and high-frequency queries.",
-    strengths,
-    caveats,
+      "Failed baseline capability gates, syntax validation, or encountered fatal upstream auth/transport errors across all evaluated stages. Not recommended for production agent delegation.",
+    strengths: [],
+    caveats: caveats.length > 0 ? caveats : ["Failed capability thresholds across all evaluated agentic roles."],
   };
 }
 
@@ -839,9 +947,10 @@ export function generateMarkdownReport(summary: EvalOrchestratorSummary): string
 
       const ttftStatus = agg.avgTtftMs < 1500 ? "🟢 Snappy" : (agg.avgTtftMs < 3000 ? "🟡 Acceptable" : "🔴 High Latency");
       const speedStatus = agg.avgSpeedTokPerSec >= 35 ? "🟢 High" : (agg.avgSpeedTokPerSec >= 20 ? "🟡 Normal" : "🔴 Slow");
+      const speedLabel = `${agg.avgSpeedTokPerSec} tok/s${agg.buffered ? " [BUFFERED]" : ""}`;
 
       lines.push(`| **Time to First Token (TTFT)** | \`${agg.avgTtftMs} ms\` (min: \`${agg.minTtftMs} ms\`, max: \`${agg.maxTtftMs} ms\`) | \`< 2,000 ms\` | ${ttftStatus} |`);
-      lines.push(`| **Streaming Throughput** | \`${agg.avgSpeedTokPerSec} tok/s\` | \`> 30 tok/s\` | ${speedStatus} |`);
+      lines.push(`| **Streaming Throughput** | \`${speedLabel}\` | \`> 30 tok/s\` | ${speedStatus} |`);
       lines.push(`| **Average Duration** | \`${agg.avgDurationMs} ms\` | - | ℹ️ |`);
       lines.push(`| **Average Output Tokens** | \`${agg.avgTotalTokens} tokens\` | - | ℹ️ |`);
       lines.push(`| **Successful Benchmark Runs** | \`${agg.successfulRuns}\` | \`>= 2\` | 🟢 Complete |`);
@@ -967,7 +1076,14 @@ export function generateMarkdownReport(summary: EvalOrchestratorSummary): string
         const statusIcon = stage.passed ? "🟢 PASSED" : "🔴 FAILED";
         const totalChecks = stage.checks.length;
         const passedChecks = stage.checks.filter((c) => c.passed).length;
-        const checkRate = totalChecks > 0 ? `\`${passedChecks}/${totalChecks}\` checks` : `N/A`;
+        const modalityStr =
+          stage.details &&
+          typeof stage.details === "object" &&
+          "modality" in stage.details &&
+          typeof stage.details.modality === "string"
+            ? ` (${stage.details.modality})`
+            : "";
+        const checkRate = totalChecks > 0 ? `\`${passedChecks}/${totalChecks}\` checks${modalityStr}` : `N/A${modalityStr}`;
         lines.push(`| **${stage.stageNumber}** | ${stage.stageName} | \`${stage.score}/100\` | ${statusIcon} | \`${stage.durationMs} ms\` | ${checkRate} |`);
       } else {
         let reason = "Intentionally excluded (CLI filter / not scheduled)";
@@ -983,7 +1099,14 @@ export function generateMarkdownReport(summary: EvalOrchestratorSummary): string
         const statusIcon = stage.passed ? "🟢 PASSED" : "🔴 FAILED";
         const totalChecks = stage.checks.length;
         const passedChecks = stage.checks.filter((c) => c.passed).length;
-        const checkRate = totalChecks > 0 ? `\`${passedChecks}/${totalChecks}\` checks` : `N/A`;
+        const modalityStr =
+          stage.details &&
+          typeof stage.details === "object" &&
+          "modality" in stage.details &&
+          typeof stage.details.modality === "string"
+            ? ` (${stage.details.modality})`
+            : "";
+        const checkRate = totalChecks > 0 ? `\`${passedChecks}/${totalChecks}\` checks${modalityStr}` : `N/A${modalityStr}`;
         lines.push(`| **${stage.stageNumber}** | ${stage.stageName} | \`${stage.score}/100\` | ${statusIcon} | \`${stage.durationMs} ms\` | ${checkRate} |`);
       }
     }
@@ -1079,7 +1202,7 @@ function formatWireSpeed(w?: WireResultSummary): string {
     (a) => a.model === w.summary?.model
   ) ?? w.summary.speedResult?.aggregates?.[0];
   if (speedAgg && speedAgg.avgSpeedTokPerSec > 0) {
-    return `${speedAgg.avgSpeedTokPerSec.toFixed(1)} tok/s`;
+    return `${speedAgg.avgSpeedTokPerSec.toFixed(1)} tok/s${speedAgg.buffered ? " [BUFFERED]" : ""}`;
   }
   const telemetry = computePipelineAvgSpeed(
     (w.summary.codeSummary?.results ?? []) as CodeStageResult[],
@@ -1194,7 +1317,7 @@ function formatWireDetailSection(wireNumber: number, w: WireResultSummary): stri
       const ttftStr = `${Math.round(agg.minTtftMs)} / ${Math.round(agg.avgTtftMs)} / ${Math.round(agg.maxTtftMs)} ms`;
       const durStr = `${Math.round(agg.avgDurationMs)} ms`;
       const tokStr = `${Math.round(agg.avgTotalTokens)}`;
-      const spdStr = `${agg.avgSpeedTokPerSec.toFixed(1)} tok/s`;
+      const spdStr = `${agg.avgSpeedTokPerSec.toFixed(1)} tok/s${agg.buffered ? " [BUFFERED]" : ""}`;
       lines.push(`| \`${agg.model}\` | ${agg.successfulRuns} | ${ttftStr} | ${durStr} | ${tokStr} | ${spdStr} |`);
     }
     lines.push("");
@@ -1264,7 +1387,14 @@ function formatWireDetailSection(wireNumber: number, w: WireResultSummary): stri
       const st = executedWebMap.get(canonical.stageNumber);
       if (st) {
         const statusStr = st.passed ? "🟢 PASSED" : "🔴 FAILED";
-        const checks = st.checks.length > 0 ? `\`${st.checks.filter((c) => c.passed).length}/${st.checks.length}\`` : "N/A";
+        const modalityStr =
+          st.details &&
+          typeof st.details === "object" &&
+          "modality" in st.details &&
+          typeof st.details.modality === "string"
+            ? ` (${st.details.modality})`
+            : "";
+        const checks = st.checks.length > 0 ? `\`${st.checks.filter((c) => c.passed).length}/${st.checks.length}\`${modalityStr}` : `N/A${modalityStr}`;
         lines.push(`| **${st.stageNumber}** | ${st.stageName} | \`${st.score}/100\` | ${statusStr} | \`${st.durationMs} ms\` | ${checks} |`);
       } else {
         lines.push(`| **${canonical.stageNumber}** | ${canonical.stageName} | - | ⏭️ SKIPPED | - | - |`);
@@ -1368,9 +1498,9 @@ export function determineUnifiedRoleRecommendation(
 
   // Overall Role
   const roles = wires.map((w) => w.summary?.roleRecommendation.role).filter(Boolean);
-  let overallRole: ArchitecturalRole = "Explorer";
-  let badge = "⚡ FAST EXPLORER";
-  let rationale = "Recommended for fast browsing, repo exploration, and symbol navigation.";
+  let overallRole: ArchitecturalRole = "Rejected";
+  let badge = "🚫 REJECTED / UNVERIFIED";
+  let rationale = "Failed baseline capability gates or encountered fatal upstream errors across evaluated wires.";
 
   if (roles.includes("Orchestrator")) {
     overallRole = "Orchestrator";
@@ -1382,6 +1512,10 @@ export function determineUnifiedRoleRecommendation(
     badge = "💻 GENERAL CODER";
     rationale =
       "Demonstrates solid surgical code diffing, patch fidelity, and code synthesis across one or more wire protocols. Well-suited for core engineering workflows, writing implementation code, debugging unit tests, and delivering full-stack features.";
+  } else if (roles.includes("Explorer")) {
+    overallRole = "Explorer";
+    badge = "⚡ FAST EXPLORER";
+    rationale = "Recommended for fast browsing, repo exploration, and symbol navigation.";
   }
 
   return {

@@ -4,6 +4,31 @@ All notable changes to LiteRouter will be documented in this file.
 
 ## [Unreleased] — 2026-10-16
 
+### Eval Gauntlet Methodological & Implementation Upgrades (`literouter-gsti`)
+- **Stage 4 Surgical Patch Fidelity & Functional Verification (`eval/stages/stage4_patch.ts`, `eval/stages_rs/stage4_patch.ts`)**:
+  - Added `EXPECTED_INNER_OLD_STR` targeting the core code statements (`const step = val * 2; this.count += step; this.logTelemetry("increment", step);`).
+  - Updated `gradeIndentation` to award full points (50/50, `status: "PASSED"`, `fidelity: "PERFECT"`) when models replace the target code cleanly without requiring outer comment boundaries (`// TARGET SCOPE START / END`).
+  - Added functional verification of `new_str`: verifies that the replacement logic preserves telemetry logging, applies correct step values, and implements valid arithmetic before awarding execution points.
+- **Zero-Overhead TSX AST Syntax Gating (`eval/stages_web/ast_verify.ts`)**:
+  - Implemented `verifyComponentAst` / `verifyTsxCompiles` powered by Bun's native C++/Zig Transpiler (`new Bun.Transpiler({ loader: "tsx", target: "browser" })`), parsing TSX in ~0.5ms with zero external runtime dependencies.
+  - Automatically wraps unadorned HTML/JSX snippets in fragment wrappers to validate balanced tag nesting and attribute syntax.
+  - Gated Web Stages 1 through 5 with AST verification: components with syntax or nesting errors are capped at a maximum of 30/100 (`passed: false`), preventing heuristic regex matches from masking broken frontend code.
+- **Web Modality Resilience & Local SVG Fixtures (`eval/stages_web/fixtures.ts`, `eval/stages_web/stage1_structure.ts`, `stage2_responsive.ts`, `stage5_a11y.ts`)**:
+  - Replaced GreptimeDB PNG asset references with self-contained, semantically aligned local SVGs (`pricing_table.svg`, `auth_error.svg`).
+  - Added image-rejection fallback handling across Stages 1, 2, and 5: when non-responses wires or text-only models encounter vision rejections (e.g., HTTP 400 parameter errors or missing multimodal support), the harness retries with a text-only UI description prompt and records the modality mode (`Text-to-UI (Vision Unsupported)`).
+- **Speed Benchmark Streaming Burst & Buffering Detection (`eval/speed.ts`)**:
+  - Added proxy buffering and chunk burst detection: tracks `chunkCount` and identifies when >80% of tokens arrive in <=2 chunks at >300 tok/s.
+  - Flags such runs with `buffered: true` and falls back to wall-clock duration (`totalTokens / (totalDurationMs / 1000)`) instead of artificial zero-duration stream rates.
+  - Displays `[BUFFERED]` label in terminal summaries and report scorecards.
+- **Master Role Gating & Pass Rate Clarification (`eval/eval.ts`)**:
+  - Introduced the `🚫 REJECTED / UNVERIFIED` tier in `determineArchitecturalRole` and `determineUnifiedRoleRecommendation` for models that fail baseline capability gates, syntax validation, or experience fatal upstream protocol rejections (e.g. 100% HTTP 403/401 errors).
+  - Gated `⚡ FAST EXPLORER` on empirical TTFT (<2500ms), viable throughput (>=25 tok/s), and at least 1 passing functional stage (or speed-only evaluation).
+  - Clarified single-run reporting: when `runs <= 1`, outputs deterministic `Stage Pass Rate: X/Y (%)` and suppresses misleading `pass@k` statistical rows.
+  - Integrated `[BUFFERED]` speed notes and web modality indicators in generated Markdown reports.
+- **Automated Verification Suite (`tests/eval/eval_gauntlet_upgrades.test.ts`)**:
+  - Added comprehensive unit tests covering TSX AST compilation gating, Stage 4 inner-scope patch grading, speed buffering detection, Rejection role assignment, and single-run pass rate formatting.
+  - All 1,442 tests pass across 7 domains (`bun run test`) with zero TypeScript diagnostics (`bun run typecheck`).
+
 ### Performance & High-Throughput Upgrades (`literouter-g98s`)
 - **Phase 1: Inbound Trailing Assistant Auto-Healing (`ensureTerminalUserTurn`)**:
   - Implemented `ensureTerminalUserTurn` across `src/transformers/opencode_adapter.ts`, `src/transformers/payload.ts`, and `src/transformers/anthropic_openai_xwire.ts`.

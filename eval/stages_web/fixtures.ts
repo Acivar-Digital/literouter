@@ -269,13 +269,13 @@ export const FIXTURES = {
     name: "Pricing Table (4 Tiers)",
     description: "Pricing table with 4 tiers (Hobby, Pro, Business, Enterprise)",
     svg: PRICING_TABLE_SVG,
-    dataUri: REMOTE_FIXTURE_URLS.metricChart,
+    dataUri: svgToDataUri(PRICING_TABLE_SVG),
   },
   authModalError: {
     id: "auth-modal-error",
     name: "Auth Modal Error State",
     description: "Centered authentication modal with invalid credentials error state",
     svg: AUTH_MODAL_ERROR_SVG,
-    dataUri: REMOTE_FIXTURE_URLS.logsQuery,
+    dataUri: svgToDataUri(AUTH_MODAL_ERROR_SVG),
   },
 } as const;

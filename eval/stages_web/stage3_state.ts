@@ -17,6 +17,7 @@ import {
   extractCompletionText,
   isResponsesEndpoint,
 } from "./types";
+import { verifyTsxCompiles } from "./ast_verify";
 
 export interface StateAnalysisResult {
   score: number;
@@ -384,10 +385,17 @@ Return the complete, working TSX code inside a \`\`\`tsx ... \`\`\` block.
       };
     }
 
-    const data = (await resp.json()) as any;
+    const data = (await resp.json()) as Record<string, unknown>;
 
     if (data.error) {
-      const errMsg = typeof data.error === "object" ? data.error.message || JSON.stringify(data.error) : data.error;
+      let errMsg = String(data.error);
+      if (data.error && typeof data.error === "object") {
+        if ("message" in data.error && typeof data.error.message === "string") {
+          errMsg = data.error.message;
+        } else {
+          errMsg = JSON.stringify(data.error);
+        }
+      }
       notes.push(`Upstream error: ${errMsg}`);
       console.log(`         ❌ Stage 3 Failed: ${errMsg}`);
       return {
@@ -428,7 +436,17 @@ Return the complete, working TSX code inside a \`\`\`tsx ... \`\`\` block.
     }
 
     const extractedCode = extractCodeSnippet(rawContent);
+    const ast = verifyTsxCompiles(extractedCode);
     const analysis = analyzeStateManagement(extractedCode);
+    if (!ast.valid) {
+      analysis.score = Math.min(analysis.score, 30);
+      analysis.passed = false;
+      details.astValid = false;
+      details.astError = ast.error;
+      notes.push(`TSX compilation failed: ${ast.error}`);
+    } else {
+      details.astValid = true;
+    }
 
     notes.push(...analysis.notes);
     details["subChecks"] = analysis.subChecks;
