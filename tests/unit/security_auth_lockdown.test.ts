@@ -186,10 +186,43 @@ describe("Step 1: Admin & Trace Authentication Lockdown", () => {
       expect(result.directiveStr).toBe("lr-or-oa-ch-no");
     });
 
-    it("rejects when authKey is configured but no valid key is provided", () => {
+    it("accepts a bare well-formed routing directive without the master key (single-credential clients)", () => {
       const req = new Request("http://localhost:7766/v1/chat/completions", {
         headers: {
           Authorization: "Bearer lr-or-oa-ch-no",
+        },
+      });
+      const result = resolveInferenceAuth(req);
+      expect(result.valid).toBe(true);
+      expect(result.directiveStr).toBe("lr-or-oa-ch-no");
+    });
+
+    it("rejects a bare token that is not a strictly valid direct directive (bad codes)", () => {
+      const req = new Request("http://localhost:7766/v1/chat/completions", {
+        headers: {
+          Authorization: "Bearer lr-or-xx-yy-zz",
+        },
+      });
+      const result = resolveInferenceAuth(req);
+      expect(result.valid).toBe(false);
+      expect(result.error).toBe("Authentication failed: valid LITEROUTER_AUTH_KEY required");
+    });
+
+    it("rejects a bare malformed token", () => {
+      const req = new Request("http://localhost:7766/v1/chat/completions", {
+        headers: {
+          Authorization: "Bearer tok-123-abc",
+        },
+      });
+      const result = resolveInferenceAuth(req);
+      expect(result.valid).toBe(false);
+      expect(result.error).toBe("Authentication failed: valid LITEROUTER_AUTH_KEY required");
+    });
+
+    it("rejects a bare fusion preset token (master/paired path required)", () => {
+      const req = new Request("http://localhost:7766/v1/chat/completions", {
+        headers: {
+          Authorization: "Bearer lr-fse-dev",
         },
       });
       const result = resolveInferenceAuth(req);

@@ -1,5 +1,5 @@
 import { createHash, timingSafeEqual } from "node:crypto";
-import { parseDirective, type ParsedDirective } from "./parser";
+import { isDirectDirective, parseDirective, type ParsedDirective } from "./parser";
 import { getEnv } from "../config/env";
 
 export const DIRECTIVE_ERROR_CODE = "invalid_api_key";
@@ -47,6 +47,17 @@ export function resolveInferenceAuth(req: Request, candidateToken?: string): Res
 
   // Option 2: Authorization: Bearer <directive> with x-literouter-key: <authKey>
   if (headerMasterKey && verifyMasterSecret(headerMasterKey.trim(), authKey)) {
+    return { valid: true, directiveStr: token };
+  }
+
+  // Option 3: Single-credential clients (omp/CLI) present a bare routing
+  // directive with no second channel for the master key. REQUIREMENT: Accept
+  // the token WITHOUT the master key because such clients have no header slot
+  // for it; gate strictly on the directive parser's fixed code tables so
+  // malformed or foreign tokens still fail. Direct directives only — fusion
+  // presets keep the master/paired path.
+  const parsedToken = parseDirective(token);
+  if (parsedToken && isDirectDirective(parsedToken)) {
     return { valid: true, directiveStr: token };
   }
 
