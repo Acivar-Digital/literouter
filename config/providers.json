@@ -167,5 +167,33 @@
         "max_queue_wait_ms": 240000
       }
     }
+    ,
+    "groq": {
+      "code": "gq",
+      "name": "Groq",
+      "env_key": "GROQ_API_KEYS",
+      "strategy": "standard",
+      "base_url": "https://api.groq.com/openai",
+      "auth_header": "Bearer",
+      "endpoints": {
+        "ch": "/v1/chat/completions",
+        "md": "/v1/models"
+      },
+      "request_retry": {
+        "enabled": true,
+        "max_attempts": 3,
+        "delay": {
+          "min_ms": 150,
+          "max_ms": 500
+        }
+      },
+      "pacer": {
+        "enabled": true,
+        "min_delay_ms": 300,
+        "max_delay_ms": 500,
+        "max_queue_depth": 500,
+        "max_queue_wait_ms": 15000
+      }
+    }
   }
 }

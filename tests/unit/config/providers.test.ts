@@ -16,13 +16,14 @@ describe("ProviderRegistry — In-Memory Store", () => {
 
   it("initializes successfully from config/providers.json", () => {
     const all = getAllProviders();
-    expect(all.length).toBe(5);
+    expect(all.length).toBe(6);
 
     expect(isRegisteredProvider("or")).toBe(true);
     expect(isRegisteredProvider("nv")).toBe(true);
     expect(isRegisteredProvider("gg")).toBe(true);
     expect(isRegisteredProvider("zn")).toBe(true);
     expect(isRegisteredProvider("gc")).toBe(true);
+    expect(isRegisteredProvider("gq")).toBe(true);
     expect(isRegisteredProvider("unknown_provider")).toBe(false);
   });
 
@@ -178,7 +179,7 @@ describe("ProviderRegistry — In-Memory Store", () => {
 
   it("getAllProviders() returns every registered provider with required fields", () => {
     const all = getAllProviders();
-    expect(all.length).toBe(5);
+    expect(all.length).toBe(6);
 
     const codes = all.map((p) => p.code);
     expect(codes).toContain("or");
@@ -186,6 +187,7 @@ describe("ProviderRegistry — In-Memory Store", () => {
     expect(codes).toContain("gg");
     expect(codes).toContain("gc");
     expect(codes).toContain("zn");
+    expect(codes).toContain("gq");
 
     for (const entry of all) {
       expect(entry.code).toMatch(/^[a-z0-9]{2,6}$/);
