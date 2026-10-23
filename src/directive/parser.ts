@@ -29,7 +29,7 @@ export type CompletionCode =
   | "md"
   | "rs";
 
-export type NuanceCode = "no" | "dp" | "ts" | "gm" | "g3" | "sb" | "tc" | "lg";
+export type NuanceCode = "no" | "dp" | "ts" | "gm" | "g3" | "sb" | "tc" | "lg" | "ds";
 
 export interface DirectDirective {
   readonly type: "direct";
@@ -91,6 +91,7 @@ const VALID_NUANCES: ReadonlySet<string> = new Set([
   "sb",
   "tc",
   "lg",
+  "ds",
 ]);
 
 export function parseNuanceTokens(token: string): readonly NuanceCode[] | null {

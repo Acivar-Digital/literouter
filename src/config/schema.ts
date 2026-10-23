@@ -39,6 +39,7 @@ export const NuanceCodeSchema = z.enum([
   "g3",
   "sb",
   "tc",
+  "ds",
 ]);
 
 export const RateLimitSchema = z.object({

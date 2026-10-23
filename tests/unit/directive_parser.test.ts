@@ -59,6 +59,18 @@ describe("Directive Parser — Direct Keys", () => {
     expect(direct.nuances).toEqual(["no"]);
   });
 
+  it("parses DeepSeek nuance (ds) on direct key", () => {
+    const parsed = parseDirective("lr-zn-oa-ch-ds");
+    expect(parsed).not.toBeNull();
+    expect(isDirectDirective(parsed!)).toBe(true);
+
+    const direct = parsed as DirectDirective;
+    expect(direct.provider).toBe("zn");
+    expect(direct.payload).toBe("oa");
+    expect(direct.completion).toBe("ch");
+    expect(direct.nuances).toEqual(["ds"]);
+  });
+
   it("parses all registered 2-letter provider codes", () => {
     const providers = ["or", "nv", "gg", "oa", "an", "gq", "cb", "ds", "ms", "tg", "zn", "tp"] as const;
     for (const p of providers) {

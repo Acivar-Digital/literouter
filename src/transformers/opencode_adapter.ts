@@ -27,7 +27,7 @@ export function isOpenCodeClient(
   headers?: Headers | Record<string, string | string[] | undefined> | null,
   nuances?: readonly string[]
 ): boolean {
-  if (nuances && nuances.includes("ts")) {
+  if (nuances && (nuances.includes("ts") || nuances.includes("ds"))) {
     return false;
   }
   if (nuances && nuances.includes("sb")) {
@@ -450,6 +450,28 @@ export function scrubReasoningFromMessages(
     return [];
   }
   return messages.map(scrubReasoningFromMessage);
+}
+
+export function applyDeepSeekConstraints(
+  messages: readonly OpenAIMessage[] | undefined
+): readonly OpenAIMessage[] {
+  if (!Array.isArray(messages)) {
+    return [];
+  }
+  return messages.map((msg) => {
+    if (msg.role !== "assistant") {
+      return msg;
+    }
+    const updated: Record<string, unknown> = { ...msg };
+    if (
+      Array.isArray(updated.tool_calls) &&
+      updated.tool_calls.length > 0 &&
+      (updated.reasoning_content === undefined || updated.reasoning_content === null)
+    ) {
+      updated.reasoning_content = "";
+    }
+    return updated as unknown as OpenAIMessage;
+  });
 }
 
 export function ensureTerminalUserTurn(

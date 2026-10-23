@@ -49,7 +49,7 @@ function extractDirectiveWire(directive: ParsedDirective): string {
 function shouldScrubReasoning(directive: ParsedDirective): boolean {
   const nuances = extractDirectiveNuances(directive);
   const wire = extractDirectiveWire(directive);
-  if (nuances.includes("ts")) {
+  if (nuances.includes("ts") || nuances.includes("ds")) {
     return false;
   }
   return wire === "oa" || nuances.includes("sb");
