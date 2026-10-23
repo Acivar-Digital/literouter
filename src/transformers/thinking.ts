@@ -106,7 +106,7 @@ export function shouldStripReasoning(
   targetWire?: string,
   aoStripReasoning?: boolean
 ): boolean {
-  if (nuances.includes("ts")) {
+  if (nuances.includes("ts") || nuances.includes("ds")) {
     return false;
   }
   if (nuances.includes("sb")) {

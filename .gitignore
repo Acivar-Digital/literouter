@@ -98,3 +98,6 @@ scripts/sync/vps_git_pull.sh
 # run LiteRouter.
 1proxy/
 1proxy.zip
+
+# softe experiment: local research workspace for SoftEther VPN Gate egress.
+softe/

@@ -17,6 +17,7 @@ import {
   stripToolMetadata,
   scrubReasoningFromMessage,
   scrubReasoningFromMessages,
+  applyDeepSeekConstraints,
   ensureTerminalUserTurn,
 } from "./opencode_adapter";
 import {
@@ -37,6 +38,7 @@ export {
   stripToolMetadata,
   scrubReasoningFromMessage,
   scrubReasoningFromMessages,
+  applyDeepSeekConstraints,
   ensureTerminalUserTurn,
   DEFAULT_SAFE_CONTEXT_TOKENS,
   DEFAULT_MAX_CONTEXT_TOKENS,
@@ -289,7 +291,9 @@ export function transformMessages(
   model?: string,
   tools?: readonly unknown[]
 ): readonly OpenAIMessage[] {
-  let res = scrubReasoningFromMessages(messages);
+  let res = nuances.includes("ds")
+    ? applyDeepSeekConstraints(messages)
+    : scrubReasoningFromMessages(messages);
   if (nuances.includes("gm")) {
     res = applyGemmaConstraints(res);
   }
