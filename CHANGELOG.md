@@ -2,6 +2,27 @@
 
 All notable changes to LiteRouter will be documented in this file.
 
+## [Unreleased] — 2026-10-23
+
+### Groq Provider Onboarding & Ultra-Low Latency Inference (`literouter-a5hb`, `literouter-jcxf`, PR #2)
+- **Groq Provider Registration (`config/providers.json`, `src/config/schema.ts`, `src/config/keys.ts`)**:
+  - Registered `groq` (`gq`) with base URL `https://api.groq.com/openai`, targeting OpenAI-compatible endpoints (`/v1/chat/completions`, `/v1/models`).
+  - Configured dedicated conveyor `RequestPacer` with `min_delay_ms: 300`, `max_delay_ms: 500`, and `max_queue_depth: 500` to respect upstream rate limits.
+  - Ingested `GROQ_API_KEYS` into `KeyPoolManager` supporting multi-key pool rotation.
+- **Quota & Rate-Limit Telemetry (`src/telemetry/session.ts`, `src/engine/dispatch.ts`)**:
+  - Captured `x-ratelimit-remaining-tokens` and `x-ratelimit-remaining-requests` headers in `recordLimit` telemetry to provide complete quota visibility without preemptive scheduling churn.
+  - Verified v4.1 transient retry preservation: generic 429 errors preserve key eligibility without premature lockout.
+- **Diagnostic Doctor Probing (`scripts/diagnose/doctor.ts`)**:
+  - Added `probeGroqKey` validating Groq upstream keys using `qwen/qwen3.8-27b` via `POST https://api.groq.com/openai/v1/chat/completions`.
+  - Added `provider=gq` CLI filter flag and registered `gq` in `DoctorOptions.provider`.
+- **Live Empirical Benchmarks & Production VPS Verification**:
+  - Synced to production VPS (`vps466a` on `192.168.50.10:7766`), loading 6 active Groq keys at gateway startup.
+  - Verified 6-key round-robin rotation across 6 sequential inference turns with directive `lr-gq-oa-ch-no` and model `qwen/qwen3.8-27b` (100% HTTP 200 success).
+  - Measured live streaming performance on `qwen/qwen3.8-27b`: average TTFT **143 ms**, streaming throughput **~487 tok/s**, total turnaround **~400 ms** for ~130 tokens.
+- **Documentation & Operational Guides (`docs/groq_onboard.md`, `.opencode/skills/literouter/SKILL.md`)**:
+  - Comprehensive onboarding documentation covering RPM/TPM rate limits, reset headers, and client quickstart configurations for cURL, Python, and TypeScript.
+  - Updated LiteRouter skill (§1 Quick Reference, §2 Active Key Pools) with Groq (`gq`) reference.
+
 ## [Unreleased] — 2026-10-16
 
 ### VPS Production Deployment & Multi-Model Eval Gauntlet Validation

@@ -42,7 +42,7 @@ description: LiteRouter API Gateway operational guide for Bun/TypeScript proxy o
 | Benchmark eval grader tests | `bun run test:eval` (`bun run scripts/test/test_runner.ts eval`) |
 | Anti-bloat failure runner | `bun run test:failures` (`bun test --only-failures`) |
 | Zen wire adaptation test | `bun run test:zen` (`bun run scripts/test/test_zen_fixes.ts`; live test against the gateway at the `config/location.json` host) |
-| Diagnostics | `bun run scripts/diagnose/doctor.ts` (JSON schema + live upstream key probes for Google, NVIDIA, OpenRouter, Zen, GCP) |
+| Diagnostics | `bun run scripts/diagnose/doctor.ts` (JSON schema + live upstream key probes for Google, Groq, NVIDIA, OpenRouter, Zen, GCP) |
 | Master Model Evaluation Gauntlet | `bun run eval/eval.ts <model> <provider> <directive_key>` (orchestrates speed, code & web; default = 3-wire sequential matrix producing a Consolidated Multi-Wire report card. **A bare `<model>` alone aborts with `Missing required argument #2: <provider>`**) |
 | Coding & Agentic Benchmark | `bun run eval/code.ts <model> <provider> <directive_key>` (5-stage wire, pydantic, loop, str_replace & injection audit; dual Chat/Responses) |
 | Web Frontend Evaluation | `bun run eval/web.ts <model> <provider> <directive_key>` (5-stage DOM structure, responsive, React state, hygiene & a11y audit; **no reasoning-transcript flags**) |
@@ -89,6 +89,7 @@ description: LiteRouter API Gateway operational guide for Bun/TypeScript proxy o
 | **Google AI Studio** | `gg` | `GOOGLE_API_KEYS` | `https://generativelanguage.googleapis.com` | `native_cascade` |
 | **Zen** | `zn` | `ZEN_API_KEYS` | `https://opencode.ai/zen` | `standard` |
 | **Google Cloud (GCP)** | `gc` | `GCP_KEYS` / `GCP_API_KEYS` | `https://generativelanguage.googleapis.com` | `gcp_guarded` |
+| **Groq** | `gq` | `GROQ_API_KEYS` | `https://api.groq.com/openai` | `standard` |
 
 *Validation*: Discards tokens `< 4` chars or matching `changeme`, `todo`, `undefined`, `null`. Non-destructive mock keys injected during unit tests.
 

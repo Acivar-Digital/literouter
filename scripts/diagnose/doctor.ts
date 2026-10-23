@@ -92,6 +92,42 @@ function validateJson(name: string): void {
   }
 }
 
+async function probeGroqKey(key: string): Promise<ProbeResult> {
+  const masked = maskKey(key);
+  const url = "https://api.groq.com/openai/v1/chat/completions";
+  const payload = {
+    model: "qwen/qwen3.8-27b",
+    messages: [{ role: "user", content: "ping" }],
+    max_tokens: 10,
+  };
+
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${key}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(10000),
+    });
+
+    if (res.status === 200) {
+      return { provider: "Groq (Qwen 3.8-27B)", maskedKey: masked, status: "PASS", message: "200 OK (Healthy)", statusCode: 200 };
+    }
+    if (res.status === 401 || res.status === 403) {
+      return { provider: "Groq (Qwen 3.8-27B)", maskedKey: masked, status: "FAIL", message: `HTTP ${res.status} Unauthorized / Forbidden`, statusCode: res.status };
+    }
+    if (res.status === 429) {
+      return { provider: "Groq (Qwen 3.8-27B)", maskedKey: masked, status: "WARN", message: "HTTP 429 Rate Limited (Active)", statusCode: 429 };
+    }
+    return { provider: "Groq (Qwen 3.8-27B)", maskedKey: masked, status: "WARN", message: `HTTP ${res.status} Upstream Warning`, statusCode: res.status };
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    return { provider: "Groq (Qwen 3.8-27B)", maskedKey: masked, status: "WARN", message: `Connection error: ${detail}` };
+  }
+}
+
 function auditPoolKeys(provider: string, keys: readonly string[]): void {
   for (const k of keys) {
     if (k.includes("changeme") || k.includes("todo") || k.length < 5) {
@@ -385,12 +421,12 @@ async function probePoolSequential(
 export interface DoctorOptions {
   readonly full?: boolean;
   readonly sampleLimit?: number;
-  readonly provider?: "gg" | "nv" | "or" | "zn" | "gc" | null;
+  readonly provider?: "gg" | "nv" | "or" | "zn" | "gc" | "gq" | null;
 }
 
 export async function runDoctor(options?: DoctorOptions): Promise<void> {
   const rawArgs = process.argv.slice(2).map((a) => a.toLowerCase().replace(/^--?/, ""));
-  let targetProvider: "gg" | "nv" | "or" | "zn" | "gc" | null = options?.provider ?? null;
+  let targetProvider: "gg" | "nv" | "or" | "zn" | "gc" | "gq" | null = options?.provider ?? null;
   let cliFull = options?.full ?? false;
   let cliSampleLimit = options?.sampleLimit;
 
@@ -410,6 +446,7 @@ export async function runDoctor(options?: DoctorOptions): Promise<void> {
     else if (["or", "openrouter"].includes(clean)) targetProvider = "or";
     else if (["zn", "zen"].includes(clean)) targetProvider = "zn";
     else if (["gc", "gcp", "gemma"].includes(clean)) targetProvider = "gc";
+    else if (["gq", "groq"].includes(clean)) targetProvider = "gq";
   }
 
   const isFull = cliFull;
@@ -464,6 +501,20 @@ export async function runDoctor(options?: DoctorOptions): Promise<void> {
     probeResults.push(...res);
   } else {
     console.log("\n[Google (Gemini 3.5 Flash Lite)] ⏭️ Skipped: No keys configured.");
+  }
+
+  const groqSelection = selectKeys(pools.get("gq") ?? []);
+  if (targetProvider && targetProvider !== "gq") {
+    console.log("\n[Groq (Qwen 3.8-27B)] ⏭️ Skipped (filter active).");
+  } else if (groqSelection.keys.length > 0) {
+    const probeMsg = groqSelection.isSampled
+      ? `Probing ${groqSelection.keys.length} of ${groqSelection.total} key(s) (sample mode, max ${sampleLimit})...`
+      : `Probing ${groqSelection.keys.length} key(s)...`;
+    console.log(`\n[Groq (Qwen 3.8-27B)] ${probeMsg}`);
+    const res = await probePoolSequential("Groq (Qwen 3.8-27B)", groqSelection.keys, probeGroqKey, 1000);
+    probeResults.push(...res);
+  } else {
+    console.log("\n[Groq (Qwen 3.8-27B)] ⏭️ Skipped: No keys configured.");
   }
 
   const nvidiaSelection = selectKeys(pools.get("nv") ?? []);
