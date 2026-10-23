@@ -79,9 +79,9 @@ Enum: `src/directive/parser.ts:20-30`, `src/config/schema.ts:21-32`.
 | `im` | Images | Declared `src/directive/parser.ts:26`, `src/config/schema.ts:27`. Provider endpoint map key only. |
 | `au` | Audio | Declared `src/directive/parser.ts:28`, `src/config/schema.ts:29`. Provider endpoint map key only. |
 
-## 5. Nuance codes (8, compoundable with `+`)
+## 5. Nuance codes (9, compoundable with `+`)
 
-Parser set: `src/directive/parser.ts:32,85-94`.
+Parser set: `src/directive/parser.ts:32,85-95`.
 
 | Code | Name | Effect (grounded) |
 |---|---|---|
@@ -93,6 +93,7 @@ Parser set: `src/directive/parser.ts:32,85-94`.
 | `g3` | Google-3 cleanup | `cleanGoogle3Nuance` (`src/transformers/nuances.ts:198-200`). |
 | `tc` | Tool compaction | Normalizes `tool_choice` to target wire (`src/transformers/nuances.ts:201-203`); injects tool-schema prompt, serializes Dots history, merges consecutive messages (`src/transformers/payload.ts:298-305`; also `src/handlers/openai_compat.ts:396`). |
 | `lg` | Ling | Ling-dialect request transform (`src/transformers/payload.ts:333-339`); Ling tool path in `openai_compat.ts:392`. **Parser-only**: accepted by `parseNuanceTokens` (`src/directive/parser.ts:93`) but absent from `NuanceCodeSchema` (`src/config/schema.ts:34-42`) — config-file validation will reject what the gateway parser accepts. |
+| `ds` | DeepSeek | **Preserves reasoning stream & auto-heals assistant tool messages**. Bypasses reasoning scrubbing downstream and upstream across turns without dead-air stalls (`src/transformers/openai_chat.ts`, `src/transformers/thinking.ts`). Scans history and auto-injects `reasoning_content: ""` on assistant turns containing `tool_calls` when missing or null (`src/transformers/opencode_adapter.ts`) to satisfy DeepSeek backend validation, while maintaining message content hygiene. Also preserved when rebuilding assistant messages in `serializeDotsToolHistory` (`src/transformers/dots.ts`). |
 
 Compound: split on `+`, each part validated (`src/directive/parser.ts:96-109`).
 Common: `dp+ts` (XML tools + keep thinking), `tc+ts`.

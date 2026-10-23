@@ -459,16 +459,17 @@ export function applyDeepSeekConstraints(
     return [];
   }
   return messages.map((msg) => {
-    if (msg.role !== "assistant") {
-      return msg;
-    }
     const updated: Record<string, unknown> = { ...msg };
-    if (
-      Array.isArray(updated.tool_calls) &&
-      updated.tool_calls.length > 0 &&
-      (updated.reasoning_content === undefined || updated.reasoning_content === null)
-    ) {
-      updated.reasoning_content = "";
+    scrubMessageContent(updated);
+
+    if (msg.role === "assistant") {
+      if (
+        Array.isArray(updated.tool_calls) &&
+        updated.tool_calls.length > 0 &&
+        (updated.reasoning_content === undefined || updated.reasoning_content === null)
+      ) {
+        updated.reasoning_content = "";
+      }
     }
     return updated as unknown as OpenAIMessage;
   });

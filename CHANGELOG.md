@@ -10,12 +10,14 @@ All notable changes to LiteRouter will be documented in this file.
   - Supports direct keys (e.g. `lr-zn-oa-ch-ds`) and compound nuances (e.g. `lr-zn-oa-ch-dp+ds`).
 - **Inbound Multi-Turn Auto-Healing (`src/transformers/opencode_adapter.ts`, `src/transformers/payload.ts`)**:
   - Implemented `applyDeepSeekConstraints`: scans message history for assistant turns containing `tool_calls`; if `reasoning_content` is missing or null, injects `reasoning_content: ""` to prevent HTTP 400 `InvalidRequestError` ("The reasoning_content in the thinking mode must be passed back to the API") on DeepSeek/Zen backends.
+  - Preserves standard message content hygiene (`scrubMessageContent`) on `ds` routes: strips client metadata, cleans leaked XML tool tags in assistant content, and normalizes tool messages without dropping reasoning keys.
   - Updated `transformMessages` to bypass unconditional `scrubReasoningFromMessages` when `ds` nuance is active, preserving thinking tokens across conversational turns.
+  - Upgraded `serializeDotsToolHistory` (`src/transformers/dots.ts`) to retain `reasoning_content` when reconstructing assistant tool messages, protecting reasoning context when combined with `tc` nuance or Dots models.
 - **Outbound Streaming & Client Passthrough (`src/transformers/openai_chat.ts`, `src/transformers/thinking.ts`)**:
   - Updated `shouldScrubReasoning` to return `false` when nuance includes `ds`, preserving `delta.reasoning_content` in SSE streams and `message.reasoning_content` in non-streaming responses.
   - Updated `isOpenCodeClient` to disable client-side reasoning stripping when `ds` is specified.
 - **Hermetic Unit Test Suite (`tests/unit/transformers/deepseek_nuance.test.ts`, `tests/unit/directive_parser.test.ts`)**:
-  - Added 11 new automated unit tests validating schema parsing, compound directive resolution, assistant message auto-healing, scrub bypass, and streaming delta passthrough with negative controls.
+  - Added 13 automated unit tests validating schema parsing, compound directive resolution, assistant message auto-healing, scrub bypass, content hygiene, `serializeDotsToolHistory` reasoning retention, and streaming delta passthrough with negative controls.
 
 ### Groq Provider Onboarding & Ultra-Low Latency Inference (`literouter-a5hb`, `literouter-jcxf`, PR #2)
 - **Groq Provider Registration (`config/providers.json`, `src/config/schema.ts`, `src/config/keys.ts`)**:

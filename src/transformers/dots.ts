@@ -522,7 +522,11 @@ export function serializeDotsToolHistory(
       const xml = serializeDotsToolCalls(msg.tool_calls);
       const baseText = typeof msg.content === "string" ? msg.content : "";
       const newContent = baseText.length > 0 ? `${baseText}\n${xml}` : xml;
-      result.push({ role: "assistant", content: newContent || " " });
+      const reconstructed: Record<string, unknown> = { role: "assistant", content: newContent || " " };
+      if ("reasoning_content" in msg && (msg as Record<string, unknown>).reasoning_content !== undefined) {
+        reconstructed.reasoning_content = (msg as Record<string, unknown>).reasoning_content;
+      }
+      result.push(reconstructed as unknown as OpenAIMessage);
     } else {
       result.push(msg);
     }

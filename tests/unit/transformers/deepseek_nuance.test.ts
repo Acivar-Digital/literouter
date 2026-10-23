@@ -10,6 +10,7 @@ import {
   sanitizeAndTransformPayload,
 } from "../../../src/transformers/payload";
 import { OpenAIChatTransformer } from "../../../src/transformers/openai_chat";
+import { serializeDotsToolHistory } from "../../../src/transformers/dots";
 import { RequestTelemetry } from "../../../src/telemetry/session";
 import type { OpenAIMessage, OpenAIRequestPayload } from "../../../src/transformers/nuances";
 
@@ -134,6 +135,54 @@ describe("DeepSeek Nuance (ds) — Message Transformation & Auto-Healing", () =>
 
     const assistantMsg = transformed.messages[1] as Record<string, unknown>;
     expect(assistantMsg.reasoning_content).toBe("");
+  });
+
+  it("performs message content hygiene while preserving reasoning_content under ds", () => {
+    const inputMessages: OpenAIMessage[] = [
+      {
+        role: "assistant",
+        content: "Here is the plan <tool_call>{\"name\":\"test\"}</tool_call>",
+        reasoning_content: "My thinking process",
+        tool_calls: [{ id: "call_1", type: "function", function: { name: "test", arguments: "{}" } }],
+      } as unknown as OpenAIMessage,
+      {
+        role: "tool",
+        content: [{ type: "text", text: "tool output" }],
+      } as unknown as OpenAIMessage,
+    ];
+
+    const cleaned = applyDeepSeekConstraints(inputMessages);
+    const assistantMsg = cleaned[0] as Record<string, unknown>;
+    // reasoning_content is preserved
+    expect(assistantMsg.reasoning_content).toBe("My thinking process");
+    // leaked tool_call tags in content are scrubbed
+    expect(assistantMsg.content).toBe("Here is the plan");
+
+    // tool content is normalized to string
+    const toolMsg = cleaned[1] as Record<string, unknown>;
+    expect(toolMsg.content).toBe("tool output");
+  });
+
+  it("preserves reasoning_content through serializeDotsToolHistory when tc is active", () => {
+    const inputMessages: OpenAIMessage[] = [
+      {
+        role: "assistant",
+        content: "Calling weather",
+        reasoning_content: "Checking Tokyo temperature",
+        tool_calls: [{ id: "call_w", type: "function", function: { name: "get_weather", arguments: "{\"city\":\"Tokyo\"}" } }],
+      } as unknown as OpenAIMessage,
+      {
+        role: "tool",
+        tool_call_id: "call_w",
+        content: "20C Sunny",
+      } as unknown as OpenAIMessage,
+    ];
+
+    const serialized = serializeDotsToolHistory(inputMessages);
+    const assistantMsg = serialized[0] as Record<string, unknown>;
+    expect(assistantMsg.role).toBe("assistant");
+    expect(assistantMsg.reasoning_content).toBe("Checking Tokyo temperature");
+    expect(String(assistantMsg.content)).toContain("<invoke name=\"get_weather\">");
   });
 });
 
