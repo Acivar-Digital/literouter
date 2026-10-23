@@ -39,12 +39,9 @@ The following is a high level summary and there may be exceptions to these limit
 
 **Need higher rate limits?** Upgrade to [Developer plan](https://console.groq.com/settings/billing/plans) to access higher limits, [Batch](https://console.groq.com/docs/batch) and [Flex](https://console.groq.com/docs/flex-processing) processing, and more. Note that the limits shown below are the base limits for the Developer plan, and higher limits are available for select workloads and enterprise use cases.
 
-|          |     |     |     |     |     |     |
-| -------- | --- | --- | --- | --- | --- | --- |
 | MODEL ID | RPM | RPD | TPM | TPD | ASH | ASD |
-
-| canopylabs/orpheus-arabic-saudi     | 10 | 100   | 1.2K | 3.6K | \-   | \-    |
 | ----------------------------------- | -- | ----- | ---- | ---- | ---- | ----- |
+| canopylabs/orpheus-arabic-saudi     | 10 | 100   | 1.2K | 3.6K | \-   | \-    |
 | canopylabs/orpheus-v1-english       | 10 | 100   | 1.2K | 3.6K | \-   | \-    |
 | meta-llama/llama-prompt-guard-2-22m | 30 | 14.4K | 15K  | 500K | \-   | \-    |
 | meta-llama/llama-prompt-guard-2-86m | 30 | 14.4K | 15K  | 500K | \-   | \-    |
@@ -68,7 +65,7 @@ The following headers are set (values are illustrative):
 | x-ratelimit-limit-tokens       | 18000    | Always refers to Tokens Per Minute (TPM) |
 | x-ratelimit-remaining-requests | 14370    | Always refers to Requests Per Day (RPD)  |
 | x-ratelimit-remaining-tokens   | 17997    | Always refers to Tokens Per Minute (TPM) |
-| x-ratelimit-reset-requests     | 2m59.56s | Always refers to Requests Per Day (RPD)  |
+| x-ratelimit-reset-requests     | 2m59.56s | Time until request quota window resets   |
 | x-ratelimit-reset-tokens       | 7.66s    | Always refers to Tokens Per Minute (TPM) |
 
 ## [Handling Rate Limits](#handling-rate-limits)
