@@ -55,6 +55,8 @@ export interface RecordLimitInfo {
   readonly rawMessage?: string;
   readonly hasUpstreamRetryAfter?: boolean;
   readonly errorType?: string;
+  readonly remainingTokens?: number;
+  readonly remainingRequests?: number;
 }
 
 export interface TraceMetrics {
@@ -181,6 +183,9 @@ export class RequestTelemetry {
     console.warn(`${EMOJI.limit} ${ts} [LIMIT ${this.reqId}] ${provName} [Key #${keyIdx + 1}${keyTotal}] returned ${statusText} [${condensedType} ${info.status}]`);
     if (info.retryAfterSec && info.hasUpstreamRetryAfter !== false) {
       console.warn(`${EMOJI.limit} ${ts} [LIMIT ${this.reqId}] Parsed Retry-After: ${info.retryAfterSec}s -> Quarantined Key #${keyIdx + 1} for ${info.retryAfterSec}s`);
+    }
+    if (info.remainingTokens !== undefined || info.remainingRequests !== undefined) {
+      console.warn(`${EMOJI.limit} ${ts} [LIMIT ${this.reqId}] Remaining Quota: ${info.remainingTokens !== undefined ? `${info.remainingTokens} tokens` : "unknown"}, ${info.remainingRequests !== undefined ? `${info.remainingRequests} reqs` : "unknown"}`);
     }
     if (info.rawMessage) {
       console.warn(`${EMOJI.limit} ${ts} [LIMIT ${this.reqId}] Upstream Error: "${info.rawMessage.slice(0, 300)}"`);

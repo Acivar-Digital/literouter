@@ -365,7 +365,7 @@ describe("ProviderConfigEntrySchema", () => {
     expect(parsed.success).toBe(true);
     if (parsed.success) {
       const providers = parsed.data.providers;
-      expect(Object.keys(providers).length).toBe(5);
+      expect(Object.keys(providers).length).toBe(6);
 
       // Verify openrouter specific headers & conserve_rules
       const or = providers.openrouter;
@@ -388,6 +388,9 @@ describe("ProviderConfigEntrySchema", () => {
       expect(providers.zen?.request_retry.max_attempts).toBe(5);
       expect(providers.gcp?.name).toBe("Google Cloud (GCP)");
       expect(providers.gcp?.strategy).toBe("gcp_guarded");
+      expect(providers.groq?.name).toBe("Groq");
+      expect(providers.groq?.strategy).toBe("standard");
+      expect(providers.groq?.code).toBe("gq");
 
       // Verify all providers have valid applied operational configurations
       for (const provider of Object.values(providers)) {

@@ -733,6 +733,10 @@ export async function executeDispatchPipeline(
       const quarantineEnabled = isProviderQuarantineEnabled(providerCode);
       const rawRetryAfterSec = parseRetryAfterSec(upstreamResponse.headers.get("retry-after"));
       const retryAfterSec = quarantineEnabled ? rawRetryAfterSec : undefined;
+      const rawRemTokens = upstreamResponse.headers.get("x-ratelimit-remaining-tokens");
+      const rawRemRequests = upstreamResponse.headers.get("x-ratelimit-remaining-requests");
+      const remainingTokens = rawRemTokens ? parseInt(rawRemTokens, 10) : undefined;
+      const remainingRequests = rawRemRequests ? parseInt(rawRemRequests, 10) : undefined;
 
       telemetry.recordLimit({
         status: upstreamResponse.status,
@@ -740,6 +744,8 @@ export async function executeDispatchPipeline(
         totalKeys: key.totalKeys,
         rawMessage: rawErrorMsg,
         hasUpstreamRetryAfter: retryAfterSec !== undefined,
+        remainingTokens: remainingTokens !== undefined && !Number.isNaN(remainingTokens) ? remainingTokens : undefined,
+        remainingRequests: remainingRequests !== undefined && !Number.isNaN(remainingRequests) ? remainingRequests : undefined,
       });
 
       const failureAction: FailureAction = strategy.classifyFailure?.(currentCtx, upstreamResponse.status)
