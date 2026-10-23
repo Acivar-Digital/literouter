@@ -1,0 +1,31 @@
+name: Dependency Graph & Supply Chain Submission
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  dependency-submission:
+    name: Submit Dependency Graph Snapshot
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: "latest"
+
+      - name: Submit Python dependencies (uv.lock)
+        uses: rmuir/uv-dependency-submission@v1
+        continue-on-error: true
+
+      - name: Submit Component Detection Snapshot
+        uses: advanced-security/component-detection-dependency-submission-action@v0.0.4
+        continue-on-error: true
