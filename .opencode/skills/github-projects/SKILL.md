@@ -27,7 +27,8 @@ Do NOT mirror micro-tasks 1:1 between Beads (`bd`) and GitHub Projects. That cre
 
 - **GitHub Projects**: High-level visibility, roadmap planning, stakeholder status (`Todo`, `In Progress`, `Done`).
 - **Beads (`bd`)**: Sub-millisecond local execution, zero-token overhead, scratchpad memory (`bd remember`), failure quarantine.
-- **Contract**: When all child beads for an Epic are closed and quality gates pass, update the GitHub Project item to `Done`.
+- **Bidirectional Linkage**: Store the GitHub Project URL / Item ID in the child bead description (`Epic: <url>`), and record child bead IDs in the Project item's body (`Beads: literouter-xxx`).
+- **Pre-Sync Validation**: Immediately before updating a Project item to `Done`, run `bd list --status=open,in_progress` to verify zero child tasks remain active or blocked.
 
 ---
 
@@ -56,8 +57,8 @@ gh project list --owner Acivar-Digital --format json
 # View project fields and option IDs
 gh project field-list <project-number> --owner Acivar-Digital --format json
 
-# List items (issues, PRs, drafts) currently on the project
-gh project item-list <project-number> --owner Acivar-Digital --format json
+# List items currently on the project (ALWAYS specify --limit to prevent truncation; default is 30)
+gh project item-list <project-number> --owner Acivar-Digital --limit 1000 --format json
 ```
 
 ### B. Adding Items to a Project
@@ -111,7 +112,7 @@ gh api repos/Acivar-Digital/literouter/dependency-graph/sbom \
 
 ### B. Audit Active Security Vulnerabilities (Dependabot Alerts)
 ```bash
-gh api repos/Acivar-Digital/literouter/dependabot/alerts \
+gh api repos/Acivar-Digital/literouter/dependabot/alerts --paginate \
   --jq '.[] | {package: .dependency.package.name, severity: .security_advisory.severity, summary: .security_advisory.summary}'
 ```
 
@@ -123,6 +124,9 @@ gh api repos/Acivar-Digital/literouter/dependabot/alerts \
 
 ## 6. Safety & Hygiene Rules for LLMs
 
-1. **Never Create Duplicate Items**: Run `gh project item-list` before creating a new epic or draft.
-2. **Never Put Micro-Tasks on GitHub**: Beads is the execution engine; GitHub is the portfolio dashboard.
-3. **Handle Missing Scopes Gracefully**: If `gh project` returns code 1 (`missing required scopes`), stop and alert the user with the exact `gh auth refresh` command.
+1. **Orchestrator-Only Creation**: Subagents MUST NEVER create or modify GitHub Project items. Only the lead orchestrator manages Level 1 epics to prevent duplicate item races.
+2. **Always Use Pagination Flags**: Default `gh project item-list` limit is 30. ALWAYS pass `--limit 1000`. Pass `--paginate` to `gh api` endpoints.
+3. **Never Put Micro-Tasks on GitHub**: Beads is the execution engine; GitHub is the portfolio dashboard.
+4. **Durable Bidirectional Linkage**: Every child bead must reference its parent Epic URL (`Epic: <url>`), and the Epic must document its child bead IDs.
+5. **Resume / Close Reconciliation**: On session start and session close, verify in-progress Project items. If all linked child beads are closed and quality gates pass, update the Project item to `Done`.
+6. **Handle Missing Scopes Gracefully**: If `gh project` returns code 1 (`missing required scopes`), stop and alert the user with `gh auth refresh -s project,read:project`.

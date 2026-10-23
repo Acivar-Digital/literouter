@@ -75,8 +75,10 @@ If your repo uses modern tools like **Bun** (`bun.lock`) or **uv** (`uv.lock`), 
 ### The Universal Fix:
 1. **For Bun / Node repos**: Keep a lightweight `package-lock.json` committed:
    ```bash
+   # Generate or synchronize package-lock.json without installing node_modules
    npm i --package-lock-only
    ```
+   *Note*: When dependencies are added or updated via `bun add`, re-run `npm i --package-lock-only` to ensure the static dependency graph and Dependabot reflect exact resolved versions.
 2. **For Python / uv repos**: Deploy the GitHub Dependency Submission Action in `.github/workflows/dependency_graph.yml`:
 
 ```yaml
@@ -88,6 +90,11 @@ on:
       - main
   workflow_dispatch:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Note: Dependency Submission API requires 'contents: write' scope to upload snapshots.
 permissions:
   contents: write
 
@@ -97,20 +104,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5.4.2
         with:
           version: "latest"
 
       - name: Submit Python dependencies (uv.lock)
-        uses: rmuir/uv-dependency-submission@v1
-        continue-on-error: true
+        uses: rmuir/uv-dependency-submission@8c650a3e5e519b93e604e644f7a4a3953144babe # v1.1.1
 
       - name: Submit Component Detection Snapshot
-        uses: advanced-security/component-detection-dependency-submission-action@v0.0.4
-        continue-on-error: true
+        uses: advanced-security/component-detection-dependency-submission-action@a02aeda7a175ad4dd38a13c4d3ff2df9da8f2cf0 # v0.2.0
 ```
 
 ---
@@ -119,6 +124,9 @@ jobs:
 
 ### Step 4.1: Initialize Beads
 ```bash
+# Initialize beads in a fresh repository:
+bd init
+# In subsequent sessions, hydrate context with:
 bd prime
 ```
 
@@ -126,14 +134,15 @@ bd prime
 1. Agent reads GitHub Project Epic.
 2. Agent breaks Epic into local beads:
    ```bash
-   bd create "Slice 1: Implement data layer" -t task -p 2 --acceptance="1. Unit tests pass"
+   bd create "Slice 1: Implement data layer" -t task -p 2 -d "Epic: <PROJECT_URL_OR_ITEM_ID>" --acceptance="1. Unit tests pass"
    bd update <id> --claim
    ```
 3. Agent executes, runs test gates, and closes beads:
    ```bash
    bd close <id> --reason "Completed and verified"
    ```
-4. When all child beads close, the agent marks the parent GitHub Project item as `Done`:
+4. Before marking the parent item `Done`, verify zero child beads remain active: `bd list --status=open,in_progress`.
+5. Update the parent GitHub Project item to `Done`:
    ```bash
    gh project item-edit --project-id "<PROJECT_ID>" --id "<ITEM_ID>" \
      --field-id "<STATUS_FIELD_ID>" --single-select-option-id "<DONE_OPTION_ID>"
@@ -151,6 +160,6 @@ Paste this block into the repository's `AGENTS.md`:
 - **Implementation Slices**: Tracked locally in Beads (`bd ready`, `bd claim`, `bd close`).
 - **Dependencies & Supply Chain**:
   - Query full SBOM: `gh api repos/<OWNER>/<REPO>/dependency-graph/sbom`
-  - Query CVE alerts: `gh api repos/<OWNER>/<REPO>/dependabot/alerts`
+  - Query CVE alerts: `gh api repos/<OWNER>/<REPO>/dependabot/alerts --paginate`
 - **Agent Skill**: Refer to `skill://github-projects` for CLI and GraphQL operations.
 ```

@@ -6,6 +6,11 @@ on:
       - main
   workflow_dispatch:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Note: Dependency Submission API requires 'contents: write' scope to upload snapshots.
 permissions:
   contents: write
 
@@ -15,17 +20,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5.4.2
         with:
           version: "latest"
 
       - name: Submit Python dependencies (uv.lock)
-        uses: rmuir/uv-dependency-submission@v1
-        continue-on-error: true
+        uses: rmuir/uv-dependency-submission@8c650a3e5e519b93e604e644f7a4a3953144babe # v1.1.1
 
       - name: Submit Component Detection Snapshot
-        uses: advanced-security/component-detection-dependency-submission-action@v0.0.4
-        continue-on-error: true
+        uses: advanced-security/component-detection-dependency-submission-action@a02aeda7a175ad4dd38a13c4d3ff2df9da8f2cf0 # v0.2.0
