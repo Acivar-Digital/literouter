@@ -23,6 +23,7 @@ Mandatory operational guidance for AI agents working in this repository.
 - **Lazy-Load Guides**: Antigravity IDE: `.opencode/skills/literouter/agy-ide-setup.md` | TUI Math: `.opencode/skills/literouter/tui-latex-math-rendering.md` | Test Hygiene: `.opencode/skills/literouter/test-hygiene-playbook.md`
 - **Rate Limiting (Zdist Retired)**: Client-side sliding-window tracking is retired (see `docs/GRAVEYARD/ZDIST.md`). Active stack: deterministic **RequestPacer** (`src/network/pacer.ts`) + reactive **CooldownManager** (`src/network/cooldown.ts` 429 quarantine with `Retry-After`).
 - **OpenCode Config Format**: v1 (`.opencode/opencode.json`, key: `"plugin"` [strings]) vs v2 (`.opencode/opencode.json`, key: `"plugins"` [strings or `{ package, options }`]).
+- **GitHub Project & Dependency Intelligence**: Project Board: [Acivar-Digital/projects/3](https://github.com/orgs/Acivar-Digital/projects/3) (Linked to `Acivar-Digital/literouter`). Query items: `gh project item-list 3 --owner Acivar-Digital --limit 1000`. Dependency Graph & SBOM: `gh api repos/Acivar-Digital/literouter/dependency-graph/sbom`. Vulnerabilities: `gh api repos/Acivar-Digital/literouter/dependabot/alerts --paginate`. Skill: `.opencode/skills/github-projects/SKILL.md` (or global `skill://github-projects`). Template: `docs/templates/REPO_PROJECT_MANAGEMENT_TEMPLATE.md`.
 
 ---
 
@@ -33,6 +34,7 @@ Mandatory operational guidance for AI agents working in this repository.
 4. **Ticket (Definition of Done)**: Create issue if not already tracked: `bd create "..." -t task -p 2 -d "..." --acceptance="1. Deterministic verification passes\n2. Output artifact exists"` (`validation.on-create: error` is enforced; omitting `--acceptance` fails).
 5. **Claim**: Run `bd update <id> --claim`.
 6. **Resume Protocol**: If context is lost or session restarts, run `bd list --status in_progress --json` to find your claimed task and continue. Never ask the user "what should I work on?" if tasks are in progress. [Rationale: Persistent brain in beads].
+7. **GitHub Projects Hybrid Protocol**: Epics, features, and public deliverables are tracked in GitHub Projects v2 (Project #3 'LiteRouter Roadmap & Deliverables'). Only the lead orchestrator may create or edit Project items (subagents are restricted to local Beads). Child beads store `Epic: <url>` and Project items document their child bead IDs. Immediately before marking an Epic `Done`, run `bd list --status=open,in_progress` to verify zero active child beads. On session start or resume, reconcile in-progress Project items whose child beads are fully closed.
 
 ---
 
