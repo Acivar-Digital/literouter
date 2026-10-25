@@ -20,7 +20,7 @@ This document serves as the definitive reference for how LiteRouter and its clie
 | **SSE Keep-Alive Heartbeats** | `src/network/fetcher.ts` (`startKeepAliveTimer`), `src/transformers/opencode_adapter.ts` | Emits spec-compliant `: keep-alive\n\n` comments (and stateful 5-second empty delta heartbeats for reasoning models) to prevent client/proxy 55s socket severance. |
 | **Terminal Usage Accounting Chunk** | `src/network/fetcher.ts` (`extractUsageFromChunk`, `onUsage`), `src/handlers/openai_compat.ts` | Intercepts and parses OpenRouter's final usage frame containing repeated `finish_reason` without corrupting client token accounting. |
 | **Stream Cancellation / Upstream Abort** | `src/network/fetcher.ts`, `src/network/h2_pool.ts` | Downstream client abort signal propagates immediately through `AbortController`, tears down keepalive timers, and closes upstream HTTP/2 streams to preserve credits. |
-| **Agentic Harness Gate Bypass (`:free` models)** | `config/providers.json`, `src/handlers/openai_compat.ts` | Declaratively configures and injects `HTTP-Referer`, `X-Title`, and `User-Agent` headers (defaulting to `OpenCode/1.18.29`) on upstream OpenRouter calls to bypass the `Gate Free Endpoints by Agentic Harness` HTTP 403 gate. |
+| **Agentic Harness Gate Bypass (`:free` models)** | `config/providers.json`, `scripts/update-user-agent.ts`, `src/handlers/openai_compat.ts` | Declaratively configures and injects `HTTP-Referer`, `X-Title`, and `User-Agent` headers (`OpenCode/<version>`, dynamically synchronized by `scripts/update-user-agent.ts` on boot) on upstream OpenRouter calls to bypass the `Gate Free Endpoints by Agentic Harness` HTTP 403 gate. |
 
 ---
 

@@ -69,7 +69,7 @@ mkdir -p logs
 if [ -f logs/gateway.log ]; then bash scripts/gateway/prune-logs.sh || true; fi
 
 # Discover local OpenCode version and sync User-Agent header (failsafe)
-bun run "$ROOT_DIR/tools/get_opencode_ver.ts" || true
+bun run "$ROOT_DIR/scripts/update-user-agent.ts" --skip-reset || true
 
 echo "🚀 Starting LiteRouter v4.0 (Bun) on ${HOST}:${PORT} (${PROTOCOL}) at ${ROOT_DIR}..."
 

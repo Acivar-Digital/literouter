@@ -371,7 +371,7 @@ describe("ProviderConfigEntrySchema", () => {
       const or = providers.openrouter;
       expect(or).toBeDefined();
       expect(or?.code).toBe("or");
-      expect(or?.headers?.["User-Agent"]).toBe("OpenCode/1.18.29");
+      expect(or?.headers?.["User-Agent"]).toMatch(/^OpenCode\/\d+\.\d+\.\d+/);
       expect(or?.conserve_rules.length).toBe(1);
       expect(or?.conserve_rules[0]?.contains).toBe("free-models-per-day");
       expect(or?.conserve_rules[0]?.ttl).toBe("midnight_utc");

@@ -23,14 +23,14 @@ describe("Declarative Provider Headers & Cache Hot-Reload", () => {
       expect(orHeaders["Accept-Encoding"]).toBe("identity");
       expect(orHeaders["HTTP-Referer"]).toBe("https://opencode.ai");
       expect(orHeaders["X-Title"]).toBe("OpenCode");
-      expect(orHeaders["User-Agent"]).toBe("OpenCode/1.18.29");
+      expect(orHeaders["User-Agent"]).toMatch(/^OpenCode\/\d+\.\d+\.\d+/);
       expect(orHeaders["Referer"]).toBeUndefined();
 
       const openrouterHeaders = buildAuthHeaders("Bearer", "sk-mock-or-key", "openrouter");
       expect(openrouterHeaders["Authorization"]).toBe("Bearer sk-mock-or-key");
       expect(openrouterHeaders["HTTP-Referer"]).toBe("https://opencode.ai");
       expect(openrouterHeaders["X-Title"]).toBe("OpenCode");
-      expect(openrouterHeaders["User-Agent"]).toBe("OpenCode/1.18.29");
+      expect(openrouterHeaders["User-Agent"]).toMatch(/^OpenCode\/\d+\.\d+\.\d+/);
       expect(openrouterHeaders["Referer"]).toBeUndefined();
     });
 
@@ -87,11 +87,9 @@ describe("Declarative Provider Headers & Cache Hot-Reload", () => {
   describe("resolveUpstreamEndpoint", () => {
     it("returns headers dictionary matching config/providers.json for 'or'", () => {
       const endpoint = resolveUpstreamEndpoint("or", "ch", "openai/gpt-4o");
-      expect(endpoint.headers).toEqual({
-        "HTTP-Referer": "https://opencode.ai",
-        "X-Title": "OpenCode",
-        "User-Agent": "OpenCode/1.18.29",
-      });
+      expect(endpoint.headers?.["HTTP-Referer"]).toBe("https://opencode.ai");
+      expect(endpoint.headers?.["X-Title"]).toBe("OpenCode");
+      expect(endpoint.headers?.["User-Agent"]).toMatch(/^OpenCode\/\d+\.\d+\.\d+/);
     });
 
     it("returns headers dictionary matching config/providers.json for 'zn'", () => {

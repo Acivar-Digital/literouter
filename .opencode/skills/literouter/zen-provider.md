@@ -19,7 +19,7 @@
   - `HTTP-Referer: https://opencode.ai` (or `LITEROUTER_HTTP_REFERER`)
   - `Referer: https://opencode.ai`
   - `X-Title: OpenCode` (or `LITEROUTER_X_TITLE`)
-  - `User-Agent`: `opencode/1.18.30 ai-sdk/provider-utils/4.0.23 runtime/bun/1.4.2` (from `config/providers.json`; the gateway re-reads it at boot via `tools/get_opencode_ver.ts`)
+  - `User-Agent`: `opencode/<version> ai-sdk/provider-utils/4.0.23 runtime/bun/<bun_version>` (from `config/providers.json`; the gateway re-reads it at boot via `scripts/update-user-agent.ts`)
 - Endpoints: `ch` → `/v1/chat/completions`, `ms` → `/v1/messages`, `md` → `/v1/models`, `rs` → `/v1/responses`
 
 ## 2. Bare Model Standard (no `zen/` prefix)
@@ -51,7 +51,7 @@ Static `User-Agent` / `Referer` alone does **not** satisfy free-tier gating — 
   - Normalizes `tool_choice`: converts `"none"` to `"auto"` so subagents (such as title generation) don't trigger upstream `FreeTierError`.
   - Forces `stream: true` upstream. For downstream non-streaming callers, LiteRouter transparently accumulates SSE stream chunks into standard responses (`chat.completion` or Responses JSON) via `accumulateZenStreamToCompletion` / `accumulateZenResponsesStream`.
 - **Emitted Zen Headers**: `buildZenHeaders` returns exactly the registry `zen.headers` plus `User-Agent` (registry value, hardcoded fallback `opencode/1.18.30 ai-sdk/provider-utils/4.0.23 runtime/bun/1.4.2`), `HTTP-Referer`, `Referer`, `X-Title`, and the session trio `session-id` / `x-session-id` / `x-opencode-session` plus `x-opencode-request: msg_<session tail>` (`src/engine/zen.ts:125-135`).
-- **Startup Version Sync**: Prior to gateway startup, `scripts/gateway/start.sh` invokes `tools/get_opencode_ver.ts`, executing local `opencode --version` and updating `config/providers.json` with the exact runtime `User-Agent`.
+- **Startup Version Sync**: Prior to gateway startup, `scripts/gateway/start.sh` invokes `scripts/update-user-agent.ts` (with `tools/get_opencode_ver.ts` as a backwards-compatible shim), executing local `opencode --version` and updating `config/providers.json` for both OpenRouter (`OpenCode/<version>`) and Zen (`opencode/<version> ai-sdk/...`).
 
 ### 4.1 🚨 CRITICAL MANDATE: NEVER DROP OPENCODE SESSION ID OR USE UUID4
 - Outbound requests MUST always carry `session-id` (and `x-session-id`) formatted as `ses_` + alphanumeric characters (`generateOpenCodeSessionId()` in `src/engine/session_id.ts`).

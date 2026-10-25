@@ -127,6 +127,23 @@ What it does (verified against source):
      `./plugins/collapse-reasoning.ts` in `~/.config/opencode/config.json`.
 6. `chmod +x` on binaries and itself; `touch .autopatch_verified`.
 
+### 1.6 `scripts/update-user-agent.ts` — Dynamic OpenCode Version Sync (OpenRouter & Zen)
+
+```bash
+bun run scripts/update-user-agent.ts               # Detects opencode --version, updates config/providers.json, attempts /reset hot-reload
+bun run scripts/update-user-agent.ts --dry-run     # Previews detected version and header diff without modifying files
+bun run scripts/update-user-agent.ts --skip-reset  # Updates config/providers.json without attempting gateway /reset (used during start.sh boot)
+```
+
+What it does:
+1. Executes `opencode --version` via Bun subprocess and extracts semver using regex.
+2. Validates against beta/RC tags and enforces semver floor (defaults to `1.18.30` if binary is missing or unparseable).
+3. Dynamically updates `config/providers.json`:
+   - **OpenRouter (`or`)**: `OpenCode/<semver>` (e.g. `OpenCode/2.1.4`)
+   - **Zen (`zn`)**: `opencode/<semver> ai-sdk/provider-utils/4.0.23 runtime/bun/<bun_version>`
+4. Automatically invoked prior to gateway startup in `scripts/gateway/start.sh:72` with `--skip-reset`.
+5. `tools/get_opencode_ver.ts` is maintained as a backwards-compatible forwarding shim delegating directly to this script.
+
 ---
 
 ## 2. `GET /health` — Liveness Probe (No Auth, Any Method)

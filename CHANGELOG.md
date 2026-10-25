@@ -4,6 +4,18 @@ All notable changes to LiteRouter will be documented in this file.
 
 ## [Unreleased] — 2026-10-23
 
+### Dynamic OpenCode User-Agent Sync for OpenRouter & Zen (`literouter-v4ol`)
+- **Unified Version Discovery Script (`scripts/update-user-agent.ts`)**:
+  - Implemented `scripts/update-user-agent.ts` executing local `opencode --version` with semver parsing, regex validation, and non-blocking fallback to `1.18.30`.
+  - Synchronizes both OpenRouter (`OpenCode/<version>`) and Zen (`opencode/<version> ai-sdk/provider-utils/4.0.23 runtime/bun/<bun_version>`) in `config/providers.json`.
+  - Added CLI flags: `--dry-run` for previewing changes and `--skip-reset` for skipping live gateway resets.
+  - Standalone execution automatically probes `config/location.json` host:port and triggers authenticated `POST /reset` via `LITEROUTER_AUTH_KEY` to hot-reload running gateways without restarts.
+- **Gateway Boot Integration (`scripts/gateway/start.sh`)**:
+  - Updated `scripts/gateway/start.sh:72` to invoke `bun run "$ROOT_DIR/scripts/update-user-agent.ts" --skip-reset || true`, ensuring fresh User-Agent headers across boots and restarts.
+  - Refactored `tools/get_opencode_ver.ts` into a lightweight backwards-compatible forwarding shim delegating directly to `scripts/update-user-agent.ts`.
+- **Test & Schema Synchronization (`tests/unit/openrouter_headers.test.ts`, `tests/unit/config/schema.test.ts`)**:
+  - Updated unit tests from hardcoded `OpenCode/1.18.29` to regex-matching `^OpenCode\/\d+\.\d+\.\d+` matching dynamic versions.
+
 ### DeepSeek Reasoning Nuance (`ds`) & Multi-Turn Protocol Auto-Healing (`literouter-tn34`)
 - **DeepSeek Nuance Code Registration (`src/config/schema.ts`, `src/directive/parser.ts`)**:
   - Registered nuance code `ds` in `NuanceCodeSchema` (Zod union) and `VALID_NUANCES` in the directive parser.

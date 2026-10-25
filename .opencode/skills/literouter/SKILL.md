@@ -49,6 +49,7 @@ description: LiteRouter API Gateway operational guide for Bun/TypeScript proxy o
 | Model probe & onboarding | `bun run scripts/probe/probe_model.ts <model_name>` (validates OpenCode 2, Claude Code CLI & Pydantic AI) |
 | Model speed & throughput | `bun run eval/speed.ts <model>` (sequential TTFT, duration, tokens & tok/s; alias: `scripts/probe/bench_speed.ts`) |
 | OpenCode2 Auto-Patch | `bash scripts/hooks/opencode_autopatch.sh` (fast <5ms self-heal & binary verification) |
+| Dynamic OpenCode User-Agent Sync | `bun run scripts/update-user-agent.ts [--dry-run] [--skip-reset]` (syncs OpenRouter and Zen User-Agents in `config/providers.json` to local `opencode --version`; auto-invoked on boot via `start.sh`) |
 | Sync LiteRouter to VPS | `bash scripts/sync/sync_literouter_to_vps.sh` (strictly unidirectional mirror of LiteRouter code, .env, and .env.local from WSL golden truth to VPS) |
 | Redeploy code only to VPS | `bash scripts/sync/vps_git_pull.sh --dry-run` then `--restart` (⚠️ **gitignored, per-operator** — see [vps-redeploy.md](vps-redeploy.md); if missing, recreate per that file) |
 | Typecheck & lint | `bun run typecheck` && `uv run ruff check .` |

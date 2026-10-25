@@ -10,7 +10,7 @@
       "headers": {
         "HTTP-Referer": "https://opencode.ai",
         "X-Title": "OpenCode",
-        "User-Agent": "OpenCode/1.18.29"
+        "User-Agent": "OpenCode/2.1.4"
       },
       "endpoints": {
         "ch": "/api/v1/chat/completions",
@@ -112,7 +112,7 @@
         "HTTP-Referer": "https://opencode.ai",
         "Referer": "https://opencode.ai",
         "X-Title": "OpenCode",
-        "User-Agent": "opencode/1.18.30 ai-sdk/provider-utils/4.0.23 runtime/bun/1.4.2"
+        "User-Agent": "opencode/2.1.4 ai-sdk/provider-utils/4.0.23 runtime/bun/1.4.2"
       },
       "endpoints": {
         "ch": "/v1/chat/completions",
@@ -166,8 +166,7 @@
         "max_queue_depth": 500,
         "max_queue_wait_ms": 240000
       }
-    }
-    ,
+    },
     "groq": {
       "code": "gq",
       "name": "Groq",
