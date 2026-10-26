@@ -118,6 +118,7 @@ LiteRouter starts as a resilient background daemon managed via `tmux`.
 | `/v1/chat/completions` | `POST` | Standard OpenAI Chat (`lr-*-oa-ch-*`, `lr-*-ao-ch-*`) | HTTP/2 or HTTP/1.1 |
 | `/v1/messages` | `POST` | Anthropic Messages API (`lr-*-cl-ms-*`) for Claude Code | HTTP/2 or HTTP/1.1 |
 | `/v1/responses` | `POST` | OpenAI Responses API (`lr-*-oo-rs-*`) for ACP agents | HTTP/2 or HTTP/1.1 |
+| `/v1/embeddings` | `POST` | OpenAI Embeddings (`lr-tei-oa-em-no`, `lr-fse-embeddings`, or ambient zero-config) | HTTP/2 or HTTP/1.1 |
 | `/v1beta/models/*` | `POST` | Direct Google Gemini REST (`lr-gg-gg-gc-no`) | HTTP/2 or HTTP/1.1 |
 | `/v1/models` | `GET` | Dynamic model discovery and registered fusion chains | HTTP/2 or HTTP/1.1 |
 | `/health` | `GET` | Auth-free health probe, active key counts, and circuit breaker stats | HTTP/2 or HTTP/1.1 |
@@ -242,6 +243,43 @@ response = client.chat.completions.create(
     messages=[{"role": "user", "content": "Explain quantum computing in 2 sentences."}]
 )
 print(response.choices[0].message.content)
+```
+
+### CortexKit AFT Semantic Search (`~/.config/cortexkit/aft.jsonc`)
+LiteRouter provides ambient zero-config authentication for embedding endpoints (`/v1/embeddings`), automatically proxying embedding requests with transparent multi-document batch slicing and dual-host failover:
+```jsonc
+{
+  "semantic": {
+    "backend": "openai_compatible",
+    "base_url": "http://literouter.lan:7766/v1",
+    "model": "BAAI/bge-m3",
+    "timeout_ms": 30000,
+    "max_batch_size": 8,
+    "max_input_tokens": 1024
+  }
+}
+```
+
+### Oh-My-Pi (OMP) Mnemopi Long-Term Memory (`~/.omp/agent/config.yml`)
+```yaml
+mnemopi:
+  embeddingModel: BAAI/bge-m3
+  embeddingApiUrl: http://literouter.lan:7766/v1
+  embeddingApiKey: lr-tei-oa-em-no
+```
+
+### Direct Embeddings via cURL
+```bash
+# Ambient Zero-Config (no auth header needed for local/trusted indexing agents):
+curl -s -X POST http://localhost:7766/v1/embeddings \
+  -H "Content-Type: application/json" \
+  -d '{"input": ["Text chunk 1", "Text chunk 2"], "model": "BAAI/bge-m3"}'
+
+# Or with explicit directive:
+curl -s -X POST http://localhost:7766/v1/embeddings \
+  -H "Authorization: Bearer lr-tei-oa-em-no" \
+  -H "Content-Type: application/json" \
+  -d '{"input": "Deep learning query", "model": "BAAI/bge-m3"}'
 ```
 
 ---
