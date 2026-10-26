@@ -15,7 +15,7 @@ import { extractDirectiveToken, verifyMasterSecret, resolveInferenceAuth, create
 import { handleAnthropicCompat, handleAnthropicCountTokens } from "./handlers/anthropic_compat";
 import { handleModelsDiscovery } from "./handlers/discovery";
 import { handleGcpCompat } from "./handlers/gcp_compat";
-import { dispatchV4 } from "./handlers/v4/router";
+import { dispatchV4, EMBEDDINGS_PATHS } from "./handlers/v4/router";
 import {
   handleGoogleInteractionsPassthrough,
   handleGoogleNative,
@@ -380,6 +380,28 @@ export function validateEndpointMatch(
   pathname: string,
   directive?: { readonly endpoint?: string } | null
 ): Response | null {
+  if (EMBEDDINGS_PATHS.has(pathname) && directive?.endpoint !== "em") {
+    return new Response(
+      JSON.stringify({
+        error: {
+          message: "Endpoint mismatch: Directive specifies non-embeddings API. Use /v1/embeddings with -em-.",
+          type: "invalid_request_error",
+        },
+      }),
+      { status: 400, headers: { "Content-Type": "application/json" } }
+    );
+  }
+  if (!EMBEDDINGS_PATHS.has(pathname) && directive?.endpoint === "em") {
+    return new Response(
+      JSON.stringify({
+        error: {
+          message: "Endpoint mismatch: Directive specifies Embeddings API (-em-). Use /v1/embeddings.",
+          type: "invalid_request_error",
+        },
+      }),
+      { status: 400, headers: { "Content-Type": "application/json" } }
+    );
+  }
   if (CHAT_PATHS.has(pathname) && directive?.endpoint === "rs") {
     return new Response(
       JSON.stringify({
@@ -470,7 +492,9 @@ export async function dispatchRoute(
   }
 
   const isTrace = path === "/v1/traces" || path.startsWith("/v1/traces/");
-  if (!isTrace) {
+  if (EMBEDDINGS_PATHS.has(path) && !rawKey) {
+    rawKey = "lr-tei-oa-em-no";
+  } else if (!isTrace) {
     const authCheck = resolveInferenceAuth(req, rawKey);
     if (!authCheck.valid) {
       return createUnauthorizedResponse(authCheck.error);
@@ -540,7 +564,12 @@ export async function handleAppRequest(req: Request): Promise<Response> {
     req.headers.get("x-request-id") ||
     req.headers.get("x-req-id") ||
     `req_${Math.random().toString(36).slice(2, 9)}`;
-  const rawKey = extractDirectiveToken(req) || "";
+  const rawPath = new URL(req.url).pathname;
+  const path = rawPath.length > 1 && rawPath.endsWith("/") ? rawPath.slice(0, -1) : rawPath;
+  let rawKey = extractDirectiveToken(req) || "";
+  if (EMBEDDINGS_PATHS.has(path) && !rawKey) {
+    rawKey = "lr-tei-oa-em-no";
+  }
   try {
     const res = await dispatchRoute(req, rawKey, reqId);
     try {

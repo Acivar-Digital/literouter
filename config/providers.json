@@ -194,5 +194,36 @@
         "max_queue_wait_ms": 15000
       }
     }
+    ,
+    "tei": {
+      "code": "tei",
+      "name": "Text Embeddings Inference",
+      "env_key": "TEI_API_KEYS",
+      "strategy": "standard",
+      "base_url": "http://10.32.34.172:8002",
+      "auth_header": "Bearer",
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "endpoints": {
+        "em": "/v1/embeddings"
+      },
+      "request_retry": {
+        "enabled": true,
+        "max_attempts": 3,
+        "delay": {
+          "min_ms": 150,
+          "max_ms": 500
+        }
+      },
+      "pacer": {
+        "enabled": true,
+        "min_delay_ms": 10,
+        "max_delay_ms": 50,
+        "max_queue_depth": 500,
+        "max_queue_wait_ms": 5000,
+        "max_concurrency": 8
+      }
+    }
   }
 }

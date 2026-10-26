@@ -14,6 +14,7 @@ export const ProviderCodeSchema = z.enum([
   "zn",
   "tp",
   "gc",
+  "tei",
 ]);
 
 export const PayloadCodeSchema = z.enum(["oa", "oo", "cl", "gg", "rs", "ao"]);

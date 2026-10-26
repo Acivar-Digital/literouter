@@ -142,6 +142,21 @@
           ]
         }
       }
+    },
+    "embeddings": {
+      "strategy": "sticky_fallback",
+      "timeout_ms": 30000,
+      "models": {
+        "BAAI/bge-m3": {
+          "tiers": [
+            {
+              "priority": 1,
+              "apikey": "lr-tei-oa-em-no",
+              "model": "BAAI/bge-m3"
+            }
+          ]
+        }
+      }
     }
   },
   "native_chains": {

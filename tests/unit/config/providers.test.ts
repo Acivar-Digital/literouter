@@ -16,7 +16,7 @@ describe("ProviderRegistry — In-Memory Store", () => {
 
   it("initializes successfully from config/providers.json", () => {
     const all = getAllProviders();
-    expect(all.length).toBe(6);
+    expect(all.length).toBe(7);
 
     expect(isRegisteredProvider("or")).toBe(true);
     expect(isRegisteredProvider("nv")).toBe(true);
@@ -179,7 +179,7 @@ describe("ProviderRegistry — In-Memory Store", () => {
 
   it("getAllProviders() returns every registered provider with required fields", () => {
     const all = getAllProviders();
-    expect(all.length).toBe(6);
+    expect(all.length).toBe(7);
 
     const codes = all.map((p) => p.code);
     expect(codes).toContain("or");

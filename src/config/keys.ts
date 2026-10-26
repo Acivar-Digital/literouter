@@ -15,6 +15,7 @@ const PROVIDER_ENV_MAP: Readonly<Record<ProviderCode, string>> = {
   zn: "ZEN_API_KEYS",
   tp: "TESTPROVIDER_API_KEYS",
   gc: "GCP_KEYS",
+  tei: "TEI_API_KEYS",
 };
 
 const INVALID_PLACEHOLDERS = new Set([

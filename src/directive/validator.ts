@@ -32,6 +32,15 @@ export function resolveInferenceAuth(req: Request, candidateToken?: string): Res
     return { valid: true, directiveStr };
   }
 
+  // Special case: Ambient zero-config requests to embeddings endpoints
+  // (e.g. from local CortexKit AFT semantic indexing) default to tei embeddings
+  if (!token && !headerDirective && !headerMasterKey) {
+    const pathname = new URL(req.url, "http://localhost").pathname;
+    if (pathname === "/v1/embeddings" || pathname === "/embeddings" || pathname === "/api/v1/embeddings") {
+      return { valid: true, directiveStr: "lr-tei-oa-em-no" };
+    }
+  }
+
   // When LITEROUTER_AUTH_KEY is configured:
   // Option 1: Authorization: Bearer <authKey> with x-literouter-directive: lr-...
   if (verifyMasterSecret(token, authKey)) {

@@ -9,6 +9,7 @@ import { handleV4AnthropicMessages } from "./anthropic_messages";
 import { handleV4GoogleNative } from "./google_native";
 import { handleV4OpenAIResponses } from "./openai_responses";
 import { handleV4GcpCompat } from "./gcp_compat";
+import { handleV4OpenAIEmbeddings } from "./openai_embeddings";
 import { handleGoogleInteractionsPassthrough } from "../google_native";
 
 export interface TraceDbRow {
@@ -236,6 +237,12 @@ function dispatchGoogleRoute(
   return null;
 }
 
+export const EMBEDDINGS_PATHS: ReadonlySet<string> = new Set([
+  "/v1/embeddings",
+  "/embeddings",
+  "/api/v1/embeddings",
+]);
+
 function dispatchPostRoute(
   path: string,
   req: Request,
@@ -253,6 +260,9 @@ function dispatchPostRoute(
   }
   if (RESPONSES_PATHS.has(path)) {
     return handleV4OpenAIResponses(req, rawKey, reqId);
+  }
+  if (EMBEDDINGS_PATHS.has(path)) {
+    return handleV4OpenAIEmbeddings(req, rawKey, reqId);
   }
   return null;
 }

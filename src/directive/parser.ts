@@ -11,7 +11,8 @@ export type ProviderCode =
   | "tg"
   | "zn"
   | "tp"
-  | "gc";
+  | "gc"
+  | "tei";
 
 export type WireProtocol = "oa" | "oo" | "cl" | "gg" | "rs" | "ao";
 
@@ -65,6 +66,7 @@ const VALID_PROVIDERS: ReadonlySet<string> = new Set([
   "zn",
   "tp",
   "gc",
+  "tei",
 ]);
 
 const VALID_PAYLOADS: ReadonlySet<string> = new Set(["oa", "oo", "cl", "gg", "rs", "ao"]);
