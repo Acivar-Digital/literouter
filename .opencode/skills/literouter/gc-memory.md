@@ -1,6 +1,6 @@
 # LiteRouter GC & Memory (lazy-load)
 
-No explicit GC by default. Zero `Bun.gc()` calls in `scripts/gateway/start.sh` (the only `Bun.gc(true)` in the repo is the flush handler at `src/index.ts:108-109`). With Bun v1.4.2+, JIT idle memory reclamation (~35–40% RSS drop) and safe `Bun.gc(true)` on flush events (`/reset`) are available (see SKILL.md §16.5). Read only on memory-leak / uptime / restart questions.
+No explicit GC by default. Zero `Bun.gc()` calls in `scripts/gateway/start.sh` (the only `Bun.gc(true)` in the repo is the flush handler at `src/index.ts:108-109`). With Bun v1.4.2+, JIT idle memory reclamation (~35–40% RSS drop) and safe `Bun.gc(true)` on flush events (`/reset`) are available (see `bun-runtime.md`). Read only on memory-leak / uptime / restart questions.
 
 ## 1. Bounded state (where "GC" lives)
 

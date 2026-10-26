@@ -4,6 +4,35 @@ All notable changes to LiteRouter will be documented in this file.
 
 ## [Unreleased] — 2026-10-23
 
+### Text Embeddings Inference (TEI) BGE-M3 Onboarding & Dual-Host Failover (`literouter-ejx2`)
+- **Dedicated Embeddings Route & Gateway Dispatch (`src/handlers/v4/router.ts`, `src/handlers/v4/openai_embeddings.ts`, `src/index.ts`)**:
+  - Implemented `POST /v1/embeddings`, `/embeddings`, and `/api/v1/embeddings` in Engine v4.1 via `handleV4OpenAIEmbeddings`.
+  - Integrated ambient zero-config fallback: unauthenticated requests targeting embedding paths automatically default to directive `lr-tei-oa-em-no` (or `lr-fse-embeddings`), enabling seamless local integration with CortexKit AFT and OMP Mnemopi.
+  - Added strict bidirectional endpoint mismatch enforcement: non-embedding directives on `/v1/embeddings` and embedding directives on chat/completions/responses return immediate HTTP 400.
+- **Automatic Multi-Document Batch Chunk Slicing (`src/transformers/openai_embeddings.ts`)**:
+  - Implemented `openAiEmbeddingsTransformer` adhering to `PayloadTransformerContract`.
+  - In `sliceEmbeddingInput`: automatically partitions input arrays $> 8$ items into sequential chunks of $\le 8$ items to respect TEI maximum batch limits.
+  - In `mergeEmbeddingResponses`: aggregates embedding vectors, re-indexes outputs from $0 \dots N-1$, and sums `prompt_tokens` and `total_tokens` across chunks before returning unified responses to clients.
+- **Active-Passive Dual-Tier Failover & Concurrency Tuning (`config/providers.json`, `config/fusion.json`)**:
+  - Registered provider `tei` and completion code `em` in `src/config/schema.ts` and `src/directive/parser.ts`.
+  - Configured Tier 1 Primary: WSL2 CUDA instance (`http://192.168.50.199:8002`, 4G cap, concurrency 8, batch size 8).
+  - Configured Tier 2 Fallback: VPS CPU instance (`http://127.0.0.1:8002`, 4G cap, concurrency 4, batch size 4).
+  - Implemented anti-sticky failover via `concurrency_penalty` and 30s reset cooldown on HTTP 429, 503, connection drops, or timeouts.
+- **Comprehensive Test Coverage (`tests/handlers/openai_embeddings.test.ts`)**:
+  - Added 6 automated tests validating valid authenticated requests, ambient zero-config authentication, batch chunk slicing (12-item batch into 8 + 4), endpoint mismatch validation (400), and dual-tier failover under simulated upstream failure.
+
+### LiteRouter Skill Refactoring & Lazy-Loading Architecture
+- **Lazy-Loading Topic Extraction (`.opencode/skills/literouter/`)**:
+  - Extracted Bun v1.4.2 optimization guidelines into standalone reference `.opencode/skills/literouter/bun-runtime.md` covering HTTP/2 ALPN, JIT GC, streaming `Bun.write`, and memory reclamation.
+  - Extracted Text Embeddings Inference architecture into standalone topic `.opencode/skills/literouter/tei-embeddings.md` covering provider codes, batch slicing, ambient zero-config auth, and client setups.
+  - Refactored `.opencode/skills/literouter/SKILL.md` into a lean, fast index delegating in-depth guidance to topic maps, reducing LLM context overhead during routine development.
+
+### Client Configuration & Integration Guides (`README.md`, `.opencode/skills/literouter/tei-embeddings.md`)
+- **CortexKit AFT & OMP Mnemopi Integration**:
+  - Configured `~/.config/cortexkit/aft.jsonc` across WSL2 and VPS pointing to LiteRouter (`http://192.168.50.10:7766/v1` or `http://127.0.0.1:7766/v1`) with model `BAAI/bge-m3`.
+  - Configured `~/.omp/agent/config.yml` embedding backend pointing to LiteRouter with directive `lr-tei-oa-em-no`.
+  - Documented cURL examples for single embeddings, multi-item batches, and unauthenticated ambient probes in `README.md`.
+
 ### Dynamic OpenCode User-Agent Sync for OpenRouter & Zen (`literouter-v4ol`)
 - **Unified Version Discovery Script (`scripts/update-user-agent.ts`)**:
   - Implemented `scripts/update-user-agent.ts` executing local `opencode --version` with semver parsing, regex validation, and non-blocking fallback to `1.18.30`.

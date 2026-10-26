@@ -90,7 +90,8 @@ description: LiteRouter API Gateway operational guide for Bun/TypeScript proxy o
 | **Google AI Studio** | `gg` | `GOOGLE_API_KEYS` | `https://generativelanguage.googleapis.com` | `native_cascade` |
 | **Zen** | `zn` | `ZEN_API_KEYS` | `https://opencode.ai/zen` | `standard` |
 | **Google Cloud (GCP)** | `gc` | `GCP_KEYS` / `GCP_API_KEYS` | `https://generativelanguage.googleapis.com` | `gcp_guarded` |
-| **Groq** | `gq` | `GROQ_API_KEYS` | `https://api.groq.com/openai` | `standard` |
+|**Groq**|`gq`|`GROQ_API_KEYS`|`https://api.groq.com/openai`|`standard`|
+|**Text Embeddings Inference (TEI)**|`tei`|`TEI_API_KEYS`|`http://192.168.50.199:8002` (WSL2 CUDA) / `http://127.0.0.1:8002` (VPS CPU)|`standard`|
 
 *Validation*: Discards tokens `< 4` chars or matching `changeme`, `todo`, `undefined`, `null`. Non-destructive mock keys injected during unit tests.
 
@@ -116,8 +117,9 @@ description: LiteRouter API Gateway operational guide for Bun/TypeScript proxy o
 | `POST /v1beta/models/*:generateContent`<br>`POST /v1beta/models/*:streamGenerateContent` | `src/handlers/google_native.ts`<br>(v4: `src/handlers/v4/google_native.ts`) | `handleGoogleNative`<br>(v4: `handleV4GoogleNative`) | `lr-gg-gg-gc-no`. Direct Gemini REST for Google AI Studio v1beta (`/v1beta/models/*`). In v4, extracts model from path, preserves `:streamGenerateContent` action and query parameters (e.g. `?alt=sse`), streaming SSE (`text/event-stream`). |
 | `POST /v1/models/*:generateContent`<br>`POST /v1/models/*:streamGenerateContent` | `src/handlers/google_native.ts`<br>(v4: `src/handlers/v4/google_native.ts`) | `handleGoogleNative`<br>(v4: `handleV4GoogleNative`) | `lr-gg-gg-g1-no`. Direct Gemini REST for Google AI Studio v1 (`/v1/models/*`). In v4, extracts model from path, preserves `:streamGenerateContent` action and query parameters (e.g. `?alt=sse`), streaming SSE (`text/event-stream`). |
 | `POST /v1beta/interactions*`<br>`GET / POST /v1beta/files/*` | `src/handlers/google_native.ts`<br>(v4: `src/handlers/v4/router.ts`) | `handleGoogleInteractionsPassthrough` | `lr-gg-*`. Verbatim Google Interactions API & file download/upload passthrough (`antigravity-preview-*`) with `gg` pacer & key rotation. |
-| `POST /v1beta/openai/*` | `src/handlers/gcp_compat.ts` / `google_native.ts` | `handleGcpCompat` / `handleGoogleOpenAIBeta` | `lr-gc-oa-ch-no`. GCP Vertex AI OpenAI-compatible route. |
-| `GET /v1/models`, `/v1beta/models` | `src/handlers/discovery.ts` | `handleModelsDiscovery` | Advertises models from `models.json` (legacy, advertisement-only) & `fusion.json`; serving is dynamic passthrough, never registry-gated. |
+|`POST /v1beta/openai/*`|`src/handlers/gcp_compat.ts` / `google_native.ts`|`handleGcpCompat` / `handleGoogleOpenAIBeta`|`lr-gc-oa-ch-no`. GCP Vertex AI OpenAI-compatible route.|
+|`POST /v1/embeddings`<br>`POST /embeddings`<br>`POST /api/v1/embeddings`|`src/handlers/v4/openai_embeddings.ts`|`handleV4OpenAIEmbeddings`|`lr-tei-oa-em-no`, `lr-fse-embeddings`. Ambient zero-config auth fallback; transparent batch chunk slicing $> 8$ items; active-passive WSL2 CUDA ➔ VPS CPU failover.|
+|`GET /v1/models`, `/v1beta/models`|`src/handlers/discovery.ts`|`handleModelsDiscovery`|Advertises models from `models.json` (legacy, advertisement-only) & `fusion.json`; serving is dynamic passthrough, never registry-gated.|
 | `GET /health`, `/hello` | `src/index.ts` | `handleHealthCheck` | Auth-free liveness probe (uptime, H2 pool stats). No circuit breaker stats (v4 excised). |
 | `POST /reset` | `src/index.ts` | `handleHardReset` | Admin-auth gated hard reset (requires `Bearer <LITEROUTER_AUTH_KEY>`); hot-reloads `config/providers.json` headers, resets fusion caches, flushes pools/cooldowns — **cannot rebind port** (restart for port/host/cert changes). |
 
@@ -126,7 +128,7 @@ description: LiteRouter API Gateway operational guide for Bun/TypeScript proxy o
 > 📖 **Full matrix**: [`directive-grammar.md`](directive-grammar.md) — shapes ([§1](directive-grammar.md#1-key-shapes)), providers ([§2](directive-grammar.md#2-provider-codes-13)), wires ([§3](directive-grammar.md#3-payload-wire-codes-6)), endpoints ([§4](directive-grammar.md#4-completion-endpoint-codes-10)), nuances ([§5](directive-grammar.md#5-nuance-codes-8-compoundable-with-)), top-10 ([§6](directive-grammar.md#6-top-10-keys-expanded-handler-why)), fusion presets ([§7](directive-grammar.md#7-fusion-presets-lr-fse-)), 400 rules ([§8](directive-grammar.md#8-endpoint-mismatch-400-rules)), dispatch order ([§9](directive-grammar.md#9-dispatch-order-cheat-sheet)), validity checks ([§10](directive-grammar.md#10-quick-validity-checks)), engine gate ([§11](directive-grammar.md#11-engine-selection-v4-only-routes)).
 
 Format: `lr-<provider>-<payload>-<completion>-<nuance>`
-- **Providers**: `or`, `nv`, `gg`, `zn`, `gc`, `oa`, `an`, `gq`, `cb`, `ds`, `ms`, `tg` (+ `tp` tests-only loopback double — never use outside unit tests).
+- **Providers**: `or`, `nv`, `gg`, `zn`, `gc`, `oa`, `an`, `gq`, `cb`, `ds`, `ms`, `tg`, `tei` (+ `tp` tests-only loopback double — never use outside unit tests).
 - **Payload (wire)**: `oa` (OpenAI, scrubs reasoning), `oo` (Responses native, preserves), `cl` (Anthropic), `ao` (Anthropic→OpenAI cross-wire), `gg` (Google), `rs` (Responses translated).
 - **Completion (endpoint)**: `ch`, `ms`, `rs`, `gc`, `g1`, `ob`, `em`, `md` (+ map-only codes `im`, `au` — `g1` is a **completion-code slot for Google v1, not a nuance**).
   - Difference between Google endpoints:
@@ -147,8 +149,9 @@ Format: `lr-<provider>-<payload>-<completion>-<nuance>`
 | `lr-an-cl-ms-no` | Claude Code (Direct Anthropic) | `claude-3-7-sonnet-20250219` | Direct Anthropic Messages API with key rotation |
 | `lr-gg-gg-gc-no` | Google Native v1beta (`@ai-sdk/google`) | `gemini-flash`, `gemini-flash-lite` | Direct Google REST forwarder for `/v1beta/models/*` + Native Google Fusion cascades |
 | `lr-gg-gg-g1-no` | Google Native v1 (`@ai-sdk/google`) | `gemini-2.5-flash`, `gemini-2.5-pro` | Direct Google REST forwarder for `/v1/models/*`, preserves query params (`?alt=sse`) & streams via SSE |
-| `lr-nv-oa-ch-no` | Pydantic AI / Python SDK | `deepseek-ai/deepseek-r1` | High-throughput HTTP/2 binary multiplexed chat completions |
-| `lr-gc-oa-ch-no` | GCP Vertex AI (Gemma) | `gemma-4-31b-it` | Vertex AI Chat Completions with 30 RPM pacer & zero-cost guardrail |
+|`lr-nv-oa-ch-no`|Pydantic AI / Python SDK|`deepseek-ai/deepseek-r1`|High-throughput HTTP/2 binary multiplexed chat completions|
+|`lr-tei-oa-em-no`|CortexKit AFT / OMP Mnemopi|`BAAI/bge-m3`|OpenAI-compatible text embeddings with ambient zero-config fallback, batch slicing, and dual-tier failover|
+|`lr-gc-oa-ch-no`|GCP Vertex AI (Gemma)|`gemma-4-31b-it`|Vertex AI Chat Completions with 30 RPM pacer & zero-cost guardrail|
 | `lr-or-ao-ch-dp` | Dots / Open-Weights XML Tools | `dots-studio/dots-3-note-preview:free` | Anthropic-to-OpenAI cross-wire with XML tool & thinking extraction |
 
 Fusion presets: `lr-fse-<preset>` where preset is ONLY one of `quad` / `pydn` / `fast` / `deep` (verified on disk in `config/fusion.json`). `smart` / `code` / `cheap` do not exist — see [directive-grammar.md §7](directive-grammar.md#7-fusion-presets-lr-fse-) and [config-schemas.md §1](config-schemas.md#1-configfusionjson).
@@ -338,47 +341,6 @@ Canonical config companion — every `config/` file and its validator:
 | Env knob quick reference | [error-action-matrix.md §4](error-action-matrix.md#4-env-knob-quick-reference) |
 | Model capability probe (`scripts/probe/probe_model.ts`) | [scripts-ops.md §4.3](scripts-ops.md#43-universal-model-capability-probe-scriptsprobe_modelts) |
 
-## §13.5. Model Onboarding & Readiness Probing Protocol (`scripts/probe/probe_model.ts`)
-
-When asked to **"onboard <model> and test"** or **"verify if <model> is ready for OpenCode 2 / Claude Code / Pydantic"**:
-
-### 1. Mandatory Execution Command
-```bash
-bun run scripts/probe/probe_model.ts <model_name> [--directive <directive_key>] [--url <gateway_url>]
-```
-*(Default directive: `lr-or-oa-ch-no`, default URL: `https://localhost:7766/v1/chat/completions`)*
-
-### 2. Rigorous Multi-Tier Audit Scope
-1. **OpenCode 2 Agentic Tool-Calling**:
-   - **4-Tool Realistic Palette**: Tests tool discrimination among `read_file`, `write_file`, `execute_command`, and `grep_search`. Verifies model does not confuse argument signatures or hallucinate wrong tool invocations.
-   - **Streaming SSE Chunk Evaluation**: Measures TTFT and duration; checks for zero XML tag leakage (`<tool_call>`, `<invoke>`); verifies stream finishes on `finish_reason: "tool_calls"`.
-   - **Turn 2 (Observation Ingestion)**: Feeds executed tool output (`role: "tool"`); verifies upstream accepts the multi-turn exchange and synthesizes results.
-   - **Turn 3 (Error Injection & Fault Tolerance)**: Injects an explicit tool execution error (e.g., `EACCES: permission denied`); verifies the model acknowledges the failure and recovers gracefully instead of hanging or looping.
-2. **Claude Code CLI & Anthropic Messages API (`/v1/messages`)**:
-   - Tests `/v1/messages` compatibility with Anthropic directive key `lr-or-cl-ms-no`.
-   - Validates native Anthropic `tool_use` JSON block generation (`name`, `input.file_path`).
-   - Asserts zero leaked XML tags (`<dots_function_call>`, `<invoke>`) in response content blocks.
-   - Verifies multi-turn tool observations via `role: "user"` with `type: "tool_result"` blocks.
-3. **Pydantic AI V2 Complex Schema Validation**:
-   - **Test A (Native Structured Outputs `output_type=Model`)**:
-     - Sends `response_format: {"type": "json_object"}` containing nested models (`metadata`), string enums (`system_status`), strictly typed integers (`cluster_nodes`, `code`), and arrays of sub-objects (`alerts`).
-     - Performs strict programmatic validation against the schema.
-   - **Test B (Prompted Fallback with Downstream Fence Stripping `_strip_json_fences`)**:
-     - Tests whether complex schemas can be extracted via prompt instructions without native `response_format` (for providers like Novita that reject `json_object` with HTTP 400).
-     - Validates markdown fence stripping and deep schema compliance.
-
-### 3. Agent Decision Matrix for Onboarding
-- **If OpenCode 2 Tool-Calling Passes (Score ≥ 80)**:
-  - Model is certified for OpenCode 2 autonomous loops (`lr-or-oa-ch-no`).
-- **If Claude Code CLI Passes**:
-  - Model is certified for Anthropic Claude Code CLI (`lr-or-cl-ms-no` over `/v1/messages`).
-- **If Pydantic Native Passes (HTTP 200 + 100% Schema Valid)**:
-  - Model is certified for native Pydantic AI `Agent(output_type=Model)` without workarounds.
-- **If Pydantic Native Fails (HTTP 400 or schema invalid)**:
-  - Check Prompted Schema Conformance:
-    - If Prompted passes: Instruct client to prompt for text and use downstream fence stripping (`_strip_json_fences`) in Python rather than passing `output_type=Model`.
-    - If Prompted fails: Mark model as REJECTED for structured data workloads.
-
 ## §14. Topic Map — Read These Files for Details
 
 | Topic | File | When to read it |
@@ -413,6 +375,8 @@ bun run scripts/probe/probe_model.ts <model_name> [--directive <directive_key>] 
 | **Antigravity IDE setup (LiteRouter wiring)** | `agy-ide-setup.md` (§16) | User asks about connecting Antigravity IDE to LiteRouter or verifying IDE→gateway connectivity |
 | **Test suite hygiene, air-gap & test parking** | `test-hygiene-playbook.md` (§16) | User asks about writing tests, test hygiene, airgap, mock responses, simulation banners, bun test, or pytest |
 | **GC & memory bounds (no explicit GC, restart policy)** | `gc-memory.md` (§16) | User asks about garbage collection, memory leaks, bounded state, or periodic restarts |
+| **Model onboarding & capability probe protocol** | `scripts-ops.md` (§4.3) | User asks to onboard, probe, or verify a model for OpenCode 2, Claude Code, or Pydantic AI |
+| **TEI & BGE-M3 Embeddings (provider `tei`, `em`, batch slicing, ambient zero-config, dual-tier failover)** | `tei-embeddings.md` | User asks about embeddings, TEI (`tei`), BGE-M3, `/v1/embeddings`, ambient zero-config auth, batch chunk slicing, CortexKit AFT semantic search, OMP Mnemopi, or active-passive dual-tier failover |
 
 ## §15. Grounded Corrections (verified vs disk — must-read before editing keys/config)
 
@@ -438,59 +402,12 @@ bun run scripts/probe/probe_model.ts <model_name> [--directive <directive_key>] 
 20. **Singleton FusionEngine with In-Memory `StickyPositionCache`**: `FusionEngine` is cached as a singleton in `src/handlers/openai_compat.ts` and reset on `/reset` via `resetCachedFusionEngine()`. This preserves sticky fallback position state across turns instead of recreating a blank cache per request.
 21. **Bounded Telemetry Tracing (`MAX_LEG_BYTES` = 64KB)**: In `src/telemetry/sanitize.ts`, trace leg payloads are truncated to `MAX_LEG_BYTES` (64KB) prior to regex secret scanning, preventing multi-MB heap allocations. Client-facing error responses are passed `Infinity` and remain untruncated. Trace queue estimation uses `estimateTraceSize` in `src/telemetry/ring_buffer.ts` to avoid `JSON.stringify` allocations.
 
-## §16.5. Bun v1.4.2 Runtime & Optimization Guidelines
-
-> **Target Version**: Bun v1.4.2+ (upgraded from v1.4.0). All runtime claims below are verified capabilities of the v1.4.2 JSC/Bun runtime, not aspirational features.
-
-### Native HTTP/2 in `Bun.serve`
-- **ALPN-negotiated HTTP/2 + HTTP/1.1 on the same port**. Bun v1.4.2 resolves the TLS ALPN negotiation conflict (`TLS alert: no application protocol`) via native `Bun.serve({ tls: true })` with dual ALPN (`h2` / `http/1.1`).
-- **Replaces legacy polyfills**: Eliminates manual `node:http2` / `createSecureServer` polyfills previously required in TLS mode. No manual chunk buffering — `Bun.serve` streams natively over negotiated protocols.
-- **Architectural impact**: `h2_pool.ts` can rely on persistent multiplexed H2 upstream sessions (`https://generativelanguage.googleapis.com`) without maintaining separate TLS sockets per protocol version. Inbound dual-ALPN (port 7766) is native, not simulated.
-
-### JIT Idle Memory Reclamation
-- **Automatic flushing of JIT-compiled bytecode** during idle periods drops long-running daemon RSS by ~35–40%. This complements the bounded in-memory state (trace ring, pacer queue, H2 session rotation).
-- **Proactive `Bun.gc(true)`**: Call on explicit cache resets (`POST /reset` clears cooldowns, H2 pools, trace buffers) or during large flush events. Currently zero explicit GC in `scripts/gateway/start.sh` (see `gc-memory.md`); with v1.4.2, `Bun.gc(true)` is safe to inject on `/reset` handlers or periodic flush cycles without blocking the event loop.
-- **Memory contract unchanged**: No external Redis/Valkey dependency; bounded state remains the primary leak-defense. JIT reclamation is a secondary, not primary, bound.
-
-### Streaming `Bun.write` (Direct-to-Disk)
-- **Native direct-to-disk streaming** from `Response`, `Request`, or `ReadableStream` objects without RAM double-buffering. Replaces manual `stream.pipe(fs.createWriteStream(...))` patterns where applied.
-- **Gateway usage context**: For diagnostic logs, trace dumps (`src/telemetry/trace_writer.ts`), or response caching to disk, `Bun.write(path, stream)` avoids allocating an intermediate `Buffer` array that would double memory for large streaming payloads.
-
-### Hardened Array GC & Concurrency
-
-> **S5 Error Taxonomy Note (literouter-ky12)** — Grilled decisions recorded in `CHANGELOG.md` (Unreleased S5) and `error-action-matrix.md`: (1) 401/403 fail-fast canonical (zero retry, zero quarantine, aligned legacy+v4); (2) 403 zero-quarantine (`key_cooldown.enabled: false`, no `CooldownManager.quarantineKey`); (3) 408 retry_rotate driven by `providers.json` `request_retry` schedule (no hardcoded `Retry-After: 5`); (4) full typed `error_type` parser supporting 3 skins (`standard`, `legacy`, `v4`) with `error_type` winning over raw `status`, conservation-first (`conserve_rules` overrides generic 429); (5) condensed terminal format (`error_type=<type> status=<code> action=<action>`) with full telemetry trace (`session-id`, `key_index`, `provider_code`, `request_retry_ref`). Docs-only; no `.env*` or `src/` edits.
-- **Fixed concurrent GC array mutations** (`shift` / `splice`) that previously caused race-related array corruption during high-throughput token bucket pacing.
-- **Fixed `AsyncLocalStorage` leaks** that destabilized in-flight request queues and session tracking across concurrent H2 multiplexed streams.
-- **Architectural impact**: `RequestPacer` (`max_queue_depth: 500`, strict `min_delay_ms` spacing), in-flight retry queues, and `h2_pool.ts` session rotation are now safe under concurrent GC cycles. No additional synchronization locks are required in v4 — rely on single-threaded non-preemptive event-loop atomicity plus v1.4.2 GC hardening.
-
-### Faster Core `require()` (Lazy-Loaded Native Modules)
-- **Lazy-loaded `node:fs`**, `node:http`, etc. via faster `require()` internals. Reduces cold-start overhead for module imports in `src/handlers/`, `src/network/`, `src/engine/`.
-- **Architectural impact**: Gateway boot time (`scripts/gateway/start.sh`) and `/reset` hot-reload latency benefit from faster module resolution; no code changes needed.
-
-### Native `crypto.argon2` & WebSocket Control
-- **Native `crypto.argon2`**: Available in Bun v1.4.2 runtime for any future key-derivation or token-hashing requirements (e.g., session ID derivation, auth token rotation). No dependency on `node:crypto` polyfill needed.
-- **WebSocket `.pause()` / `.resume()`**: Native WebSocket stream control methods. If future gateway extensions add WebSocket endpoints (e.g., real-time trace streaming, agentic bi-directional channels), `.pause()` / `.resume()` provide backpressure control without manual `ReadableStream` wrappers.
-- **Current scope**: LiteRouter v4 does not expose WebSocket endpoints; these are documented as available primitives for future extensions.
-
-### Verification References
-- Runtime: `package.json` → `engines.bun` (target `>=1.4.2`).
-- ALPN / TLS: `.env` (`LITEROUTER_TLS_ENABLED`, `LITEROUTER_HTTP2`), `src/index.ts` (dual-ALPN server init), `h2-transport.md`.
-- GC / memory: `gc-memory.md` (bounded state, `POST /reset` scope), `CHANGELOG.md` (v1.4.0 upgrade notes).
-- Streaming / disk: `docs/streaming-fix.md`, `src/network/fetcher.ts`.
-- Array / concurrency: `src/network/pacer.ts`, `src/network/h2_pool.ts`, `src/network/cooldown.ts`.
-
 ## §16. Appendix — Lazy Pointers (load only on topic match)
 
 - **TUI LaTeX & math rendering**: [tui-latex-math-rendering.md](tui-latex-math-rendering.md) — overview ([§1](tui-latex-math-rendering.md#1-executive-overview-rendering-environments)), raw-math root cause ([§2](tui-latex-math-rendering.md#2-root-cause-of-raw-math-artifacts-in-tui)), upstream tracking ([§3](tui-latex-math-rendering.md#3-upstream-opencode-github-tracking)), mitigations ([§5](tui-latex-math-rendering.md#5-recommended-engineering-practices-mitigations)).
 - **Antigravity IDE setup (LiteRouter wiring only)**: [agy-ide-setup.md](agy-ide-setup.md) — architecture ([§1](agy-ide-setup.md#1-antigravity-ide-architecture)), connecting to LiteRouter ([§2](agy-ide-setup.md#2-connecting-antigravity-ide-to-literouter)), verifying connectivity ([§3](agy-ide-setup.md#3-verifying-connectivity)).
 - **Test suite hygiene & test parking (Zero-LLM hermetic testing)**: [test-hygiene-playbook.md](test-hygiene-playbook.md) — architecture & air-gap ([§2](test-hygiene-playbook.md#2-architecture-the-air-gap-barrier)), parking taxonomy ([§3](test-hygiene-playbook.md#3-parking-taxonomy-where-new-tests-belong)), simulation banners ([§4](test-hygiene-playbook.md#4-test-simulation-transparency-banner-rule)), anti-context-bloat ([§5](test-hygiene-playbook.md#5-anti-context-bloat--silent-truncation-prevention)), teardown symmetry ([§6](test-hygiene-playbook.md#6-state-teardown--anti-flake-symmetry)), pytest live gate ([§7](test-hygiene-playbook.md#7-pytest-integration-gate-live)).
 - **GC & memory bounds (no explicit GC, restart policy)**: [gc-memory.md](gc-memory.md) — bounded state ([§1](gc-memory.md#1-bounded-state-where-gc-lives)), manual reset ([§2](gc-memory.md#2-manual-reset-in-process-gc)), restart policy ([§3](gc-memory.md#3-periodic-restart-no)).
+- **Bun v1.4.2 runtime & optimization guidelines**: [bun-runtime.md](bun-runtime.md) — HTTP/2 ALPN ([§1](bun-runtime.md#1-native-http2-in-bunserve)), JIT idle memory reclamation ([§2](bun-runtime.md#2-jit-idle-memory-reclamation)), streaming `Bun.write` ([§3](bun-runtime.md#3-streaming-bunwrite-direct-to-disk)), array GC & concurrency ([§4](bun-runtime.md#4-hardened-array-gc--concurrency)), faster `require()` ([§5](bun-runtime.md#5-faster-core-require-lazy-loaded-native-modules)), native `crypto.argon2` & WebSocket ([§6](bun-runtime.md#6-native-cryptoargon2--websocket-control)), verification references ([§7](bun-runtime.md#7-verification-references)).
 - **Canonical IDE skill (cross-skill)**: `../agy-ide-playbook/SKILL.md` — IDE install/upgrade/config is owned there ([Quick Start & Commands](../agy-ide-playbook/SKILL.md#quick-start-commands), [User-Space Mandate](../agy-ide-playbook/SKILL.md#-critical-architecture-mandate-user-space-first-no-sudo), [Installation & Upgrade Protocol](../agy-ide-playbook/SKILL.md#installation-upgrade-protocol-step-by-step)). LiteRouter-side proxy wiring stays in `agy-ide-setup.md`; do not duplicate IDE procedures here.
-
-## §27. Canonical Session Identity Preservation & Upstream Invariant
-
-- **Mandatory Invariant**: All inbound handlers (`openai_compat.ts`, `openai_original.ts`, `anthropic_compat.ts`) and outbound dispatchers MUST use `ensureSessionHeaders` from `src/engine/session_id.ts`.
-- **Normalization Contract**: All 6 client session headers (`session-id`, `x-session-id`, `x-opencode-session`, `x-opencode-session-id`, `opencode-session-id`, `opencode-session`) MUST always normalize into upstream `session-id`.
-- **Upstream Gateway Dependency**: Upstream gateways (like Zen `opencode.ai/zen/v1`) track usage and free-tier access strictly via `session-id`. If stripped or overwritten, requests show as `[EMPTY]` on provider dashboards or fail with `MissingSessionID`.
-- **Refactoring Guardrail**: Future LLM code modifications MUST NEVER strip, ad-hoc loop, or drop `ensureSessionHeaders` when refactoring handlers or building upstream headers.
 
