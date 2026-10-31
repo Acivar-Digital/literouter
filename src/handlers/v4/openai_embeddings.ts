@@ -1,15 +1,17 @@
 import { executeDispatchPipeline, type DispatchRequest } from "../../engine/dispatch";
 import { parseDirectiveKey } from "../../directive/parser";
+import { logError } from "../../ui/logger";
 import {
   openAiEmbeddingsTransformer,
   sliceEmbeddingInput,
   mergeEmbeddingResponses,
   isMultiInputBatch,
+  DEFAULT_EMBEDDING_MODEL,
   DEFAULT_EMBEDDING_BATCH_SIZE,
   type OpenAIEmbeddingResponse,
 } from "../../transformers/openai_embeddings";
 
-export const DEFAULT_EMBEDDING_DIRECTIVE = "lr-tei-oa-em-no";
+export const DEFAULT_EMBEDDING_DIRECTIVE = "lr-fse-embeddings";
 
 export async function handleOpenAiEmbeddings(
   req: Request,
@@ -29,6 +31,10 @@ export async function handleOpenAiEmbeddings(
         { status: 400 }
       );
     }
+  }
+
+  if (!body.model || typeof body.model !== "string" || !body.model.trim()) {
+    body.model = DEFAULT_EMBEDDING_MODEL;
   }
 
   const directive = parseDirectiveKey(effectiveRawKey);
@@ -86,7 +92,22 @@ export async function handleOpenAiEmbeddings(
         transformer: openAiEmbeddingsTransformer,
       };
 
-      const chunkRes = await executeDispatchPipeline(dispatchReq);
+      let chunkRes: Response;
+      try {
+        chunkRes = await executeDispatchPipeline(dispatchReq);
+      } catch (err: unknown) {
+        logError(reqId, "Unhandled error in executeDispatchPipeline for embeddings chunk", err);
+        return new Response(
+          JSON.stringify({
+            error: {
+              message: `Embeddings dispatch error: ${err instanceof Error ? err.message : String(err)}`,
+              type: "gateway_error",
+              code: "embeddings_dispatch_error",
+            },
+          }),
+          { status: 502, headers: { "content-type": "application/json" } }
+        );
+      }
       if (chunkRes.status >= 400) {
         return chunkRes;
       }
@@ -123,7 +144,21 @@ export async function handleOpenAiEmbeddings(
     transformer: openAiEmbeddingsTransformer,
   };
 
-  return executeDispatchPipeline(dispatchReq);
+  try {
+    return await executeDispatchPipeline(dispatchReq);
+  } catch (err: unknown) {
+    logError(reqId, "Unhandled error in executeDispatchPipeline for embeddings", err);
+    return new Response(
+      JSON.stringify({
+        error: {
+          message: `Embeddings dispatch error: ${err instanceof Error ? err.message : String(err)}`,
+          type: "gateway_error",
+          code: "embeddings_dispatch_error",
+        },
+      }),
+      { status: 502, headers: { "content-type": "application/json" } }
+    );
+  }
 }
 
 export const handleV4OpenAIEmbeddings = handleOpenAiEmbeddings;

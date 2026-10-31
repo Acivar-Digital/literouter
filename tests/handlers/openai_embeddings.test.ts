@@ -1,9 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import { openAiEmbeddingsTransformer, DEFAULT_EMBEDDING_BATCH_SIZE } from "../../src/transformers/openai_embeddings";
-import { handleV4OpenAIEmbeddings } from "../../src/handlers/v4/openai_embeddings";
+import { handleV4OpenAIEmbeddings, DEFAULT_EMBEDDING_DIRECTIVE } from "../../src/handlers/v4/openai_embeddings";
 import { parseDirectiveKey } from "../../src/directive/parser";
 import { EMBEDDINGS_PATHS } from "../../src/handlers/v4/router";
-import { validateEndpointMatch } from "../../src/index";
+import { validateEndpointMatch, handleAppRequest } from "../../src/index";
+import { globalCooldownManager, globalKeyPool } from "../../src/handlers/openai_compat";
+import { executeDispatchPipeline, type DispatchRequest } from "../../src/engine/dispatch";
+import { resetEnvCache } from "../../src/config/env";
 
 describe("OpenAI Embeddings Transformer & Handler", () => {
   test("EMBEDDINGS_PATHS contains standard endpoints", () => {
@@ -98,5 +101,127 @@ describe("OpenAI Embeddings Transformer & Handler", () => {
     expect(res.status).toBe(400);
     const body = await res.json();
     expect(body.error.message).toContain("Endpoint mismatch");
+  });
+
+  test("DEFAULT_EMBEDDING_DIRECTIVE is lr-fse-embeddings", () => {
+    expect(DEFAULT_EMBEDDING_DIRECTIVE).toBe("lr-fse-embeddings");
+    const parsed = parseDirectiveKey(DEFAULT_EMBEDDING_DIRECTIVE);
+    expect(parsed?.type).toBe("fusion");
+    if (parsed?.type === "fusion") {
+      expect(parsed.preset).toBe("embeddings");
+    }
+  });
+
+  test("handleAppRequest defaults unauthenticated /v1/embeddings to lr-fse-embeddings and executes dual-tier fusion", async () => {
+    const prevEngine = process.env.LITEROUTER_ENGINE;
+    process.env.LITEROUTER_ENGINE = "v4.1";
+    resetEnvCache();
+    globalCooldownManager.clearAll();
+    globalKeyPool.reset();
+    const originalFetch = globalThis.fetch;
+    const requestedUrls: string[] = [];
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      requestedUrls.push(url);
+      // Simulate Tier 1 (http://tei-wsl.lan:8002) connection error
+      if (url.includes("tei-wsl.lan")) {
+        throw new Error("Unable to connect to tei-wsl.lan:8002");
+      }
+      // Tier 2 (http://127.0.0.1:8002) succeeds
+      if (url.includes("127.0.0.1:8002")) {
+        return new Response(
+          JSON.stringify([
+            [0.11, 0.22, 0.33]
+          ]),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      }
+      return new Response("Not Found", { status: 404 });
+    }) as any;
+
+    try {
+      globalKeyPool.setPool("tei", ["mock-tei-key"]);
+      globalKeyPool.setPool("teivps", ["mock-teivps-key"]);
+
+      const req = new Request("http://localhost:7766/v1/embeddings", {
+        method: "POST",
+        body: JSON.stringify({ input: "failover test query" }),
+        headers: { "content-type": "application/json" },
+      });
+
+      const res = await handleAppRequest(req);
+      expect(res.status).toBe(200);
+      const json = await res.json();
+      expect(json.object).toBe("list");
+      expect(json.data[0]?.embedding).toEqual([0.11, 0.22, 0.33]);
+      // Verified Tier 1 was attempted first, then Tier 2
+      expect(requestedUrls.some((u) => u.includes("tei-wsl.lan:8002"))).toBe(true);
+      expect(requestedUrls.some((u) => u.includes("127.0.0.1:8002"))).toBe(true);
+    } finally {
+      process.env.LITEROUTER_ENGINE = prevEngine;
+      resetEnvCache();
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("executeDispatchPipeline returns structured 502 with code retries_exhausted when all retries fail", async () => {
+    globalCooldownManager.clearAll();
+    globalKeyPool.reset();
+    globalKeyPool.setPool("tei", ["mock-tei-key"]);
+    const directive = parseDirectiveKey("lr-tei-oa-em-no")!;
+    const outboundPayload = openAiEmbeddingsTransformer.transformClientToWire(
+      { input: "retry exhaust test" },
+      directive,
+      new Headers()
+    );
+
+    const dispatchReq: DispatchRequest = {
+      reqId: "test-exhaust-502",
+      method: "POST",
+      path: "/v1/embeddings",
+      directive,
+      rawInboundBody: { input: "retry exhaust test" },
+      outboundPayload,
+      clientSignal: new AbortController().signal,
+      clientHeaders: new Headers(),
+      transformer: openAiEmbeddingsTransformer,
+    };
+
+    const fetchFn = async () => {
+      throw new Error("Connection refused: 192.168.50.199:8002");
+    };
+
+    const res = await executeDispatchPipeline(dispatchReq, fetchFn);
+    expect(res.status).toBe(502);
+    const body = await res.json();
+    expect(body.error.type).toBe("gateway_error");
+    expect(body.error.code).toBe("retries_exhausted");
+    expect(body.error.message).toContain("retry attempts exhausted");
+  });
+
+  test("handleOpenAiEmbeddings catches unexpected synchronous dispatch failure and returns 502 error boundary", async () => {
+    globalCooldownManager.clearAll();
+    globalKeyPool.reset();
+    globalKeyPool.setPool("tei", ["mock-tei-key"]);
+    const req = new Request("http://localhost:7766/v1/embeddings", {
+      method: "POST",
+      body: JSON.stringify({ input: "boundary test" }),
+      headers: { "content-type": "application/json" },
+    });
+
+    // Intentionally pass an invalid directive that bypasses validation or causes internal error
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () => {
+      throw new TypeError("Uncaught native buffer error");
+    }) as any;
+
+    try {
+      const res = await handleV4OpenAIEmbeddings(req, "lr-tei-oa-em-no", "test-boundary-id");
+      expect(res.status).toBe(502);
+      const body = await res.json();
+      expect(body.error.type).toBe("gateway_error");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 });

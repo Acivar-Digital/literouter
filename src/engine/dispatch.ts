@@ -834,27 +834,40 @@ export async function executeDispatchPipeline(
         upstreamOutbound: sanitizeBody(req.outboundPayload.body, MAX_LEG_BYTES),
       });
 
-      throw err;
+      telemetry.served(502, attempt, maxAttempts);
+      recordTrace(telemetry, 502, {
+        clientInbound: sanitizeBody(req.rawInboundBody, MAX_LEG_BYTES),
+        upstreamOutbound: sanitizeBody(req.outboundPayload.body, MAX_LEG_BYTES),
+      });
+      return new Response(
+        JSON.stringify({
+          error: {
+            message: `Provider ${provConfig.name ?? providerCode} retry attempts exhausted: ${err instanceof Error ? err.message : String(err)}`,
+            type: "gateway_error",
+            code: "retries_exhausted",
+          },
+        }),
+        {
+          status: 502,
+          headers: { "content-type": "application/json" },
+        }
+      );
     }
   }
 
-  telemetry.error("All retry attempts exhausted");
-  telemetry.served(502);
-  recordTrace(telemetry, 502, {
-    clientInbound: sanitizeBody(req.rawInboundBody, MAX_LEG_BYTES),
-    upstreamOutbound: sanitizeBody(req.outboundPayload.body, MAX_LEG_BYTES),
-  });
+  // Should never be reached (all loop paths return), but satisfies TypeScript exhaustiveness
   return new Response(
     JSON.stringify({
       error: {
-        message: `Provider ${provConfig.name ?? providerCode} retry attempts exhausted`,
+        message: `Provider ${provConfig.name ?? providerCode} dispatch completed without response`,
         type: "gateway_error",
-        code: "retries_exhausted",
+        code: "dispatch_unexpected_exit",
       },
     }),
     {
-      status: 502,
+      status: 500,
       headers: { "content-type": "application/json" },
     }
   );
 }
+

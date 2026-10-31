@@ -165,7 +165,7 @@ export function initializeKeyPools(envSource: Record<string, string | undefined>
     if (keys.length > 0) {
       globalKeyPool.setPool(code, keys);
     } else {
-      globalKeyPool.setPool(code, [`sk-stub-${code}-mock-key-1`, `sk-stub-${code}-mock-key-2`]);
+      globalKeyPool.setPool(code, [`sk-stub-${code}-mock-key-1`]);
     }
   }
 }
@@ -1089,6 +1089,35 @@ async function tryExecuteTier(
     return null;
   }
   const tierBody: OpenAIRequestPayload = { ...body, model: tier.model };
+  if (tierDirective.endpoint === "em") {
+    try {
+      const { executeDispatchPipeline } = await import("../engine/dispatch");
+      const { openAiEmbeddingsTransformer } = await import("../transformers/openai_embeddings");
+      const clientHeaders = clientOptions?.headers instanceof Headers
+        ? clientOptions.headers
+        : new Headers();
+      const outboundPayload = openAiEmbeddingsTransformer.transformClientToWire(
+        tierBody as any,
+        tierDirective,
+        clientHeaders
+      );
+      const dispatchReq = {
+        reqId: `${reqId}_tier${tier.priority}`,
+        method: "POST",
+        path: "/v1/embeddings",
+        directive: tierDirective,
+        rawInboundBody: tierBody,
+        outboundPayload,
+        clientSignal: clientSignal ?? new AbortController().signal,
+        clientHeaders,
+        transformer: openAiEmbeddingsTransformer,
+      };
+      const res = await executeDispatchPipeline(dispatchReq);
+      return res.status < 400 ? res : null;
+    } catch {
+      return null;
+    }
+  }
   try {
     const res = await executeDirectRequest(tierDirective, tierBody, clientSignal, reqId, clientOptions);
     return res.status < 400 ? res : null;

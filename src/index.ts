@@ -16,6 +16,7 @@ import { handleAnthropicCompat, handleAnthropicCountTokens } from "./handlers/an
 import { handleModelsDiscovery } from "./handlers/discovery";
 import { handleGcpCompat } from "./handlers/gcp_compat";
 import { dispatchV4, EMBEDDINGS_PATHS } from "./handlers/v4/router";
+import { DEFAULT_EMBEDDING_DIRECTIVE, handleV4OpenAIEmbeddings } from "./handlers/v4/openai_embeddings";
 import {
   handleGoogleInteractionsPassthrough,
   handleGoogleNative,
@@ -303,6 +304,9 @@ const ROUTE_MAP: Readonly<Record<string, RouteHandler>> = {
   "/api/v1/message/count_tokens": handleAnthropicCountTokens,
   "/v1/message/message/count_tokens": handleAnthropicCountTokens,
   "/message/message/count_tokens": handleAnthropicCountTokens,
+  "/v1/embeddings": handleV4OpenAIEmbeddings,
+  "/embeddings": handleV4OpenAIEmbeddings,
+  "/api/v1/embeddings": handleV4OpenAIEmbeddings,
 };
 
 const SYSTEM_MAP: Readonly<Record<string, () => Response>> = {
@@ -380,6 +384,9 @@ export function validateEndpointMatch(
   pathname: string,
   directive?: { readonly endpoint?: string } | null
 ): Response | null {
+  if (directive && "type" in directive && (directive as any).type === "fusion") {
+    return null;
+  }
   if (EMBEDDINGS_PATHS.has(pathname) && directive?.endpoint !== "em") {
     return new Response(
       JSON.stringify({
@@ -493,7 +500,7 @@ export async function dispatchRoute(
 
   const isTrace = path === "/v1/traces" || path.startsWith("/v1/traces/");
   if (EMBEDDINGS_PATHS.has(path) && !rawKey) {
-    rawKey = "lr-tei-oa-em-no";
+    rawKey = DEFAULT_EMBEDDING_DIRECTIVE;
   } else if (!isTrace) {
     const authCheck = resolveInferenceAuth(req, rawKey);
     if (!authCheck.valid) {
@@ -568,7 +575,7 @@ export async function handleAppRequest(req: Request): Promise<Response> {
   const path = rawPath.length > 1 && rawPath.endsWith("/") ? rawPath.slice(0, -1) : rawPath;
   let rawKey = extractDirectiveToken(req) || "";
   if (EMBEDDINGS_PATHS.has(path) && !rawKey) {
-    rawKey = "lr-tei-oa-em-no";
+    rawKey = "lr-fse-embeddings";
   }
   try {
     const res = await dispatchRoute(req, rawKey, reqId);

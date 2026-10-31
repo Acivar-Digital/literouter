@@ -37,7 +37,7 @@ export function resolveInferenceAuth(req: Request, candidateToken?: string): Res
   if (!token && !headerDirective && !headerMasterKey) {
     const pathname = new URL(req.url, "http://localhost").pathname;
     if (pathname === "/v1/embeddings" || pathname === "/embeddings" || pathname === "/api/v1/embeddings") {
-      return { valid: true, directiveStr: "lr-tei-oa-em-no" };
+      return { valid: true, directiveStr: "lr-fse-embeddings" };
     }
   }
 

@@ -153,6 +153,25 @@
               "priority": 1,
               "apikey": "lr-tei-oa-em-no",
               "model": "BAAI/bge-m3"
+            },
+            {
+              "priority": 2,
+              "apikey": "lr-teivps-oa-em-no",
+              "model": "BAAI/bge-m3"
+            }
+          ]
+        },
+        "bge-m3": {
+          "tiers": [
+            {
+              "priority": 1,
+              "apikey": "lr-tei-oa-em-no",
+              "model": "BAAI/bge-m3"
+            },
+            {
+              "priority": 2,
+              "apikey": "lr-teivps-oa-em-no",
+              "model": "BAAI/bge-m3"
             }
           ]
         }
