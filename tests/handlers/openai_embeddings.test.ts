@@ -123,9 +123,9 @@ describe("OpenAI Embeddings Transformer & Handler", () => {
     globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
       const url = String(input);
       requestedUrls.push(url);
-      // Simulate Tier 1 (http://tei-wsl.lan:8002) connection error
-      if (url.includes("tei-wsl.lan")) {
-        throw new Error("Unable to connect to tei-wsl.lan:8002");
+      // Simulate Tier 1 (http://10.32.34.172:8002) connection error
+      if (url.includes("10.32.34.172")) {
+        throw new Error("Unable to connect to 10.32.34.172:8002");
       }
       // Tier 2 (http://127.0.0.1:8002) succeeds
       if (url.includes("127.0.0.1:8002")) {
@@ -155,7 +155,7 @@ describe("OpenAI Embeddings Transformer & Handler", () => {
       expect(json.object).toBe("list");
       expect(json.data[0]?.embedding).toEqual([0.11, 0.22, 0.33]);
       // Verified Tier 1 was attempted first, then Tier 2
-      expect(requestedUrls.some((u) => u.includes("tei-wsl.lan:8002"))).toBe(true);
+      expect(requestedUrls.some((u) => u.includes("10.32.34.172:8002"))).toBe(true);
       expect(requestedUrls.some((u) => u.includes("127.0.0.1:8002"))).toBe(true);
     } finally {
       process.env.LITEROUTER_ENGINE = prevEngine;

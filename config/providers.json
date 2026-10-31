@@ -200,7 +200,7 @@
       "name": "Text Embeddings Inference",
       "env_key": "TEI_API_KEYS",
       "strategy": "standard",
-      "base_url": "http://tei-wsl.lan:8002",
+      "base_url": "http://10.32.34.172:8002",
       "auth_header": "Bearer",
       "headers": {
         "Content-Type": "application/json"
