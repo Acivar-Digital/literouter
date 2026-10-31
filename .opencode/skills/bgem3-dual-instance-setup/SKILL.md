@@ -21,7 +21,7 @@ LiteRouter routes embedding inference (`POST /v1/embeddings`) for downstream app
                   ┌──────────────────────────┴──────────────────────────┐
                   │                                                     │
                   ▼                                                     ▼
-    Tier 1: http://tei-wsl.lan:8002                       Tier 2: http://127.0.0.1:8002
+    Tier 1: http://10.32.34.172:8002                      Tier 2: http://127.0.0.1:8002
   (Sovereign LAN via Windows PortProxy)                  (Local VPS Loopback - Zero Net Hop)
         • CUDA GPU (~25ms TTFT)                               • 24/7 Sovereign CPU (~150ms TTFT)
         • Fast Failover (max 2 attempts / ~3s)                • Immune to laptop sleep/Wi-Fi
@@ -72,32 +72,13 @@ New-NetFirewallRule -DisplayName "TEI-WSL-8002" -Direction Inbound -LocalPort 80
 
 ---
 
-## 3. Router DNS Resolution (ASUS RT-BE92U / Merlin)
+## 3. Network Topology (ZeroTier Overlay Network)
 
-The local domain names `tei-wsl.lan` and `tei-vps.lan` provide stable, human-readable DNS endpoints independent of DHCP renewals.
-
-### 3.1 Edit `hosts.add` on Router
-SSH into the ASUS RT-BE92U router (`192.168.50.1`):
-```bash
-cat << 'EOF' >> /jffs/configs/hosts.add
-192.168.50.199 tei-wsl.lan
-192.168.50.10 tei-vps.lan
-EOF
-```
-
-### 3.2 Restart Dnsmasq
-```bash
-service restart_dnsmasq
-```
-
-### 3.3 Verify DNS Resolution from VPS / Client
-```bash
-ping -c 2 tei-wsl.lan
-# Expected: PING tei-wsl.lan (192.168.50.199) 56(84) bytes of data.
-
-ping -c 2 tei-vps.lan
-# Expected: PING tei-vps.lan (192.168.50.10) 56(84) bytes of data.
-```
+Tier 1 routes directly over the encrypted ZeroTier overlay network:
+- **WSL2 TEI GPU Endpoint**: `http://10.32.34.172:8002` (host networking bound to ZeroTier NIC).
+- **VPS TEI CPU Endpoint**: `http://127.0.0.1:8002` (local loopback on the VPS).
+- **LiteRouter Gateway**: `http://literouter.lan:7766/v1` or `http://192.168.50.10:7766/v1`.
+ZeroTier point-to-point encryption (AES-256-GCM) ensures fast, secure communication without requiring router DNS modifications or Windows PortProxy.
 
 ---
 
@@ -152,7 +133,7 @@ docker run -d \
       "name": "Text Embeddings Inference (WSL CUDA)",
       "env_key": "TEI_API_KEYS",
       "strategy": "standard",
-      "base_url": "http://tei-wsl.lan:8002",
+      "base_url": "http://10.32.34.172:8002",
       "auth_header": "Bearer",
       "headers": { "Content-Type": "application/json" },
       "endpoints": { "em": "/v1/embeddings" },
@@ -229,8 +210,8 @@ docker run -d \
 
 ### 6.1 Direct Health Checks
 ```bash
-# Probe WSL2 instance via Sovereign LAN
-curl -s http://tei-wsl.lan:8002/health
+# Probe WSL2 instance via ZeroTier
+curl -s http://10.32.34.172:8002/health
 # Expected: {"status":"ok"} or HTTP 200
 
 # Probe VPS local instance via loopback
@@ -277,7 +258,7 @@ Expected response:
      -d '{"model": "BAAI/bge-m3", "input": "Failover verification query"}'
    ```
 3. **Observe Gateway Behavior**:
-   - LiteRouter probes Tier 1 (`http://tei-wsl.lan:8002`).
+   - LiteRouter probes Tier 1 (`http://10.32.34.172:8002`).
    - TCP connect fails after 2 attempts (~3s total).
    - Fusion engine marks Tier 1 failed and switches to Tier 2 (`http://127.0.0.1:8002`).
    - VPS CPU returns embedding in ~150ms.
