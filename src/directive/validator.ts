@@ -34,9 +34,10 @@ export function resolveInferenceAuth(req: Request, candidateToken?: string): Res
 
   // Special case: Ambient zero-config requests to embeddings endpoints
   // (e.g. from local CortexKit AFT semantic indexing) default to tei embeddings
-  if (!token && !headerDirective && !headerMasterKey) {
-    const pathname = new URL(req.url, "http://localhost").pathname;
-    if (pathname === "/v1/embeddings" || pathname === "/embeddings" || pathname === "/api/v1/embeddings") {
+  const rawUrlPath = new URL(req.url, "http://localhost").pathname;
+  const normalizedPath = rawUrlPath.length > 1 && rawUrlPath.endsWith("/") ? rawUrlPath.slice(0, -1) : rawUrlPath;
+  if (normalizedPath === "/v1/embeddings" || normalizedPath === "/embeddings" || normalizedPath === "/api/v1/embeddings") {
+    if (!token || token === "lr-fse-embeddings" || token === "lr-tei-oa-em-no" || (!headerDirective && !headerMasterKey)) {
       return { valid: true, directiveStr: "lr-fse-embeddings" };
     }
   }

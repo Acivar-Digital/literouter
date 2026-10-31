@@ -501,6 +501,11 @@ export async function dispatchRoute(
   const isTrace = path === "/v1/traces" || path.startsWith("/v1/traces/");
   if (EMBEDDINGS_PATHS.has(path) && !rawKey) {
     rawKey = DEFAULT_EMBEDDING_DIRECTIVE;
+  } else if (EMBEDDINGS_PATHS.has(path)) {
+    const authCheck = resolveInferenceAuth(req, rawKey);
+    rawKey = authCheck.valid && authCheck.directiveStr
+      ? authCheck.directiveStr
+      : DEFAULT_EMBEDDING_DIRECTIVE;
   } else if (!isTrace) {
     const authCheck = resolveInferenceAuth(req, rawKey);
     if (!authCheck.valid) {
