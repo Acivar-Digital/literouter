@@ -582,11 +582,11 @@ def fix_cluster():
             f'"base_url": "{CANONICAL_LITEROUTER_URL}"',
             content,
         )
-        new_content = re.sub(r'"max_batch_size":\s*\d+', '"max_batch_size": 8', new_content)
+        new_content = re.sub(r'"max_batch_size":\s*\d+', '"max_batch_size": 4', new_content)
         if new_content != content:
             win11_aft.write_text(new_content, encoding="utf-8")
             print(
-                "  • [Win11] cortexkit-aft: Updated base_url to http://literouter.lan:7766/v1 and max_batch_size to 8"
+                "  • [Win11] cortexkit-aft: Updated base_url to http://literouter.lan:7766/v1 and max_batch_size to 4"
             )
         else:
             print("  • [Win11] cortexkit-aft: Already aligned")

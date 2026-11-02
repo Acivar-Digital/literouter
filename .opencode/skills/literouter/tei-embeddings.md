@@ -16,7 +16,7 @@ LiteRouter acts as the authoritative embedding gateway for local and remote cons
 
 To protect upstream Hugging Face Text Embeddings Inference (TEI) engines from crash loops, HTTP 429 (Too Many Requests), 422 (batch limit exceeded), or connection drops under concurrent traffic, LiteRouter provides:
 1. **Dedicated Provider (`tei`) & Completion Code (`em`)**.
-2. **Transparent Batch Chunk Slicing**: Automatically slices batch inputs $> 8$ items into sequential $\le 8$-item sub-batches, aggregating vectors and token usage into a single OpenAI-compatible response.
+2. **Transparent Batch Chunk Slicing**: Automatically slices batch inputs $> 4$ items into sequential $\le 4$-item sub-batches, aggregating vectors and token usage into a single OpenAI-compatible response.
 3. **Ambient Zero-Config Auth**: Local tools (e.g. CortexKit AFT) hitting `/v1/embeddings` without an `Authorization` header automatically default to `lr-tei-oa-em-no` without client-side API key configuration.
 4. **Active-Passive Dual-Tier Failover**: WSL2 CUDA primary (`http://192.168.50.199:8002` or LAN ZeroTier `10.32.34.172:8002`) falling back to VPS CPU (`http://127.0.0.1:8002`) on 429, 503, connection drops, or timeouts.
 
@@ -68,18 +68,18 @@ LiteRouter implements **Ambient Zero-Config Fallback** in:
 
 ## 4. Transparent Batch Chunk Slicing
 
-Upstream Hugging Face TEI instances enforce strict client batch limits (typically `--max-client-batch-size 8` or `4`). When clients send large batches (e.g., 16 or 64 documents during codebase re-indexing), raw TEI immediately rejects the payload with HTTP 422:
+Upstream Hugging Face TEI instances enforce strict client batch limits (cluster-wide standardized to `--max-client-batch-size 4` and `--max-concurrent-requests 4`). When clients send large batches (e.g., 8, 16, or 64 documents during codebase re-indexing), raw TEI immediately rejects the payload with HTTP 422:
 ```json
-{"error": "batch size exceeds max 8"}
+{"error": "batch size exceeds max 4"}
 ```
 
 ### Gateway Slicing & Merging (`src/transformers/openai_embeddings.ts`)
 LiteRouter solves this transparently inside `src/handlers/v4/openai_embeddings.ts`:
 
 1. **Detection**:
-   Checks `isMultiInputBatch(body.input)` and `body.input.length > DEFAULT_EMBEDDING_BATCH_SIZE` (`DEFAULT_EMBEDDING_BATCH_SIZE = 8`).
+   Checks `isMultiInputBatch(body.input)` and `body.input.length > DEFAULT_EMBEDDING_BATCH_SIZE` (`DEFAULT_EMBEDDING_BATCH_SIZE = 4`).
 2. **Sequential Chunking (`sliceEmbeddingInput`)**:
-   Splits the array into chunks of $\le 8$ items.
+   Splits the array into chunks of $\le 4$ items.
 3. **Sub-dispatch Execution**:
    Each chunk is executed through `executeDispatchPipeline` with isolated sub-request IDs (`${reqId}_chunk${chunkIdx}`).
 4. **Result Aggregation (`mergeEmbeddingResponses`)**:
@@ -102,12 +102,20 @@ To guarantee high availability when indexing massive codebases or running concur
   - Forwarded to VPS port `8002` via persistent supervised SSH reverse tunnel (`tei-reverse-tunnel.service` on WSL2).
   - VPS `sshd_config.d/60-tei-reverse-tunnel.conf` sets `GatewayPorts clientspecified` and `StreamLocalBindUnlink yes` to expose `0.0.0.0:8002` to LAN/ZeroTier.
   - Registered in `config/providers.json` as provider `tei` pointing to `http://127.0.0.1:8002`.
-  - Specs: batch size 8, concurrency 8, max tokens 2048, 4GB RAM cap, `float16` precision (~80-100ms latency).
+  - Container run arguments: `--model-id BAAI/bge-m3 --max-client-batch-size 4 --max-concurrent-requests 4 --max-batch-tokens 2048`.
+  - Specs: batch size 4, concurrency 4, max tokens 2048, 4GB RAM cap, `float16` precision (~80-100ms latency).
 - **Tier 2 (Fallback — VPS Local CPU Container)**:
   - Runs on VPS Docker container `tei-fallback` (`ghcr.io/huggingface/text-embeddings-inference:cpu-1.8`) on dedicated port `8003`.
   - Bound to `http://127.0.0.1:8003` and LAN/ZeroTier.
   - Registered in `config/providers.json` as provider `teivps` pointing to `http://127.0.0.1:8003`.
+  - Container run arguments: `--model-id BAAI/bge-m3 --max-client-batch-size 4 --max-concurrent-requests 4 --max-batch-tokens 1024`.
   - Specs: batch size 4, concurrency 4, max tokens 1024, 4GB RAM cap, `float32` precision (~150-180ms latency).
+
+### Heterogeneous Failover Rationale (Tier 2 CPU 4 Limit & Lowest Common Denominator)
+In an active-passive dual-tier architecture with heterogeneous hardware:
+- **Tier 2 CPU Constraints**: The fallback VPS CPU instance (`tei-fallback` / `tei-bge-m3`) operates under constrained CPU core resources without GPU acceleration. To prevent high thread contention, queue latency spikes, and out-of-memory (OOM) aborts, Tier 2 is strictly configured with `--max-client-batch-size 4` and `--max-concurrent-requests 4`.
+- **Lowest Common Denominator Slicing**: If Tier 1 were configured for batch size 8 while Tier 2 is capped at 4, any batch slicing threshold of 8 at the gateway would produce 8-item chunks. Under failover (when Tier 1 fails on 429, 503, or connection drop), LiteRouter would forward these 8-item chunks to Tier 2, which would immediately reject them with HTTP 422 (`batch size exceeds max 4`), causing catastrophic failover collapse during outages.
+- **Unified Cluster Standardization**: Slicing at the Lowest Common Denominator of 4 across both tiers guarantees deterministic, zero-error failover under peak load across heterogeneous hardware.
 
 ### Failover Trigger & Concurrency Pacing
 Configured in `config/fusion.json` (`embeddings` preset):
@@ -115,7 +123,7 @@ Configured in `config/fusion.json` (`embeddings` preset):
 - **Fallback Chain**: Priority 1 `lr-tei-oa-em-no` -> Priority 2 `lr-teivps-oa-em-no`.
 - **Conveyor Pacer (`pacer`)**:
   - `min_delay_ms: 10`, `max_delay_ms: 50`.
-  - Concurrency capped (`max_concurrency: 8` for primary CUDA, throttled to `4` for fallback CPU).
+  - Concurrency capped (`max_concurrency: 4` across tiers to match container capacity).
 - **Anti-Sticky Cooldown**:
   - Failures advance immediately to Tier 2.
   - Sticky affinity resets back to Tier 1 after cooldown, preventing persistent pinning to CPU when the GPU container is online.
@@ -138,7 +146,7 @@ Migrate our embeddings and semantic retrieval to LiteRouter's sovereign aggregat
 - Vector Dimension: `1024` (dense float32 vectors)
 - Max Context Length: `8192` tokens (recommended chunk size: 512–1024)
 - Authentication: Ambient Zero-Config. No auth header required. If the SDK demands an API key, use `sk-no-key-required` or directive `lr-fse-embeddings`.
-- Batch Handling: The gateway transparently slices batches > 8 items into sub-batches and reassembles them. You do not need complex client-side chunking.
+- Batch Handling: The gateway transparently slices batches > 4 items into sub-batches and reassembles them. You do not need complex client-side chunking.
 
 ### 2. Prohibitions & Removals
 - DO NOT connect directly to port `8002`, `8003`, raw ZeroTier IPs (`10.32.34.172:8002`), or `tei-wsl.lan` (DNS does not resolve).
@@ -161,7 +169,7 @@ Configure AFT to route semantic embedding queries through LiteRouter. Thanks to 
     "base_url": "http://literouter.lan:7766/v1",
     "model": "BAAI/bge-m3",
     "timeout_ms": 30000,
-    "max_batch_size": 8,
+    "max_batch_size": 4,
     "max_input_tokens": 1024
   }
 }
@@ -323,7 +331,7 @@ curl -s -X POST http://localhost:7766/v1/embeddings \
 ```
 *Expected output*: `1024` (vector dimensions for `BAAI/bge-m3`).
 
-### Large Batch Slicing Probe (16 items > batch size 8)
+### Large Batch Slicing Probe (16 items > batch size 4)
 ```bash
 curl -s -X POST http://localhost:7766/v1/embeddings \
   -H "Content-Type: application/json" \
@@ -342,4 +350,4 @@ curl -s -X POST http://localhost:7766/v1/embeddings \
 16
 15
 ```
-*(Confirms transparent slicing into two 8-item chunks and continuous re-indexing up to index 15).*
+*(Confirms transparent slicing into four 4-item chunks and continuous re-indexing up to index 15).*

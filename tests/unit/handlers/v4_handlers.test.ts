@@ -278,7 +278,7 @@ describe("v4 thin route handlers", () => {
 
       try {
         globalKeyPool.setPool("tei", ["dummy-tei-key"]);
-        // 16 items: should slice into two chunks of 8
+        // 16 items: should slice into four chunks of 4
         const inputs = Array.from({ length: 16 }, (_, i) => `doc_${i}`);
         const req = new Request("http://localhost:7766/v1/embeddings", {
           method: "POST",
@@ -287,9 +287,10 @@ describe("v4 thin route handlers", () => {
         });
         const res = await handleV4OpenAIEmbeddings(req, "lr-tei-oa-em-no");
         expect(res.status).toBe(200);
-        expect(fetchedBodies).toHaveLength(2);
-        expect((fetchedBodies[0]!.input as string[])).toHaveLength(8);
-        expect((fetchedBodies[1]!.input as string[])).toHaveLength(8);
+        expect(fetchedBodies).toHaveLength(4);
+        for (let i = 0; i < 4; i++) {
+          expect((fetchedBodies[i]!.input as string[])).toHaveLength(4);
+        }
 
         const json = await res.json();
         expect(json.object).toBe("list");

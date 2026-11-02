@@ -4,6 +4,26 @@ All notable changes to LiteRouter will be documented in this file.
 
 ## [Unreleased] — 2026-11-02
 
+### BGE-M3 Lowest Common Denominator Batch Size 4 Standardization (Issue #6 Rev 2, `literouter-y3t3`, `literouter-y3t3.4`)
+- **BGE-M3 Gateway Batch Slicing Standardization (`src/transformers/openai_embeddings.ts`, `literouter-y3t3.1`)**:
+  - Updated `DEFAULT_EMBEDDING_BATCH_SIZE` from `8` to `4` in `src/transformers/openai_embeddings.ts`.
+  - `sliceEmbeddingInput` partitions embedding input arrays $> 4$ items into sequential chunks of $\le 4$ items, harmonizing gateway chunking with the Lowest Common Denominator cluster capacity.
+- **Root Cause Elimination of Tier 2 Failover HTTP 422 Errors (`literouter-y3t3`)**:
+  - Identified and eliminated root cause of Tier 2 failover failures: VPS CPU fallback TEI instance (port 8003) is constrained by a 4GB RAM cap to `--max-client-batch-size 4`. Under the previous batch threshold of 8, batches of 5–8 documents routed to Tier 2 during Tier 1 outages triggered upstream HuggingFace TEI `HTTP 422 Unprocessable Entity` ("batch size X > maximum allowed batch size 4").
+  - Lowering gateway slicing threshold to 4 guarantees upstream payloads never exceed Tier 2 container limits, enabling resilient, transparent multi-chunk failover.
+- **WSL2 Docker Container & Skill Documentation Alignment (`.opencode/skills/literouter/tei-embeddings.md`, `literouter-y3t3.3`)**:
+  - Harmonized WSL2 primary GPU TEI container configuration from `--max-client-batch-size 8` to `--max-client-batch-size 4` and `--max-concurrent-requests 4`, ensuring exact hardware and operational parity with Tier 2 VPS CPU fallback.
+  - Updated `.opencode/skills/literouter/tei-embeddings.md` to reflect universal batch size 4 specifications, container launch arguments, and cluster-wide capacity rationale.
+- **Automated Test Updates for Batch Size 4 & Multi-Chunk Slicing (`tests/unit/transformers/openai_embeddings.test.ts`, `tests/handlers/openai_embeddings.test.ts`, `literouter-y3t3.1`)**:
+  - Updated unit tests in `tests/unit/transformers/openai_embeddings.test.ts` asserting `DEFAULT_EMBEDDING_BATCH_SIZE` is 4, verifying 10-document input arrays partition into chunks of `[4, 4, 2]`, and validating single-item and $\le 4$ boundary conditions.
+  - Updated test `handleV4OpenAIEmbeddings slices 5-document batch into chunks of max 4 and merges sequentially`, verifying that 5-document batches are partitioned into sequential sub-batches of 4 + 1 items with continuous indexing ($0 \dots 4$) and aggregated token usage.
+  - Added reproduction test `reproduction: 5-to-8 document payload succeeds when upstream TEI enforces max batch size 4`, validating that 6-document batches succeed cleanly without triggering HTTP 422 errors under upstream batch size 4 constraints.
+  - Updated thin route handler test in `tests/unit/handlers/v4_handlers.test.ts` validating that 16-document input arrays partition into four sequential 4-item chunks with stitched 0..15 indices and aggregated token usage.
+- **Cluster Audit Diagnostic Tool Update (`scripts/diagnose/audit_bgem3_cluster.py`, `literouter-y3t3.2`)**:
+  - Updated `scripts/diagnose/audit_bgem3_cluster.py` `fix_cluster()` regex replacement to enforce `"max_batch_size": 4` in CortexKit AFT configuration (`aft.jsonc`) across cluster nodes.
+  - Updated log reporting to explicitly confirm alignment of `max_batch_size to 4`.
+  - Maintained strict Pydantic V2 schema governance (`ConfigDict(extra="forbid")`) and PEP 8 compliance.
+
 ### Dual-Tier BGE-M3 TEI Failover & Cluster-Wide AFT Harmonization (Issue #6, `literouter-q2sd`)
 - **Dual-Port VPS TEI Deployment & SSH Ingress Hardening (`literouter-1wec`, `literouter-ve3m`, `literouter-y3vd`)**:
   - Reconfigured VPS SSH daemon (`sshd_config.d/60-tei-reverse-tunnel.conf`) with `GatewayPorts clientspecified` and `StreamLocalBindUnlink yes` to permit bind-all `0.0.0.0:8002` remote port forwarding.

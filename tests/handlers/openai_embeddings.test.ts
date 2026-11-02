@@ -123,12 +123,12 @@ describe("OpenAI Embeddings Transformer & Handler", () => {
     globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
       const url = String(input);
       requestedUrls.push(url);
-      // Simulate Tier 1 (http://10.32.34.172:8002) connection error
-      if (url.includes("10.32.34.172")) {
-        throw new Error("Unable to connect to 10.32.34.172:8002");
+      // Simulate Tier 1 (port 8002) connection error
+      if (url.includes(":8002")) {
+        throw new Error("Unable to connect to Tier 1 :8002");
       }
-      // Tier 2 (http://127.0.0.1:8002) succeeds
-      if (url.includes("127.0.0.1:8002")) {
+      // Tier 2 (port 8003) succeeds
+      if (url.includes(":8003")) {
         return new Response(
           JSON.stringify([
             [0.11, 0.22, 0.33]
@@ -155,8 +155,8 @@ describe("OpenAI Embeddings Transformer & Handler", () => {
       expect(json.object).toBe("list");
       expect(json.data[0]?.embedding).toEqual([0.11, 0.22, 0.33]);
       // Verified Tier 1 was attempted first, then Tier 2
-      expect(requestedUrls.some((u) => u.includes("10.32.34.172:8002"))).toBe(true);
-      expect(requestedUrls.some((u) => u.includes("127.0.0.1:8002"))).toBe(true);
+      expect(requestedUrls.some((u) => u.includes(":8002"))).toBe(true);
+      expect(requestedUrls.some((u) => u.includes(":8003"))).toBe(true);
     } finally {
       process.env.LITEROUTER_ENGINE = prevEngine;
       resetEnvCache();
@@ -220,6 +220,98 @@ describe("OpenAI Embeddings Transformer & Handler", () => {
       expect(res.status).toBe(502);
       const body = await res.json();
       expect(body.error.type).toBe("gateway_error");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("handleV4OpenAIEmbeddings slices 5-document batch into chunks of max 4 and merges sequentially", async () => {
+    globalCooldownManager.clearAll();
+    globalKeyPool.reset();
+    globalKeyPool.setPool("tei", ["mock-tei-key"]);
+
+    const capturedBodies: any[] = [];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      if (init?.body) {
+        capturedBodies.push(JSON.parse(String(init.body)));
+      }
+      const lastInput = capturedBodies[capturedBodies.length - 1]?.input;
+      const count = Array.isArray(lastInput) ? lastInput.length : 1;
+      const vectors = Array.from({ length: count }, () => [0.1, 0.2, 0.3]);
+      return new Response(JSON.stringify(vectors), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }) as any;
+
+    try {
+      const docs = ["doc0", "doc1", "doc2", "doc3", "doc4"];
+      const req = new Request("http://localhost:7766/v1/embeddings", {
+        method: "POST",
+        body: JSON.stringify({ input: docs, model: "BAAI/bge-m3" }),
+        headers: { "content-type": "application/json" },
+      });
+
+      const res = await handleV4OpenAIEmbeddings(req, "lr-tei-oa-em-no", "test-batch-4-id");
+      expect(res.status).toBe(200);
+      const json = await res.json();
+      expect(json.object).toBe("list");
+      expect(json.data.length).toBe(5);
+      expect(json.data.map((d: any) => d.index)).toEqual([0, 1, 2, 3, 4]);
+
+      // Expect exactly 2 sub-batch requests (4 items + 1 item)
+      expect(capturedBodies.length).toBe(2);
+      expect(capturedBodies[0].input.length).toBe(4);
+      expect(capturedBodies[1].input.length).toBe(1);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("reproduction: 5-to-8 document payload succeeds when upstream TEI enforces max batch size 4", async () => {
+    globalCooldownManager.clearAll();
+    globalKeyPool.reset();
+    globalKeyPool.setPool("tei", ["mock-tei-key"]);
+
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      const parsedBody = init?.body ? JSON.parse(String(init.body)) : {};
+      const batchLength = Array.isArray(parsedBody.input) ? parsedBody.input.length : 1;
+
+      // Upstream TEI enforces MAX_CLIENT_BATCH_SIZE=4: rejects > 4 with HTTP 422
+      if (batchLength > 4) {
+        return new Response(
+          JSON.stringify({
+            message: `batch size ${batchLength} > maximum allowed batch size 4`,
+            code: 422,
+            type: "Validation",
+          }),
+          { status: 422, headers: { "content-type": "application/json" } }
+        );
+      }
+
+      const vectors = Array.from({ length: batchLength }, () => [0.1, 0.2, 0.3]);
+      return new Response(JSON.stringify(vectors), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }) as any;
+
+    try {
+      // Verbatim 6-document payload that crashes unpatched gateway
+      const docs = ["text1", "text2", "text3", "text4", "text5", "text6"];
+      const req = new Request("http://localhost:7766/v1/embeddings", {
+        method: "POST",
+        body: JSON.stringify({ input: docs }),
+        headers: { "content-type": "application/json" },
+      });
+
+      const res = await handleV4OpenAIEmbeddings(req, "lr-tei-oa-em-no", "test-repro-failover-id");
+      expect(res.status).toBe(200);
+      const json = await res.json();
+      expect(json.data.length).toBe(6);
+      expect(json.data[5].index).toBe(5);
     } finally {
       globalThis.fetch = originalFetch;
     }

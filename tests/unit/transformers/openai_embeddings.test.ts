@@ -19,7 +19,7 @@ describe("OpenAIEmbeddingsTransformer", () => {
   it("exports openAiEmbeddingsTransformer as a singleton instance", () => {
     expect(openAiEmbeddingsTransformer).toBeInstanceOf(OpenAIEmbeddingsTransformer);
     expect(DEFAULT_EMBEDDING_MODEL).toBe("BAAI/bge-m3");
-    expect(DEFAULT_EMBEDDING_BATCH_SIZE).toBe(8);
+    expect(DEFAULT_EMBEDDING_BATCH_SIZE).toBe(4);
   });
 
   describe("transformClientToWire", () => {
@@ -207,23 +207,42 @@ describe("OpenAIEmbeddingsTransformer", () => {
   });
 
   describe("sliceEmbeddingInput helper", () => {
-    it("slices input arrays larger than batch size", () => {
-      const items = Array.from({ length: 16 }, (_, i) => `item_${i}`);
-      const chunks = sliceEmbeddingInput(items, 8);
+    it("slices input arrays larger than batch size 4 into chunks of at most 4 using default batch size", () => {
+      const items = Array.from({ length: 10 }, (_, i) => `item_${i}`);
+      const chunks = sliceEmbeddingInput(items);
 
-      expect(chunks).toHaveLength(2);
-      expect(chunks[0]).toHaveLength(8);
-      expect(chunks[1]).toHaveLength(8);
+      expect(chunks).toHaveLength(3);
+      expect(chunks[0]).toHaveLength(4);
+      expect(chunks[1]).toHaveLength(4);
+      expect(chunks[2]).toHaveLength(2);
       expect(chunks[0]![0]).toBe("item_0");
-      expect(chunks[1]![0]).toBe("item_8");
+      expect(chunks[1]![0]).toBe("item_4");
+      expect(chunks[2]![0]).toBe("item_8");
     });
 
-    it("does not slice input with length <= batch size", () => {
-      const items = ["a", "b", "c"];
-      const chunks = sliceEmbeddingInput(items, 8);
+    it("does not slice input with length <= default batch size 4", () => {
+      const items = ["a", "b", "c", "d"];
+      const chunks = sliceEmbeddingInput(items);
 
       expect(chunks).toHaveLength(1);
       expect(chunks[0]).toEqual(items);
+    });
+
+    it("handles boundary condition of exactly 1 item", () => {
+      const items = ["single_item"];
+      const chunks = sliceEmbeddingInput(items);
+
+      expect(chunks).toHaveLength(1);
+      expect(chunks[0]).toEqual(["single_item"]);
+    });
+
+    it("slices explicitly with custom maxBatchSize if provided", () => {
+      const items = Array.from({ length: 16 }, (_, i) => `item_${i}`);
+      const chunks = sliceEmbeddingInput(items, 4);
+
+      expect(chunks).toHaveLength(4);
+      expect(chunks[0]).toHaveLength(4);
+      expect(chunks[3]).toHaveLength(4);
     });
   });
 

@@ -7,7 +7,7 @@ import type { RequestTelemetry } from "../telemetry/session";
 import { SAFE_CLIENT_PASS_HEADERS } from "../engine/dispatch";
 
 export const DEFAULT_EMBEDDING_MODEL = "BAAI/bge-m3";
-export const DEFAULT_EMBEDDING_BATCH_SIZE = 8;
+export const DEFAULT_EMBEDDING_BATCH_SIZE = 4;
 
 export interface OpenAIEmbeddingItem {
   object: "embedding";
