@@ -200,7 +200,7 @@
       "name": "Text Embeddings Inference",
       "env_key": "TEI_API_KEYS",
       "strategy": "standard",
-      "base_url": "http://10.32.34.172:8002",
+      "base_url": "http://127.0.0.1:8002",
       "auth_header": "Bearer",
       "headers": {
         "Content-Type": "application/json"
@@ -231,7 +231,7 @@
       "name": "Text Embeddings Inference (VPS CPU)",
       "env_key": "TEI_API_KEYS",
       "strategy": "standard",
-      "base_url": "http://127.0.0.1:8002",
+      "base_url": "http://127.0.0.1:8003",
       "auth_header": "Bearer",
       "headers": {
         "Content-Type": "application/json"

@@ -2,6 +2,31 @@
 
 All notable changes to LiteRouter will be documented in this file.
 
+## [Unreleased] — 2026-11-02
+
+### Dual-Tier BGE-M3 TEI Failover & Cluster-Wide AFT Harmonization (Issue #6, `literouter-q2sd`)
+- **Dual-Port VPS TEI Deployment & SSH Ingress Hardening (`literouter-1wec`, `literouter-ve3m`, `literouter-y3vd`)**:
+  - Reconfigured VPS SSH daemon (`sshd_config.d/60-tei-reverse-tunnel.conf`) with `GatewayPorts clientspecified` and `StreamLocalBindUnlink yes` to permit bind-all `0.0.0.0:8002` remote port forwarding.
+  - Relocated VPS local CPU TEI fallback container to dedicated port 8003 (`ghcr.io/huggingface/text-embeddings-inference:cpu-1.8`, 4GB memory cap), completely vacating port 8002.
+  - Established persistent supervised SSH reverse tunnel service on WSL2 (`tei-reverse-tunnel.service`) forwarding WSL2 GPU TEI (`localhost:8002`) to VPS port `8002` with 10s keepalives and automatic restart.
+  - Hardened VPS UFW firewall rules granting LAN (`192.168.50.0/24`) and ZeroTier ingress to ports 8002 and 8003.
+- **LiteRouter Dual-Tier Providers & Fusion Configuration (`literouter-4awi`, `literouter-arlk`, `literouter-1pfc`)**:
+  - Updated `config/providers.json`: routed `tei` to `http://127.0.0.1:8002` (Tier 1 GPU) and `teivps` to `http://127.0.0.1:8003` (Tier 2 CPU fallback).
+  - Updated `config/fusion.json`: configured `embeddings` preset with Priority 1 (`lr-tei-oa-em-no`) and Priority 2 (`lr-teivps-oa-em-no`) with `concurrency_penalty` and 30s reset cooldown.
+  - Synchronized configurations to production VPS and reloaded LiteRouter gateway via authenticated `/reset`.
+- **Cluster-Wide AFT & OMP Provisioning @0.62.0 (`literouter-wft6`, `literouter-kvez`, `literouter-2pi5`, `literouter-3lm4`)**:
+  - Harmonized CortexKit AFT and Oh My Pi across all cluster nodes (WSL2, VPS `vps466a`, and Mac Mini `yapilymm`) strictly pinned at version `0.62.0`.
+  - Configured `~/.config/cortexkit/aft.jsonc` and `~/.omp/agent/config.yml` cluster-wide to use unified LiteRouter embeddings at `http://literouter.lan:7766/v1` with model `BAAI/bge-m3`.
+  - Pre-cached local ONNX runtime v1.24.4 for macOS (`darwin-arm64`) and VPS (`linux-x64`).
+  - Validated clean `npx @cortexkit/aft doctor` checks across all 3 nodes and both harnesses (OpenCode and OMP) with exit code 0 ("Everything looks good.").
+- **Cluster-Wide Pydantic V2 Audit Tool (`scripts/diagnose/audit_bgem3_cluster.py`, `literouter-2brm`)**:
+  - Developed `scripts/diagnose/audit_bgem3_cluster.py` with strict Pydantic V2 schemas (`ConfigDict(extra="forbid")`) and PEP 8 typing.
+  - Audits static configuration across WSL2, Win11, VPS, and macOS against canonical targets.
+  - Probes live dual-tier ports (8002, 8003) and LiteRouter gateway (7766), asserting dimension 1024 and latency thresholds.
+  - Implemented multi-host curl/PowerShell validation confirming 100% reachability across all 4 environments.
+- **Live Dual-Instance Failover Drill (`literouter-w4th`)**:
+  - Verified zero-downtime client failover (<600ms latency, HTTP 200) during simulated primary GPU tunnel outages via Tier 2 CPU fallback, and seamless recovery upon tunnel restoration.
+
 ## [Unreleased] — 2026-10-23
 
 ### Text Embeddings Inference (TEI) BGE-M3 Onboarding & Dual-Host Failover (`literouter-ejx2`)

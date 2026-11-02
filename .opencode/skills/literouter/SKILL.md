@@ -376,7 +376,7 @@ Canonical config companion — every `config/` file and its validator:
 | **Test suite hygiene, air-gap & test parking** | `test-hygiene-playbook.md` (§16) | User asks about writing tests, test hygiene, airgap, mock responses, simulation banners, bun test, or pytest |
 | **GC & memory bounds (no explicit GC, restart policy)** | `gc-memory.md` (§16) | User asks about garbage collection, memory leaks, bounded state, or periodic restarts |
 | **Model onboarding & capability probe protocol** | `scripts-ops.md` (§4.3) | User asks to onboard, probe, or verify a model for OpenCode 2, Claude Code, or Pydantic AI |
-| **TEI & BGE-M3 Embeddings (provider `tei`, `em`, batch slicing, ambient zero-config, dual-tier failover)** | `tei-embeddings.md` | User asks about embeddings, TEI (`tei`), BGE-M3, `/v1/embeddings`, ambient zero-config auth, batch chunk slicing, CortexKit AFT semantic search, OMP Mnemopi, or active-passive dual-tier failover |
+| **TEI & BGE-M3 Embeddings (provider `tei`, `em`, batch slicing, ambient zero-config, dual-tier failover, downstream client/LLM migration)** | `tei-embeddings.md` | User asks about embeddings, TEI (`tei`), BGE-M3, `/v1/embeddings`, ambient zero-config auth, batch chunk slicing, CortexKit AFT semantic search, OMP Mnemopi, active-passive dual-tier failover, or what to tell/configure in other repos/LLMs for BGE-M3 |
 
 ## §15. Grounded Corrections (verified vs disk — must-read before editing keys/config)
 
