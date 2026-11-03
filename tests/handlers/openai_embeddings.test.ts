@@ -7,6 +7,7 @@ import { validateEndpointMatch, handleAppRequest } from "../../src/index";
 import { globalCooldownManager, globalKeyPool } from "../../src/handlers/openai_compat";
 import { executeDispatchPipeline, type DispatchRequest } from "../../src/engine/dispatch";
 import { resetEnvCache } from "../../src/config/env";
+import { resolveInferenceAuth } from "../../src/directive/validator";
 
 describe("OpenAI Embeddings Transformer & Handler", () => {
   test("EMBEDDINGS_PATHS contains standard endpoints", () => {
@@ -109,6 +110,47 @@ describe("OpenAI Embeddings Transformer & Handler", () => {
     expect(parsed?.type).toBe("fusion");
     if (parsed?.type === "fusion") {
       expect(parsed.preset).toBe("embeddings");
+    }
+  });
+
+  test("resolveInferenceAuth resolves single-credential direct teimac directive on /v1/embeddings", () => {
+    const prevAuthKey = process.env.LITEROUTER_AUTH_KEY;
+    process.env.LITEROUTER_AUTH_KEY = "sk-test-master-auth";
+    resetEnvCache();
+    try {
+      const directReq = new Request("http://localhost:7766/v1/embeddings", {
+        method: "POST",
+        headers: { Authorization: "Bearer lr-teimac-oa-em-no" },
+      });
+      const directAuth = resolveInferenceAuth(directReq);
+      expect(directAuth.valid).toBe(true);
+      expect(directAuth.directiveStr).toBe("lr-teimac-oa-em-no");
+
+      const ambientReq = new Request("http://localhost:7766/v1/embeddings", {
+        method: "POST",
+      });
+      const ambientAuth = resolveInferenceAuth(ambientReq);
+      expect(ambientAuth.valid).toBe(true);
+      expect(ambientAuth.directiveStr).toBe("lr-fse-embeddings");
+
+      const dummyReq = new Request("http://localhost:7766/v1/embeddings", {
+        method: "POST",
+        headers: { Authorization: "Bearer sk-no-key-required" },
+      });
+      const dummyAuth = resolveInferenceAuth(dummyReq);
+      expect(dummyAuth.valid).toBe(true);
+      expect(dummyAuth.directiveStr).toBe("lr-fse-embeddings");
+
+      const legacyReq = new Request("http://localhost:7766/v1/embeddings", {
+        method: "POST",
+        headers: { Authorization: "Bearer lr-tei-oa-em-no" },
+      });
+      const legacyAuth = resolveInferenceAuth(legacyReq);
+      expect(legacyAuth.valid).toBe(true);
+      expect(legacyAuth.directiveStr).toBe("lr-fse-embeddings");
+    } finally {
+      process.env.LITEROUTER_AUTH_KEY = prevAuthKey;
+      resetEnvCache();
     }
   });
 

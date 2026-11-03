@@ -37,6 +37,12 @@ export function resolveInferenceAuth(req: Request, candidateToken?: string): Res
   const rawUrlPath = new URL(req.url, "http://localhost").pathname;
   const normalizedPath = rawUrlPath.length > 1 && rawUrlPath.endsWith("/") ? rawUrlPath.slice(0, -1) : rawUrlPath;
   if (normalizedPath === "/v1/embeddings" || normalizedPath === "/embeddings" || normalizedPath === "/api/v1/embeddings") {
+    const parsed = parseDirective(token);
+    // If caller explicitly targets a direct embedding directive (e.g. lr-teimac-oa-em-no or lr-teivps-oa-em-no),
+    // honor Option 3 single-credential targeting directly.
+    if (parsed && isDirectDirective(parsed) && token !== "lr-tei-oa-em-no") {
+      return { valid: true, directiveStr: token };
+    }
     if (!token || token === "lr-fse-embeddings" || token === "lr-tei-oa-em-no" || (!headerDirective && !headerMasterKey)) {
       return { valid: true, directiveStr: "lr-fse-embeddings" };
     }
