@@ -145,7 +145,7 @@
     },
     "embeddings": {
       "strategy": "sticky_fallback",
-      "timeout_ms": 30000,
+      "timeout_ms": 2500,
       "models": {
         "BAAI/bge-m3": {
           "tiers": [
