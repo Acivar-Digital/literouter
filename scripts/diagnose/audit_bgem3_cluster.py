@@ -31,6 +31,7 @@ from pydantic import BaseModel, ConfigDict, Field
 CANONICAL_LITEROUTER_URL = "http://literouter.lan:7766/v1"
 CANONICAL_EMBEDDINGS_URL = "http://literouter.lan:7766/v1/embeddings"
 TEI_GPU_URL = "http://192.168.50.10:8002"
+TEI_MAC_URL = "http://192.168.50.11:8002/v1/embeddings"
 TEI_CPU_URL = "http://192.168.50.10:8003"
 CANONICAL_MODEL = "BAAI/bge-m3"
 CANONICAL_TOKEN = "sk-no-key-required"
@@ -720,13 +721,14 @@ def main():
         print(
             "\n════════════════════════════════════════════════════════════════════════════════════════════════════════════════════"
         )
-        print("                              Dual-Tier TEI & LiteRouter Gateway Probes")
+        print("                             Three-Tier TEI & LiteRouter Gateway Probes")
         print(
             "════════════════════════════════════════════════════════════════════════════════════════════════════════════════════"
         )
         tier_probes = [
             probe_endpoint(TEI_GPU_URL, "Tier 1: WSL2 GPU (Reverse Tunnel Port 8002)", is_openai_compat=False),
-            probe_endpoint(TEI_CPU_URL, "Tier 2: VPS CPU (Local Fallback Port 8003)", is_openai_compat=False),
+            probe_endpoint(TEI_MAC_URL, "Tier 2: Mac Mini M1 MPS (Flat LAN Port 8002)", is_openai_compat=True),
+            probe_endpoint(TEI_CPU_URL, "Tier 3: VPS CPU (Local Fallback Port 8003)", is_openai_compat=False),
             probe_endpoint(CANONICAL_EMBEDDINGS_URL, "LiteRouter Gateway (Unified Port 7766)", is_openai_compat=True),
         ]
 
