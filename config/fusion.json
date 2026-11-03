@@ -156,6 +156,11 @@
             },
             {
               "priority": 2,
+              "apikey": "lr-teimac-oa-em-no",
+              "model": "BAAI/bge-m3"
+            },
+            {
+              "priority": 3,
               "apikey": "lr-teivps-oa-em-no",
               "model": "BAAI/bge-m3"
             }
@@ -170,6 +175,11 @@
             },
             {
               "priority": 2,
+              "apikey": "lr-teimac-oa-em-no",
+              "model": "BAAI/bge-m3"
+            },
+            {
+              "priority": 3,
               "apikey": "lr-teivps-oa-em-no",
               "model": "BAAI/bge-m3"
             }

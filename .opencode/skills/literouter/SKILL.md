@@ -91,7 +91,9 @@ description: LiteRouter API Gateway operational guide for Bun/TypeScript proxy o
 | **Zen** | `zn` | `ZEN_API_KEYS` | `https://opencode.ai/zen` | `standard` |
 | **Google Cloud (GCP)** | `gc` | `GCP_KEYS` / `GCP_API_KEYS` | `https://generativelanguage.googleapis.com` | `gcp_guarded` |
 |**Groq**|`gq`|`GROQ_API_KEYS`|`https://api.groq.com/openai`|`standard`|
-|**Text Embeddings Inference (TEI)**|`tei`|`TEI_API_KEYS`|`http://192.168.50.199:8002` (WSL2 CUDA) / `http://127.0.0.1:8002` (VPS CPU)|`standard`|
+|**Text Embeddings Inference (TEI WSL2 GPU)**|`tei`|`TEI_API_KEYS`|`http://127.0.0.1:8002` (WSL2 CUDA via reverse SSH tunnel)|`standard`|
+|**Text Embeddings Inference (Mac Mini M1 MPS)**|`teimac`|`TEI_API_KEYS`|`http://192.168.50.11:8002` (Mac Mini M1 direct LAN)|`standard`|
+|**Text Embeddings Inference (VPS CPU)**|`teivps`|`TEI_API_KEYS`|`http://127.0.0.1:8003` (VPS CPU Docker container)|`standard`|
 
 *Validation*: Discards tokens `< 4` chars or matching `changeme`, `todo`, `undefined`, `null`. Non-destructive mock keys injected during unit tests.
 

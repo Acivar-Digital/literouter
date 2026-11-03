@@ -4,6 +4,16 @@ All notable changes to LiteRouter will be documented in this file.
 
 ## [Unreleased] — 2026-11-02
 
+### Mac Mini M1 BGE-M3 Embedding Provider Registration (`teimac`, `literouter-d02z`)
+- **Provider Code & Schema Registration (`src/config/schema.ts`, `src/directive/parser.ts`, `src/config/keys.ts`)**:
+  - Registered `teimac` in `ProviderCodeSchema`, `ProviderCode` type union, and `VALID_PROVIDERS` set.
+  - Mapped `teimac` to `TEI_API_KEYS` in `PROVIDER_ENV_MAP`.
+- **Provider Configuration (`config/providers.json`)**:
+  - Added `teimac` provider pointing directly to Mac Mini Apple Silicon M1 MPS instance on sovereign flat LAN at `http://192.168.50.11:8002` (< 1ms latency, zero tunnel overhead).
+  - Configured pacer with `max_concurrency: 4` adhering to the cluster Rule of 4.
+- **Multi-Tier Fusion Hierarchy (`config/fusion.json`)**:
+  - Integrated `lr-teimac-oa-em-no` as Priority 2 in the `embeddings` preset for `BAAI/bge-m3` and `bge-m3` between Priority 1 (WSL2 CUDA) and Priority 3 (VPS CPU).
+
 ### BGE-M3 Lowest Common Denominator Batch Size 4 Standardization (Issue #6 Rev 2, `literouter-y3t3`, `literouter-y3t3.4`)
 - **BGE-M3 Gateway Batch Slicing Standardization (`src/transformers/openai_embeddings.ts`, `literouter-y3t3.1`)**:
   - Updated `DEFAULT_EMBEDDING_BATCH_SIZE` from `8` to `4` in `src/transformers/openai_embeddings.ts`.

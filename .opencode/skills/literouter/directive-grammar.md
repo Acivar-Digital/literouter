@@ -23,9 +23,9 @@ Rules (`src/directive/parser.ts:96-109,192-196`, `src/directive/validator.ts:71-
   `?api_key=` / `?token=`. Missing/invalid token → `401 invalid_api_key`
   (`src/directive/validator.ts:98-116`).
 
-## 2. Provider codes (13)
+## 2. Provider codes (16)
 
-Enum: `src/directive/parser.ts:1-14`. Upstreams: `config/providers.json`.
+Enum: `src/directive/parser.ts:1-17`. Upstreams: `config/providers.json`.
 
 | Code | Provider | Upstream base URL |
 |---|---|---|
@@ -42,6 +42,9 @@ Enum: `src/directive/parser.ts:1-14`. Upstreams: `config/providers.json`.
 | `zn` | Zen (OpenCode free tier) | `https://opencode.ai/zen` |
 | `tp` | Test provider (tests only) | `http://127.0.0.1:8999` |
 | `gc` | Google Cloud Vertex | `https://generativelanguage.googleapis.com` |
+| `tei` | Text Embeddings Inference (WSL2 GPU) | `http://127.0.0.1:8002` |
+| `teimac` | Text Embeddings Inference (Mac Mini M1 MPS) | `http://192.168.50.11:8002` |
+| `teivps` | Text Embeddings Inference (VPS CPU) | `http://127.0.0.1:8003` |
 
 Note: `tp` exists in code (`src/directive/parser.ts:12`, `src/config/schema.ts:15`)
 but is a loopback test double — never use it outside unit tests.

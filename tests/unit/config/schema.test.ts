@@ -365,7 +365,7 @@ describe("ProviderConfigEntrySchema", () => {
     expect(parsed.success).toBe(true);
     if (parsed.success) {
       const providers = parsed.data.providers;
-      expect(Object.keys(providers).length).toBe(8);
+      expect(Object.keys(providers).length).toBe(9);
 
       // Verify openrouter specific headers & conserve_rules
       const or = providers.openrouter;

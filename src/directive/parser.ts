@@ -13,7 +13,8 @@ export type ProviderCode =
   | "tp"
   | "gc"
   | "tei"
-  | "teivps";
+  | "teivps"
+  | "teimac";
 
 export type WireProtocol = "oa" | "oo" | "cl" | "gg" | "rs" | "ao";
 
@@ -69,6 +70,7 @@ const VALID_PROVIDERS: ReadonlySet<string> = new Set([
   "gc",
   "tei",
   "teivps",
+  "teimac",
 ]);
 
 const VALID_PAYLOADS: ReadonlySet<string> = new Set(["oa", "oo", "cl", "gg", "rs", "ao"]);

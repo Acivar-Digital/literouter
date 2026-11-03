@@ -92,7 +92,7 @@ If any chunk returns an HTTP $\ge 400$ error, execution aborts early and returns
 
 ---
 
-## 5. Active-Passive Dual-Tier Failover
+## 5. Active-Passive Three-Tier Failover
 
 To guarantee high availability when indexing massive codebases or running concurrent memory queries across machines:
 
@@ -104,7 +104,12 @@ To guarantee high availability when indexing massive codebases or running concur
   - Registered in `config/providers.json` as provider `tei` pointing to `http://127.0.0.1:8002`.
   - Container run arguments: `--model-id BAAI/bge-m3 --max-client-batch-size 4 --max-concurrent-requests 4 --max-batch-tokens 2048`.
   - Specs: batch size 4, concurrency 4, max tokens 2048, 4GB RAM cap, `float16` precision (~80-100ms latency).
-- **Tier 2 (Fallback — VPS Local CPU Container)**:
+- **Tier 2 (Secondary Fallback — Mac Mini M1 MPS on Direct LAN)**:
+   - Runs on Apple Silicon M1 with Metal Performance Shaders (MPS) acceleration on port `8002`.
+   - Directly accessible over flat sovereign LAN (`http://192.168.50.11:8002`), $< 1\text{ ms}$ latency, zero tunnels.
+   - Registered in `config/providers.json` as provider `teimac` pointing to `http://192.168.50.11:8002`.
+   - Specs: batch size 4, concurrency 4, max tokens 512, float16/float32 precision (~30-60ms latency).
+- **Tier 3 (Tertiary Fallback — VPS Local CPU Container)**:
   - Runs on VPS Docker container `tei-fallback` (`ghcr.io/huggingface/text-embeddings-inference:cpu-1.8`) on dedicated port `8003`.
   - Bound to `http://127.0.0.1:8003` and LAN/ZeroTier.
   - Registered in `config/providers.json` as provider `teivps` pointing to `http://127.0.0.1:8003`.
@@ -120,7 +125,7 @@ In an active-passive dual-tier architecture with heterogeneous hardware:
 ### Failover Trigger & Concurrency Pacing
 Configured in `config/fusion.json` (`embeddings` preset):
 - **Triggers**: HTTP 429 (rate/queue limit), HTTP 503, connection drops (socket hangup/ECONNREFUSED), or request timeout.
-- **Fallback Chain**: Priority 1 `lr-tei-oa-em-no` -> Priority 2 `lr-teivps-oa-em-no`.
+- **Fallback Chain**: Priority 1 `lr-tei-oa-em-no` -> Priority 2 `lr-teimac-oa-em-no` -> Priority 3 `lr-teivps-oa-em-no`.
 - **Conveyor Pacer (`pacer`)**:
   - `min_delay_ms: 10`, `max_delay_ms: 50`.
   - Concurrency capped (`max_concurrency: 4` across tiers to match container capacity).

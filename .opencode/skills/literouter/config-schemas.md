@@ -209,6 +209,9 @@ compliance; invalid or missing blocks fail loudly and halt startup.
 | `zen` | `zn` | `https://opencode.ai/zen` | `zen_single_flight` |
 | `testprovider` | `tp` | `http://127.0.0.1:8999` | `standard` |
 | `gcp` | `gc` | `https://generativelanguage.googleapis.com` | `gcp_guarded` |
+| `tei` | `tei` | `http://127.0.0.1:8002` | `standard` |
+| `teimac` | `teimac` | `http://192.168.50.11:8002` | `standard` |
+| `teivps` | `teivps` | `http://127.0.0.1:8003` | `standard` |
 
 Codes must stay in sync with `ProviderCodeSchema`
 (`src/config/schema.ts:3-17`); directive parsing, `globalKeyPool`, and the
