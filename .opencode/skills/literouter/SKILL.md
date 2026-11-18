@@ -156,7 +156,7 @@ Format: `lr-<provider>-<payload>-<completion>-<nuance>`
 |`lr-gc-oa-ch-no`|GCP Vertex AI (Gemma)|`gemma-4-31b-it`|Vertex AI Chat Completions with 30 RPM pacer & zero-cost guardrail|
 | `lr-or-ao-ch-dp` | Dots / Open-Weights XML Tools | `dots-studio/dots-3-note-preview:free` | Anthropic-to-OpenAI cross-wire with XML tool & thinking extraction |
 
-Fusion presets: `lr-fse-<preset>` where preset is ONLY one of `quad` / `pydn` / `fast` / `deep` (verified on disk in `config/fusion.json`). `smart` / `code` / `cheap` do not exist — see [directive-grammar.md §7](directive-grammar.md#7-fusion-presets-lr-fse-) and [config-schemas.md §1](config-schemas.md#1-configfusionjson).
+Fusion presets: `lr-fse-<preset>` where preset is ONLY one of `quad` / `pydn` / `fast` / `deep` / `safe` / `simple` (verified on disk in `config/fusion.json`). `smart` / `code` / `cheap` do not exist — see [directive-grammar.md §7](directive-grammar.md#7-fusion-presets-lr-fse-) and [config-schemas.md §1](config-schemas.md#1-configfusionjson).
 
 ## §5. Wire & Compatibility Rules (summary)
 

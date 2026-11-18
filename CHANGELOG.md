@@ -2,6 +2,30 @@
 
 All notable changes to LiteRouter will be documented in this file.
 
+## [Unreleased] — 2026-11-19
+
+### Fusion Presets: `safe` and `simple` for Baziforecast Groq Guardrail Cascade (`config/fusion.json`)
+- **New preset `safe` (`lr-fse-safe`)**:
+  - 3-tier sticky fallback cascade across Groq safeguard/standard models for downstream guardrail use in Baziforecast v27.
+  - Tier 1: `openai/gpt-oss-safeguard-20b` (Groq, primary guardrail — 3 RPM / 1K RPD limit).
+  - Tier 2: `openai/gpt-oss-20b` (Groq, standard fallback — 1K RPD).
+  - Tier 3: `openai/gpt-oss-120b` (Groq, heavyweight fallback — 1K RPD).
+  - All Groq keys rotated per tier before advancing; 429 only surfaces to downstream after all tiers and all keys are exhausted.
+  - Client usage: `model: "safe"`, `Authorization: Bearer lr-fse-safe`, `x-literouter-key: <LITEROUTER_AUTH_KEY>`.
+- **New preset `simple` (`lr-fse-simple`)**:
+  - 3-tier sticky fallback cascade for general Baziforecast inference with simplified model naming.
+  - Tier 1: `qwen/qwen3.8-27b` (Groq, 30 RPM / 1K RPD).
+  - Tier 2: `openai/gpt-oss-120b` (Groq, 30 RPM / 1K RPD).
+  - Tier 3: `openai/gpt-oss-20b` (Groq, 30 RPM / 1K RPD).
+  - Client usage: `model: "simple"`, `Authorization: Bearer lr-fse-simple`, `x-literouter-key: <LITEROUTER_AUTH_KEY>`.
+
+### Provider Tuning: OpenRouter & Zen Aggressive Key Rotation (`config/providers.json`)
+- **OpenRouter (`or`)**: Increased `request_retry.max_attempts` from 3 → 15; tightened retry delay from 150–500ms → 1–10ms; reduced pacer `min_delay_ms` from 200ms → 20ms and `max_delay_ms` from 500ms → 50ms for faster key rotation under burst load.
+- **Zen (`zn`)**: Increased `request_retry.max_attempts` from 3 → 5; tightened retry delay from 150–500ms → 1–5ms; reduced pacer `min_delay_ms` from 300ms → 3ms and `max_delay_ms` from 500ms → 5ms.
+- **TEI (`tei`)**: Increased `request_retry.max_attempts` from 2 → 3; tightened retry delay to 1–5ms; reduced pacer `min_delay_ms` from 10ms → 1ms and `max_delay_ms` from 50ms → 5ms.
+- **User-Agent bump**: Updated OpenRouter and Zen `User-Agent` headers from `OpenCode/2.1.4` → `OpenCode/2.3.0`.
+- **JSON formatting**: Fixed trailing whitespace in provider block separators.
+
 ## [Unreleased] — 2026-11-02
 
 ### Mac Mini M1 BGE-M3 Embedding Provider Registration (`teimac`, `literouter-d02z`)

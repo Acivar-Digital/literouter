@@ -1,3 +1,4 @@
+
 {
   "providers": {
     "openrouter": {
@@ -10,7 +11,7 @@
       "headers": {
         "HTTP-Referer": "https://opencode.ai",
         "X-Title": "OpenCode",
-        "User-Agent": "OpenCode/2.1.4"
+        "User-Agent": "OpenCode/2.3.0"
       },
       "endpoints": {
         "ch": "/api/v1/chat/completions",
@@ -29,16 +30,16 @@
       ],
       "request_retry": {
         "enabled": true,
-        "max_attempts": 3,
+        "max_attempts": 15,
         "delay": {
-          "min_ms": 150,
-          "max_ms": 500
+          "min_ms": 1,
+          "max_ms": 10
         }
       },
       "pacer": {
         "enabled": true,
-        "min_delay_ms": 200,
-        "max_delay_ms": 500,
+        "min_delay_ms": 20,
+        "max_delay_ms": 50,
         "max_queue_depth": 500,
         "max_queue_wait_ms": 15000
       }
@@ -112,7 +113,7 @@
         "HTTP-Referer": "https://opencode.ai",
         "Referer": "https://opencode.ai",
         "X-Title": "OpenCode",
-        "User-Agent": "opencode/2.1.4 ai-sdk/provider-utils/4.0.23 runtime/bun/1.4.2"
+        "User-Agent": "opencode/2.3.0 ai-sdk/provider-utils/4.0.23 runtime/bun/1.4.2"
       },
       "endpoints": {
         "ch": "/v1/chat/completions",
@@ -180,21 +181,20 @@
       },
       "request_retry": {
         "enabled": true,
-        "max_attempts": 3,
+        "max_attempts": 5,
         "delay": {
-          "min_ms": 150,
-          "max_ms": 500
+          "min_ms": 1,
+          "max_ms": 5
         }
       },
       "pacer": {
         "enabled": true,
-        "min_delay_ms": 300,
-        "max_delay_ms": 500,
+        "min_delay_ms": 3,
+        "max_delay_ms": 5,
         "max_queue_depth": 500,
         "max_queue_wait_ms": 15000
       }
-    }
-    ,
+    },
     "tei": {
       "code": "tei",
       "name": "Text Embeddings Inference",
@@ -210,22 +210,21 @@
       },
       "request_retry": {
         "enabled": true,
-        "max_attempts": 2,
+        "max_attempts": 3,
         "delay": {
-          "min_ms": 150,
-          "max_ms": 500
+          "min_ms": 1,
+          "max_ms": 5
         }
       },
       "pacer": {
         "enabled": true,
-        "min_delay_ms": 10,
-        "max_delay_ms": 50,
+        "min_delay_ms": 1,
+        "max_delay_ms": 5,
         "max_queue_depth": 500,
         "max_queue_wait_ms": 5000,
         "max_concurrency": 8
       }
-    }
-    ,
+    },
     "teivps": {
       "code": "teivps",
       "name": "Text Embeddings Inference (VPS CPU)",

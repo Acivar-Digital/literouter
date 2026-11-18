@@ -143,6 +143,56 @@
         }
       }
     },
+    "safe": {
+      "strategy": "sticky_fallback",
+      "timeout_ms": 30000,
+      "models": {
+        "safe": {
+          "tiers": [
+            {
+              "priority": 1,
+              "apikey": "lr-gq-oa-ch-no",
+              "model": "openai/gpt-oss-safeguard-20b"
+            },
+            {
+              "priority": 2,
+              "apikey": "lr-gq-oa-ch-no",
+              "model": "openai/gpt-oss-20b"
+            },
+            {
+              "priority": 3,
+              "apikey": "lr-gq-oa-ch-no",
+              "model": "openai/gpt-oss-120b"
+            }
+          ]
+        }
+      }
+    },
+    "simple": {
+      "strategy": "sticky_fallback",
+      "timeout_ms": 30000,
+      "models": {
+        "simple": {
+          "tiers": [
+            {
+              "priority": 1,
+              "apikey": "lr-gq-oa-ch-no",
+              "model": "qwen/qwen3.8-27b"
+            },
+            {
+              "priority": 2,
+              "apikey": "lr-gq-oa-ch-no",
+              "model": "openai/gpt-oss-120b"
+            },
+            {
+              "priority": 3,
+              "apikey": "lr-gq-oa-ch-no",
+              "model": "openai/gpt-oss-20b"
+            }
+          ]
+        }
+      }
+    },
     "embeddings": {
       "strategy": "sticky_fallback",
       "timeout_ms": 2500,
