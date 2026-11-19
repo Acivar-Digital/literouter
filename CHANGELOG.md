@@ -1,5 +1,10 @@
 # Changelog
 
+## [4.1.1] - 2026-11-19
+### Fixed
+- Enabled native authentication for fusion presets (e.g., `lr-fse-*`) in single-credential auth paths to satisfy requirement for first-class invokability.
+
+
 All notable changes to LiteRouter will be documented in this file.
 
 ## [Unreleased] — 2026-11-19
@@ -1922,3 +1927,6 @@ LITEROUTER_PROVIDER=openrouter  # or anthropic
 - Initial Anthropic response transformer
 - Streaming support (SSE pass-through)
 - Model name prefix stripping
+## [4.1.1] - 2026-11-19
+### Fixed
+- Enabled native authentication for fusion presets (e.g., ) in single-credential auth paths to satisfy requirement for first-class invokability.

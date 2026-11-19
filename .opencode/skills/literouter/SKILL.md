@@ -130,6 +130,8 @@ description: LiteRouter API Gateway operational guide for Bun/TypeScript proxy o
 > 📖 **Full matrix**: [`directive-grammar.md`](directive-grammar.md) — shapes ([§1](directive-grammar.md#1-key-shapes)), providers ([§2](directive-grammar.md#2-provider-codes-13)), wires ([§3](directive-grammar.md#3-payload-wire-codes-6)), endpoints ([§4](directive-grammar.md#4-completion-endpoint-codes-10)), nuances ([§5](directive-grammar.md#5-nuance-codes-8-compoundable-with-)), top-10 ([§6](directive-grammar.md#6-top-10-keys-expanded-handler-why)), fusion presets ([§7](directive-grammar.md#7-fusion-presets-lr-fse-)), 400 rules ([§8](directive-grammar.md#8-endpoint-mismatch-400-rules)), dispatch order ([§9](directive-grammar.md#9-dispatch-order-cheat-sheet)), validity checks ([§10](directive-grammar.md#10-quick-validity-checks)), engine gate ([§11](directive-grammar.md#11-engine-selection-v4-only-routes)).
 
 Format: `lr-<provider>-<payload>-<completion>-<nuance>`
+- **Note**: Fusion presets (`lr-fse-<preset>`) are now supported as bare tokens in single-credential authentication paths (e.g., in headers or as the API key in `.env`).
+
 - **Providers**: `or`, `nv`, `gg`, `zn`, `gc`, `oa`, `an`, `gq`, `cb`, `ds`, `ms`, `tg`, `tei` (+ `tp` tests-only loopback double — never use outside unit tests).
 - **Payload (wire)**: `oa` (OpenAI, scrubs reasoning), `oo` (Responses native, preserves), `cl` (Anthropic), `ao` (Anthropic→OpenAI cross-wire), `gg` (Google), `rs` (Responses translated).
 - **Completion (endpoint)**: `ch`, `ms`, `rs`, `gc`, `g1`, `ob`, `em`, `md` (+ map-only codes `im`, `au` — `g1` is a **completion-code slot for Google v1, not a nuance**).
