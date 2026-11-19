@@ -152,17 +152,32 @@
             {
               "priority": 1,
               "apikey": "lr-gq-oa-ch-no",
-              "model": "openai/gpt-oss-safeguard-20b"
+              "model": "openai/gpt-oss-safeguard-20b",
+              "overrides": {
+                "temperature": 0.0,
+                "reasoning_effort": "low",
+                "reasoning_format": "hidden"
+              }
             },
             {
               "priority": 2,
               "apikey": "lr-gq-oa-ch-no",
-              "model": "openai/gpt-oss-20b"
+              "model": "openai/gpt-oss-20b",
+              "overrides": {
+                "temperature": 0.0,
+                "reasoning_effort": "low",
+                "reasoning_format": "hidden"
+              }
             },
             {
               "priority": 3,
               "apikey": "lr-gq-oa-ch-no",
-              "model": "openai/gpt-oss-120b"
+              "model": "openai/gpt-oss-120b",
+              "overrides": {
+                "temperature": 0.0,
+                "reasoning_effort": "low",
+                "reasoning_format": "hidden"
+              }
             }
           ]
         }
@@ -177,17 +192,32 @@
             {
               "priority": 1,
               "apikey": "lr-gq-oa-ch-no",
-              "model": "qwen/qwen3.8-27b"
+              "model": "qwen/qwen3.8-27b",
+              "overrides": {
+                "temperature": 0.0,
+                "reasoning_effort": "none",
+                "reasoning_format": "hidden"
+              }
             },
             {
               "priority": 2,
               "apikey": "lr-gq-oa-ch-no",
-              "model": "openai/gpt-oss-120b"
+              "model": "openai/gpt-oss-120b",
+              "overrides": {
+                "temperature": 0.0,
+                "reasoning_effort": "low",
+                "reasoning_format": "hidden"
+              }
             },
             {
               "priority": 3,
               "apikey": "lr-gq-oa-ch-no",
-              "model": "openai/gpt-oss-20b"
+              "model": "openai/gpt-oss-20b",
+              "overrides": {
+                "temperature": 0.0,
+                "reasoning_effort": "low",
+                "reasoning_format": "hidden"
+              }
             }
           ]
         }

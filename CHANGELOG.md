@@ -1,5 +1,13 @@
 # Changelog
 
+## [4.1.2] - 2026-11-19
+### Added
+- **Per-Tier Parameter Overrides in Fusion (`config/fusion.json`, `src/config/schema.ts`, `src/handlers/openai_compat.ts`)**:
+  - Extended `FusionTierSchema` with optional `overrides: z.record(z.string(), z.unknown()).optional()`.
+  - Updated `tryExecuteTier` to apply `tier.overrides` at dispatch time, enforcing parameter injection and overwriting downstream client parameters (e.g. `temperature: 0.0`).
+  - Implemented automatic reasoning parameter scrubbing when reasoning suppression is active (`reasoning_format: "hidden"` or `include_reasoning: false` or `reasoning_effort: "none"`).
+  - Configured deterministic overrides for `safe` and `simple` presets: `qwen/qwen3.8-27b` with temperature 0.0 and `reasoning_effort: "none"`; `openai/gpt-oss-*` with temperature 0.0 and `reasoning_effort: "low"` + `reasoning_format: "hidden"`.
+
 ## [4.1.1] - 2026-11-19
 ### Fixed
 - Enabled native authentication for fusion presets (e.g., `lr-fse-*`) in single-credential auth paths to satisfy requirement for first-class invokability.

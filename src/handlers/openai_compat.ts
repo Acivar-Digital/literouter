@@ -1089,6 +1089,24 @@ async function tryExecuteTier(
     return null;
   }
   const tierBody: OpenAIRequestPayload = { ...body, model: tier.model };
+
+  if (tier.overrides && typeof tier.overrides === "object") {
+    Object.assign(tierBody, tier.overrides);
+
+    if (
+      tier.overrides.reasoning_format === "hidden" ||
+      tier.overrides.include_reasoning === false ||
+      tier.overrides.reasoning_effort === "none" ||
+      tier.overrides.reasoning === false
+    ) {
+      if (tier.overrides.reasoning_effort === undefined) {
+        delete (tierBody as Record<string, unknown>).reasoning_effort;
+      }
+      delete (tierBody as Record<string, unknown>).thinking;
+      delete (tierBody as Record<string, unknown>).thinking_config;
+      delete (tierBody as Record<string, unknown>).thinkingConfig;
+    }
+  }
   if (tierDirective.endpoint === "em") {
     try {
       const { executeDispatchPipeline } = await import("../engine/dispatch");

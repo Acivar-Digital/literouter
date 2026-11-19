@@ -140,6 +140,7 @@ export const FusionTierSchema = z.object({
   priority: z.number().int().positive(),
   apikey: z.string().min(1),
   model: z.string().min(1),
+  overrides: z.record(z.string(), z.unknown()).optional(),
 });
 
 export const FusionModelConfigSchema = z.object({
