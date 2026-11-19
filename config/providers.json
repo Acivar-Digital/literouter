@@ -181,16 +181,16 @@
       },
       "request_retry": {
         "enabled": true,
-        "max_attempts": 5,
+        "max_attempts": 3,
         "delay": {
-          "min_ms": 1,
-          "max_ms": 5
+          "min_ms": 150,
+          "max_ms": 500
         }
       },
       "pacer": {
         "enabled": true,
-        "min_delay_ms": 3,
-        "max_delay_ms": 5,
+        "min_delay_ms": 300,
+        "max_delay_ms": 500,
         "max_queue_depth": 500,
         "max_queue_wait_ms": 15000
       }

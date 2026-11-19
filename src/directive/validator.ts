@@ -1,5 +1,5 @@
 import { createHash, timingSafeEqual } from "node:crypto";
-import { isDirectDirective, parseDirective, type ParsedDirective } from "./parser";
+import { isDirectDirective, isFusionDirective, parseDirective, type ParsedDirective } from "./parser";
 import { getEnv } from "../config/env";
 
 export const DIRECTIVE_ERROR_CODE = "invalid_api_key";
@@ -73,7 +73,7 @@ export function resolveInferenceAuth(req: Request, candidateToken?: string): Res
   // malformed or foreign tokens still fail. Direct directives only — fusion
   // presets keep the master/paired path.
   const parsedToken = parseDirective(token);
-  if (parsedToken && isDirectDirective(parsedToken)) {
+  if (parsedToken && (isDirectDirective(parsedToken) || isFusionDirective(parsedToken))) {
     return { valid: true, directiveStr: token };
   }
 

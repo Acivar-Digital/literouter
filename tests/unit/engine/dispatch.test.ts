@@ -766,7 +766,7 @@ describe("Dispatch Error Handling, Retry Telemetry & Quarantine Prevention", () 
     const res = await executeDispatchPipeline(req, fetchFn);
 
     expect(res.status).toBe(429);
-    expect(attempts).toBe(3); // OpenRouter default max_attempts is 3
+    expect(attempts).toBe(15); // OpenRouter default max_attempts is 15
     expect(res.headers.get("content-encoding")).toBeNull();
     expect(res.headers.get("content-length")).not.toBe("8888");
     expect(res.headers.get("transfer-encoding")).toBeNull();

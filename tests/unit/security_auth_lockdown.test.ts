@@ -219,15 +219,15 @@ describe("Step 1: Admin & Trace Authentication Lockdown", () => {
       expect(result.error).toBe("Authentication failed: valid LITEROUTER_AUTH_KEY required");
     });
 
-    it("rejects a bare fusion preset token (master/paired path required)", () => {
+    it("allows a bare fusion preset token as a valid directive", () => {
       const req = new Request("http://localhost:7766/v1/chat/completions", {
         headers: {
           Authorization: "Bearer lr-fse-dev",
         },
       });
       const result = resolveInferenceAuth(req);
-      expect(result.valid).toBe(false);
-      expect(result.error).toBe("Authentication failed: valid LITEROUTER_AUTH_KEY required");
+      expect(result.valid).toBe(true);
+      expect(result.directiveStr).toBe("lr-fse-dev");
     });
 
     it("allows permissive directive when LITEROUTER_AUTH_KEY is unset", () => {

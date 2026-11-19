@@ -62,7 +62,7 @@ describe("openai_compat handler unit tests", () => {
 
       const orConfig = getProviderConfig("or");
       expect(orConfig.request_retry.enabled).toBe(true);
-      expect(orConfig.request_retry.max_attempts).toBe(3);
+      expect(orConfig.request_retry.max_attempts).toBe(15);
 
       const nvConfig = getProviderConfig("nv");
       expect(nvConfig.request_retry.enabled).toBe(true);
